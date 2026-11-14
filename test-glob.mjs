@@ -45,7 +45,11 @@ check("'[abc]' класс символов", globToRegExp("[abc]").test("b") && 
 check("'[!abc]' отрицание класса", globToRegExp("[!abc]").test("d") && !globToRegExp("[!abc]").test("a"));
 check("'{a,b}' альтернатива", globToRegExp("{a,b}").test("a") && globToRegExp("{a,b}").test("b") && !globToRegExp("{a,b}").test("c"));
 check("escaped '.' в маске", globToRegExp("file.txt").test("file.txt") && !globToRegExp("file.txt").test("filetxt"));
-check("регистронезависимость на win32", globToRegExp("SRC").test("src"));
+// glob.ts регистронезависим только на Windows; на Linux/macOS маска точная.
+check(
+  `регистр: ${process.platform === "win32" ? "независимый" : "точный"} на ${process.platform}`,
+  globToRegExp("SRC").test("src") === (process.platform === "win32")
+);
 
 // --- 3. matchesGlob ----------------------------------------------------------
 check("matchesGlob 'src/a.ts' по 'src/*.ts'", matchesGlob("src/a.ts", "src/*.ts"));
