@@ -2,6 +2,22 @@ import { createSignal, onCleanup, ErrorBoundary } from "solid-js"
 import { Panel, Plugin } from "@opencode/plugin/gui"
 import { SchedulerRpc } from "./rpc.js"
 import { loadHistory, loadMetrics, type HistoryRecord } from "./history.js"
+import { setLocale, t, type TranslateParams, type Locale } from "./i18n.js"
+
+/** Счётчик смены локали: чтение в JSX-геттерах делает строки реактивными. */
+const [localeTick, setLocaleTick] = createSignal(0)
+
+/** gt — t() + подписка на смену локали для Solid. */
+const gt = (key: string, params?: TranslateParams): string => {
+  localeTick()
+  return t(key, params)
+}
+
+/** Переключает язык интерфейса без перезапуска панели. */
+const applyLocale = (locale: unknown): void => {
+  setLocale(locale as Locale)
+  setLocaleTick((v) => v + 1)
+}
 
 /** Статус задачи для отображения в GUI. */
 type JobStatus = "running" | "success" | "error" | "partial" | "idle" | "unknown"
@@ -232,24 +248,27 @@ function statusColor(status: JobStatus): string {
 /** Приоритет по умолчанию — «Обычный». */
 const DEFAULT_PRIORITY = 5
 
+/** Внутренний маркер dry-run локальной формы — не переводится. */
+const DRYRUN_FORM_MARKER = "form"
+
 /** Человекочитаемая подпись приоритета (0..10). */
 function priorityLabel(priority?: number): string {
   const value =
     typeof priority === "number" && Number.isFinite(priority)
       ? Math.min(10, Math.max(0, Math.floor(priority)))
       : DEFAULT_PRIORITY
-  if (value >= 10) return "Критический"
-  if (value >= 8) return "Высокий"
-  if (value <= 3) return "Низкий"
-  return "Обычный"
+  if (value >= 10) return gt("gui.priority.critical")
+  if (value >= 8) return gt("gui.priority.high")
+  if (value <= 3) return gt("gui.priority.low")
+  return gt("gui.priority.normal")
 }
 
 /** Варианты выпадающего списка «Приоритет». */
-const PRIORITY_OPTIONS: Array<{ value: number; label: string }> = [
-  { value: 2, label: "Низкий" },
-  { value: 5, label: "Обычный" },
-  { value: 8, label: "Высокий" },
-  { value: 10, label: "Критический" },
+const priorityOptions = (): Array<{ value: number; label: string }> => [
+  { value: 2, label: gt("gui.priority.low") },
+  { value: 5, label: gt("gui.priority.normal") },
+  { value: 8, label: gt("gui.priority.high") },
+  { value: 10, label: gt("gui.priority.critical") },
 ]
 
 /** Безопасно извлекает текст ошибки из любого thrown value. */
@@ -284,12 +303,12 @@ function joinListInput(list?: string[] | null): string {
 }
 
 /** Пресеты cron-расписаний */
-const CRON_PRESETS: Array<{ label: string; value: string }> = [
-  { label: "Каждую минуту", value: "* * * * *" },
-  { label: "Каждый час", value: "0 * * * *" },
-  { label: "Каждый день в 09:00", value: "0 9 * * *" },
-  { label: "Каждый понедельник в 10:00", value: "0 10 * * 1" },
-  { label: "Свое расписание…", value: "__custom__" },
+const cronPresets = (): Array<{ label: string; value: string }> => [
+  { label: gt("gui.cron.everyMinute"), value: "* * * * *" },
+  { label: gt("gui.cron.everyHour"), value: "0 * * * *" },
+  { label: gt("gui.cron.dailyAt9"), value: "0 9 * * *" },
+  { label: gt("gui.cron.mondayAt10"), value: "0 10 * * 1" },
+  { label: gt("gui.cron.custom"), value: "__custom__" },
 ]
 
 export default Plugin.define({
@@ -309,7 +328,7 @@ export default Plugin.define({
     const [profilesOpen, setProfilesOpen] = createSignal(false)
     const [profileBusy, setProfileBusy] = createSignal(false)
     // Собственный текстовый prompt: в Electron/WebView window.prompt не работает
-    // (возвращает null), из-за чего «+ Создать» в профилях молча ничего не делал.
+    // (возвращает null), из-за чего «{gt("gui.createProfile")}» в профилях молча ничего не делал.
     const [promptOpen, setPromptOpen] = createSignal(false)
     const [promptTitle, setPromptTitle] = createSignal("")
     const [promptValue, setPromptValue] = createSignal("")
@@ -344,22 +363,22 @@ export default Plugin.define({
     const [history, setHistory] = createSignal<HistoryRecord[]>([])
 
     // Шаблоны промптов
-    const TEMPLATES: Array<{ label: string; value: string; prompt: string }> = [
-      { label: "Свой промпт", value: "custom", prompt: "" },
+    const promptTemplates = (): Array<{ label: string; value: string; prompt: string }> => [
+      { label: gt("gui.promptTemplates.custom"), value: "custom", prompt: "" },
       {
-        label: "Ночной сторож (тесты)",
+        label: gt("gui.promptTemplates.nightWatch"),
         value: "night-watch",
-        prompt: "Запусти ночные проверки: прогнали тесты, зафиксируй ошибки и составь краткий отчёт о состоянии репозитория.",
+        prompt: gt("gui.promptTemplates.nightWatchPrompt"),
       },
       {
-        label: "Утренний дайджест",
+        label: gt("gui.promptTemplates.morningDigest"),
         value: "morning-digest",
-        prompt: "Собери утренний дайджест: какие изменения были за ночь, есть ли проваленные сборки, что требует внимания сегодня.",
+        prompt: gt("gui.promptTemplates.morningDigestPrompt"),
       },
       {
-        label: "Гигиена кода",
+        label: gt("gui.promptTemplates.codeHygiene"),
         value: "code-hygiene",
-        prompt: "Проведи аудит гигиены кода: найди неиспользуемые импорты, неиспользуемые переменные, лишние зависимости и предложи правки.",
+        prompt: gt("gui.promptTemplates.codeHygienePrompt"),
       },
     ]
     const [template, setTemplate] = createSignal<string>("custom")
@@ -450,7 +469,7 @@ export default Plugin.define({
 
     // Название планировщика приходит с бэкенда: на Windows — «Планировщик Windows»,
     // на macOS/Linux — «OpenCode Scheduler». GUI не зависит от ОС напрямую.
-    const [schedulerTitle, setSchedulerTitle] = createSignal("Планировщик задач")
+    const [schedulerTitle, setSchedulerTitle] = createSignal(gt("gui.app.title"))
 
     async function loadPlatformGui() {
       try {
@@ -516,6 +535,7 @@ export default Plugin.define({
         setAuditRetentionEnabled(Boolean(au?.enabled !== false))
         setAuditRetentionDays(Number(au?.retentionDays ?? 90))
         setAuditMaxRecords(Number(au?.maxRecords ?? 10000))
+        applyLocale((s as { locale?: string }).locale)
       } catch (err: any) {
         console.error("RPC Error (get_settings):", err)
       }
@@ -627,9 +647,10 @@ export default Plugin.define({
           setAuditRetentionDays(Number(au?.retentionDays ?? 90))
           setAuditMaxRecords(Number(au?.maxRecords ?? 10000))
         }
+        applyLocale((s as { locale?: string }).locale)
       } catch (err: any) {
         console.error("RPC Error (save_settings):", err)
-        ctx.toast.show({ title: "Не удалось сохранить настройки", variant: "error", description: errorMessage(err) })
+        ctx.toast.show({ title: gt("gui.toast.settingsSaveFailed"), variant: "error", description: errorMessage(err) })
       }
     }
 
@@ -657,15 +678,16 @@ export default Plugin.define({
         setHistoryMaxRecords(Number(h?.maxRecords ?? 5000))
         setHistoryLastCleanupAt(h?.lastCleanupAt ?? null)
         setHistoryLastCleanupDeleted(Number(h?.lastCleanupDeleted ?? 0))
+        applyLocale((s as { locale?: string }).locale)
         ctx.toast.show({
-          title: result.success ? "Очистка истории завершена" : "Очистка не удалась",
+          title: result.success ? gt("gui.toast.historyCleanupDone") : gt("gui.toast.historyCleanupFailed"),
           variant: result.success ? "success" : "error",
           description: result.message,
         })
       } catch (err: any) {
         console.error("RPC Error (cleanup_history):", err)
         ctx.toast.show({
-          title: "Очистка не удалась",
+          title: gt("gui.toast.historyCleanupFailed"),
           variant: "error",
           description: errorMessage(err),
         })
@@ -698,14 +720,14 @@ export default Plugin.define({
         if (result?.success) {
           setSecretName("")
           setSecretValue("")
-          ctx.toast.show({ title: "Секрет сохранён", variant: "success", description: result.message })
+          ctx.toast.show({ title: gt("gui.toast.secretSaved"), variant: "success", description: result.message })
           void loadSecretsGui()
         } else {
-          ctx.toast.show({ title: "Секрет не сохранён", variant: "error", description: result?.message ?? "" })
+          ctx.toast.show({ title: gt("gui.toast.secretNotSaved"), variant: "error", description: result?.message ?? "" })
         }
       } catch (err: any) {
         console.error("RPC Error (save_secret):", err)
-        ctx.toast.show({ title: "Секрет не сохранён", variant: "error", description: errorMessage(err) })
+        ctx.toast.show({ title: gt("gui.toast.secretNotSaved"), variant: "error", description: errorMessage(err) })
       } finally {
         setSecretsBusy(false)
       }
@@ -717,14 +739,14 @@ export default Plugin.define({
       try {
         const result = await rpc.delete_secret({ name })
         if (result?.success) {
-          ctx.toast.show({ title: "Секрет удалён", variant: "success", description: result?.message ?? "" })
+          ctx.toast.show({ title: gt("gui.toast.secretDeleted"), variant: "success", description: result?.message ?? "" })
           void loadSecretsGui()
         } else {
-          ctx.toast.show({ title: "Секрет не удалён", variant: "error", description: result?.message ?? "" })
+          ctx.toast.show({ title: gt("gui.toast.secretNotDeleted"), variant: "error", description: result?.message ?? "" })
         }
       } catch (err: any) {
         console.error("RPC Error (delete_secret):", err)
-        ctx.toast.show({ title: "Секрет не удалён", variant: "error", description: errorMessage(err) })
+        ctx.toast.show({ title: gt("gui.toast.secretNotDeleted"), variant: "error", description: errorMessage(err) })
       } finally {
         setSecretsBusy(false)
       }
@@ -763,14 +785,14 @@ export default Plugin.define({
         await saveNotificationSettings()
         const result = await rpc.test_notification({})
         ctx.toast.show({
-          title: result.success ? "Тестовое уведомление отправлено" : "Тест не удался",
+          title: result.success ? gt("gui.toast.testSent") : gt("gui.toast.testFailed"),
           variant: result.success ? "success" : "error",
           description: result.message,
         })
       } catch (err: any) {
         console.error("RPC Error (test_notification):", err)
         ctx.toast.show({
-          title: "Тест не удался",
+          title: gt("gui.toast.testFailed"),
           variant: "error",
           description: errorMessage(err),
         })
@@ -787,14 +809,14 @@ export default Plugin.define({
         await saveNotificationSettings()
         const result = await rpc.send_digest({})
         ctx.toast.show({
-          title: result.success ? "Дайджест отправлен" : "Дайджест не отправлен",
+          title: result.success ? gt("gui.toast.digestSent") : gt("gui.toast.digestFailed"),
           variant: result.success ? "success" : "error",
           description: result.message,
         })
       } catch (err: any) {
         console.error("RPC Error (send_digest):", err)
         ctx.toast.show({
-          title: "Дайджест не отправлен",
+          title: gt("gui.toast.digestFailed"),
           variant: "error",
           description: errorMessage(err),
         })
@@ -1034,7 +1056,7 @@ export default Plugin.define({
       try {
         const result = await rpc.export_tasks({})
         if (!result.success) {
-          ctx.toast.show({ title: "Ошибка экспорта", variant: "error", description: result.error })
+          ctx.toast.show({ title: gt("gui.toast.exportFailed"), variant: "error", description: result.error })
           return
         }
         setExportData(result.data)
@@ -1047,10 +1069,10 @@ export default Plugin.define({
         a.click()
         document.body.removeChild(a)
         URL.revokeObjectURL(url)
-        ctx.toast.show({ title: `Экспортировано задач: ${result.count}`, variant: "success" })
+        ctx.toast.show({ title: gt("gui.toast.exported", { count: result.count }), variant: "success" })
       } catch (err: any) {
         console.error("RPC Error (export_tasks):", err)
-        ctx.toast.show({ title: "Ошибка экспорта", variant: "error", description: errorMessage(err) })
+        ctx.toast.show({ title: gt("gui.toast.exportFailed"), variant: "error", description: errorMessage(err) })
       } finally {
         setExportBusy(false)
       }
@@ -1065,7 +1087,7 @@ export default Plugin.define({
     async function handleImport() {
       const file = importFile()
       if (!file) {
-        ctx.toast.show({ title: "Выберите файл", variant: "error", description: "Не выбран файл для импорта." })
+        ctx.toast.show({ title: gt("gui.toast.chooseFile"), variant: "error", description: gt("gui.toast.noFileForImport") })
         return
       }
       setImportBusy(true)
@@ -1073,15 +1095,15 @@ export default Plugin.define({
         const text = await file.text()
         const result = await rpc.import_tasks({ data: text })
         if (!result.success) {
-          ctx.toast.show({ title: "Ошибка импорта", variant: "error", description: result.error })
+          ctx.toast.show({ title: gt("gui.toast.importFailed"), variant: "error", description: result.error })
           return
         }
         setImportFile(null)
-        ctx.toast.show({ title: `Импортировано задач: ${result.imported}`, variant: "success" })
+        ctx.toast.show({ title: gt("gui.toast.imported", { count: result.imported }), variant: "success" })
         await loadJobs()
       } catch (err: any) {
         console.error("RPC Error (import_tasks):", err)
-        ctx.toast.show({ title: "Ошибка импорта", variant: "error", description: errorMessage(err) })
+        ctx.toast.show({ title: gt("gui.toast.importFailed"), variant: "error", description: errorMessage(err) })
       } finally {
         setImportBusy(false)
       }
@@ -1130,35 +1152,35 @@ export default Plugin.define({
       try {
         const result = await rpc.set_profile({ name })
         if (!result.success) {
-          ctx.toast.show({ title: "Не удалось переключить профиль", variant: "error", description: result.message ?? "Неизвестная ошибка" })
+          ctx.toast.show({ title: gt("gui.toast.profileSwitchFailed"), variant: "error", description: result.message ?? gt("gui.common.unknownError") })
           return
         }
         setProfileCurrent(result.current ?? name)
-        ctx.toast.show({ title: "Профиль переключён", variant: "success", description: result.message })
+        ctx.toast.show({ title: gt("gui.toast.profileSwitched"), variant: "success", description: result.message })
         await loadProfilesGui()
       } catch (err: any) {
         console.error("RPC Error (set_profile):", err)
-        ctx.toast.show({ title: "Ошибка переключения профиля", variant: "error", description: shortError(errorMessage(err)) })
+        ctx.toast.show({ title: gt("gui.toast.profileSwitchError"), variant: "error", description: shortError(errorMessage(err)) })
       } finally {
         setProfileBusy(false)
       }
     }
 
     async function handleCreateProfile() {
-      const name = ((await askText("Имя нового профиля (латиница, цифры, - и _)", "")) ?? "").trim()
+      const name = ((await askText(gt("gui.profile.namePrompt"), "")) ?? "").trim()
       if (!name) return
       setProfileBusy(true)
       try {
         const result = await rpc.create_profile({ name })
         if (!result.success) {
-          ctx.toast.show({ title: "Не удалось создать профиль", variant: "error", description: result.message ?? "Неизвестная ошибка" })
+          ctx.toast.show({ title: gt("gui.toast.profileCreateFailed"), variant: "error", description: result.message ?? gt("gui.common.unknownError") })
           return
         }
         await loadProfilesGui()
-        ctx.toast.show({ title: "Профиль создан", variant: "success", description: result.message })
+        ctx.toast.show({ title: gt("gui.toast.profileCreated"), variant: "success", description: result.message })
       } catch (err: any) {
         console.error("RPC Error (create_profile):", err)
-        ctx.toast.show({ title: "Ошибка создания профиля", variant: "error", description: shortError(errorMessage(err)) })
+        ctx.toast.show({ title: gt("gui.toast.profileCreateError"), variant: "error", description: shortError(errorMessage(err)) })
       } finally {
         setProfileBusy(false)
       }
@@ -1166,19 +1188,19 @@ export default Plugin.define({
 
     async function handleDeleteProfile(name: string) {
       if (!name || name === "default") return
-      if (!window.confirm(`Удалить профиль "${name}" вместе с его БД, настройками и логами?`)) return
+      if (!window.confirm(gt("gui.profile.deleteConfirm", { name }))) return
       setProfileBusy(true)
       try {
         const result = await rpc.delete_profile({ name })
         if (!result.success) {
-          ctx.toast.show({ title: "Не удалось удалить профиль", variant: "error", description: result.message ?? "Неизвестная ошибка" })
+          ctx.toast.show({ title: gt("gui.toast.profileDeleteFailed"), variant: "error", description: result.message ?? gt("gui.common.unknownError") })
           return
         }
         await loadProfilesGui()
-        ctx.toast.show({ title: "Профиль удалён", variant: "success" })
+        ctx.toast.show({ title: gt("gui.toast.profileDeleted"), variant: "success" })
       } catch (err: any) {
         console.error("RPC Error (delete_profile):", err)
-        ctx.toast.show({ title: "Ошибка удаления профиля", variant: "error", description: shortError(errorMessage(err)) })
+        ctx.toast.show({ title: gt("gui.toast.profileDeleteError"), variant: "error", description: shortError(errorMessage(err)) })
       } finally {
         setProfileBusy(false)
       }
@@ -1209,17 +1231,17 @@ export default Plugin.define({
 
     async function handleEditWorkspaceEnv(workspace: Workspace) {
       const envText = await askText(
-        "Env-переменные workspace, по одной в строке KEY=VALUE\n(пустое поле — очистить)",
+        gt("gui.workspace.envPrompt"),
         envToText(workspace.env)
       )
       if (envText === null) return
       const env = parseEnvText(envText)
       if (!env) {
-        ctx.toast.show({ title: "Неверный формат env", variant: "error", description: "Нужны строки KEY=VALUE, имя — латиница/цифры/_" })
+        ctx.toast.show({ title: gt("gui.toast.envInvalid"), variant: "error", description: gt("gui.workspace.envInvalidHelp") })
         return
       }
       const envFile = await askText(
-        "Путь к .env-файлу workspace (необязательно, пусто — без файла)",
+        gt("gui.workspace.envFilePrompt"),
         workspace.envFile ?? ""
       )
       if (envFile === null) return
@@ -1231,23 +1253,23 @@ export default Plugin.define({
           envFile: envFile.trim() || null,
         })
         if (!result.success) {
-          ctx.toast.show({ title: "Не удалось сохранить env", variant: "error", description: result.error ?? "Неизвестная ошибка" })
+          ctx.toast.show({ title: gt("gui.toast.envSaveFailed"), variant: "error", description: result.error ?? gt("gui.common.unknownError") })
           return
         }
         await loadWorkspacesGui()
-        ctx.toast.show({ title: "Env-переменные сохранены", variant: "success", description: "Секреты маскируются в логах" })
+        ctx.toast.show({ title: gt("gui.toast.envSaved"), variant: "success", description: gt("gui.workspace.envSecretsMasked") })
       } catch (err: any) {
         console.error("RPC Error (update_workspace env):", err)
-        ctx.toast.show({ title: "Ошибка сохранения env", variant: "error", description: shortError(errorMessage(err)) })
+        ctx.toast.show({ title: gt("gui.toast.envSaveError"), variant: "error", description: shortError(errorMessage(err)) })
       } finally {
         setWorkspaceBusy(false)
       }
     }
 
     async function handleAddWorkspace() {
-      const workspacePath = ((await askText("Путь к git-репозиторию (workspace)", "")) ?? "").trim()
+      const workspacePath = ((await askText(gt("gui.workspace.pathPrompt"), "")) ?? "").trim()
       if (!workspacePath) return
-      const workspaceName = ((await askText("Название workspace (необязательно)", "")) ?? "").trim()
+      const workspaceName = ((await askText(gt("gui.workspace.namePrompt"), "")) ?? "").trim()
       setWorkspaceBusy(true)
       try {
         const result = await rpc.add_workspace({
@@ -1255,24 +1277,24 @@ export default Plugin.define({
           ...(workspaceName ? { name: workspaceName } : {}),
         })
         if (!result.success) {
-          ctx.toast.show({ title: "Ошибка добавления workspace", variant: "error", description: result.error ?? "Неизвестная ошибка" })
+          ctx.toast.show({ title: gt("gui.toast.workspaceAddFailed"), variant: "error", description: result.error ?? gt("gui.common.unknownError") })
           return
         }
         await loadWorkspacesGui()
         if (result.workspace?.id) setWorkspaceId(result.workspace.id)
-        ctx.toast.show({ title: "Workspace добавлен", variant: "success" })
+        ctx.toast.show({ title: gt("gui.toast.workspaceAdded"), variant: "success" })
       } catch (err: any) {
         console.error("RPC Error (add_workspace):", err)
-        ctx.toast.show({ title: "Ошибка добавления workspace", variant: "error", description: shortError(errorMessage(err)) })
+        ctx.toast.show({ title: gt("gui.toast.workspaceAddFailed"), variant: "error", description: shortError(errorMessage(err)) })
       } finally {
         setWorkspaceBusy(false)
       }
     }
 
     async function handleEditWorkspace(workspace: Workspace) {
-      const nextPath = ((await askText("Путь к git-репозиторию", workspace.path)) ?? "").trim()
+      const nextPath = ((await askText(gt("gui.workspace.pathPromptShort"), workspace.path)) ?? "").trim()
       if (!nextPath) return
-      const nextName = ((await askText("Название workspace", workspace.name)) ?? "").trim()
+      const nextName = ((await askText(gt("gui.workspace.namePromptShort"), workspace.name)) ?? "").trim()
       setWorkspaceBusy(true)
       try {
         const result = await rpc.update_workspace({
@@ -1281,36 +1303,36 @@ export default Plugin.define({
           ...(nextName ? { name: nextName } : {}),
         })
         if (!result.success) {
-          ctx.toast.show({ title: "Ошибка обновления workspace", variant: "error", description: result.error ?? "Неизвестная ошибка" })
+          ctx.toast.show({ title: gt("gui.toast.workspaceUpdateFailed"), variant: "error", description: result.error ?? gt("gui.common.unknownError") })
           return
         }
         await loadWorkspacesGui()
-        ctx.toast.show({ title: "Workspace обновлён", variant: "success" })
+        ctx.toast.show({ title: gt("gui.toast.workspaceUpdated"), variant: "success" })
       } catch (err: any) {
         console.error("RPC Error (update_workspace):", err)
-        ctx.toast.show({ title: "Ошибка обновления workspace", variant: "error", description: shortError(errorMessage(err)) })
+        ctx.toast.show({ title: gt("gui.toast.workspaceUpdateFailed"), variant: "error", description: shortError(errorMessage(err)) })
       } finally {
         setWorkspaceBusy(false)
       }
     }
 
     async function handleDeleteWorkspace(workspace: Workspace) {
-      if (!window.confirm(`Удалить workspace "${workspace.name}"? Задачи сохранены, привязка будет очищена.`)) return
+      if (!window.confirm(gt("gui.workspace.deleteConfirm", { name: workspace.name }))) return
       setWorkspaceBusy(true)
       try {
         const result = await rpc.delete_workspace({ id: workspace.id })
         if (!result.success) {
-          ctx.toast.show({ title: "Ошибка удаления workspace", variant: "error", description: result.message ?? "Неизвестная ошибка" })
+          ctx.toast.show({ title: gt("gui.toast.workspaceDeleteFailed"), variant: "error", description: result.message ?? gt("gui.common.unknownError") })
           return
         }
         if (workspaceId() === workspace.id) setWorkspaceId("")
         if (workspaceFilter() === workspace.id) setWorkspaceFilter("all")
         await loadWorkspacesGui()
         await loadJobs()
-        ctx.toast.show({ title: "Workspace удалён", variant: "success", description: result.message })
+        ctx.toast.show({ title: gt("gui.toast.workspaceDeleted"), variant: "success", description: result.message })
       } catch (err: any) {
         console.error("RPC Error (delete_workspace):", err)
-        ctx.toast.show({ title: "Ошибка удаления workspace", variant: "error", description: shortError(errorMessage(err)) })
+        ctx.toast.show({ title: gt("gui.toast.workspaceDeleteFailed"), variant: "error", description: shortError(errorMessage(err)) })
       } finally {
         setWorkspaceBusy(false)
       }
@@ -1331,7 +1353,7 @@ export default Plugin.define({
         setPrompt(t.prompt ?? "")
         if (t.schedule) {
           setSchedule(t.schedule)
-          const preset = CRON_PRESETS.find((p) => p.value === t.schedule)
+          const preset = cronPresets().find((p) => p.value === t.schedule)
           setCronPreset((preset ? preset.value : "__custom__") as any)
         }
         setRetryCount(t.retryCount ?? 0)
@@ -1388,7 +1410,7 @@ export default Plugin.define({
         return
       }
 
-      const builtin = TEMPLATES.find((t) => t.value === val)
+      const builtin = promptTemplates().find((t) => t.value === val)
       if (builtin) setPrompt(builtin.prompt)
     }
 
@@ -1396,14 +1418,14 @@ export default Plugin.define({
     async function handleSaveAsTemplate() {
       if (!(prompt() || "").trim()) {
         ctx.toast.show({
-          title: "Нечего сохранять",
+          title: gt("gui.toast.nothingToSave"),
           variant: "error",
-          description: "Сначала заполните промпт — он обязателен для шаблона.",
+          description: gt("gui.toast.promptRequired"),
         })
         return
       }
 
-      const templateName = ((await askText("Название шаблона", "")) ?? "").trim()
+      const templateName = ((await askText(gt("gui.templates.namePrompt"), "")) ?? "").trim()
       if (!templateName) return
 
       try {
@@ -1442,20 +1464,20 @@ export default Plugin.define({
         })
         if (!result.success) {
           ctx.toast.show({
-            title: "Не удалось сохранить шаблон",
+            title: gt("gui.toast.templateSaveFailed"),
             variant: "error",
-            description: result.error || "Неизвестная ошибка",
+            description: result.error || gt("gui.common.unknownError"),
           })
           return
         }
         await loadTemplatesGui()
         const saved = (result as any).template
         if (saved?.id) setTemplate(`custom:${saved.id}`)
-        ctx.toast.show({ title: `Шаблон "${templateName}" сохранён`, variant: "success" })
+        ctx.toast.show({ title: gt("gui.toast.templateSaved", { name: templateName }), variant: "success" })
       } catch (err: any) {
         console.error("RPC Error (save_template):", err)
         ctx.toast.show({
-          title: "Ошибка сохранения шаблона",
+          title: gt("gui.toast.templateSaveError"),
           variant: "error",
           description: errorMessage(err),
         })
@@ -1464,24 +1486,24 @@ export default Plugin.define({
 
     /** Удаляет пользовательский шаблон по id. */
     async function handleDeleteTemplate(t: CustomTemplate) {
-      if (!window.confirm(`Удалить шаблон "${t.name}"?`)) return
+      if (!window.confirm(gt("gui.templates.deleteConfirm", { name: t.name }))) return
       try {
         const result = await rpc.delete_template({ id: t.id })
         if (!result.success) {
           ctx.toast.show({
-            title: "Не удалось удалить шаблон",
+            title: gt("gui.toast.templateDeleteFailed"),
             variant: "error",
-            description: result.error || "Неизвестная ошибка",
+            description: result.error || gt("gui.common.unknownError"),
           })
           return
         }
         if (template() === `custom:${t.id}`) setTemplate("custom")
         await loadTemplatesGui()
-        ctx.toast.show({ title: `Шаблон "${t.name}" удалён`, variant: "success" })
+        ctx.toast.show({ title: gt("gui.toast.templateDeleted", { name: t.name }), variant: "success" })
       } catch (err: any) {
         console.error("RPC Error (delete_template):", err)
         ctx.toast.show({
-          title: "Ошибка удаления шаблона",
+          title: gt("gui.toast.templateDeleteError"),
           variant: "error",
           description: errorMessage(err),
         })
@@ -1542,7 +1564,7 @@ export default Plugin.define({
       } catch (err: any) {
         console.error("RPC Error (get_tasks):", err)
         // Оставляем старые данные на экране, не роняем UI
-        ctx.toast.show({ title: "Ошибка загрузки задач", variant: "error", description: shortError(errorMessage(err)) })
+        ctx.toast.show({ title: gt("gui.toast.jobsLoadFailed"), variant: "error", description: shortError(errorMessage(err)) })
       }
     }
 
@@ -1562,7 +1584,7 @@ export default Plugin.define({
         setHistory(result.records ?? [])
       } catch (err: any) {
         console.error("RPC Error (get_history):", err)
-        ctx.toast.show({ title: "Ошибка загрузки истории", variant: "error", description: errorMessage(err) })
+        ctx.toast.show({ title: gt("gui.toast.historyLoadFailed"), variant: "error", description: errorMessage(err) })
       }
     }
 
@@ -1638,7 +1660,7 @@ export default Plugin.define({
         if (!result.success) {
           const short = shortError(result.message)
           setCronError(short)
-          ctx.toast.show({ title: "Ошибка создания задачи", variant: "error", description: short })
+          ctx.toast.show({ title: gt("gui.toast.taskCreateFailed"), variant: "error", description: short })
           return
         }
         // Windows регистрирует задачу в Планировщике не мгновенно:
@@ -1678,12 +1700,12 @@ export default Plugin.define({
         resetMatrixForm()
         setEditingJob(null)
         setTemplate("custom")
-        ctx.toast.show({ title: "Задача создана", variant: "success" })
+        ctx.toast.show({ title: gt("gui.toast.taskCreated"), variant: "success" })
       } catch (err: any) {
         console.error("RPC Error (create_task):", err)
         const msg = shortError(errorMessage(err))
         setCronError(msg)
-        ctx.toast.show({ title: "Ошибка создания задачи", variant: "error", description: msg })
+        ctx.toast.show({ title: gt("gui.toast.taskCreateFailed"), variant: "error", description: msg })
       } finally {
         setBusy(false)
       }
@@ -1729,7 +1751,7 @@ export default Plugin.define({
             const seconds = ((Number(record.durationMs) || 0) / 1000).toFixed(1)
             const reason = record.error ? `: ${record.error}` : ""
             ctx.toast.show({
-              title: ok ? `Задача "${jobName}" выполнена` : `Задача "${jobName}" упала`,
+              title: ok ? gt("gui.toast.taskDone", { name: jobName }) : gt("gui.toast.taskCrashed", { name: jobName }),
               variant: ok ? "success" : "error",
               description: `${seconds}s${reason}`,
             })
@@ -1752,12 +1774,12 @@ export default Plugin.define({
       try {
         const result = await rpc.run_task({ name: jobName })
         if (!result.success) {
-          ctx.toast.show({ title: `Не удалось запустить "${jobName}"`, variant: "error", description: result.message })
+          ctx.toast.show({ title: gt("gui.toast.taskStartFailed", { name: jobName }), variant: "error", description: result.message })
           return
         }
         // Уже выполняющаяся задача приходит как success с сообщением
         // «Задача ... уже выполняется» — показываем мягкое уведомление, не ошибку.
-        ctx.toast.show({ title: result.message || `Задача "${jobName}" запущена`, variant: "success" })
+        ctx.toast.show({ title: result.message || gt("gui.toast.taskStarted", { name: jobName }), variant: "success" })
         // Для уже идущего запуска не ждём новую запись истории.
         if (!/уже выполняется/i.test(result.message || "")) {
           watchManualRun(jobName)
@@ -1765,7 +1787,7 @@ export default Plugin.define({
         await loadJobs()
       } catch (err: any) {
         console.error("RPC Error (run_task):", err)
-        ctx.toast.show({ title: "Ошибка запуска", variant: "error", description: errorMessage(err) })
+        ctx.toast.show({ title: gt("gui.toast.runFailed"), variant: "error", description: errorMessage(err) })
       }
     }
 
@@ -1773,14 +1795,14 @@ export default Plugin.define({
       try {
         const result = await rpc.pause_task({ name: jobName })
         if (!result.success) {
-          ctx.toast.show({ title: `Не удалось поставить на паузу "${jobName}"`, variant: "error", description: result.message })
+          ctx.toast.show({ title: gt("gui.toast.pauseFailed", { name: jobName }), variant: "error", description: result.message })
           return
         }
-        ctx.toast.show({ title: `Задача "${jobName}" поставлена на паузу`, variant: "success" })
+        ctx.toast.show({ title: gt("gui.toast.paused", { name: jobName }), variant: "success" })
         await loadJobs()
       } catch (err: any) {
         console.error("RPC Error (pause_task):", err)
-        ctx.toast.show({ title: "Ошибка паузы", variant: "error", description: errorMessage(err) })
+        ctx.toast.show({ title: gt("gui.toast.pauseError"), variant: "error", description: errorMessage(err) })
       }
     }
 
@@ -1788,46 +1810,46 @@ export default Plugin.define({
       try {
         const result = await rpc.resume_task({ name: jobName })
         if (!result.success) {
-          ctx.toast.show({ title: `Не удалось возобновить "${jobName}"`, variant: "error", description: result.message })
+          ctx.toast.show({ title: gt("gui.toast.resumeFailed", { name: jobName }), variant: "error", description: result.message })
           return
         }
-        ctx.toast.show({ title: `Задача "${jobName}" возобновлена`, variant: "success" })
+        ctx.toast.show({ title: gt("gui.toast.resumed", { name: jobName }), variant: "success" })
         await loadJobs()
       } catch (err: any) {
         console.error("RPC Error (resume_task):", err)
-        ctx.toast.show({ title: "Ошибка возобновления", variant: "error", description: errorMessage(err) })
+        ctx.toast.show({ title: gt("gui.toast.resumeError"), variant: "error", description: errorMessage(err) })
       }
     }
 
     async function handleCancelMatrix(jobName: string) {
-      if (!window.confirm(`Отменить выполняющиеся клоны матрицы "${jobName}"?`)) return
+      if (!window.confirm(gt("gui.matrix.cancelClonesConfirm", { name: jobName }))) return
       try {
         const result = await rpc.cancel_matrix({ name: jobName })
         if (!result.success) {
-          ctx.toast.show({ title: "Не удалось отменить матрицу", variant: "error", description: result.message })
+          ctx.toast.show({ title: gt("gui.toast.matrixCancelFailed"), variant: "error", description: result.message })
           return
         }
         ctx.toast.show({ title: result.message, variant: "success" })
         await loadJobs()
       } catch (err: any) {
         console.error("RPC Error (cancel_matrix):", err)
-        ctx.toast.show({ title: "Ошибка отмены матрицы", variant: "error", description: errorMessage(err) })
+        ctx.toast.show({ title: gt("gui.toast.matrixCancelError"), variant: "error", description: errorMessage(err) })
       }
     }
 
     async function handleDelete(jobName: string) {
       const target = jobs().find((job) => job.name === jobName)
       const message = target?.matrix
-        ? `Удалить матрицу "${jobName}" вместе со всеми клонами и агрегатором?`
-        : `Удалить задачу "${jobName}"?`
+        ? gt("gui.matrix.deleteConfirm", { name: jobName })
+        : gt("gui.task.deleteConfirm", { name: jobName })
       if (!window.confirm(message)) return
       try {
         const result = await rpc.delete_task({ name: jobName })
         if (!result.success) {
-          ctx.toast.show({ title: "Ошибка удаления", variant: "error", description: result.message })
+          ctx.toast.show({ title: gt("gui.toast.deleteFailed"), variant: "error", description: result.message })
           return
         }
-        ctx.toast.show({ title: `Задача "${jobName}" удалена`, variant: "success" })
+        ctx.toast.show({ title: gt("gui.toast.taskDeleted", { name: jobName }), variant: "success" })
         if (logsTask() === jobName) {
           setLogs("")
           setLogsTask(null)
@@ -1836,24 +1858,24 @@ export default Plugin.define({
         await loadJobs()
       } catch (err: any) {
         console.error("RPC Error (delete_task):", err)
-        ctx.toast.show({ title: "Ошибка удаления", variant: "error", description: errorMessage(err) })
+        ctx.toast.show({ title: gt("gui.toast.deleteFailed"), variant: "error", description: errorMessage(err) })
       }
     }
 
     async function showLogs(jobName: string) {
       setLogsTask(jobName)
-      setLogs("Загрузка логов…")
+      setLogs(gt("gui.logs.loading"))
       try {
         const result = await rpc.get_task_logs({ name: jobName })
         if (!result.success) {
-          setLogs(result.error || "Не удалось загрузить логи")
-          ctx.toast.show({ title: "Ошибка чтения логов", variant: "error", description: result.error })
+          setLogs(result.error || gt("gui.logs.loadFailed"))
+          ctx.toast.show({ title: gt("gui.toast.logsReadFailed"), variant: "error", description: result.error })
           return
         }
-        setLogs(result.logs || "(пусто)")
+        setLogs(result.logs || gt("gui.logs.empty"))
       } catch (err: any) {
         console.error("RPC Error (get_task_logs):", err)
-        setLogs("Ошибка чтения логов: " + errorMessage(err))
+        setLogs(gt("gui.logs.readError", { error: errorMessage(err) }))
       }
     }
 
@@ -1906,7 +1928,7 @@ export default Plugin.define({
         })
         if (!result.success) {
           setCronError(result.message)
-          ctx.toast.show({ title: "Ошибка обновления задачи", variant: "error", description: result.message })
+          ctx.toast.show({ title: gt("gui.toast.taskUpdateFailed"), variant: "error", description: result.message })
           return
         }
         setEditingJob(null)
@@ -1940,12 +1962,12 @@ export default Plugin.define({
         resetMatrixForm()
         setCronPreset("* * * * *")
         await loadJobs()
-        ctx.toast.show({ title: "Задача обновлена", variant: "success" })
+        ctx.toast.show({ title: gt("gui.toast.taskUpdated"), variant: "success" })
       } catch (err: any) {
         console.error("RPC Error (update_task):", err)
         const msg = errorMessage(err)
         setCronError(msg)
-        ctx.toast.show({ title: "Ошибка обновления задачи", variant: "error", description: msg })
+        ctx.toast.show({ title: gt("gui.toast.taskUpdateFailed"), variant: "error", description: msg })
       } finally {
         setBusy(false)
       }
@@ -2044,36 +2066,36 @@ export default Plugin.define({
 
     const validationError = (): string => {
       const taskName = (name() || "").trim()
-      if (!taskName) return "Укажите имя задачи."
-      if (!(prompt() || "").trim()) return "Укажите промпт."
-      if (triggerType() === "cron" && !(schedule() || "").trim()) return "Укажите cron-расписание."
+      if (!taskName) return gt("gui.validation.taskNameRequired")
+      if (!(prompt() || "").trim()) return gt("gui.validation.promptRequired")
+      if (triggerType() === "cron" && !(schedule() || "").trim()) return gt("gui.validation.cronRequired")
       if (triggerType() === "once" && !(runAt() || "").trim() && !(delaySeconds() || "").trim()) {
-        return "Укажите время запуска или задержку."
+        return gt("gui.validation.runAtRequired")
       }
       // Спринт 27: git-триггер работает только в git-репозитории задачи.
       if (triggerType() === "git" && !(workspaceId() || "").trim() && !(workingDirectory() || "").trim()) {
-        return "Для git-триггера выберите workspace или укажите рабочую директорию."
+        return gt("gui.validation.gitWorkspaceRequired")
       }
       if ((gitPollSeconds() || "").trim() && !/^([5-9]|[1-9]\d+)$/.test(gitPollSeconds().trim())) {
-        return "Период опроса git — целое число секунд не меньше 5."
+        return gt("gui.validation.gitPollInvalid")
       }
-      if (matrixMode() && matrixWorkspaceIds().length === 0) return "Выберите хотя бы один workspace для матрицы."
+      if (matrixMode() && matrixWorkspaceIds().length === 0) return gt("gui.validation.matrixWorkspacesRequired")
       if (session() === "reuse" && (sessionMaxRuns() || "").trim() && !/^[1-9]\d*$/.test(sessionMaxRuns().trim())) {
-        return "Лимит запусков сессии — целое положительное число."
+        return gt("gui.validation.sessionMaxRunsInvalid")
       }
       if (matrixMode() && (matrixConcurrency() || "").trim() && !/^[1-9]\d*$/.test(matrixConcurrency().trim())) {
-        return "Concurrency матрицы — целое положительное число."
+        return gt("gui.validation.matrixConcurrencyInvalid")
       }
       if (((notBefore() || "").trim() === "") !== ((notAfter() || "").trim() === "")) {
-        return "Окно запуска задаётся только парой «с/по»."
+        return gt("gui.validation.windowPairRequired")
       }
-      if (!validTimezone()) return "Неизвестная таймзона. Укажите IANA-пояс, например Europe/Moscow."
-      if (!isIntInRange(priority(), 0, 10)) return "Приоритет — целое число от 0 до 10."
-      if (!isIntInRange(retryCount(), 0)) return "Количество повторов — целое число ≥ 0."
-      if (!isIntInRange(retryDelay(), 0)) return "Задержка повтора — целое число секунд ≥ 0."
+      if (!validTimezone()) return gt("gui.validation.timezoneInvalid")
+      if (!isIntInRange(priority(), 0, 10)) return gt("gui.validation.priorityInvalid")
+      if (!isIntInRange(retryCount(), 0)) return gt("gui.validation.retryCountInvalid")
+      if (!isIntInRange(retryDelay(), 0)) return gt("gui.validation.retryDelayInvalid")
       const self = taskName.toLowerCase()
       if (dependsOn().some((dep) => dep.trim().toLowerCase() === self)) {
-        return "Задача не может зависеть от самой себя."
+        return gt("gui.validation.dependsOnSelf")
       }
       return ""
     }
@@ -2161,44 +2183,50 @@ export default Plugin.define({
               )}
               {job.isMatrixParent && job.matrix && (
                 <span
-                  title={`Matrix fan-out: ${job.matrix.workspaceIds.length} клонов, стратегия: ${job.matrix.strategy ?? "parallel"}, при ошибке: ${job.matrix.failureMode ?? "continue"}${
-                    job.matrix.concurrency
-                      ? `, одновременно: ${job.matrix.concurrency}`
-                      : ""
-                  }${
-                    job.matrix.overrides
-                      ? `, переопределено workspace: ${Object.keys(job.matrix.overrides).length}`
-                      : ""
-                  }`}
+                  title={gt("gui.job.fanoutTitle", {
+                    count: job.matrix.workspaceIds.length,
+                    strategy: job.matrix.strategy ?? "parallel",
+                    failureMode: job.matrix.failureMode ?? "continue",
+                    concurrency: job.matrix.concurrency
+                      ? gt("gui.job.fanoutConcurrency", { concurrency: job.matrix.concurrency })
+                      : "",
+                    overrides: job.matrix.overrides
+                      ? gt("gui.job.fanoutOverrides", { overrides: Object.keys(job.matrix.overrides).length })
+                      : "",
+                  })}
                   style="font-size:11px;font-weight:600;flex-shrink:0;cursor:help;white-space:nowrap;padding:2px 7px;border-radius:999px;border:1px solid #ff9f0a;color:#ff9f0a;background:rgba(255,159,10,0.12)"
                 >📦 Matrix ({job.matrix.workspaceIds.length}){job.matrix.concurrency ? ` ⚙${job.matrix.concurrency}` : ""}</span>
               )}
               {job.matrixParentId && (
                 <span
-                  title={`Клон матрицы. Родитель: ${job.matrixParentId}`}
+                  title={gt("gui.job.matrixClone", { parent: job.matrixParentId })}
                   style="font-size:11px;font-weight:600;flex-shrink:0;cursor:help;white-space:nowrap;padding:2px 7px;border-radius:999px;border:1px solid #8e8e93;color:#b0b0b6;background:rgba(142,142,147,0.12)"
                 >↳ matrix {job.matrixParentId}</span>
               )}
               {job.watchPath && (
-                <span title={`Отслеживание файла: ${job.watchPath}`} style="font-size:13px;flex-shrink:0;cursor:help">👁️</span>
+                <span title={gt("gui.job.watchFile", { path: job.watchPath })} style="font-size:13px;flex-shrink:0;cursor:help">👁️</span>
               )}
               {Array.isArray(job.watchGlobs) && job.watchGlobs.length > 0 && (
-                <span title={`Glob-маски файлового триггера: ${job.watchGlobs.join(", ")}`} style="font-size:11px;font-weight:600;flex-shrink:0;cursor:help;white-space:nowrap;padding:2px 7px;border-radius:999px;border:1px solid #5ac8fa;color:#5ac8fa;background:rgba(90,200,250,0.12)">✳ {job.watchGlobs.length} масок</span>
+                <span title={gt("gui.job.watchGlobsTitle", { globs: job.watchGlobs.join(", ") })} style="font-size:11px;font-weight:600;flex-shrink:0;cursor:help;white-space:nowrap;padding:2px 7px;border-radius:999px;border:1px solid #5ac8fa;color:#5ac8fa;background:rgba(90,200,250,0.12)">{gt("gui.job.watchGlobsCount", { count: job.watchGlobs.length })}</span>
               )}
               {job.triggerType === "git" && (
-                <span title={`Git-триггер: новый коммит${job.gitBranch ? ` в ветке ${job.gitBranch}` : ""}${Array.isArray(job.gitPaths) && job.gitPaths.length > 0 ? `, пути: ${job.gitPaths.join(", ")}` : ""}. Опрос каждые ${job.gitPollSeconds ?? 60} с.`} style="font-size:11px;font-weight:600;flex-shrink:0;cursor:help;white-space:nowrap;padding:2px 7px;border-radius:999px;border:1px solid #ff9f0a;color:#ff9f0a;background:rgba(255,159,10,0.12)">🔀 git</span>
+                <span title={gt("gui.job.gitTriggerTitle", {
+                  branch: job.gitBranch ? gt("gui.job.gitTriggerBranch", { branch: job.gitBranch }) : "",
+                  paths: Array.isArray(job.gitPaths) && job.gitPaths.length > 0 ? gt("gui.job.gitTriggerPaths", { paths: job.gitPaths.join(", ") }) : "",
+                  seconds: job.gitPollSeconds ?? 60,
+                })} style="font-size:11px;font-weight:600;flex-shrink:0;cursor:help;white-space:nowrap;padding:2px 7px;border-radius:999px;border:1px solid #ff9f0a;color:#ff9f0a;background:rgba(255,159,10,0.12)">🔀 git</span>
               )}
               {Array.isArray(job.activeDays) && job.activeDays.length > 0 && (
-                <span title={`Запуск только в дни: ${job.activeDays.map((d) => ["Вс", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"][d] ?? d).join(", ")}`} style="font-size:11px;font-weight:600;flex-shrink:0;cursor:help;white-space:nowrap;padding:2px 7px;border-radius:999px;border:1px solid #30d158;color:#30d158;background:rgba(48,209,88,0.12)">📅 {job.activeDays.length}/7</span>
+                <span title={gt("gui.job.activeDaysTitle", { days: job.activeDays.map((d) => [gt("gui.weekday.0"), gt("gui.weekday.1"), gt("gui.weekday.2"), gt("gui.weekday.3"), gt("gui.weekday.4"), gt("gui.weekday.5"), gt("gui.weekday.6")][d] ?? d).join(", ") })} style="font-size:11px;font-weight:600;flex-shrink:0;cursor:help;white-space:nowrap;padding:2px 7px;border-radius:999px;border:1px solid #30d158;color:#30d158;background:rgba(48,209,88,0.12)">📅 {job.activeDays.length}/7</span>
               )}
               {job.timezone && (
-                <span title={`Часовой пояс задачи: ${job.timezone}`} style="font-size:11px;font-weight:600;flex-shrink:0;cursor:help;white-space:nowrap;padding:2px 7px;border-radius:999px;border:1px solid #64d2ff;color:#64d2ff;background:rgba(100,210,255,0.12)">🌍 {job.timezone}</span>
+                <span title={gt("gui.job.timezoneTitle", { tz: job.timezone })} style="font-size:11px;font-weight:600;flex-shrink:0;cursor:help;white-space:nowrap;padding:2px 7px;border-radius:999px;border:1px solid #64d2ff;color:#64d2ff;background:rgba(100,210,255,0.12)">🌍 {job.timezone}</span>
               )}
               {job.notBefore && job.notAfter && (
-                <span title={`Окно запуска: ${job.notBefore}–${job.notAfter}. Вне окна запуск переносится на его открытие.`} style="font-size:11px;font-weight:600;flex-shrink:0;cursor:help;white-space:nowrap;padding:2px 7px;border-radius:999px;border:1px solid #bf5af2;color:#bf5af2;background:rgba(191,90,242,0.12)">🪟 {job.notBefore}–{job.notAfter}</span>
+                <span title={gt("gui.job.windowTitle", { from: job.notBefore, to: job.notAfter })} style="font-size:11px;font-weight:600;flex-shrink:0;cursor:help;white-space:nowrap;padding:2px 7px;border-radius:999px;border:1px solid #bf5af2;color:#bf5af2;background:rgba(191,90,242,0.12)">🪟 {job.notBefore}–{job.notAfter}</span>
               )}
               {job.pausedUntil && (
-                <span title={`Пауза до ${new Date(job.pausedUntil).toLocaleString()} — задача включится автоматически.`} style="font-size:11px;font-weight:600;flex-shrink:0;cursor:help;white-space:nowrap;padding:2px 7px;border-radius:999px;border:1px solid #ffd60a;color:#ffd60a;background:rgba(255,214,10,0.12)">⏸ до {new Date(job.pausedUntil).toLocaleDateString()}</span>
+                <span title={gt("gui.job.pausedUntilTitle", { date: new Date(job.pausedUntil).toLocaleString() })} style="font-size:11px;font-weight:600;flex-shrink:0;cursor:help;white-space:nowrap;padding:2px 7px;border-radius:999px;border:1px solid #ffd60a;color:#ffd60a;background:rgba(255,214,10,0.12)">{gt("gui.job.pausedUntilShort", { date: new Date(job.pausedUntil).toLocaleDateString() })}</span>
               )}
               {(job.beforeScript || job.afterScript) && (
                 <span
@@ -2208,37 +2236,42 @@ export default Plugin.define({
               )}
               {job.triggerType === "mcp-event" && (
                 <span
-                  title={`MCP-событие: ${job.mcpEvent?.event ?? "—"}${job.mcpEvent?.filter ? ` (фильтр: ${job.mcpEvent.filter})` : ""}`}
+                  title={gt("gui.job.mcpEventTitle", {
+                    event: job.mcpEvent?.event ?? "—",
+                    filterSuffix: job.mcpEvent?.filter ? gt("gui.job.mcpEventFilterSuffix", { filter: job.mcpEvent.filter }) : "",
+                  })}
                   style="font-size:13px;flex-shrink:0;cursor:help"
                 >📡</span>
               )}
               {job.session && job.session !== "new" && (
                 <span
                   title={job.session === "reuse"
-                    ? `Переиспользуемая сессия OpenCode${job.sessionId ? `: ${job.sessionId}` : ""}`
-                    : "Продолжение последней сессии OpenCode (--continue)"}
+                    ? (job.sessionId
+                      ? gt("gui.job.sessionReuseTitleId", { id: job.sessionId })
+                      : gt("gui.job.sessionReuseTitle"))
+                    : gt("gui.job.sessionContinueTitle")}
                   style="font-size:11px;font-weight:600;flex-shrink:0;cursor:help;white-space:nowrap;padding:2px 7px;border-radius:999px;border:1px solid #30d158;color:#30d158;background:rgba(48,209,88,0.12)"
-                >{job.session === "reuse" ? "⟳ сессия" : "↪ продолжение"}</span>
+                >{job.session === "reuse" ? gt("gui.job.sessionReuseShort") : gt("gui.job.sessionContinueShort")}</span>
               )}
               {job.model && (
-                <span title={`Модель LLM: ${job.model}`} style="font-size:12px;flex-shrink:0;cursor:help;color:#c084fc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px">🧠 {job.model}</span>
+                <span title={gt("gui.job.modelTitle", { model: job.model })} style="font-size:12px;flex-shrink:0;cursor:help;color:#c084fc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px">🧠 {job.model}</span>
               )}
               {typeof job.priority === "number" && job.priority !== DEFAULT_PRIORITY && (
-                <span title={`Приоритет: ${priorityLabel(job.priority)} (${job.priority})`} style="font-size:12px;flex-shrink:0;cursor:help;color:#f5a623;white-space:nowrap">🚀 {priorityLabel(job.priority)}</span>
+                <span title={gt("gui.job.priorityTitle", { label: priorityLabel(job.priority), priority: job.priority })} style="font-size:12px;flex-shrink:0;cursor:help;color:#f5a623;white-space:nowrap">🚀 {priorityLabel(job.priority)}</span>
               )}
               {(Array.isArray(job.allowedTools) && job.allowedTools.length > 0) || (Array.isArray(job.deniedTools) && job.deniedTools.length > 0) ? (
                 <span
-                  title={`Ограничения инструментов: ${[
+                  title={gt("gui.job.toolLimitsTitle", { limits: [
                     job.allowedTools?.length ? `allowed=[${job.allowedTools.join(", ")}]` : "",
                     job.deniedTools?.length ? `denied=[${job.deniedTools.join(", ")}]` : "",
-                  ].filter(Boolean).join(" · ")}`}
+                  ].filter(Boolean).join(" · ") })}
                   style="font-size:13px;flex-shrink:0;cursor:help"
                 >🔒</span>
               ) : null}
             </div>
             {Array.isArray(job.dependsOn) && job.dependsOn.length > 0 && (
               <div style="display:flex;flex-direction:column;gap:2px;margin-top:4px;font-size:11px;line-height:1.35">
-                <span style="color:#5ac8fa;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">🔗 Зависит от: {job.dependsOn.join(" + ")}</span>
+                <span style="color:#5ac8fa;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{gt("gui.job.dependsOn", { list: job.dependsOn.join(" + ") })}</span>
               </div>
             )}
             {job.isMatrixParent && job.matrixSummary && (
@@ -2247,17 +2280,17 @@ export default Plugin.define({
                   title={job.matrixSummary.message}
                   style={`cursor:help;color:${statusColor(job.matrixSummary.status as JobStatus)};white-space:nowrap;overflow:hidden;text-overflow:ellipsis`}
                 >
-                  📦 Matrix: {job.matrixSummary.successCount}/{job.matrixSummary.totalCount} успешных
+                  {gt("gui.job.matrixDone", { success: job.matrixSummary.successCount, total: job.matrixSummary.totalCount })}
                   {job.matrixSummary.errorCount > 0 ? ` · ❌ ${job.matrixSummary.errorCount}` : ""}
                   {job.matrixSummary.pendingCount > 0 ? ` · ⏳ ${job.matrixSummary.pendingCount}` : ""}
                 </span>
               </div>
             )}
             <div
-              title="Запуски именно этой задачи: успешные / частичные / ошибки и таймауты"
+              title={gt("gui.job.runsTitle")}
               style="font-size:12px;color:#a0a0a6;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"
             >
-              📊 Всего: {job.runsTotal ?? 0} | ✅ {job.runsSuccess ?? 0} | 🟠 {job.runsPartial ?? 0} | ❌ {job.runsError ?? 0}
+              {gt("gui.job.runsLine", { total: job.runsTotal ?? 0, success: job.runsSuccess ?? 0, partial: job.runsPartial ?? 0, error: job.runsError ?? 0 })}
             </div>
             {(job.schedule || job.nextRun) && (
               <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:#a0a0a6;margin-top:2px">
@@ -2269,23 +2302,23 @@ export default Plugin.define({
           <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;min-width:110px">
             {job.status === "running" ? (
               <div style="font-size:12px;color:#f5a623;font-weight:600;white-space:nowrap">
-                🟡 Выполняется: {runningSec()} сек
+                {gt("gui.jobStatus.running", { seconds: runningSec() })}
               </div>
             ) : (
               <div style="font-size:12px;font-weight:600;white-space:nowrap">
                 {job.orphaned
-                  ? "🧟 Нет в планировщике"
+                  ? gt("gui.jobStatus.orphan")
                   : job.paused
-                  ? "⏸ Пауза"
+                  ? gt("gui.jobStatus.paused")
                   : job.status === "success"
-                  ? "🟢 Готова"
+                  ? gt("gui.jobStatus.success")
                   : job.status === "error"
-                  ? "🔴 Ошибка"
+                  ? gt("gui.jobStatus.error")
                   : job.status === "partial"
-                  ? "🟠 Частично"
+                  ? gt("gui.jobStatus.partial")
                   : job.status === "idle"
-                  ? "⚪ Не запускалась"
-                  : "⚪ Неизвестно"}
+                  ? gt("gui.jobStatus.never")
+                  : gt("gui.jobStatus.unknown")}
               </div>
             )}
           </div>
@@ -2293,7 +2326,7 @@ export default Plugin.define({
         <div style="display:flex;gap:6px">
           <button
             onClick={() => void handleRun(job.name)}
-            title={`Запустить "${job.name}"`}
+            title={gt("gui.job.runTitle", { name: job.name })}
             style={iconButtonStyle()}
             onMouseEnter={(e) => {
               iconHover(e, true)
@@ -2314,10 +2347,10 @@ export default Plugin.define({
             disabled={!!job.orphaned}
             title={
               job.orphaned
-                ? `Задача "${job.name}" отсутствует в планировщике ОС — пауза недоступна`
+                ? gt("gui.job.pauseUnavailable", { name: job.name })
                 : job.paused
-                ? `Возобновить "${job.name}"`
-                : `Поставить на паузу "${job.name}"`
+                ? gt("gui.job.resumeTitle", { name: job.name })
+                : gt("gui.job.pauseTitle", { name: job.name })
             }
             style={iconButtonStyle()}
             onMouseEnter={(e) => iconHover(e, true)}
@@ -2327,7 +2360,7 @@ export default Plugin.define({
           </button>
           <button
             onClick={() => void showLogs(job.name)}
-            title={`Логи "${job.name}"`}
+            title={gt("gui.job.logsTitle", { name: job.name })}
             style={iconButtonStyle()}
             onMouseEnter={(e) => iconHover(e, true)}
             onMouseLeave={(e) => iconHover(e, false)}
@@ -2336,7 +2369,7 @@ export default Plugin.define({
           </button>
           <button
             onClick={() => void openDryRun(job.name)}
-            title={`Dry-Run симуляция "${job.name}"`}
+            title={gt("gui.job.dryRunTitle", { name: job.name })}
             style={iconButtonStyle(dryRunOpen() && dryRunName() === job.name)}
             onMouseEnter={(e) => iconHover(e, true, dryRunOpen() && dryRunName() === job.name)}
             onMouseLeave={(e) => iconHover(e, false, dryRunOpen() && dryRunName() === job.name)}
@@ -2345,7 +2378,7 @@ export default Plugin.define({
           </button>
           <button
             onClick={() => void fetchHistory(job.name)}
-            title={`История "${job.name}"`}
+            title={gt("gui.job.historyTitle", { name: job.name })}
             style={iconButtonStyle(historyOpen() === job.name)}
             onMouseEnter={(e) => iconHover(e, true, historyOpen() === job.name)}
             onMouseLeave={(e) => iconHover(e, false, historyOpen() === job.name)}
@@ -2354,7 +2387,7 @@ export default Plugin.define({
           </button>
           <button
             onClick={() => void startEditing(job)}
-            title={`Редактировать "${job.name}"`}
+            title={gt("gui.job.editTitle", { name: job.name })}
             style={iconButtonStyle()}
             onMouseEnter={(e) => iconHover(e, true)}
             onMouseLeave={(e) => iconHover(e, false)}
@@ -2364,7 +2397,7 @@ export default Plugin.define({
           {job.matrix && (
             <button
               onClick={() => void handleCancelMatrix(job.name)}
-              title={`Отменить выполняющиеся клоны матрицы "${job.name}"`}
+              title={gt("gui.job.cancelMatrixTitle", { name: job.name })}
               style={iconButtonStyle()}
               onMouseEnter={(e) => iconHover(e, true)}
               onMouseLeave={(e) => iconHover(e, false)}
@@ -2375,7 +2408,7 @@ export default Plugin.define({
           {!job.matrixParentId && (
             <button
               onClick={() => void handleDelete(job.name)}
-              title={job.matrix ? `Удалить матрицу "${job.name}" вместе с клонами` : `Удалить "${job.name}"`}
+              title={job.matrix ? gt("gui.job.deleteMatrixTitle", { name: job.name }) : gt("gui.job.deleteTitle", { name: job.name })}
               style={iconButtonStyle()}
               onMouseEnter={(e) => iconHover(e, true)}
               onMouseLeave={(e) => iconHover(e, false)}
@@ -2388,7 +2421,7 @@ export default Plugin.define({
         {historyOpen() === job.name && (
           <div style="margin-top:8px;padding:8px 12px;background:#1e1e1e;border:1px solid #333;border-radius:6px;display:flex;flex-direction:column;gap:6px;width:100%">
             <div style="font-size:12px;font-weight:600;color:#ffffff;display:flex;align-items:center;gap:6px">
-              📜 История последних запусков
+              {gt("gui.job.historyPanelTitle")}
               <button
                 onClick={() => setHistoryOpen(null)}
                 style="background:none;border:none;color:#8e8e93;cursor:pointer;font-size:14px;padding:0"
@@ -2399,17 +2432,17 @@ export default Plugin.define({
               </button>
             </div>
             {history().length === 0 ? (
-              <div style="font-size:12px;color:#8e8e93;padding:6px 0">Запусков пока нет.</div>
+              <div style="font-size:12px;color:#8e8e93;padding:6px 0">{gt("gui.job.historyEmpty")}</div>
             ) : (
               history().map((r) => (
                 <div key={r.startedAt + r.durationMs} style="display:flex;align-items:flex-start;gap:10px;font-size:12px;color:#e0e0e0;padding:4px 0;border-bottom:1px solid #333">
                   <span style="color:#8e8e93;white-space:nowrap">{new Date(r.startedAt).toLocaleString()}</span>
                   <span style={{color: r.status === "success" ? "#34c759" : "#ff3b30", fontWeight: 600, whiteSpace: "nowrap"}}>
-                    {r.status === "success" ? "✅ Успех" : "❌ Ошибка"}
+                    {r.status === "success" ? gt("gui.history.success") : gt("gui.history.error")}
                   </span>
-                  <span style="color:#b0b0b0;white-space:nowrap">{r.durationMs} мс</span>
+                  <span style="color:#b0b0b0;white-space:nowrap">{gt("gui.history.durationMs", { ms: r.durationMs })}</span>
                   {r.model && (
-                    <span style="color:#c084fc;white-space:nowrap" title={`Модель: ${r.model}`}>🧠 {r.model}</span>
+                    <span style="color:#c084fc;white-space:nowrap" title={gt("gui.history.modelTitle", { model: r.model })}>🧠 {r.model}</span>
                   )}
                   {r.preFlightStatus && r.preFlightStatus !== "skipped" && (
                     <span
@@ -2431,7 +2464,7 @@ export default Plugin.define({
                     <div style="margin-top:2px;color:#ff6b6b;font-size:11px;white-space:pre-wrap;word-break:break-word">{r.error}</div>
                   )}
                   {r.nextTask && (
-                    <span style="color:#5ac8fa;font-size:11px;white-space:nowrap" title="Запущена следующая задача в цепочке">🔗 → {r.nextTask}</span>
+                    <span style="color:#5ac8fa;font-size:11px;white-space:nowrap" title={gt("gui.history.nextTaskTitle")}>🔗 → {r.nextTask}</span>
                   )}
                 </div>
               ))
@@ -2451,9 +2484,9 @@ export default Plugin.define({
                 ✕
               </button>
             </div>
-            {dryRunBusy() && <div style="font-size:12px;color:#8e8e93;padding:6px 0">Симуляция…</div>}
+            {dryRunBusy() && <div style="font-size:12px;color:#8e8e93;padding:6px 0">{gt("gui.job.simulating")}</div>}
             {!dryRunBusy() && dryRunReport() && !dryRunReport().success && (
-              <div style="font-size:12px;color:#ff6b6b;padding:6px 0">❌ {dryRunReport().error ?? "Симуляция не удалась"}</div>
+              <div style="font-size:12px;color:#ff6b6b;padding:6px 0">❌ {dryRunReport().error ?? gt("gui.job.simulationFailed")}</div>
             )}
             {!dryRunBusy() && dryRunReport() && dryRunReport().success && (
               <div style="display:flex;flex-direction:column;gap:4px">
@@ -2468,10 +2501,10 @@ export default Plugin.define({
                     <span style="font-weight:600;white-space:nowrap">🧪 {t.name}</span>
                     {t.workspace && <span style="color:#5ac8fa;white-space:nowrap">📦 {t.workspace.name}</span>}
                     {t.matrixParent && <span style="color:#ff9f0a;white-space:nowrap">↳ matrix {t.matrixParent}</span>}
-                    <span style="color:#8e8e93;white-space:nowrap">cwd: {t.cwd || "(папка проекта)"}</span>
+                    <span style="color:#8e8e93;white-space:nowrap">cwd: {t.cwd || gt("gui.common.projectDir")}</span>
                     {t.roleScoped && <span style="cursor:help" title={`allowed=[${(t.roleScoped.allowed ?? []).join(", ")}] · denied=[${(t.roleScoped.denied ?? []).join(", ")}]`}>🔒</span>}
-                    {t.estimatedDurationSec != null && <span style="color:#8e8e93;white-space:nowrap">⏱ ~{t.estimatedDurationSec} с</span>}
-                    {t.estimatedTokens != null && <span style="color:#8e8e93;white-space:nowrap">· ~{t.estimatedTokens} ток.</span>}
+                    {t.estimatedDurationSec != null && <span style="color:#8e8e93;white-space:nowrap">{gt("gui.job.durationEst", { seconds: t.estimatedDurationSec })}</span>}
+                    {t.estimatedTokens != null && <span style="color:#8e8e93;white-space:nowrap">{gt("gui.job.tokensEst", { tokens: t.estimatedTokens })}</span>}
                     {t.estimatedCostUsd != null && <span style="color:#8e8e93;white-space:nowrap">· ~${Number(t.estimatedCostUsd).toFixed(4)}</span>}
                     <div style="width:100%;color:#a0a0a6;overflow-wrap:anywhere">$ {t.command}</div>
                     {t.preFlight && <div style="width:100%;color:#8e8e93;overflow-wrap:anywhere">⚡ pre: {t.preFlight}</div>}
@@ -2481,9 +2514,11 @@ export default Plugin.define({
                 ))}
                 {dryRunReport().totals && (dryRunReport().totals.estimatedDurationSec != null || dryRunReport().totals.estimatedTokens != null) && (
                   <div style="font-size:11px;color:#b0b0b0;padding:4px 0">
-                    Σ {(dryRunReport().totals.estimatedDurationSec ?? "—") + " с · " +
-                      (dryRunReport().totals.estimatedTokens ?? "—") + " токенов" +
-                      (dryRunReport().totals.estimatedCostUsd != null ? ` · ~$${Number(dryRunReport().totals.estimatedCostUsd).toFixed(4)}` : "")}
+                    {gt("gui.job.totalsLine", {
+                      duration: dryRunReport().totals.estimatedDurationSec ?? "—",
+                      tokens: dryRunReport().totals.estimatedTokens ?? "—",
+                      cost: dryRunReport().totals.estimatedCostUsd != null ? ` · ~$${Number(dryRunReport().totals.estimatedCostUsd).toFixed(4)}` : "",
+                    })}
                   </div>
                 )}
               </div>
@@ -2498,11 +2533,11 @@ export default Plugin.define({
       return ctx.add(Panel, {
         id: "scheduler-jobs",
         region: "side",
-        list: () => [{ id: "jobs", title: "Планировщик", pinned: true }],
+        list: () => [{ id: "jobs", title: gt("gui.jobsTitle"), pinned: true }],
         render: () => (
           <ErrorBoundary fallback={(err: any) => (
             <div style="padding:16px;color:#ff3b30;font-size:13px">
-              Ошибка UI: {err.message}
+              {gt("gui.uiError", { message: err.message })}
             </div>
           )}>
             <div style={`display:flex;flex-direction:column;width:100%;height:100%;max-height:100vh;min-height:0;box-sizing:border-box;overflow-y:auto;overflow-x:hidden;gap:24px;padding:20px;font-size:13px;font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;color:#e0e0e0;transition:background 0.3s ease;scrollbar-width:thin;scrollbar-color:#444 transparent;background:${winterMode() ? "linear-gradient(180deg, #0f172a 0%, #000000 100%)" : "#0f0f0f"}`}>
@@ -2515,30 +2550,30 @@ export default Plugin.define({
                   Local AI CI/CD Orchestrator
                 </div>
                 <div
-                  title="Суммарные метрики по всем задачам (включая архивные записи метрик)"
+                  title={gt("gui.metricsTotalsTitle")}
                   style="margin-top:4px;font-size:11px;color:#8e8e93"
                 >
-                  📊 Всего по всем задачам: {metrics().total} · ✅ {metrics().success} · ❌ {metrics().error}
+                  {gt("gui.metricsTotalsLine", { total: metrics().total, success: metrics().success, error: metrics().error })}
                 </div>
               </div>
               <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
                 <select
                   value={workspaceFilter()}
                   onChange={(e) => setWorkspaceFilter(e.currentTarget.value)}
-                  title="Фильтр задач по workspace"
+                  title={gt("gui.workspaceFilterTitle")}
                   style="padding:6px 10px;border-radius:999px;cursor:pointer;font-size:12px;border:1px solid #333;background:#1e1e1e;color:#e0e0e0;outline:none;max-width:200px"
                 >
-                  <option value="all">Все workspace</option>
+                  <option value="all">{gt("gui.workspaceAll")}</option>
                   {workspaces().map((workspace) => (
                     <option key={workspace.id} value={workspace.id}>📦 {workspace.name}</option>
                   ))}
-                  <option value="none">Без workspace</option>
+                  <option value="none">{gt("gui.workspaceNone")}</option>
                 </select>
                 <button
                   onClick={() => setProfilesOpen((v) => !v)}
                   title={profilePinned()
-                    ? "Профиль задан переменной окружения OPENCODE_SCHEDULER_PROFILE — переключение в GUI недоступно"
-                    : "Профили: отдельные БД, настройки и порт дашборда"}
+                    ? gt("gui.profileEnvLockedTitle")
+                    : gt("gui.profilesTitle")}
                   style={`display:flex;align-items:center;gap:6px;padding:6px 12px;border-radius:999px;cursor:pointer;font-size:12px;user-select:none;white-space:nowrap;border:1px solid ${profilesOpen() ? "#bf5af2" : "#333"};background:${profilesOpen() ? "rgba(191,90,242,0.12)" : "#1e1e1e"};color:${profilesOpen() ? "#bf5af2" : "#e0e0e0"}`}
                 >
                   👤 {profileCurrent()}{profilePinned() ? " 🔒" : ""}
@@ -2560,15 +2595,15 @@ export default Plugin.define({
                     if (win) win.location.href = url;
                     else window.open(url, "_blank");
                   }}
-                  title="Открыть локальный веб-дашборд (фактический порт сервера)"
+                  title={gt("gui.openDashboardTitle")}
                   style="display:flex;align-items:center;gap:6px;padding:6px 12px;border-radius:999px;cursor:pointer;font-size:12px;user-select:none;white-space:nowrap;transition:background 0.2s ease, border-color 0.2s ease;border:1px solid #333;background:#1e1e1e;color:#e0e0e0"
                   onMouseEnter={(e) => { const b = e.currentTarget; b.style.borderColor = "#5ac8fa"; b.style.background = "rgba(90,200,250,0.12)"; b.style.color = "#5ac8fa" }}
                   onMouseLeave={(e) => { const b = e.currentTarget; b.style.borderColor = "#333"; b.style.background = "#1e1e1e"; b.style.color = "#e0e0e0" }}
                 >
-                  🌐 Открыть дашборд
+                  {gt("gui.openDashboard")}
                 </button>
                 <label
-                  title="Переключить зимнюю тему"
+                  title={gt("gui.winterModeTitle")}
                   style={`display:flex;align-items:center;gap:6px;padding:6px 12px;border-radius:999px;cursor:pointer;font-size:12px;user-select:none;white-space:nowrap;transition:background 0.2s ease, border-color 0.2s ease;border:1px solid ${winterMode() ? "rgba(135, 206, 250, 0.5)" : "#333"};background:${winterMode() ? "rgba(135, 206, 250, 0.12)" : "#1e1e1e"};color:#e0e0e0`}
                 >
                   <input
@@ -2577,7 +2612,7 @@ export default Plugin.define({
                     onChange={(e) => void toggleWinterMode(e.currentTarget.checked)}
                     style="accent-color:#5ac8fa;cursor:pointer;margin:0"
                   />
-                  ❄️ Зимний режим
+                  {gt("gui.winterMode")}
                 </label>
               </div>
             </div>
@@ -2585,39 +2620,39 @@ export default Plugin.define({
             {profilesOpen() && (
               <div style="background:#1e1e1e;border:1px solid #333;border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:8px">
                 <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
-                  <div style="font-size:12px;font-weight:600;color:#e0e0e0">👤 Профили</div>
+                  <div style="font-size:12px;font-weight:600;color:#e0e0e0">{gt("gui.profilesHeading")}</div>
                   <button
                     onClick={() => void handleCreateProfile()}
                     disabled={profileBusy()}
                     style={`padding:4px 10px;border-radius:6px;border:1px solid #333;background:#262626;color:#e0e0e0;font-size:11px;cursor:${profileBusy() ? "not-allowed" : "pointer"}`}
                   >
-                    + Создать
+                    {gt("gui.createProfile")}
                   </button>
                 </div>
                 {profilePinned() && (
                   <div style="font-size:11px;color:#ffd60a">
-                    Профиль задан переменной OPENCODE_SCHEDULER_PROFILE. Переключение в GUI недоступно.
+                    {gt("gui.profileEnvLocked")}
                   </div>
                 )}
                 <div style="display:flex;flex-direction:column;gap:6px">
                   {profiles().map((profile) => (
                     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px">
                       <span style={`font-weight:${profile.active ? 700 : 400};color:${profile.active ? "#bf5af2" : "#e0e0e0"}`}>
-                        {profile.name}{profile.isDefault ? " (по умолчанию)" : ""}
+                        {profile.name}{profile.isDefault ? gt("gui.defaultSuffix") : ""}
                       </span>
                       <span style="font-size:11px;color:#8e8e93">
-                        {profile.port ? `порт ${profile.port}` : "порт по умолчанию"}
+                        {profile.port ? gt("gui.profilePort", { port: profile.port }) : gt("gui.profilePortDefault")}
                       </span>
                       <span style="font-size:11px;color:#8e8e93;overflow:hidden;text-overflow:ellipsis;max-width:340px" title={profile.dir}>{profile.dir}</span>
                       {profile.active ? (
-                        <span style="font-size:11px;color:#34c759">активен</span>
+                        <span style="font-size:11px;color:#34c759">{gt("gui.profileActive")}</span>
                       ) : (
                         <button
                           onClick={() => void handleSwitchProfile(profile.name)}
                           disabled={profileBusy() || profilePinned()}
                           style={`padding:2px 8px;border-radius:6px;border:1px solid #333;background:#262626;color:#e0e0e0;font-size:11px;cursor:${profileBusy() || profilePinned() ? "not-allowed" : "pointer"};opacity:${profilePinned() ? 0.5 : 1}`}
                         >
-                          Переключить
+                          {gt("gui.profileSwitch")}
                         </button>
                       )}
                       {!profile.isDefault && !profile.active && (
@@ -2626,14 +2661,14 @@ export default Plugin.define({
                           disabled={profileBusy()}
                           style={`padding:2px 8px;border-radius:6px;border:1px solid rgba(255,59,48,0.4);background:rgba(255,59,48,0.12);color:#ff3b30;font-size:11px;cursor:${profileBusy() ? "not-allowed" : "pointer"}`}
                         >
-                          Удалить
+                          {gt("gui.profileDelete")}
                         </button>
                       )}
                     </div>
                   ))}
                 </div>
                 <div style="font-size:11px;color:#8e8e93">
-                  У каждого профиля своя БД, настройки, логи и порт дашборда. После переключения перезапустите OpenCode.
+                  {gt("gui.profilesHint")}
                 </div>
               </div>
             )}
@@ -2644,7 +2679,7 @@ export default Plugin.define({
                 disabled={exportBusy()}
                 style={`padding:6px 12px;background:#007acc;color:white;border:none;border-radius:6px;cursor:${exportBusy() ? "not-allowed" : "pointer"};font-size:12px;font-weight:500;opacity:${exportBusy() ? 0.6 : 1};transition:background 0.18s ease`}
               >
-                {exportBusy() ? "Экспорт..." : "Экспорт"}
+                {exportBusy() ? gt("gui.exportBusy") : gt("gui.export")}
               </button>
               <input
                 type="file"
@@ -2657,12 +2692,12 @@ export default Plugin.define({
                 disabled={importBusy()}
                 style={`padding:6px 12px;background:#007acc;color:white;border:none;border-radius:6px;cursor:${importBusy() ? "not-allowed" : "pointer"};font-size:12px;font-weight:500;opacity:${importBusy() ? 0.6 : 1};transition:background 0.18s ease`}
               >
-                {importBusy() ? "Импорт..." : "Импорт"}
+                {importBusy() ? gt("gui.importBusy") : gt("gui.import")}
               </button>
             </div>
 
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px">
-              <label style="font-size:12px;color:#b0b0b0;font-weight:500;white-space:nowrap">Макс. одновременных задач:</label>
+              <label style="font-size:12px;color:#b0b0b0;font-weight:500;white-space:nowrap">{gt("gui.maxConcurrentLabel")}</label>
               <input
                 type="number"
                 min="0"
@@ -2670,7 +2705,7 @@ export default Plugin.define({
                 onChange={(e) => saveSettingsGui(Number(e.currentTarget.value) || 1)}
                 style="width:60px;padding:4px 6px;background:#1e1e1e;border:1px solid #333;border-radius:4px;color:#fff;font-size:12px;outline:none"
               />
-              <span style="font-size:11px;color:#8e8e93;white-space:nowrap">(0 = без ограничений)</span>
+              <span style="font-size:11px;color:#8e8e93;white-space:nowrap">{gt("gui.zeroUnlimited")}</span>
             </div>
 
             {/* 🔔 Уведомления (сворачиваемая секция, чтобы не загромождать форму) */}
@@ -2679,9 +2714,9 @@ export default Plugin.define({
                 onClick={() => setNotificationsCollapsed(!notificationsCollapsed())}
                 style="display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;box-sizing:border-box;padding:10px 14px;background:transparent;border:none;color:#e0e0e0;font-size:12px;font-weight:600;cursor:pointer;text-align:left"
               >
-                <span>🔔 Уведомления</span>
+                <span>{gt("gui.notifications")}</span>
                 <span style="display:flex;align-items:center;gap:8px;font-size:11px;font-weight:400;color:#8e8e93">
-                  {notificationsEnabled() ? (onlyOnError() ? "только ошибки" : "все запуски") : "выключены"}
+                  {notificationsEnabled() ? (onlyOnError() ? gt("gui.notifyOnlyErrors") : gt("gui.notifyAllRuns")) : gt("gui.notifyDisabled")}
                   <span>{notificationsCollapsed() ? "▾" : "▴"}</span>
                 </span>
               </button>
@@ -2698,7 +2733,7 @@ export default Plugin.define({
                       }}
                       style="accent-color:#5ac8fa;cursor:pointer;margin:0"
                     />
-                    Включить уведомления
+                    {gt("gui.notifyEnable")}
                   </label>
 
                   <label style={`display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;opacity:${notificationsEnabled() ? 1 : 0.5}`}>
@@ -2712,7 +2747,7 @@ export default Plugin.define({
                       }}
                       style="accent-color:#5ac8fa;cursor:pointer;margin:0"
                     />
-                    Только при ошибке
+                    {gt("gui.notifyOnlyOnError")}
                   </label>
 
                   <div style="border-top:1px solid #333;padding-top:10px;display:flex;flex-direction:column;gap:8px">
@@ -2727,7 +2762,7 @@ export default Plugin.define({
                         }}
                         style="accent-color:#5ac8fa;cursor:pointer;margin:0"
                       />
-                      Webhook (Discord / Slack / generic)
+                      {gt("gui.webhookLabel")}
                     </label>
                     <input
                       type="url"
@@ -2739,10 +2774,10 @@ export default Plugin.define({
                       style={`display:block;width:100%;box-sizing:border-box;padding:8px;background:#1e1e1e;border:1px solid #333;border-radius:6px;color:#fff;font-size:13px;outline:none;opacity:${notificationsEnabled() && webhookEnabled() ? 1 : 0.5}`}
                     />
                     <div style="font-size:11px;color:#8e8e93">
-                      POST с JSON {"{ content, text }"} — совместимо с Discord и Slack.
+                      {gt("gui.webhookPostHint", { payload: "{ content, text }" })}
                     </div>
                     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:11px;color:#b0b0b0">
-                      <span>Таймаут, мс:</span>
+                      <span>{gt("gui.timeoutMs")}</span>
                       <input
                         type="number"
                         min="1000"
@@ -2754,7 +2789,7 @@ export default Plugin.define({
                         onChange={() => void saveNotificationSettings()}
                         style="width:80px;padding:4px 6px;background:#1e1e1e;border:1px solid #333;border-radius:4px;color:#fff;font-size:12px;outline:none"
                       />
-                      <span>повторов:</span>
+                      <span>{gt("gui.retryCount")}</span>
                       <input
                         type="number"
                         min="0"
@@ -2765,7 +2800,7 @@ export default Plugin.define({
                         onChange={() => void saveNotificationSettings()}
                         style="width:56px;padding:4px 6px;background:#1e1e1e;border:1px solid #333;border-radius:4px;color:#fff;font-size:12px;outline:none"
                       />
-                      <span>пауза, мс:</span>
+                      <span>{gt("gui.retryDelayMs")}</span>
                       <input
                         type="number"
                         min="100"
@@ -2779,7 +2814,7 @@ export default Plugin.define({
                       />
                     </div>
                     <div style="font-size:11px;color:#8e8e93">
-                      Повтор при сетевой ошибке, таймауте, 5xx и 429 (экспоненциальная пауза).
+                      {gt("gui.retryHint")}
                     </div>
                   </div>
 
@@ -2805,7 +2840,7 @@ export default Plugin.define({
                       disabled={!notificationsEnabled() || !telegramEnabled()}
                       onInput={(e) => setTelegramBotToken(e.currentTarget.value)}
                       onChange={() => void saveNotificationSettings()}
-                      placeholder="Токен бота из @BotFather"
+                      placeholder={gt("gui.botTokenPlaceholder")}
                       style={`display:block;width:100%;box-sizing:border-box;padding:8px;background:#1e1e1e;border:1px solid #333;border-radius:6px;color:#fff;font-size:13px;outline:none;opacity:${notificationsEnabled() && telegramEnabled() ? 1 : 0.5}`}
                     />
                     <input
@@ -2814,11 +2849,11 @@ export default Plugin.define({
                       disabled={!notificationsEnabled() || !telegramEnabled()}
                       onInput={(e) => setTelegramChatId(e.currentTarget.value)}
                       onChange={() => void saveNotificationSettings()}
-                      placeholder="chat_id (например, 123456789 или -100...)"
+                      placeholder={gt("gui.chatIdPlaceholder")}
                       style={`display:block;width:100%;box-sizing:border-box;padding:8px;background:#1e1e1e;border:1px solid #333;border-radius:6px;color:#fff;font-size:13px;outline:none;opacity:${notificationsEnabled() && telegramEnabled() ? 1 : 0.5}`}
                     />
                     <div style={`display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:12px;color:#b0b0b0;opacity:${notificationsEnabled() && telegramEnabled() ? 1 : 0.5}`}>
-                      <span>разметка:</span>
+                      <span>{gt("gui.parseModeLabel")}</span>
                       <select
                         value={telegramParseMode()}
                         disabled={!notificationsEnabled() || !telegramEnabled()}
@@ -2844,7 +2879,7 @@ export default Plugin.define({
                           }}
                           style="accent-color:#5ac8fa;cursor:pointer;margin:0"
                         />
-                        без звука
+                        {gt("gui.silent")}
                       </label>
                       <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
                         <input
@@ -2857,15 +2892,15 @@ export default Plugin.define({
                           }}
                           style="accent-color:#5ac8fa;cursor:pointer;margin:0"
                         />
-                        ссылка на дашборд
+                        {gt("gui.dashboardLink")}
                       </label>
                     </div>
                     <div style="font-size:11px;color:#8e8e93">
-                      Токен можно не хранить в settings.json: задайте OPENCODE_SCHEDULER_TELEGRAM_BOT_TOKEN и OPENCODE_SCHEDULER_TELEGRAM_CHAT_ID.
+                      {gt("gui.botTokenEnvHint")}
                     </div>
                   </div>
 
-                  {/* Нативные уведомления ОС (Спринт 25) */}
+                  {/* {gt("gui.nativeNotifications")} (Спринт 25) */}
                   <div style="border-top:1px solid #333;padding-top:10px;display:flex;flex-direction:column;gap:8px">
                     <label style={`display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;opacity:${notificationsEnabled() ? 1 : 0.5}`}>
                       <input
@@ -2878,7 +2913,7 @@ export default Plugin.define({
                         }}
                         style="accent-color:#5ac8fa;cursor:pointer;margin:0"
                       />
-                      Нативные уведомления ОС
+                      {gt("gui.nativeNotifications")}
                     </label>
                     <label style={`display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;opacity:${notificationsEnabled() && nativeEnabled() ? 1 : 0.5}`}>
                       <input
@@ -2891,14 +2926,14 @@ export default Plugin.define({
                         }}
                         style="accent-color:#5ac8fa;cursor:pointer;margin:0"
                       />
-                      со звуком
+                      {gt("gui.withSound")}
                     </label>
                     <div style="font-size:11px;color:#8e8e93">
-                      Windows Toast, macOS Notification Center, Linux notify-send. Без внешних зависимостей.
+                      {gt("gui.nativeHint")}
                     </div>
                   </div>
 
-                  {/* Тихие часы (Спринт 25) */}
+                  {/* {gt("gui.quietHours")} (Спринт 25) */}
                   <div style="border-top:1px solid #333;padding-top:10px;display:flex;flex-direction:column;gap:8px">
                     <label style={`display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;opacity:${notificationsEnabled() ? 1 : 0.5}`}>
                       <input
@@ -2911,10 +2946,10 @@ export default Plugin.define({
                         }}
                         style="accent-color:#5ac8fa;cursor:pointer;margin:0"
                       />
-                      Тихие часы
+                      {gt("gui.quietHours")}
                     </label>
                     <div style={`display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;color:#b0b0b0;opacity:${notificationsEnabled() && quietEnabled() ? 1 : 0.5}`}>
-                      <span>с</span>
+                      <span>{gt("gui.quietFrom")}</span>
                       <input
                         type="time"
                         value={quietFrom()}
@@ -2923,7 +2958,7 @@ export default Plugin.define({
                         onChange={() => void saveNotificationSettings()}
                         style="padding:4px 6px;background:#1e1e1e;border:1px solid #333;border-radius:4px;color:#fff;font-size:12px;outline:none"
                       />
-                      <span>до</span>
+                      <span>{gt("gui.quietTo")}</span>
                       <input
                         type="time"
                         value={quietTo()}
@@ -2934,20 +2969,20 @@ export default Plugin.define({
                       />
                     </div>
                     <div style="font-size:11px;color:#8e8e93">
-                      В тихие часы success и partial подавляются, ошибки и таймауты отправляются.
+                      {gt("gui.quietHoursHint")}
                     </div>
                   </div>
 
                   {/* Фильтры по задачам (Спринт 20) */}
                   <div style="border-top:1px solid #333;padding-top:10px;display:flex;flex-direction:column;gap:8px">
-                    <div style="font-size:12px;color:#e0e0e0;font-weight:600">Фильтры по задачам</div>
+                    <div style="font-size:12px;color:#e0e0e0;font-weight:600">{gt("gui.taskFiltersHeading")}</div>
                     <input
                       type="text"
                       value={filterInclude() || ""}
                       disabled={!notificationsEnabled()}
                       onInput={(e) => setFilterInclude(e.currentTarget.value)}
                       onChange={() => void saveNotificationSettings()}
-                      placeholder="Только эти задачи (через запятую, * — маска)"
+                      placeholder={gt("gui.filterIncludePlaceholder")}
                       style={`display:block;width:100%;box-sizing:border-box;padding:8px;background:#1e1e1e;border:1px solid #333;border-radius:6px;color:#fff;font-size:13px;outline:none;opacity:${notificationsEnabled() ? 1 : 0.5}`}
                     />
                     <input
@@ -2956,24 +2991,24 @@ export default Plugin.define({
                       disabled={!notificationsEnabled()}
                       onInput={(e) => setFilterExclude(e.currentTarget.value)}
                       onChange={() => void saveNotificationSettings()}
-                      placeholder="Исключить задачи (через запятую, * — маска)"
+                      placeholder={gt("gui.filterExcludePlaceholder")}
                       style={`display:block;width:100%;box-sizing:border-box;padding:8px;background:#1e1e1e;border:1px solid #333;border-radius:6px;color:#fff;font-size:13px;outline:none;opacity:${notificationsEnabled() ? 1 : 0.5}`}
                     />
                     <div style="font-size:11px;color:#8e8e93">
-                      Пустой список «только» = все задачи. Исключения важнее включений.
+                      {gt("gui.filterHint")}
                     </div>
                   </div>
 
                   {/* Шаблоны сообщений (Спринт 20) */}
                   <div style="border-top:1px solid #333;padding-top:10px;display:flex;flex-direction:column;gap:8px">
-                    <div style="font-size:12px;color:#e0e0e0;font-weight:600">Шаблоны сообщений</div>
+                    <div style="font-size:12px;color:#e0e0e0;font-weight:600">{gt("gui.templatesHeading")}</div>
                     <input
                       type="text"
                       value={templateSuccess() || ""}
                       disabled={!notificationsEnabled()}
                       onInput={(e) => setTemplateSuccess(e.currentTarget.value)}
                       onChange={() => void saveNotificationSettings()}
-                      placeholder={'✅ Задача "{task}" выполнена ({duration})'}
+                      placeholder={gt("gui.templateSuccessPlaceholder")}
                       style={`display:block;width:100%;box-sizing:border-box;padding:8px;background:#1e1e1e;border:1px solid #333;border-radius:6px;color:#fff;font-size:12px;outline:none;opacity:${notificationsEnabled() ? 1 : 0.5}`}
                     />
                     <input
@@ -2982,18 +3017,18 @@ export default Plugin.define({
                       disabled={!notificationsEnabled()}
                       onInput={(e) => setTemplateError(e.currentTarget.value)}
                       onChange={() => void saveNotificationSettings()}
-                      placeholder={'❌ Задача "{task}" упала ({duration}){error}'}
+                      placeholder={gt("gui.templateErrorPlaceholder")}
                       style={`display:block;width:100%;box-sizing:border-box;padding:8px;background:#1e1e1e;border:1px solid #333;border-radius:6px;color:#fff;font-size:12px;outline:none;opacity:${notificationsEnabled() ? 1 : 0.5}`}
                     />
                     <div style="font-size:11px;color:#8e8e93">
-                      Плейсхолдеры: {"{task} {status} {duration} {error} {emoji} {cost} {tokens}"}. Пусто = шаблон по умолчанию.
+                      {gt("gui.templateHint")}
                     </div>
                   </div>
 
                   {/* 🔐 Секреты (Спринт 26) */}
                   <div style="width:100%;max-width:700px;box-sizing:border-box;margin-top:8px;background:#1e1e1e;border:1px solid #333;border-radius:10px;overflow:hidden">
                     <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 14px">
-                      <span style="font-size:12px;font-weight:600;color:#e0e0e0">🔐 Секреты</span>
+                      <span style="font-size:12px;font-weight:600;color:#e0e0e0">{gt("gui.secrets")}</span>
                       <span style="font-size:11px;color:#8e8e93">{secretsList().length}</span>
                     </div>
                     <div style="padding:0 14px 14px;display:flex;flex-direction:column;gap:10px">
@@ -3001,7 +3036,7 @@ export default Plugin.define({
                         <input
                           type="text"
                           value={secretName()}
-                          placeholder="Имя секрета (A-Za-z0-9_.-)"
+                          placeholder={gt("gui.secretNamePlaceholder")}
                           onInput={(e) => setSecretName(e.currentTarget.value)}
                           style="width:220px;padding:4px 6px;background:#1e1e1e;border:1px solid #333;border-radius:4px;color:#fff;font-size:12px;outline:none"
                         />
@@ -3009,7 +3044,7 @@ export default Plugin.define({
                           type="password"
                           autocomplete="new-password"
                           value={secretValue()}
-                          placeholder="Значение (не возвращается при чтении)"
+                          placeholder={gt("gui.secretValuePlaceholder")}
                           onInput={(e) => setSecretValue(e.currentTarget.value)}
                           style="width:320px;padding:4px 6px;background:#1e1e1e;border:1px solid #333;border-radius:4px;color:#fff;font-size:12px;outline:none"
                         />
@@ -3020,7 +3055,7 @@ export default Plugin.define({
                             ? "padding:6px 12px;background:#666;color:white;border:none;border-radius:6px;cursor:not-allowed;font-size:12px;font-weight:500;opacity:0.6"
                             : "padding:6px 12px;background:#007acc;color:white;border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:500;opacity:1"}
                         >
-                          {secretsBusy() ? "Сохранение..." : "💾 Сохранить"}
+                          {secretsBusy() ? gt("gui.saving") : gt("gui.save")}
                         </button>
                       </div>
                       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;overflow:auto">
@@ -3033,7 +3068,7 @@ export default Plugin.define({
                             <span style="color:#ce9178">•••• {item.preview}</span>
                             <button
                               onClick={() => void handleDeleteSecret(item.name)}
-                              title="Удалить"
+                              title={gt("gui.delete")}
                               style="padding:2px 6px;background:#c43b2b;color:white;border:none;border-radius:3px;cursor:pointer;font-size:10px;font-weight:600;line-height:1"
                             >
                               ×
@@ -3041,17 +3076,17 @@ export default Plugin.define({
                           </span>
                         ))}
                         {secretsList().length === 0 && (
-                          <span style="font-size:11px;color:#8e8e93">Секретов нет. Значения хранятся зашифрованно в secrets.json.</span>
+                          <span style="font-size:11px;color:#8e8e93">{gt("gui.secretsEmpty")}</span>
                         )}
                       </div>
                       <div style="font-size:11px;color:#8e8e93">
-                        В задачах используйте ссылку <code style="color:#dcdcaa">${"{secret:NAME}"}</code> — значение подставляется из хранилища при запуске и маскируется в логах.
+                        {gt("gui.secretsUsage", { secretRef: "{secret:NAME}" })}
                       </div>
                     </div>
                   </div>
                   {/* Уведомления о матрицах (Спринт 20) */}
                   <div style="border-top:1px solid #333;padding-top:10px;display:flex;flex-direction:column;gap:8px">
-                    <div style="font-size:12px;color:#e0e0e0;font-weight:600">Матрицы</div>
+                    <div style="font-size:12px;color:#e0e0e0;font-weight:600">{gt("gui.matrixNotifyHeading")}</div>
                     <label style={`display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;opacity:${notificationsEnabled() ? 1 : 0.5}`}>
                       <input
                         type="checkbox"
@@ -3063,7 +3098,7 @@ export default Plugin.define({
                         }}
                         style="accent-color:#5ac8fa;cursor:pointer;margin:0"
                       />
-                      Уведомлять о завершении матриц
+                      {gt("gui.matrixNotifyEnable")}
                     </label>
                     <div style={`display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:12px;color:#b0b0b0;opacity:${notificationsEnabled() && matrixNotifyEnabled() ? 1 : 0.5}`}>
                       <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
@@ -3090,9 +3125,9 @@ export default Plugin.define({
                           }}
                           style="accent-color:#5ac8fa;cursor:pointer;margin:0"
                         />
-                        все упали
+                        {gt("gui.matrixAllFailed")}
                       </label>
-                      <span>зависший клон, мин:</span>
+                      <span>{gt("gui.matrixStuckMinutes")}</span>
                       <input
                         type="number"
                         min="0"
@@ -3105,13 +3140,13 @@ export default Plugin.define({
                       />
                     </div>
                     <div style="font-size:11px;color:#8e8e93">
-                      Клон, выполняющийся дольше указанного времени, уведомляется один раз. 0 — выключить.
+                      {gt("gui.matrixStuckHint")}
                     </div>
                   </div>
 
                   {/* Дайджест (Спринт 20) */}
                   <div style="border-top:1px solid #333;padding-top:10px;display:flex;flex-direction:column;gap:8px">
-                    <div style="font-size:12px;color:#e0e0e0;font-weight:600">Дайджест</div>
+                    <div style="font-size:12px;color:#e0e0e0;font-weight:600">{gt("gui.digestHeading")}</div>
                     <label style={`display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;opacity:${notificationsEnabled() ? 1 : 0.5}`}>
                       <input
                         type="checkbox"
@@ -3123,7 +3158,7 @@ export default Plugin.define({
                         }}
                         style="accent-color:#5ac8fa;cursor:pointer;margin:0"
                       />
-                      Отправлять дайджест
+                      {gt("gui.digestEnable")}
                     </label>
                     <div style={`display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;color:#b0b0b0;opacity:${notificationsEnabled() && digestEnabled() ? 1 : 0.5}`}>
                       <select
@@ -3135,8 +3170,8 @@ export default Plugin.define({
                         }}
                         style="padding:4px 6px;background:#1e1e1e;border:1px solid #333;border-radius:4px;color:#fff;font-size:12px;outline:none"
                       >
-                        <option value="daily">ежедневно</option>
-                        <option value="weekly">еженедельно (Пн)</option>
+                        <option value="daily">{gt("gui.digestDaily")}</option>
+                        <option value="weekly">{gt("gui.digestWeekly")}</option>
                       </select>
                       <input
                         type="time"
@@ -3148,12 +3183,12 @@ export default Plugin.define({
                       />
                       <span style="font-size:11px;color:#8e8e93">
                         {digestLastSentAt()
-                          ? `последняя отправка: ${new Date(digestLastSentAt()!).toLocaleString()}`
-                          : "ещё не отправлялся"}
+                          ? gt("gui.digestLastSent", { when: new Date(digestLastSentAt()!).toLocaleString() })
+                          : gt("gui.digestNeverSent")}
                       </span>
                     </div>
                     <div style="font-size:11px;color:#8e8e93">
-                      Запуски, success rate, стоимость и топ ошибок за сутки/неделю.
+                      {gt("gui.digestHint")}
                     </div>
                   </div>
 
@@ -3163,17 +3198,17 @@ export default Plugin.define({
                       disabled={testNotificationBusy() || !(webhookEnabled() || telegramEnabled() || nativeEnabled())}
                       style={`padding:6px 12px;background:#007acc;color:white;border:none;border-radius:6px;cursor:${testNotificationBusy() || !(webhookEnabled() || telegramEnabled() || nativeEnabled()) ? "not-allowed" : "pointer"};font-size:12px;font-weight:500;opacity:${testNotificationBusy() || !(webhookEnabled() || telegramEnabled() || nativeEnabled()) ? 0.6 : 1}`}
                     >
-                      {testNotificationBusy() ? "Отправка..." : "🧪 Тестовое уведомление"}
+                      {testNotificationBusy() ? gt("gui.sending") : gt("gui.sendTestNotification")}
                     </button>
                     <button
                       onClick={() => void handleSendDigest()}
                       disabled={digestBusy() || !(webhookEnabled() || telegramEnabled() || nativeEnabled())}
                       style={`padding:6px 12px;background:#2d7d46;color:white;border:none;border-radius:6px;cursor:${digestBusy() || !(webhookEnabled() || telegramEnabled() || nativeEnabled()) ? "not-allowed" : "pointer"};font-size:12px;font-weight:500;opacity:${digestBusy() || !(webhookEnabled() || telegramEnabled() || nativeEnabled()) ? 0.6 : 1}`}
                     >
-                      {digestBusy() ? "Отправка..." : "📊 Отправить дайджест сейчас"}
+                      {digestBusy() ? gt("gui.sending") : gt("gui.sendDigestNow")}
                     </button>
                     <span style="font-size:11px;color:#8e8e93">
-                      Каналы: webhook, Telegram, нативные уведомления ОС.
+                      {gt("gui.digestChannels")}
                     </span>
                   </div>
                 </div>
@@ -3186,9 +3221,9 @@ export default Plugin.define({
                 onClick={() => setHistoryCollapsed(!historyCollapsed())}
                 style="display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;box-sizing:border-box;padding:10px 14px;background:transparent;border:none;color:#e0e0e0;font-size:12px;font-weight:600;cursor:pointer;text-align:left"
               >
-                <span>🧹 История и ретеншн</span>
+                <span>{gt("gui.historyHeading")}</span>
                 <span style="display:flex;align-items:center;gap:8px;font-size:11px;font-weight:400;color:#8e8e93">
-                  {historyRetentionDays() > 0 ? `старше ${historyRetentionDays()} дн.` : "без срока"} · {historyMaxRecords() > 0 ? `до ${historyMaxRecords()} записей` : "без лимита"}
+                  {historyRetentionDays() > 0 ? gt("gui.historyOlderThan", { days: historyRetentionDays() }) : gt("gui.historyNoExpiry")} · {historyMaxRecords() > 0 ? gt("gui.historyUpToRecords", { count: historyMaxRecords() }) : gt("gui.historyNoLimit")}
                   <span>{historyCollapsed() ? "▾" : "▴"}</span>
                 </span>
               </button>
@@ -3196,7 +3231,7 @@ export default Plugin.define({
               {!historyCollapsed() && (
                 <div style="padding:0 14px 14px;display:flex;flex-direction:column;gap:10px">
                   <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-                    <label style="font-size:12px;color:#e0e0e0;white-space:nowrap">Удалять записи старше, дней</label>
+                    <label style="font-size:12px;color:#e0e0e0;white-space:nowrap">{gt("gui.historyDeleteOlderLabel")}</label>
                     <input
                       type="number"
                       min="0"
@@ -3207,11 +3242,11 @@ export default Plugin.define({
                       }}
                       style="width:70px;padding:4px 6px;background:#1e1e1e;border:1px solid #333;border-radius:4px;color:#fff;font-size:12px;outline:none"
                     />
-                    <span style="font-size:11px;color:#8e8e93">0 = не удалять по возрасту</span>
+                    <span style="font-size:11px;color:#8e8e93">{gt("gui.zeroKeepByAge")}</span>
                   </div>
 
                   <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-                    <label style="font-size:12px;color:#e0e0e0;white-space:nowrap">Хранить не более записей</label>
+                    <label style="font-size:12px;color:#e0e0e0;white-space:nowrap">{gt("gui.historyKeepMaxLabel")}</label>
                     <input
                       type="number"
                       min="0"
@@ -3222,14 +3257,14 @@ export default Plugin.define({
                       }}
                       style="width:80px;padding:4px 6px;background:#1e1e1e;border:1px solid #333;border-radius:4px;color:#fff;font-size:12px;outline:none"
                     />
-                    <span style="font-size:11px;color:#8e8e93">0 = без ограничения</span>
+                    <span style="font-size:11px;color:#8e8e93">{gt("gui.zeroNoLimit")}</span>
                   </div>
 
                   <div style="font-size:11px;color:#8e8e93">
-                    Последняя очистка:{" "}
+                    {gt("gui.lastCleanupLabel")}{" "}
                     {historyLastCleanupAt()
-                      ? `${new Date(historyLastCleanupAt()!).toLocaleString()} · удалено ${historyLastCleanupDeleted()}`
-                      : "ещё не выполнялась"}
+                      ? gt("gui.lastCleanupDone", { when: new Date(historyLastCleanupAt()!).toLocaleString(), deleted: historyLastCleanupDeleted() })
+                      : gt("gui.lastCleanupNever")}
                   </div>
 
                   <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
@@ -3238,10 +3273,10 @@ export default Plugin.define({
                       disabled={historyCleanupBusy()}
                       style={`padding:6px 12px;background:#007acc;color:white;border:none;border-radius:6px;cursor:${historyCleanupBusy() ? "not-allowed" : "pointer"};font-size:12px;font-weight:500;opacity:${historyCleanupBusy() ? 0.6 : 1}`}
                     >
-                      {historyCleanupBusy() ? "Очистка..." : "🧹 Очистить сейчас"}
+                      {historyCleanupBusy() ? gt("gui.cleaningUp") : gt("gui.cleanupNow")}
                     </button>
                     <span style="font-size:11px;color:#8e8e93">
-                      Удаляются только завершённые записи; незавершённые запуски не трогаются.
+                      {gt("gui.historyCleanupHint")}
                     </span>
                   </div>
                 </div>
@@ -3255,7 +3290,7 @@ export default Plugin.define({
                   onClick={() => setAuditCollapsed(!auditCollapsed())}
                   style="display:flex;align-items:center;gap:8px;background:transparent;border:none;color:#e0e0e0;font-size:12px;font-weight:600;cursor:pointer;text-align:left;padding:0"
                 >
-                  <span>📜 Журнал аудита</span>
+                  <span>{gt("gui.auditHeading")}</span>
                   <span style="font-size:11px;font-weight:400;color:#8e8e93">{auditRecords().length}</span>
                   <span style="font-size:11px;color:#8e8e93">{auditCollapsed() ? "▾" : "▴"}</span>
                 </button>
@@ -3264,16 +3299,16 @@ export default Plugin.define({
               {!auditCollapsed() && (
                 <div style="padding:0 14px 14px;display:flex;flex-direction:column;gap:10px">
                   <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-                    <label style="font-size:12px;color:#e0e0e0;white-space:nowrap">Действие</label>
+                    <label style="font-size:12px;color:#e0e0e0;white-space:nowrap">{gt("gui.auditAction")}</label>
                     <input
                       type="text"
                       value={auditFilterAction()}
-                      placeholder="например task.create"
+                      placeholder={gt("gui.auditActionPlaceholder")}
                       onInput={(e) => setAuditFilterAction(e.currentTarget.value)}
                       onChange={() => void loadAuditGui()}
                       style="width:150px;padding:4px 6px;background:#1e1e1e;border:1px solid #333;border-radius:4px;color:#fff;font-size:12px;outline:none"
                     />
-                    <label style="font-size:12px;color:#e0e0e0;white-space:nowrap">Источник</label>
+                    <label style="font-size:12px;color:#e0e0e0;white-space:nowrap">{gt("gui.auditSource")}</label>
                     <input
                       type="text"
                       value={auditFilterActor()}
@@ -3282,11 +3317,11 @@ export default Plugin.define({
                       onChange={() => void loadAuditGui()}
                       style="width:110px;padding:4px 6px;background:#1e1e1e;border:1px solid #333;border-radius:4px;color:#fff;font-size:12px;outline:none"
                     />
-                    <label style="font-size:12px;color:#e0e0e0;white-space:nowrap">Цель</label>
+                    <label style="font-size:12px;color:#e0e0e0;white-space:nowrap">{gt("gui.auditTarget")}</label>
                     <input
                       type="text"
                       value={auditFilterTarget()}
-                      placeholder="имя задачи/секрета"
+                      placeholder={gt("gui.auditTargetPlaceholder")}
                       onInput={(e) => setAuditFilterTarget(e.currentTarget.value)}
                       onChange={() => void loadAuditGui()}
                       style="width:180px;padding:4px 6px;background:#1e1e1e;border:1px solid #333;border-radius:4px;color:#fff;font-size:12px;outline:none"
@@ -3298,19 +3333,19 @@ export default Plugin.define({
                         ? "padding:6px 12px;background:#666;color:white;border:none;border-radius:6px;cursor:not-allowed;font-size:12px;font-weight:500;opacity:0.6"
                         : "padding:6px 12px;background:#007acc;color:white;border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:500;opacity:1"}
                     >
-                      {auditBusy() ? "Загрузка..." : "Обновить"}
+                      {auditBusy() ? gt("gui.loading") : gt("gui.refresh")}
                     </button>
                   </div>
                   <div style="width:100%;overflow:auto;border:1px solid #333;border-radius:6px;background:#0f0f0f">
                     <table style="width:100%;border-collapse:collapse;font-size:11px">
                       <thead>
                         <tr style="border-bottom:1px solid #333">
-                          <th style="text-align:left;padding:6px 8px;color:#8e8e93">Время</th>
-                          <th style="text-align:left;padding:6px 8px;color:#8e8e93">Действие</th>
-                          <th style="text-align:left;padding:6px 8px;color:#8e8e93">Цель</th>
-                          <th style="text-align:left;padding:6px 8px;color:#8e8e93">Источник</th>
-                          <th style="text-align:left;padding:6px 8px;color:#8e8e93">Автор</th>
-                          <th style="text-align:left;padding:6px 8px;color:#8e8e93">Удалён с</th>
+                          <th style="text-align:left;padding:6px 8px;color:#8e8e93">{gt("gui.auditTime")}</th>
+                          <th style="text-align:left;padding:6px 8px;color:#8e8e93">{gt("gui.auditAction")}</th>
+                          <th style="text-align:left;padding:6px 8px;color:#8e8e93">{gt("gui.auditTarget")}</th>
+                          <th style="text-align:left;padding:6px 8px;color:#8e8e93">{gt("gui.auditSource")}</th>
+                          <th style="text-align:left;padding:6px 8px;color:#8e8e93">{gt("gui.auditActor")}</th>
+                          <th style="text-align:left;padding:6px 8px;color:#8e8e93">{gt("gui.auditDeletedFrom")}</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -3326,14 +3361,14 @@ export default Plugin.define({
                         ))}
                         {auditRecords().length === 0 && (
                           <tr>
-                            <td colspan="6" style="padding:10px 8px;color:#8e8e93;text-align:center">Записей аудита нет.</td>
+                            <td colspan="6" style="padding:10px 8px;color:#8e8e93;text-align:center">{gt("gui.auditEmpty")}</td>
                           </tr>
                         )}
                       </tbody>
                     </table>
                   </div>
                   <div style="font-size:11px;color:#8e8e93">
-                    Записываются мутации задач, настроек, шаблонов, профилей, рабочих зон, секретов, импорта и очистки истории. Детали маскируются (секреты заменены на <code style="color:#dcdcaa">***</code>).
+                    {gt("gui.auditHint", { redacted: "***" })}
                   </div>
                 </div>
               )}
@@ -3342,7 +3377,7 @@ export default Plugin.define({
             {/* 🧹 Настройки аудита (ретеншн) */}
             <div style="width:100%;max-width:700px;box-sizing:border-box;margin-top:8px;background:#1e1e1e;border:1px solid #333;border-radius:10px;overflow:hidden">
               <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 14px">
-                <span style="font-size:12px;font-weight:600;color:#e0e0e0">Журнал аудита — хранение</span>
+                <span style="font-size:12px;font-weight:600;color:#e0e0e0">{gt("gui.auditStorageHeading")}</span>
               </div>
               <div style="padding:0 14px 14px;display:flex;flex-direction:column;gap:10px">
                 <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
@@ -3356,11 +3391,11 @@ export default Plugin.define({
                       }}
                       style="accent-color:#5ac8fa;cursor:pointer;margin:0"
                     />
-                    Включить аудит
+                    {gt("gui.auditEnable")}
                   </label>
                 </div>
                 <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-                  <label style="font-size:12px;color:#e0e0e0;white-space:nowrap">Удалять записи старше, дней</label>
+                  <label style="font-size:12px;color:#e0e0e0;white-space:nowrap">{gt("gui.historyDeleteOlderLabel")}</label>
                   <input
                     type="number"
                     min="0"
@@ -3371,10 +3406,10 @@ export default Plugin.define({
                     }}
                     style="width:80px;padding:4px 6px;background:#1e1e1e;border:1px solid #333;border-radius:4px;color:#fff;font-size:12px;outline:none"
                   />
-                  <span style="font-size:11px;color:#8e8e93">0 = не удалять по возрасту</span>
+                  <span style="font-size:11px;color:#8e8e93">{gt("gui.zeroKeepByAge")}</span>
                 </div>
                 <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-                  <label style="font-size:12px;color:#e0e0e0;white-space:nowrap">Хранить не более записей</label>
+                  <label style="font-size:12px;color:#e0e0e0;white-space:nowrap">{gt("gui.historyKeepMaxLabel")}</label>
                   <input
                     type="number"
                     min="0"
@@ -3385,7 +3420,7 @@ export default Plugin.define({
                     }}
                     style="width:80px;padding:4px 6px;background:#1e1e1e;border:1px solid #333;border-radius:4px;color:#fff;font-size:12px;outline:none"
                   />
-                  <span style="font-size:11px;color:#8e8e93">0 = без ограничения</span>
+                  <span style="font-size:11px;color:#8e8e93">{gt("gui.zeroNoLimit")}</span>
                 </div>
               </div>
             </div>
@@ -3404,17 +3439,17 @@ export default Plugin.define({
                 <button
                   onClick={() => void handleAddWorkspace()}
                   disabled={workspaceBusy()}
-                  title="Добавить workspace (git-репозиторий)"
+                  title={gt("gui.workspaceAddTitle")}
                   style={`padding:5px 10px;border-radius:6px;border:1px solid #333;background:#252526;color:${workspaceBusy() ? "#666" : "#5ac8fa"};font-size:11px;font-weight:600;cursor:${workspaceBusy() ? "not-allowed" : "pointer"}`}
                 >
-                  ＋ Добавить
+                  {gt("gui.add")}
                 </button>
               </div>
               {!workspacesCollapsed() && (
                 <div style="display:flex;flex-direction:column;gap:6px;padding:0 14px 12px">
                   {workspaces().length === 0 ? (
                     <div style="font-size:12px;color:#8e8e93;padding:4px 0">
-                      Workspace не добавлен. Задача без workspace использует рабочую директорию проекта.
+                      {gt("gui.workspaceEmpty")}
                     </div>
                   ) : (
                     workspaces().map((workspace) => (
@@ -3424,29 +3459,29 @@ export default Plugin.define({
                           <span style="font-size:12px;font-weight:700;color:#ffffff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">📦 {workspace.name}</span>
                           <span style="font-size:10px;color:#8e8e93;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title={workspace.path}>{workspace.path}</span>
                           <span style="font-size:10px;color:#a0a0a6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
-                            git: {workspace.gitBranch || "—"} · {workspace.gitRemote || "remote не задан"}
+                            {gt("gui.workspaceGitInfo", { branch: workspace.gitBranch || "—", remote: workspace.gitRemote || gt("gui.remoteNotSet") })}
                           </span>
                           <span style="font-size:10px;color:#8e8e93;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
-                            env: {workspace.env ? `${Object.keys(workspace.env).length} перем.` : "—"}{workspace.envFile ? " · .env-файл" : ""}
+                            {gt("gui.workspaceEnvLine", { count: workspace.env ? Object.keys(workspace.env).length : "—", envFile: workspace.envFile ? gt("gui.workspaceEnvFile") : "" })}
                           </span>
                         </div>
                         <div style="display:flex;gap:4px;flex-shrink:0">
                           <button
                             onClick={() => void handleEditWorkspaceEnv(workspace)}
                             disabled={workspaceBusy()}
-                            title="Env-переменные workspace (секреты маскируются в логах)"
+                            title={gt("gui.workspaceEnvTitle")}
                             style="background:transparent;border:none;color:#a0a0a6;cursor:pointer;font-size:14px;padding:2px"
                           >🔑</button>
                           <button
                             onClick={() => void handleEditWorkspace(workspace)}
                             disabled={workspaceBusy()}
-                            title="Редактировать workspace"
+                            title={gt("gui.workspaceEditTitle")}
                             style="background:transparent;border:none;color:#a0a0a6;cursor:pointer;font-size:14px;padding:2px"
                           >✏️</button>
                           <button
                             onClick={() => void handleDeleteWorkspace(workspace)}
                             disabled={workspaceBusy()}
-                            title="Удалить workspace (задачи сохраняются)"
+                            title={gt("gui.workspaceDeleteTitle")}
                             style="background:transparent;border:none;color:#ff3b30;cursor:pointer;font-size:14px;padding:2px"
                           >🗑</button>
                         </div>
@@ -3461,37 +3496,37 @@ export default Plugin.define({
             {formCollapsed() ? (
               <button
                 onClick={() => setFormCollapsed(false)}
-                title="Развернуть форму создания задачи"
+                title={gt("gui.expandFormTitle")}
                 style="display:flex;align-items:center;justify-content:center;gap:8px;width:100%;max-width:700px;box-sizing:border-box;padding:12px 16px;background:#1e1e1e;border:1px dashed #3a3a3a;border-radius:10px;color:#e0e0e0;font-size:13px;font-weight:600;cursor:pointer;transition:border-color 0.18s ease, background 0.18s ease"
                 onMouseEnter={(e) => { const b = e.currentTarget; b.style.borderColor = "#5ac8fa"; b.style.background = "#232326" }}
                 onMouseLeave={(e) => { const b = e.currentTarget; b.style.borderColor = "#3a3a3a"; b.style.background = "#1e1e1e" }}
               >
-                ➕ Создать задачу
+                {gt("gui.createTask")}
               </button>
             ) : (
             <div style="display:block;width:100%;max-width:700px;box-sizing:border-box;background:#1e1e1e;padding:20px;border-radius:10px;box-shadow:0 4px 12px rgba(0,0,0,0.2)">
               <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:16px">
                 <h3 style="margin:0;font-size:14px;font-weight:600;color:#ffffff">
-                  {isEditing ? "Редактирование задачи" : "Новая задача"}
+                  {isEditing ? gt("gui.editingTask") : gt("gui.newTask")}
                 </h3>
                 <div style="display:flex;align-items:center;gap:8px">
                   <button
                     onClick={handleSaveAsTemplate}
-                    title="Сохранить текущие настройки формы как шаблон"
+                    title={gt("gui.saveAsTemplateTitle")}
                     style="background:transparent;border:1px solid #333;border-radius:6px;padding:4px 10px;color:#a0a0a6;font-size:11px;cursor:pointer;white-space:nowrap;transition:color 0.18s ease, border-color 0.18s ease"
                     onMouseEnter={(e) => { const b = e.currentTarget; b.style.color = "#5ac8fa"; b.style.borderColor = "#5ac8fa" }}
                     onMouseLeave={(e) => { const b = e.currentTarget; b.style.color = "#a0a0a6"; b.style.borderColor = "#333" }}
                   >
-                    💾 Сохранить как шаблон
+                    {gt("gui.saveAsTemplate")}
                   </button>
                   <button
                     onClick={() => setFormCollapsed(true)}
-                    title="Свернуть форму"
+                    title={gt("gui.collapseFormTitle")}
                     style="background:transparent;border:1px solid #333;border-radius:6px;padding:4px 10px;color:#a0a0a6;font-size:11px;cursor:pointer;white-space:nowrap;transition:color 0.18s ease, border-color 0.18s ease"
                     onMouseEnter={(e) => { const b = e.currentTarget; b.style.color = "#5ac8fa"; b.style.borderColor = "#5ac8fa" }}
                     onMouseLeave={(e) => { const b = e.currentTarget; b.style.color = "#a0a0a6"; b.style.borderColor = "#333" }}
                   >
-                    Скрыть форму ▴
+                    {gt("gui.hideForm")}
                   </button>
                 </div>
               </div>
@@ -3517,17 +3552,17 @@ export default Plugin.define({
                   📦 Matrix (Fan-Out)
                 </label>
                 <div style="font-size:11px;color:#8e8e93;margin-top:4px;line-height:1.45">
-                  Задача-шаблон раскладывается на клоны по workspace. Родитель сам не выполняется — он запускает клоны и агрегирует результат.
+                  {gt("gui.matrixHint")}
                 </div>
 
                 {matrixMode() && (
                   <div style="margin-top:10px;display:flex;flex-direction:column;gap:10px">
                     <div>
                       <div style="font-size:12px;color:#b0b0b0;font-weight:500;margin-bottom:6px">
-                        Workspaces (для матрицы) — выбрано {matrixWorkspaceIds().length}
+                        {gt("gui.matrixWorkspacesSelected", { count: matrixWorkspaceIds().length })}
                       </div>
                       {workspaces().length === 0 ? (
-                        <div style="font-size:11px;color:#f5a623">Сначала добавьте хотя бы один workspace.</div>
+                        <div style="font-size:11px;color:#f5a623">{gt("gui.addWorkspaceFirst")}</div>
                       ) : (
                         <div style="display:flex;flex-direction:column;gap:4px;max-height:170px;overflow:auto;padding:6px 8px;background:#141414;border:1px solid #333;border-radius:6px">
                           {workspaces().map((workspace) => (
@@ -3548,36 +3583,36 @@ export default Plugin.define({
 
                     <div style="display:flex;gap:8px;flex-wrap:wrap">
                       <label style="flex:1;min-width:150px;font-size:11px;color:#b0b0b0">
-                        Стратегия
+                        {gt("gui.strategy")}
                         <select
                           value={matrixStrategy()}
                           onChange={(e) => setMatrixStrategy(e.currentTarget.value === "sequential" ? "sequential" : "parallel")}
                           style="display:block;width:100%;box-sizing:border-box;margin-top:4px;padding:6px;background:#1e1e1e;border:1px solid #333;border-radius:6px;color:#fff;font-size:12px;outline:none"
                         >
-                          <option value="parallel">parallel — все сразу</option>
-                          <option value="sequential">sequential — по одному</option>
+                          <option value="parallel">{gt("gui.matrixParallel")}</option>
+                          <option value="sequential">{gt("gui.matrixSequential")}</option>
                         </select>
                       </label>
                       <label style="flex:1;min-width:150px;font-size:11px;color:#b0b0b0">
-                        При ошибке
+                        {gt("gui.onFailure")}
                         <select
                           value={matrixFailureMode()}
                           onChange={(e) => setMatrixFailureMode(e.currentTarget.value === "stop" ? "stop" : "continue")}
                           style="display:block;width:100%;box-sizing:border-box;margin-top:4px;padding:6px;background:#1e1e1e;border:1px solid #333;border-radius:6px;color:#fff;font-size:12px;outline:none"
                         >
-                          <option value="continue">continue — продолжать</option>
-                          <option value="stop">stop — остановить</option>
+                          <option value="continue">{gt("gui.matrixContinue")}</option>
+                          <option value="stop">{gt("gui.matrixStop")}</option>
                         </select>
                       </label>
                       <label style="flex:1;min-width:150px;font-size:11px;color:#b0b0b0">
-                        Агрегация
+                        {gt("gui.aggregation")}
                         <select
                           value={matrixAggregation()}
                           onChange={(e) => setMatrixAggregation(e.currentTarget.value === "per-task" ? "per-task" : "summary")}
                           style="display:block;width:100%;box-sizing:border-box;margin-top:4px;padding:6px;background:#1e1e1e;border:1px solid #333;border-radius:6px;color:#fff;font-size:12px;outline:none"
                         >
-                          <option value="summary">summary — сводка</option>
-                          <option value="per-task">per-task — по задачам</option>
+                          <option value="summary">{gt("gui.matrixSummary")}</option>
+                          <option value="per-task">{gt("gui.matrixPerTask")}</option>
                         </select>
                       </label>
                     </div>
@@ -3589,20 +3624,18 @@ export default Plugin.define({
                         onChange={(e) => setMatrixAggregator(e.currentTarget.checked)}
                         style="accent-color:#ff9f0a"
                       />
-                      Создать aggregator-задачу matrix-complete (запустится после всех клонов)
+                      {gt("gui.matrixAggregator")}
                     </label>
 
                     <label style="font-size:11px;color:#b0b0b0;max-width:240px">
-                      Одновременно клонов (concurrency)
+                      {gt("gui.matrixConcurrency")}
                       <input
                         type="number"
                         min="1"
                         step="1"
                         value={matrixConcurrency()}
                         onInput={(e) => setMatrixConcurrency(e.currentTarget.value)}
-                        placeholder={
-                          matrixStrategy() === "sequential" ? "1 (sequential)" : "без лимита"
-                        }
+                        placeholder={matrixStrategy() === "sequential" ? gt("gui.concurrencySequentialPlaceholder") : gt("gui.concurrencyUnlimitedPlaceholder")}
                         style="display:block;width:100%;box-sizing:border-box;margin-top:4px;padding:6px;background:#1e1e1e;border:1px solid #333;border-radius:6px;color:#fff;font-size:12px;outline:none"
                       />
                     </label>
@@ -3610,7 +3643,7 @@ export default Plugin.define({
                     {matrixWorkspaceIds().length > 0 && (
                       <details style="padding:8px 10px;background:#141414;border:1px solid #333;border-radius:6px">
                         <summary style="cursor:pointer;font-size:12px;color:#b0b0b0;font-weight:500">
-                          ⚙ Настройки по workspace — переопределено {matrixOverrideCount()}
+                          {gt("gui.matrixOverridesTitle", { count: matrixOverrideCount() })}
                         </summary>
                         <div style="margin-top:8px;display:flex;flex-direction:column;gap:8px;max-height:340px;overflow:auto">
                           {matrixWorkspaceIds().map((wsId) => {
@@ -3628,14 +3661,14 @@ export default Plugin.define({
                                 <div style="display:flex;flex-direction:column;gap:6px">
                                   <textarea
                                     rows={2}
-                                    placeholder="Промпт (по умолчанию — общий промпт формы)"
+                                    placeholder={gt("gui.matrixPromptPlaceholder")}
                                     value={override.prompt ?? ""}
                                     onInput={(e) => updateMatrixOverride(wsId, "prompt", e.currentTarget.value)}
                                     style={`${inputStyle};width:100%;resize:vertical;font-family:inherit`}
                                   />
                                   <div style="display:flex;gap:6px;flex-wrap:wrap">
                                     <input
-                                      placeholder="Модель (override)"
+                                      placeholder={gt("gui.matrixModelPlaceholder")}
                                       value={override.model ?? ""}
                                       onInput={(e) => updateMatrixOverride(wsId, "model", e.currentTarget.value)}
                                       style={`${inputStyle};flex:1;min-width:150px`}
@@ -3672,11 +3705,11 @@ export default Plugin.define({
                     <div style="padding:8px 10px;background:#141414;border:1px solid #333;border-radius:6px;font-size:11px;line-height:1.55;color:#a0a0a6">
                       {matrixPreview().length > 0 ? (
                         <>
-                          <div style="color:#ff9f0a;font-weight:600">Будет создано {matrixPreview().length} клон(а/ов):</div>
+                          <div style="color:#ff9f0a;font-weight:600">{gt("gui.matrixWillCreate", { count: matrixPreview().length })}</div>
                           <div style="color:#e0e0e0;word-break:break-all">{matrixPreview().join(", ")}</div>
                         </>
                       ) : (
-                        <span style="color:#f5a623">Выберите хотя бы один workspace — превью клонов появится здесь.</span>
+                        <span style="color:#f5a623">{gt("gui.matrixSelectHint")}</span>
                       )}
                     </div>
                   </div>
@@ -3685,7 +3718,7 @@ export default Plugin.define({
 
               {!matrixMode() && (
               <div style="display:block;width:100%;margin-bottom:12px">
-                <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">Workspace (multi-repo)</label>
+                <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">{gt("gui.workspaceMultiRepo")}</label>
                 <select
                   value={workspaceId()}
                   onChange={(e) => {
@@ -3694,7 +3727,7 @@ export default Plugin.define({
                   }}
                   style="display:block;width:100%;box-sizing:border-box;padding:8px;background:#1e1e1e;border:1px solid #333;border-radius:6px;color:#fff;font-size:13px;outline:none"
                 >
-                  <option value="">Без workspace — рабочая директория</option>
+                  <option value="">{gt("gui.noWorkspaceOption")}</option>
                   {workspaces().map((workspace) => (
                     <option key={workspace.id} value={workspace.id}>📦 {workspace.name}</option>
                   ))}
@@ -3710,32 +3743,32 @@ export default Plugin.define({
               )}
 
               <div style="display:block;width:100%;margin-bottom:12px">
-                <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">Имя задачи</label>
+                <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">{gt("gui.taskNameLabel")}</label>
                 <input
                   type="text"
                   value={name() || ""}
                   onInput={(e) => setName(e.currentTarget.value)}
-                  placeholder="например, Gui-Test"
+                  placeholder={gt("gui.taskNamePlaceholder")}
                   style="display:block;width:100%;box-sizing:border-box;padding:8px;background:#1e1e1e;border:1px solid #333;border-radius:6px;color:#fff;font-size:13px;outline:none"
                 />
               </div>
 
               {!workspaceId() && !matrixMode() && (
               <div style="display:block;width:100%;margin-bottom:12px">
-                <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">Рабочая директория</label>
+                <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">{gt("gui.workingDirectoryLabel")}</label>
                 <input
                   type="text"
                   value={workingDirectory() || ""}
                   onInput={(e) => setWorkingDirectory(e.currentTarget.value)}
-                  placeholder="по умолчанию — папка проекта"
+                  placeholder={gt("gui.workingDirectoryPlaceholder")}
                   style="display:block;width:100%;box-sizing:border-box;padding:8px;background:#1e1e1e;border:1px solid #333;border-radius:6px;color:#fff;font-size:13px;outline:none"
                 />
-                <div style="font-size:11px;color:#8e8e93;margin-top:6px">В этой папке задача запустит opencode run — здесь подхватятся MCP-серверы из opencode.json.</div>
+                <div style="font-size:11px;color:#8e8e93;margin-top:6px">{gt("gui.workingDirectoryHint")}</div>
               </div>
               )}
 
               <div style="display:block;width:100%;margin-bottom:12px">
-                <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">Тип триггера</label>
+                <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">{gt("gui.triggerTypeLabel")}</label>
                 <div style="display:flex;gap:8px;flex-wrap:wrap">
                   <label style="display:flex;align-items:center;gap:6px;cursor:pointer;flex:1">
                     <input
@@ -3745,7 +3778,7 @@ export default Plugin.define({
                       onChange={() => setTriggerType("cron")}
                       style="accent-color:#007acc"
                     />
-                    По расписанию (Cron)
+                    {gt("gui.triggerCron")}
                   </label>
                   <label style="display:flex;align-items:center;gap:6px;cursor:pointer;flex:1">
                     <input
@@ -3755,7 +3788,7 @@ export default Plugin.define({
                       onChange={() => setTriggerType("file")}
                       style="accent-color:#007acc"
                     />
-                    При изменении файла
+                    {gt("gui.triggerFile")}
                   </label>
                   <label style="display:flex;align-items:center;gap:6px;cursor:pointer;flex:1">
                     <input
@@ -3765,7 +3798,7 @@ export default Plugin.define({
                       onChange={() => setTriggerType("git")}
                       style="accent-color:#007acc"
                     />
-                    Новый коммит (Git)
+                    {gt("gui.triggerGit")}
                   </label>
                   <label style="display:flex;align-items:center;gap:6px;cursor:pointer;flex:1">
                     <input
@@ -3785,22 +3818,22 @@ export default Plugin.define({
                       onChange={() => setTriggerType("once")}
                       style="accent-color:#007acc"
                     />
-                    Разово
+                    {gt("gui.triggerOnce")}
                   </label>
                 </div>
               </div>
 
               {triggerType() === "file" && (
                 <div style="display:block;width:100%;margin-bottom:12px">
-                  <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">Путь к файлу для отслеживания</label>
+                  <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">{gt("gui.watchFileLabel")}</label>
                   <input
                     type="text"
                     value={watchPath() || ""}
                     onInput={(e) => setWatchPath(e.currentTarget.value)}
-                    placeholder="например, C:\project\src\main.ts"
+                    placeholder={gt("gui.watchFilePlaceholder")}
                     style="display:block;width:100%;box-sizing:border-box;padding:8px;background:#1e1e1e;border:1px solid #333;border-radius:6px;color:#fff;font-size:13px;outline:none"
                   />
-                  <label style="display:block;margin:12px 0 6px;font-size:12px;color:#b0b0b0;font-weight:500">Glob-маски (по одной в строке, пусто — любое изменение)</label>
+                  <label style="display:block;margin:12px 0 6px;font-size:12px;color:#b0b0b0;font-weight:500">{gt("gui.watchGlobsLabel")}</label>
                   <textarea
                     value={watchGlobs() || ""}
                     onInput={(e) => setWatchGlobs(e.currentTarget.value)}
@@ -3808,7 +3841,7 @@ export default Plugin.define({
                     placeholder={"**/*.md\nsrc/**"}
                     style="display:block;width:100%;box-sizing:border-box;padding:8px;background:#1e1e1e;border:1px solid #333;border-radius:6px;color:#fff;font-size:13px;outline:none;resize:vertical;font-family:ui-monospace,Consolas,monospace"
                   />
-                  <label style="display:block;margin:12px 0 6px;font-size:12px;color:#b0b0b0;font-weight:500">Исключения (glob, по одной в строке)</label>
+                  <label style="display:block;margin:12px 0 6px;font-size:12px;color:#b0b0b0;font-weight:500">{gt("gui.watchIgnoreLabel")}</label>
                   <textarea
                     value={watchIgnore() || ""}
                     onInput={(e) => setWatchIgnore(e.currentTarget.value)}
@@ -3816,14 +3849,14 @@ export default Plugin.define({
                     placeholder={"node_modules/**\n*.log"}
                     style="display:block;width:100%;box-sizing:border-box;padding:8px;background:#1e1e1e;border:1px solid #333;border-radius:6px;color:#fff;font-size:13px;outline:none;resize:vertical;font-family:ui-monospace,Consolas,monospace"
                   />
-                  <div style="font-size:11px;color:#8e8e93;margin-top:6px">Маски считаются от пути watchPath. Поддерживаются *, **, ? и классы [abc]; маска каталога с /** рекурсивна.</div>
+                  <div style="font-size:11px;color:#8e8e93;margin-top:6px">{gt("gui.watchGlobsHint")}</div>
                 </div>
               )}
 
               {triggerType() === "git" && (
                 <>
                   <div style="display:block;width:100%;margin-bottom:12px">
-                    <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">Ветки (glob, через запятую; пусто — любая)</label>
+                    <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">{gt("gui.gitBranchesLabel")}</label>
                     <input
                       type="text"
                       value={gitBranch() || ""}
@@ -3833,7 +3866,7 @@ export default Plugin.define({
                     />
                   </div>
                   <div style="display:block;width:100%;margin-bottom:12px">
-                    <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">Пути изменений (glob, по одной в строке; пусто — любой файл)</label>
+                    <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">{gt("gui.gitPathsLabel")}</label>
                     <textarea
                       value={gitPaths() || ""}
                       onInput={(e) => setGitPaths(e.currentTarget.value)}
@@ -3843,7 +3876,7 @@ export default Plugin.define({
                     />
                   </div>
                   <div style="display:block;width:100%;margin-bottom:12px">
-                    <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">Игнорируемые пути (glob, по одной в строке)</label>
+                    <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">{gt("gui.gitIgnoreLabel")}</label>
                     <textarea
                       value={gitIgnore() || ""}
                       onInput={(e) => setGitIgnore(e.currentTarget.value)}
@@ -3853,7 +3886,7 @@ export default Plugin.define({
                     />
                   </div>
                   <div style="display:block;width:100%;margin-bottom:12px">
-                    <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">Период опроса, секунды (минимум 5, по умолчанию 60)</label>
+                    <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">{gt("gui.gitPollLabel")}</label>
                     <input
                       type="number"
                       min="5"
@@ -3862,7 +3895,7 @@ export default Plugin.define({
                       placeholder="60"
                       style="display:block;width:100%;box-sizing:border-box;padding:8px;background:#1e1e1e;border:1px solid #333;border-radius:6px;color:#fff;font-size:13px;outline:none"
                     />
-                    <div style="font-size:11px;color:#8e8e93;margin-top:6px">Первый опрос запоминает текущий HEAD без запуска задачи — дальше задача стартует на новом коммите, затронувшем подходящие файлы.</div>
+                    <div style="font-size:11px;color:#8e8e93;margin-top:6px">{gt("gui.gitPollHint")}</div>
                   </div>
                 </>
               )}
@@ -3870,64 +3903,64 @@ export default Plugin.define({
               {triggerType() === "mcp-event" && (
                 <>
                   <div style="display:block;width:100%;margin-bottom:12px">
-                    <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">MCP-сервер / источник</label>
+                    <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">{gt("gui.mcpSourceLabel")}</label>
                     <input
                       type="text"
                       value={mcpServer() || ""}
                       onInput={(e) => setMcpServer(e.currentTarget.value)}
-                      placeholder="например, github"
+                      placeholder={gt("gui.mcpSourcePlaceholder")}
                       style="display:block;width:100%;box-sizing:border-box;padding:8px;background:#1e1e1e;border:1px solid #333;border-radius:6px;color:#fff;font-size:13px;outline:none"
                     />
                   </div>
                   <div style="display:block;width:100%;margin-bottom:12px">
-                    <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">Имя события</label>
+                    <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">{gt("gui.mcpEventLabel")}</label>
                     <input
                       type="text"
                       value={mcpEventName() || ""}
                       onInput={(e) => setMcpEventName(e.currentTarget.value)}
-                      placeholder="например, github.pr.opened"
+                      placeholder={gt("gui.mcpEventPlaceholder")}
                       style="display:block;width:100%;box-sizing:border-box;padding:8px;background:#1e1e1e;border:1px solid #333;border-radius:6px;color:#fff;font-size:13px;outline:none"
                     />
                   </div>
                   <div style="display:block;width:100%;margin-bottom:12px">
-                    <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">Фильтр (опционально)</label>
+                    <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">{gt("gui.mcpFilterLabel")}</label>
                     <input
                       type="text"
                       value={mcpFilter() || ""}
                       onInput={(e) => setMcpFilter(e.currentTarget.value)}
-                      placeholder='например, repo="my-project" или regex'
+                      placeholder={gt("gui.mcpFilterPlaceholder")}
                       style="display:block;width:100%;box-sizing:border-box;padding:8px;background:#1e1e1e;border:1px solid #333;border-radius:6px;color:#fff;font-size:13px;outline:none"
                     />
-                    <div style="font-size:11px;color:#8e8e93;margin-top:6px">key=value сравнивается с полем payload, иначе фильтр считается regex/подстрокой. События приходят через RPC emit_event.</div>
+                    <div style="font-size:11px;color:#8e8e93;margin-top:6px">{gt("gui.mcpFilterHint")}</div>
                   </div>
                 </>
               )}
 
               {triggerType() === "once" && (
                 <div style="display:block;width:100%;margin-bottom:12px">
-                  <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">Время однократного запуска</label>
+                  <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">{gt("gui.oneShotTimeLabel")}</label>
                   <input
                     type="text"
                     value={runAt() || ""}
                     onInput={(e) => setRunAt(e.currentTarget.value)}
-                    placeholder="2026-11-14T10:00:00.000Z или локальная дата"
+                    placeholder={gt("gui.oneShotTimePlaceholder")}
                     style="display:block;width:100%;box-sizing:border-box;padding:8px;background:#1e1e1e;border:1px solid #333;border-radius:6px;color:#fff;font-size:13px;outline:none"
                   />
-                  <div style="font-size:11px;color:#8e8e93;margin:6px 0">Или задержка в секундах от нажатия кнопки «Создать задачу»:</div>
+                  <div style="font-size:11px;color:#8e8e93;margin:6px 0">{gt("gui.oneShotDelayHint")}</div>
                   <input
                     type="number"
                     min="1"
                     value={delaySeconds() || ""}
                     onInput={(e) => setDelaySeconds(e.currentTarget.value)}
-                    placeholder="например, 3600"
+                    placeholder={gt("gui.oneShotDelayPlaceholder")}
                     style="display:block;width:100%;box-sizing:border-box;padding:8px;background:#1e1e1e;border:1px solid #333;border-radius:6px;color:#fff;font-size:13px;outline:none"
                   />
-                  <div style="font-size:11px;color:#8e8e93;margin-top:6px">Приоритет у runAt: если задано время, delaySeconds игнорируется. После запуска задача больше не повторится.</div>
+                  <div style="font-size:11px;color:#8e8e93;margin-top:6px">{gt("gui.oneShotHint")}</div>
                 </div>
               )}
 
               <div style="display:block;width:100%;margin-bottom:12px">
-                <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">Сессия OpenCode</label>
+                <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">{gt("gui.sessionLabel")}</label>
                 <div style="display:flex;gap:8px;flex-wrap:wrap">
                   <label style="display:flex;align-items:center;gap:6px;cursor:pointer;flex:1">
                     <input
@@ -3937,7 +3970,7 @@ export default Plugin.define({
                       onChange={() => setSession("new")}
                       style="accent-color:#007acc"
                     />
-                    Новая
+                        {gt("gui.sessionNew")}
                   </label>
                   <label style="display:flex;align-items:center;gap:6px;cursor:pointer;flex:1">
                     <input
@@ -3947,7 +3980,7 @@ export default Plugin.define({
                       onChange={() => setSession("reuse")}
                       style="accent-color:#007acc"
                     />
-                    Переиспользовать
+                        {gt("gui.sessionReuse")}
                   </label>
                   <label style="display:flex;align-items:center;gap:6px;cursor:pointer;flex:1">
                     <input
@@ -3957,21 +3990,21 @@ export default Plugin.define({
                       onChange={() => setSession("last")}
                       style="accent-color:#007acc"
                     />
-                    Последняя (--continue)
+                    {gt("gui.sessionContinue")}
                   </label>
                 </div>
                 {session() === "reuse" && (
                   <div style="margin-top:8px">
-                    <label style="display:block;margin-bottom:6px;font-size:11px;color:#8e8e93">Сколько запусков переживает сессия (sessionMaxRuns, необязательно)</label>
+                    <label style="display:block;margin-bottom:6px;font-size:11px;color:#8e8e93">{gt("gui.sessionMaxRunsLabel")}</label>
                     <input
                       type="number"
                       min="1"
                       value={sessionMaxRuns() || ""}
                       onInput={(e) => setSessionMaxRuns(e.currentTarget.value)}
-                      placeholder="без ограничения"
+                      placeholder={gt("gui.unboundedPlaceholder")}
                       style="display:block;width:100%;box-sizing:border-box;padding:8px;background:#1e1e1e;border:1px solid #333;border-radius:6px;color:#fff;font-size:13px;outline:none"
                     />
-                    <div style="font-size:11px;color:#8e8e93;margin-top:6px">sessionId генерируется плагином автоматически. При достижении лимита сессия удаляется, следующий запуск начинает чистую сессию.</div>
+                    <div style="font-size:11px;color:#8e8e93;margin-top:6px">{gt("gui.sessionMaxRunsHint")}</div>
                   </div>
                 )}
               </div>
@@ -3983,7 +4016,7 @@ export default Plugin.define({
                   marginBottom: "12px",
                 }}
               >
-                <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">Расписание</label>
+                <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">{gt("gui.scheduleLabel")}</label>
                 <select
                   value={cronPreset()}
                   onChange={(e) => {
@@ -3993,13 +4026,13 @@ export default Plugin.define({
                   }}
                   style="display:block;width:100%;box-sizing:border-box;padding:8px;background:#1e1e1e;border:1px solid #333;border-radius:6px;color:#fff;font-size:13px;outline:none"
                 >
-                  {CRON_PRESETS.map((p) => (
+                  {cronPresets().map((p) => (
                     <option key={p.value} value={p.value}>{p.label}</option>
                   ))}
                 </select>
                 {showCustomCron && (
                   <div style="display:block;width:100%;margin-top:8px">
-                    <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">Cron-выражение</label>
+                    <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">{gt("gui.cronExprLabel")}</label>
                     <input
                       type="text"
                       value={schedule() || ""}
@@ -4013,13 +4046,13 @@ export default Plugin.define({
                   <div style="display:block;max-height:80px;overflow-y:auto;margin-top:8px;padding:8px;background:#2a1113;border:1px solid #5a1d21;border-radius:6px;font-size:11px;line-height:1.4;color:#ff6b6b;white-space:pre-wrap;word-break:break-word">{cronError()}</div>
                 )}
                 <div style="display:block;width:100%;margin-top:12px">
-                  <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">Часовой пояс (IANA)</label>
+                  <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">{gt("gui.timezoneLabel")}</label>
                   <input
                     type="text"
                     list="iana-timezones"
                     value={timezone() || ""}
                     onInput={(e) => setTimezone(e.currentTarget.value)}
-                    placeholder="Пусто — системный пояс"
+                    placeholder={gt("gui.timezonePlaceholder")}
                     style="display:block;width:100%;box-sizing:border-box;padding:8px;background:#1e1e1e;border:1px solid #333;border-radius:6px;color:#fff;font-size:13px;outline:none"
                   />
                   <datalist id="iana-timezones">
@@ -4033,17 +4066,17 @@ export default Plugin.define({
                     <option value="UTC" />
                   </datalist>
                   <div style="display:block;margin-top:6px;font-size:11px;color:#808080">
-                    Другая зона — задача будится каждую минуту, cron проверяется с учётом пояса.
+                    {gt("gui.timezoneHint")}
                   </div>
                 </div>
                 <div style="display:block;width:100%;margin-top:12px">
-                  <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">Окно запуска (необязательно)</label>
+                  <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">{gt("gui.windowLabel")}</label>
                   <div style="display:flex;gap:8px;align-items:center">
                     <input
                       type="time"
                       value={notBefore() || ""}
                       onInput={(e) => setNotBefore(e.currentTarget.value)}
-                      title="Начало окна"
+                      title={gt("gui.windowStartTitle")}
                       style="display:block;flex:1;box-sizing:border-box;padding:8px;background:#1e1e1e;border:1px solid #333;border-radius:6px;color:#fff;font-size:13px;outline:none"
                     />
                     <span style="color:#808080;font-size:12px">—</span>
@@ -4051,24 +4084,24 @@ export default Plugin.define({
                       type="time"
                       value={notAfter() || ""}
                       onInput={(e) => setNotAfter(e.currentTarget.value)}
-                      title="Конец окна (может быть меньше начала)"
+                      title={gt("gui.windowEndTitle")}
                       style="display:block;flex:1;box-sizing:border-box;padding:8px;background:#1e1e1e;border:1px solid #333;border-radius:6px;color:#fff;font-size:13px;outline:none"
                     />
                   </div>
                   <div style="display:block;margin-top:6px;font-size:11px;color:#808080">
-                    Вне окна запуск переносится на его открытие, а не пропускается. Например 22:00 — 06:00.
+                    {gt("gui.windowHint")}
                   </div>
                   <div style="display:block;margin-top:12px">
-                    <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">Дни недели (пусто — все дни)</label>
+                    <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">{gt("gui.weekdaysLabel")}</label>
                     <div style="display:flex;gap:10px;flex-wrap:wrap">
                       {[
-                        { value: 1, label: "Пн" },
-                        { value: 2, label: "Вт" },
-                        { value: 3, label: "Ср" },
-                        { value: 4, label: "Чт" },
-                        { value: 5, label: "Пт" },
-                        { value: 6, label: "Сб" },
-                        { value: 0, label: "Вс" },
+                        { value: 1, day: "gui.weekdayShort.1" },
+                        { value: 2, day: "gui.weekdayShort.2" },
+                        { value: 3, day: "gui.weekdayShort.3" },
+                        { value: 4, day: "gui.weekdayShort.4" },
+                        { value: 5, day: "gui.weekdayShort.5" },
+                        { value: 6, day: "gui.weekdayShort.6" },
+                        { value: 0, day: "gui.weekdayShort.0" },
                       ].map((day) => (
                         <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:12px;color:#d0d0d5">
                           <input
@@ -4082,48 +4115,48 @@ export default Plugin.define({
                             }}
                             style="accent-color:#007acc"
                           />
-                          {day.label}
+                          {gt(day.day)}
                         </label>
                       ))}
                     </div>
                   </div>
                   <div style="display:block;margin-top:12px">
-                    <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">Вне окна или в неразрешённый день</label>
+                    <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">{gt("gui.outsideWindowLabel")}</label>
                     <select
                       value={windowPolicy()}
                       onChange={(e) => setWindowPolicy(e.currentTarget.value as "skip" | "postpone" | "run")}
                       style="display:block;width:100%;box-sizing:border-box;padding:8px;background:#1e1e1e;border:1px solid #333;border-radius:6px;color:#fff;font-size:13px;outline:none"
                     >
-                      <option value="postpone">Перенести на открытие окна (по умолчанию)</option>
-                      <option value="skip">Пропустить запуск</option>
-                      <option value="run">Выполнить всё равно</option>
+                      <option value="postpone">{gt("gui.windowPostpone")}</option>
+                      <option value="skip">{gt("gui.windowSkip")}</option>
+                      <option value="run">{gt("gui.windowRun")}</option>
                     </select>
                     <div style="display:block;margin-top:6px;font-size:11px;color:#808080">
-                      Для cron политика применяется в обёртке, для файловых и git-триггеров — при обработке события. Перенос ждёт не дольше 12 часов.
+                      {gt("gui.windowPolicyHint")}
                     </div>
                   </div>
                 </div>
               </div>
 
               <div style="display:block;width:100%;margin-bottom:12px">
-                <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">Промпт</label>
+                <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">{gt("gui.promptLabel")}</label>
                 <textarea
                   value={prompt() || ""}
                   onInput={(e) => setPrompt(e.currentTarget.value)}
-                  placeholder="Напиши краткий отчет о состоянии рынка"
+                  placeholder={gt("gui.promptPlaceholder")}
                   rows={2}
                   style="display:block;width:100%;box-sizing:border-box;padding:8px;background:#1e1e1e;border:1px solid #333;border-radius:6px;color:#fff;font-size:13px;outline:none;resize:vertical"
                 />
               </div>
 
               <div style="display:block;width:100%;margin-bottom:12px">
-                <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">Шаблон промпта</label>
+                <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">{gt("gui.promptTemplateLabel")}</label>
                 <select
                   value={template()}
                   onChange={(e) => selectTemplate(e.currentTarget.value)}
                   style="display:block;width:100%;box-sizing:border-box;padding:8px;background:#1e1e1e;border:1px solid #333;border-radius:6px;color:#fff;font-size:13px;outline:none"
                 >
-                  {TEMPLATES.map((t) => (
+                  {promptTemplates().map((t) => (
                     <option key={t.value} value={t.value}>{t.label}</option>
                   ))}
                   {customTemplates().map((t) => (
@@ -4132,7 +4165,7 @@ export default Plugin.define({
                 </select>
                 {template().startsWith("custom:") && (
                   <div style="display:flex;align-items:center;gap:6px;margin-top:8px">
-                    <span style="font-size:10px;color:#8e8e93">Кастомный шаблон:</span>
+                    <span style="font-size:10px;color:#8e8e93">{gt("gui.customTemplate")}</span>
                     {customTemplates().map((t) => {
                       if (`custom:${t.id}` !== template()) return null;
                       return (
@@ -4146,7 +4179,7 @@ export default Plugin.define({
                         const t = customTemplates().find((x) => `custom:${x.id}` === template());
                         if (t) handleDeleteTemplate(t);
                       }}
-                      title="Удалить шаблон"
+                      title={gt("gui.deleteTemplateTitle")}
                       style="background:transparent;border:none;color:#ff3b30;cursor:pointer;font-size:14px;line-height:1;padding:0"
                       onMouseEnter={(e) => { e.currentTarget.style.color = "#c92a2a"; }}
                       onMouseLeave={(e) => { e.currentTarget.style.color = "#ff3b30"; }}
@@ -4158,13 +4191,13 @@ export default Plugin.define({
               </div>
 
               <div style="display:block;width:100%;margin-bottom:12px">
-                <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">Модель LLM</label>
+                <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">{gt("gui.modelLabel")}</label>
                 <input
                   type="text"
                   list="scheduler-model-presets"
                   value={model() || ""}
                   onInput={(e) => setModel(e.currentTarget.value)}
-                  placeholder="по умолчанию (как в OpenCode)"
+                  placeholder={gt("gui.modelPlaceholder")}
                   style="display:block;width:100%;box-sizing:border-box;padding:8px;background:#1e1e1e;border:1px solid #333;border-radius:6px;color:#fff;font-size:13px;outline:none"
                 />
                 <datalist id="scheduler-model-presets">
@@ -4174,28 +4207,28 @@ export default Plugin.define({
                   <option value="google/gemini-2.5-pro" />
                   <option value="openai/gpt-4o-mini" />
                 </datalist>
-                <div style="font-size:11px;color:#8e8e93;margin-top:6px">Пусто — модель OpenCode по умолчанию. Иначе будет передан флаг --model.</div>
+                <div style="font-size:11px;color:#8e8e93;margin-top:6px">{gt("gui.modelHint")}</div>
               </div>
 
               <div style="display:block;width:100%;margin-bottom:12px">
-                <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">Приоритет</label>
+                <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">{gt("gui.priorityLabel")}</label>
                 <select
                   value={String(priority())}
                   onChange={(e) => setPriority(Number(e.currentTarget.value) || DEFAULT_PRIORITY)}
                   style="display:block;width:100%;box-sizing:border-box;padding:8px;background:#1e1e1e;border:1px solid #333;border-radius:6px;color:#fff;font-size:13px;outline:none"
                 >
-                  {PRIORITY_OPTIONS.map((p) => (
+                  {priorityOptions().map((p) => (
                     <option key={p.value} value={String(p.value)}>{p.label}</option>
                   ))}
-                  {!PRIORITY_OPTIONS.some((p) => p.value === priority()) && (
-                    <option value={String(priority())}>Другой ({priority()})</option>
+                  {!priorityOptions().some((p) => p.value === priority()) && (
+                    <option value={String(priority())}>{gt("gui.otherPriorityOption", { priority: priority() })}</option>
                   )}
                 </select>
-                <div style="font-size:11px;color:#8e8e93;margin-top:6px">Если готовы несколько задач сразу, первой запускается задача с более высоким приоритетом.</div>
+                <div style="font-size:11px;color:#8e8e93;margin-top:6px">{gt("gui.priorityHint")}</div>
               </div>
 
               <div style="display:block;width:100%;margin-bottom:12px">
-                <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">Кол-во повторов при ошибке</label>
+                <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">{gt("gui.maxRetriesLabel")}</label>
                 <input
                   type="number"
                   min="0"
@@ -4207,7 +4240,7 @@ export default Plugin.define({
               </div>
 
               <div style="display:block;width:100%;margin-bottom:12px">
-                <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">Задержка перед повтором (сек)</label>
+                <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">{gt("gui.retryDelayLabel")}</label>
                 <input
                   type="number"
                   min="1"
@@ -4219,46 +4252,46 @@ export default Plugin.define({
               </div>
 
               <div style="display:block;width:100%;margin-bottom:12px">
-                <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">Проверочная команда (Quality Gate)</label>
+                <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">{gt("gui.qualityGateLabel")}</label>
                 <input
                   type="text"
                   value={qualityGate() || ""}
                   onInput={(e) => setQualityGate(e.currentTarget.value)}
-                  placeholder="например: npm run test"
+                  placeholder={gt("gui.qualityGatePlaceholder")}
                   style="display:block;width:100%;box-sizing:border-box;padding:8px;background:#1e1e1e;border:1px solid #333;border-radius:6px;color:#fff;font-size:13px;outline:none"
                 />
-                <div style="font-size:11px;color:#8e8e93;margin-top:6px">Выполняется после успешного ответа ИИ. Ненулевой код = ошибка задачи.</div>
+                <div style="font-size:11px;color:#8e8e93;margin-top:6px">{gt("gui.qualityGateHint")}</div>
               </div>
 
               <div style="display:block;width:100%;margin-bottom:12px">
-                <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">Команда перед запуском (Pre-flight)</label>
+                <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">{gt("gui.preflightLabel")}</label>
                 <input
                   type="text"
                   value={beforeScript() || ""}
                   onInput={(e) => setBeforeScript(e.currentTarget.value)}
-                  placeholder="например: git pull"
+                  placeholder={gt("gui.preflightPlaceholder")}
                   style="display:block;width:100%;box-sizing:border-box;padding:8px;background:#1e1e1e;border:1px solid #333;border-radius:6px;color:#fff;font-size:13px;outline:none"
                 />
-                <div style="font-size:11px;color:#8e8e93;margin-top:6px">Например: git pull или npm install. Выполняется в рабочей директории задачи. Ненулевой код отменяет запуск (Pre-flight script failed).</div>
+                <div style="font-size:11px;color:#8e8e93;margin-top:6px">{gt("gui.preflightHint")}</div>
               </div>
 
               <div style="display:block;width:100%;margin-bottom:12px">
-                <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">Команда после запуска (Post-flight)</label>
+                <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">{gt("gui.postflightLabel")}</label>
                 <input
                   type="text"
                   value={afterScript() || ""}
                   onInput={(e) => setAfterScript(e.currentTarget.value)}
-                  placeholder="например: git push"
+                  placeholder={gt("gui.postflightPlaceholder")}
                   style="display:block;width:100%;box-sizing:border-box;padding:8px;background:#1e1e1e;border:1px solid #333;border-radius:6px;color:#fff;font-size:13px;outline:none"
                 />
-                <div style="font-size:11px;color:#8e8e93;margin-top:6px">Например: git push или npm run build. Выполняется в рабочей директории задачи даже при ошибке основной задачи.</div>
+                <div style="font-size:11px;color:#8e8e93;margin-top:6px">{gt("gui.postflightHint")}</div>
               </div>
 
               <div style="display:block;width:100%;margin-bottom:12px">
-                <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">Зависит от задач (успешное завершение)</label>
+                <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">{gt("gui.dependsOnLabel")}</label>
                 <div style="display:flex;flex-wrap:wrap;gap:6px;padding:8px;background:#1e1e1e;border:1px solid #333;border-radius:6px;min-height:38px;box-sizing:border-box">
                   {dependencyCandidates().length === 0 ? (
-                    <span style="font-size:12px;color:#8e8e93">Других задач пока нет</span>
+                    <span style="font-size:12px;color:#8e8e93">{gt("gui.noOtherTasks")}</span>
                   ) : (
                     dependencyCandidates().map((candidate) => (
                       <label style={`display:flex;align-items:center;gap:6px;padding:6px 10px;border-radius:14px;border:1px solid ${dependsOn().includes(candidate) ? "#5ac8fa" : "#333"};background:${dependsOn().includes(candidate) ? "rgba(90,200,250,0.12)" : "transparent"};color:${dependsOn().includes(candidate) ? "#5ac8fa" : "#cfcfd2"};font-size:12px;cursor:pointer;user-select:none`}>
@@ -4273,13 +4306,13 @@ export default Plugin.define({
                     ))
                   )}
                 </div>
-                <div style="font-size:11px;color:#8e8e93;margin-top:6px">Задача запустится автоматически, когда все отмеченные задачи завершатся успешно.</div>
+                <div style="font-size:11px;color:#8e8e93;margin-top:6px">{gt("gui.dependsOnHint")}</div>
               </div>
 
               {/* Role-scoped tools (Спринт 14): metadata-only, denied имеет приоритет */}
               <details style="display:block;width:100%;margin-bottom:12px">
                 <summary style="cursor:pointer;font-size:12px;color:#b0b0b0;font-weight:500;margin-bottom:8px;user-select:none">
-                  🔒 Ограничения инструментов
+                  {gt("gui.toolLimitsHeading")}
                   {(allowedTools().length > 0 || deniedTools().length > 0) && (
                     <span style="color:#5ac8fa;font-size:11px;margin-left:6px">
                       ({allowedTools().length} allowed · {deniedTools().length} denied)
@@ -4288,10 +4321,10 @@ export default Plugin.define({
                 </summary>
                 <div style="display:block;width:100%;padding:10px;background:#1e1e1e;border:1px solid #333;border-radius:6px;box-sizing:border-box">
                   <div style="font-size:11px;color:#8e8e93;margin-bottom:8px">
-                    ⚠ Metadata-only: opencode 2.2.3 не поддерживает allow/deny флаги — ограничения фиксируются в логе и истории.
-                    При конфликте приоритет у <b>denied</b>. Пустой allowedTools запрещён.
+                    {gt("gui.toolLimitsNote")}
+                    {gt("gui.toolLimitsDenied")}
                   </div>
-                  <div style="font-size:11px;color:#b0b0b0;margin-bottom:4px">Белый список (allowedTools)</div>
+                  <div style="font-size:11px;color:#b0b0b0;margin-bottom:4px">{gt("gui.allowedToolsLabel")}</div>
                   <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">
                     {POPULAR_TOOLS.map((tool) => (
                       <label style={`display:flex;align-items:center;gap:5px;padding:4px 9px;border-radius:12px;border:1px solid ${allowedTools().includes(tool) ? "#34c759" : "#333"};background:${allowedTools().includes(tool) ? "rgba(52,199,89,0.12)" : "transparent"};color:${allowedTools().includes(tool) ? "#34c759" : "#cfcfd2"};font-size:11px;cursor:pointer;user-select:none`}>
@@ -4305,7 +4338,7 @@ export default Plugin.define({
                       </label>
                     ))}
                   </div>
-                  <div style="font-size:11px;color:#b0b0b0;margin-bottom:4px">Чёрный список (deniedTools)</div>
+                  <div style="font-size:11px;color:#b0b0b0;margin-bottom:4px">{gt("gui.deniedToolsLabel")}</div>
                   <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">
                     {POPULAR_TOOLS.map((tool) => (
                       <label style={`display:flex;align-items:center;gap:5px;padding:4px 9px;border-radius:12px;border:1px solid ${deniedTools().includes(tool) ? "#ff3b30" : "#333"};background:${deniedTools().includes(tool) ? "rgba(255,59,48,0.12)" : "transparent"};color:${deniedTools().includes(tool) ? "#ff3b30" : "#cfcfd2"};font-size:11px;cursor:pointer;user-select:none`}>
@@ -4324,7 +4357,7 @@ export default Plugin.define({
                       type="text"
                       value={customTool()}
                       onInput={(e) => setCustomTool(e.currentTarget.value)}
-                      placeholder="свой инструмент, например websearch"
+                      placeholder={gt("gui.toolPlaceholder")}
                       style="flex:1;padding:6px 8px;background:#141414;border:1px solid #333;border-radius:6px;color:#fff;font-size:12px;outline:none"
                     />
                     <button onClick={() => addCustomTool("allowed")} style="padding:6px 10px;background:transparent;border:1px solid #34c759;color:#34c759;border-radius:6px;cursor:pointer;font-size:12px">+ allowed</button>
@@ -4342,7 +4375,7 @@ export default Plugin.define({
               <div style="display:block;width:100%;margin-top:8px">
                 <button
                   onClick={() => {
-                    setDryRunName("(форма)")
+                    setDryRunName(DRYRUN_FORM_MARKER)
                     const baseTask = {
                       order: 0,
                       trigger: "manual",
@@ -4363,7 +4396,7 @@ export default Plugin.define({
                         name: matrixClonePreviewName(name(), w.name),
                         order: index,
                         cwd: w.path,
-                        matrixParent: name() || "(без имени)",
+                        matrixParent: name() || gt("gui.noNameFallback"),
                       }))
                     setDryRunReport({
                       tasks: matrixMode()
@@ -4371,29 +4404,29 @@ export default Plugin.define({
                         : [
                             {
                               ...baseTask,
-                              name: name() || "(без имени)",
+                              name: name() || gt("gui.noNameFallback"),
                               cwd:
                                 selectedWorkspace()?.path ||
                                 (workingDirectory() || "").trim() ||
-                                "(папка проекта)",
+                                gt("gui.projectFolderFallback"),
                             },
                           ],
                       totals: {},
                       warnings: [
-                        ...(!name().trim() ? ["Не указано имя — превью локальное (форма не сохранена)."] : []),
+                        ...(!name().trim() ? [gt("gui.dryRunNoNameWarning")] : []),
                         ...(matrixMode()
                           ? [
-                              `Matrix: будет создано ${matrixTasks.length} клон(а/ов) по workspace; родитель сам не выполняется.`,
+                              gt("gui.dryRunMatrixPreview", { count: matrixTasks.length }),
                             ]
                           : []),
                       ],
                     })
                     setDryRunOpen(true)
                   }}
-                  title="Локальное превью команды по текущим полям формы (без RPC и без запуска)"
+                  title={gt("gui.dryRunPreviewTitle")}
                   style="display:block;width:100%;padding:8px;margin-top:4px;background:transparent;border:1px solid #333;border-radius:6px;color:#d4e6ff;cursor:pointer;font-size:12px"
                 >
-                  🧪 Превью
+                  {gt("gui.dryRunButton")}
                 </button>
                 <button
                   onClick={handleCreate}
@@ -4401,22 +4434,22 @@ export default Plugin.define({
                   title={!canSubmit() ? validationError() : undefined}
                   style={`display:block;width:100%;padding:10px;margin-top:8px;background:${busy() ? "#666" : "#007acc"};color:white;border-radius:6px;border:none;cursor:${busy() || !canSubmit() ? "not-allowed" : "pointer"};font-size:13px;font-weight:500;opacity:${busy() || !canSubmit() ? 0.6 : 1}`}
                 >
-                  {busy() ? "Создание..." : isEditing ? "Сохранить" : "Создать задачу"}
+                  {busy() ? gt("gui.creating") : isEditing ? gt("gui.save") : gt("gui.createTaskSubmit")}
                 </button>
                 {isEditing && (
                   <button
                     onClick={() => { setEditingJob(null); setName(""); setSchedule("* * * * *"); setPrompt(""); setModel(""); setPriority(DEFAULT_PRIORITY); setRetryCount(0); setRetryDelay(60); setQualityGate(""); setDependsOn([]); setBeforeScript(""); setAfterScript(""); setTriggerType("cron"); setWatchPath(""); setRunAt(""); setDelaySeconds(""); setSession("new"); setSessionMaxRuns(""); setTimezone(""); setNotBefore(""); setNotAfter(""); setMcpServer(""); setMcpEventName(""); setMcpFilter(""); setWorkingDirectory(""); setWorkspaceId(""); setAllowedTools([]); setDeniedTools([]); resetMatrixForm(); setCronPreset("* * * * *"); setCronError("") }}
                     style="background:transparent;border:1px solid #333;border-radius:6px;padding:8px 16px;color:#ff3b30;cursor:pointer;font-size:13px;width:100%"
                   >
-                    Отмена
-                  </button>
+                      {gt("gui.cancel")}
+                    </button>
                 )}
               </div>
 
-              {dryRunOpen() && dryRunName() === "(форма)" && (
+              {dryRunOpen() && dryRunName() === DRYRUN_FORM_MARKER && (
                 <div style="display:block;width:100%;margin-top:8px;padding:10px;background:#1e1e1e;border:1px solid #333;border-radius:6px">
                   <div style="font-size:12px;font-weight:600;color:#ffffff;display:flex;justify-content:space-between;align-items:center">
-                    🧪 Превью (локальное, по полям формы)
+                    {gt("gui.dryRunLocalTitle")}
                     <button onClick={() => closeDryRun()} style="background:none;border:none;color:#8e8e93;cursor:pointer;font-size:14px;padding:0">✕</button>
                   </div>
                   {(() => {
@@ -4448,10 +4481,10 @@ export default Plugin.define({
 
             {/* Список задач */}
             <div style="display:block;width:100%;margin-top:24px">
-              <h3 style="margin:0;margin-bottom:8px;font-size:14px;font-weight:600;color:#ffffff">Задачи</h3>
+              <h3 style="margin:0;margin-bottom:8px;font-size:14px;font-weight:600;color:#ffffff">{gt("gui.tasksHeading")}</h3>
               {workspaceFilter() !== "all" && (
                 <div style="font-size:11px;color:#8e8e93;margin-bottom:8px">
-                  Фильтр: {workspaceFilter() === "none" ? "без workspace" : `📦 ${workspaces().find((w) => w.id === workspaceFilter())?.name ?? "workspace"}`} · показано {visibleJobs().length} из {jobsArr().length}
+                  {gt("gui.filterSummary", { scope: workspaceFilter() === "none" ? gt("gui.workspaceNone") : `📦 ${workspaces().find((w) => w.id === workspaceFilter())?.name ?? "workspace"}`, visible: visibleJobs().length, total: jobsArr().length })}
                 </div>
               )}
               {visibleJobs().length === 0 ?
@@ -4459,8 +4492,8 @@ export default Plugin.define({
                   <span style="font-size:40px;line-height:1">{winterMode() ? "🎄" : "📅"}</span>
                   <span style="max-width:380px;line-height:1.5">
                     {winterMode()
-                      ? "Задач пока нет. Самое время украсить ёлку!"
-                      : "Нет активных задач. Создайте первую и доверьте рутину ИИ!"}
+                      ? gt("gui.emptyWinter")
+                      : gt("gui.emptyNormal")}
                   </span>
                 </div>
               :
@@ -4518,17 +4551,17 @@ export default Plugin.define({
                       onClick={() => answerPrompt(null)}
                       style="padding:6px 14px;border-radius:6px;border:1px solid #3a3a3a;background:#262626;color:#e0e0e0;font-size:12px;cursor:pointer"
                     >
-                      Отмена
+                      {gt("gui.cancel")}
                     </button>
                     <button
                       onClick={() => answerPrompt(promptValue())}
                       style="padding:6px 14px;border-radius:6px;border:1px solid #0a84ff;background:#0a84ff;color:#fff;font-size:12px;font-weight:600;cursor:pointer"
                     >
-                      ОК
+                      {gt("gui.ok")}
                     </button>
                   </div>
                   {promptTitle().includes("KEY=VALUE") && (
-                    <div style="font-size:11px;color:#8e8e93">Ctrl+Enter — сохранить, Escape — отмена</div>
+                    <div style="font-size:11px;color:#8e8e93">{gt("gui.modalShortcutHint")}</div>
                   )}
                 </div>
               </div>
@@ -4539,7 +4572,7 @@ export default Plugin.define({
               <div style="position:fixed;bottom:16px;left:16px;right:16px;background:#1e1e1e;border:1px solid #333;border-radius:8px;padding:0;max-height:300px;overflow:hidden;display:flex;flex-direction:column;z-index:1000">
                 <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid #333;background:#252526;border-radius:8px 8px 0 0">
                   <div style="display:flex;align-items:center;gap:8px">
-                    <span style="font-size:13px;font-weight:600;color:#ffffff">Логи</span>
+                    <span style="font-size:13px;font-weight:600;color:#ffffff">{gt("gui.logsHeading")}</span>
                     <span style="font-size:11px;color:#8e8e93">{logsTask()}</span>
                   </div>
                   <button
@@ -4568,18 +4601,18 @@ export default Plugin.define({
       return ctx.add(Panel, {
         id: "scheduler-jobs",
         region: "side",
-        list: () => [{ id: "jobs", title: "Планировщик", pinned: true }],
+        list: () => [{ id: "jobs", title: gt("gui.jobsTitle"), pinned: true }],
         render: () => (
           <ErrorBoundary fallback={(err: any) => (
             <div style="padding:16px;color:#ff3b30;font-size:13px">
-              Ошибка UI: {err.message}
+              {gt("gui.uiError", { message: err.message })}
             </div>
           )}>
             <div style="padding:16px;display:flex;flex-direction:column;gap:16px;font-size:13px;font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;color:#e0e0e0;background:#0f0f0f">
             <h2 style="margin:0;font-size:22px;font-weight:800;color:#ffffff">{schedulerTitle()}</h2>
             <div style="margin-top:5px;font-size:11px;font-weight:600;letter-spacing:1.2px;text-transform:uppercase;color:#8e8e93">Local AI CI/CD Orchestrator</div>
             <div style="background:#2a1a1a;border:1px solid #ff3b30;border-radius:8px;padding:16px;color:#ff3b30">
-              Произошла ошибка отображения. Попробуйте перезагрузить панель.
+              {gt("gui.errorBoundaryDetail")}
             </div>
             </div>
           </ErrorBoundary>
