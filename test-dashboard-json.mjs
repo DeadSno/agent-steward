@@ -22,6 +22,7 @@ const {
 } = await import("./dist/server.js");
 const { insertHistory } = await import("./dist/db/history-repo.js");
 const { incrementMetrics } = await import("./dist/db/metrics-repo.js");
+const { t } = await import("./dist/i18n.js");
 
 // Сид истории для проверки фильтров /api/history. Записи идут от старых к
 // новым, сервер сортирует их сам по started_at DESC.
@@ -188,13 +189,13 @@ assert(wrongSummaryMethod.status === 405, "POST /api/summary -> 405");
 
 const nfApi = await readJsonResponse(await fetch(base + "/api/unknown"));
 assert(nfApi.status === 404 && nfApi.contentType.includes("application/json"), "неизвестный /api/* -> 404 JSON");
-assert(nfApi.body.error === "Not found", "неизвестный /api/* -> { error: 'Not found' }");
+assert(nfApi.body.error === t("server.notFound"), "неизвестный /api/* -> текст из каталога локалей");
 
 const nfPage = await readJsonResponse(await fetch(base + "/no-such-page"));
-assert(nfPage.status === 404 && nfPage.body.error === "Not found", "неизвестная страница -> JSON 404, а не HTML/PNG");
+assert(nfPage.status === 404 && nfPage.body.error === t("server.notFound"), "неизвестная страница -> JSON 404, а не HTML/PNG");
 
 const wrongMethod = await readJsonResponse(await fetch(base + "/api/tasks", { method: "POST" }));
-assert(wrongMethod.status === 405 && wrongMethod.body.error === "Method not allowed", "POST на GET-маршрут -> 405 JSON");
+assert(wrongMethod.status === 405 && wrongMethod.body.error === t("server.methodNotAllowed"), "POST на GET-маршрут -> 405 JSON");
 
 const wrongRunMethod = await readJsonResponse(await fetch(base + "/api/run/json-task"));
 assert(wrongRunMethod.status === 405 && wrongRunMethod.contentType.includes("application/json"), "GET на POST-маршрут -> 405 JSON");

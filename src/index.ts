@@ -39,6 +39,7 @@ import {
 import { SchedulerRpc } from "./rpc.js";
 import { latestHistoryByTask, loadHistory, loadMetrics } from "./history.js";
 import { loadSettings, saveSettings } from "./settings.js";
+import { setLocale, type Locale } from "./i18n.js";
 import type {
   AuditSettings,
   HistorySettings,
@@ -770,6 +771,12 @@ export const manageSettingsSchema = z.object({
     .max(16)
     .optional()
     .describe("How many task runs may execute at the same time."),
+  locale: z
+    .enum(["ru", "en"])
+    .optional()
+    .describe(
+      "Interface language: ru (default) or en. Applies without restart."
+    ),
   winterMode: z
     .boolean()
     .optional()
@@ -2137,6 +2144,7 @@ const manageSettingsExecute = wrapExecute<SettingsArgs>(async (args) => {
 
   if (
     args.maxConcurrent === undefined &&
+    args.locale === undefined &&
     args.winterMode === undefined &&
     args.notifications === undefined &&
     args.history === undefined &&
@@ -2147,7 +2155,7 @@ const manageSettingsExecute = wrapExecute<SettingsArgs>(async (args) => {
       content: JSON.stringify({
         success: false,
         error:
-          "Для action=update передайте хотя бы одно поле: maxConcurrent, winterMode, notifications, history, integrations или audit.",
+          "Для action=update передайте хотя бы одно поле: maxConcurrent, locale, winterMode, notifications, history, integrations или audit.",
         settings: current,
       }),
     };
@@ -2155,12 +2163,15 @@ const manageSettingsExecute = wrapExecute<SettingsArgs>(async (args) => {
 
   const settings = await saveSettings({
     maxConcurrent: args.maxConcurrent,
+    locale: args.locale,
     winterMode: args.winterMode,
     notifications: args.notifications as NotificationSettings | undefined,
     history: args.history as HistorySettings | undefined,
     integrations: args.integrations as IntegrationSettings | undefined,
     audit: args.audit as AuditSettings | undefined,
   });
+  // Локаль процесса меняется сразу — перезапуск плагина не нужен.
+  setLocale(settings.locale);
   return { content: JSON.stringify({ success: true, settings }) };
 });
 
@@ -2725,6 +2736,14 @@ export default Plugin.define({
     // Папка проекта — рабочая директория задач по умолчанию. Благодаря ей
     // `opencode run` подхватывает opencode.json с MCP-серверами проекта.
     projectDirectory = ctx.location?.directory || process.cwd();
+
+    // Спринт 28: язык интерфейса берём из настроек. Ошибка чтения не должна
+    // мешать старту — в этом случае остаётся локаль по умолчанию (ru).
+    try {
+      setLocale((await loadSettings()).locale);
+    } catch {
+      // Локаль по умолчанию уже активна.
+    }
 
     // Спринт 12: SQLite — основное хранилище. Открываем БД, при первом запуске
     // автоматически переносим данные из JSON, затем восстанавливаем прерванные
@@ -3870,8 +3889,9 @@ export default Plugin.define({
         return await loadSettings();
       },
       save_settings: async (input: unknown) => {
-        const { maxConcurrent, winterMode, notifications, history, integrations, audit } = input as {
+        const { maxConcurrent, locale, winterMode, notifications, history, integrations, audit } = input as {
           maxConcurrent?: number;
+          locale?: Locale;
           winterMode?: boolean;
           notifications?: NotificationSettings;
           history?: HistorySettings;
@@ -3881,6 +3901,7 @@ export default Plugin.define({
         const current = await loadSettings();
         if (
           maxConcurrent === undefined &&
+          locale === undefined &&
           winterMode === undefined &&
           notifications === undefined &&
           history === undefined &&
@@ -3890,6 +3911,7 @@ export default Plugin.define({
           return {
             success: false,
             maxConcurrent: current.maxConcurrent,
+            locale: current.locale,
             winterMode: current.winterMode,
             notifications: current.notifications,
             history: current.history,
@@ -3899,15 +3921,19 @@ export default Plugin.define({
         }
         const settings = await saveSettings({
           maxConcurrent,
+          locale,
           winterMode,
           notifications,
           history,
           integrations,
           audit,
         });
+        // Локаль процесса меняется сразу — перезапуск не нужен.
+        setLocale(settings.locale);
         return {
           success: true,
           maxConcurrent: settings.maxConcurrent,
+          locale: settings.locale,
           winterMode: settings.winterMode,
           notifications: settings.notifications,
           history: settings.history,

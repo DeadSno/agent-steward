@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { PLUGIN_DIR } from "./types.js";
+import { DEFAULT_LOCALE, normalizeLocale, type Locale } from "./i18n.js";
 
 /** Настройки webhook-уведомлений (Discord/Slack/generic). */
 export interface WebhookNotificationSettings {
@@ -195,6 +196,8 @@ export interface AuditSettings {
 export interface SchedulerSettings {
   /** Максимум одновременно выполняющихся задач. 0 — без ограничения. */
   maxConcurrent: number;
+  /** Язык интерфейса (Спринт 28): ru по умолчанию, en — опционально. */
+  locale: Locale;
   /** Зимняя тема оформления GUI (снежинки, морозные рамки, градиент). */
   winterMode: boolean;
   /** Уведомления о завершении задач. */
@@ -689,6 +692,7 @@ export async function loadSettings(): Promise<SchedulerSettings> {
         parsed?.maxConcurrent,
         DEFAULT_MAX_CONCURRENT
       ),
+      locale: normalizeLocale(parsed?.locale, DEFAULT_LOCALE),
       winterMode: normalizeWinterMode(
         parsed?.winterMode,
         DEFAULT_WINTER_MODE
@@ -707,6 +711,7 @@ export async function loadSettings(): Promise<SchedulerSettings> {
   } catch {
     return {
       maxConcurrent: DEFAULT_MAX_CONCURRENT,
+      locale: DEFAULT_LOCALE,
       winterMode: DEFAULT_WINTER_MODE,
       notifications: fallbackNotifications,
       history: fallbackHistory,
@@ -726,6 +731,10 @@ export async function saveSettings(
       patch.maxConcurrent !== undefined
         ? normalizeMaxConcurrent(patch.maxConcurrent, current.maxConcurrent)
         : current.maxConcurrent,
+    locale:
+      patch.locale !== undefined
+        ? normalizeLocale(patch.locale, current.locale)
+        : current.locale,
     winterMode:
       patch.winterMode !== undefined
         ? normalizeWinterMode(patch.winterMode, current.winterMode)

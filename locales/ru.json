@@ -1,0 +1,9 @@
+{
+  "app.dashboardTitle": "Веб-дашборд",
+  "server.methodNotAllowed": "Метод не поддерживается.",
+  "server.notFound": "Страница не найдена.",
+  "server.matrixNotFound": "Матрица \"{parentId}\" не найдена.",
+  "server.taskNotFound": "Задача \"{task}\" не найдена.",
+  "server.hookTaskMissing": "Задача \"{task}\" не найдена — хук отклонён.",
+  "common.runsCount": "запусков: {count, plural, one {# запуск} few {# запуска} many {# запусков} other {# запуска}}"
+}

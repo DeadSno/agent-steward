@@ -574,18 +574,21 @@ const GetSettingsOutput = {
   type: "object" as const,
   properties: {
     maxConcurrent: { type: "number" },
+    locale: { type: "string", enum: ["ru", "en"] },
     winterMode: { type: "boolean" },
     notifications: NotificationSettingsSchema,
     history: HistorySettingsSchema,
     audit: AuditSettingsSchema,
   },
-  required: ["maxConcurrent", "winterMode", "notifications"],
+  required: ["maxConcurrent", "locale", "winterMode", "notifications"],
 } as const;
 
 const SaveSettingsInput = {
   type: "object" as const,
   properties: {
     maxConcurrent: { type: "number" },
+    /** Язык интерфейса (Спринт 28): ru по умолчанию, en — опционально. */
+    locale: { type: "string", enum: ["ru", "en"] },
     winterMode: { type: "boolean" },
     notifications: NotificationSettingsSchema,
     history: HistorySettingsSchema,
@@ -599,12 +602,13 @@ const SaveSettingsOutput = {
   properties: {
     success: { type: "boolean" },
     maxConcurrent: { type: "number" },
+    locale: { type: "string", enum: ["ru", "en"] },
     winterMode: { type: "boolean" },
     notifications: NotificationSettingsSchema,
     history: HistorySettingsSchema,
     audit: AuditSettingsSchema,
   },
-  required: ["success", "maxConcurrent", "winterMode", "notifications"],
+  required: ["success", "maxConcurrent", "locale", "winterMode", "notifications"],
 } as const;
 
 const CleanupHistoryInput = {

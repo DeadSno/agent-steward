@@ -22,6 +22,7 @@ import { appendStructuredLog, readStructuredLogs } from "./core/structured-log.j
 import { PROMETHEUS_CONTENT_TYPE, renderPrometheusMetrics } from "./core/prometheus.js";
 import { buildOtlpExport } from "./core/otel.js";
 import { readAuditLog, recordAudit } from "./core/audit.js";
+import { getLocale, t } from "./i18n.js";
 
 /**
  * Локальный веб-дашборд (Спринт 5).
@@ -629,14 +630,14 @@ async function handleRequest(
       /^\/api\/dry-run\//.test(pathname) ||
       /^\/api\/matrix\//.test(pathname);
     if (knownGet && req.method !== "GET") {
-      sendJson(res, 405, { error: "Method not allowed" });
+      sendJson(res, 405, { error: t("server.methodNotAllowed") });
       return;
     }
     const knownPost =
       /^\/api\/(run|delete|hooks|cancel-matrix)\//.test(pathname) ||
       pathname === "/api/matrix-cleanup";
     if (knownPost && req.method !== "POST") {
-      sendJson(res, 405, { error: "Method not allowed" });
+      sendJson(res, 405, { error: t("server.methodNotAllowed") });
       return;
     }
 
@@ -737,7 +738,7 @@ async function handleRequest(
       const key = parentId.toLowerCase();
       const parent = tasks.find((t) => String(t.name).toLowerCase() === key);
       if (!parent) {
-        sendJson(res, 404, { error: `Матрица "${parentId}" не найдена.` });
+        sendJson(res, 404, { error: t("server.matrixNotFound", { parentId }) });
         return;
       }
       const clones = tasks
@@ -1034,8 +1035,11 @@ async function handleRequest(
       const key = taskName.toLowerCase();
       const task = tasks.find((item) => String(item.name).toLowerCase() === key);
       if (!task) {
-        logHook(404, "rejected", `Задача "${taskName}" не найдена.`, bodyResult.body.length);
-        sendJson(res, 404, { success: false, error: `Задача "${taskName}" не найдена.` });
+        logHook(404, "rejected", t("server.hookTaskMissing", { task: taskName }), bodyResult.body.length);
+        sendJson(res, 404, {
+          success: false,
+          error: t("server.taskNotFound", { task: taskName }),
+        });
         return;
       }
 
@@ -1204,7 +1208,7 @@ async function handleRequest(
 
     // Любой неизвестный путь — строго JSON, чтобы клиент не пытался
     // разобрать HTML/картинку как JSON.
-    sendJson(res, 404, { error: "Not found" });
+    sendJson(res, 404, { error: t("server.notFound") });
   } catch (err: any) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[windows-scheduler] Ошибка обработки запроса ${req.url}: ${message}`);
@@ -1321,11 +1325,11 @@ async function collectTasksWithMetrics(deps: DashboardDeps) {
  */
 function renderPage(): string {
   return `<!DOCTYPE html>
-<html lang="ru">
+<html lang="${getLocale()}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${getSchedulerTitle()} — Веб-дашборд</title>
+<title>${getSchedulerTitle()} — ${t("app.dashboardTitle")}</title>
 <style>
   :root {
     color-scheme: dark;

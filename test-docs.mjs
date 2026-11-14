@@ -49,7 +49,33 @@ check("MIGRATION: нет упоминаний конкурентов", !/differe
 // Все три файла в npm-пакете.
 const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
 check("package.json: files включает docs", Array.isArray(pkg.files) && pkg.files.includes("docs"));
+check("package.json: files включает locales", Array.isArray(pkg.files) && pkg.files.includes("locales"));
 check("package.json: test включает test-docs.mjs", typeof pkg.scripts.test === "string" && pkg.scripts.test.includes("test-docs.mjs"));
+check("package.json: test включает test-i18n.mjs", typeof pkg.scripts.test === "string" && pkg.scripts.test.includes("test-i18n.mjs"));
+
+// Спринт 28: каталоги локалей обязаны совпадать по набору ключей.
+// Рассинхронизация — падение CI (см. ROADMAP, спринт 28).
+const localesDir = path.join(root, "locales");
+const readCatalog = (locale) => {
+  const p = path.join(localesDir, `${locale}.json`);
+  check(`locales/${locale}.json существует`, fs.existsSync(p));
+  if (!fs.existsSync(p)) return {};
+  return JSON.parse(fs.readFileSync(p, "utf8"));
+};
+const ruCatalog = readCatalog("ru");
+const enCatalog = readCatalog("en");
+const ruKeys = Object.keys(ruCatalog).sort();
+const enKeys = Object.keys(enCatalog).sort();
+const onlyRu = ruKeys.filter((k) => !(k in enCatalog));
+const onlyEn = enKeys.filter((k) => !(k in ruCatalog));
+check(`locales: нет ключей только в ru (${onlyRu.join(", ") || "нет"})`, onlyRu.length === 0);
+check(`locales: нет ключей только в en (${onlyEn.join(", ") || "нет"})`, onlyEn.length === 0);
+check("locales: набор ключей не пуст", ruKeys.length > 0);
+check(
+  "locales: значения не пустые",
+  ruKeys.every((k) => typeof ruCatalog[k] === "string" && ruCatalog[k].length > 0) &&
+    enKeys.every((k) => typeof enCatalog[k] === "string" && enCatalog[k].length > 0)
+);
 
 const failed = results.filter((r) => !r.ok);
 console.log(`\nDocs: ${results.length - failed.length}/${results.length} проверок пройдено.`);

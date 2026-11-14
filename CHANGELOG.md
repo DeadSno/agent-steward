@@ -4,6 +4,13 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ## [Unreleased]
 
+### Added
+
+- **i18n-фундамент (Спринт 28):** каталоги строк `locales/ru.json` и `locales/en.json` с плоскими ключами, загрузчик `src/i18n.ts` с fallback `en → ru → ключ` и ICU-подмножеством (`{param}`, `{count, plural, …}`) на встроенном `Intl` — без внешних зависимостей.
+- **Язык интерфейса:** настройка `locale` (`ru` по умолчанию, `en` опционально) в `settings.json`, RPC `save_settings`/`get_settings` и инструменте `manage_settings`. Переключение применяется сразу, без перезапуска плагина.
+- **Перевод сервера дашборда:** 404/405-ответы, отсутствующая матрица/задача, отклонённый webhook и заголовок HTML-страницы берутся из каталогов; `<html lang>` соответствует активной локали.
+- **Тесты:** `test-i18n.mjs` (43 проверки) и проверка паритета ключей локалей в `test-docs.mjs` — рассинхронизация каталогов валит CI.
+
 ## [1.5.0] - 2026-11-14
 
 ### Added

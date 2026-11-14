@@ -1,0 +1,9 @@
+{
+  "app.dashboardTitle": "Web dashboard",
+  "server.methodNotAllowed": "Method not allowed.",
+  "server.notFound": "Page not found.",
+  "server.matrixNotFound": "Matrix \"{parentId}\" not found.",
+  "server.taskNotFound": "Task \"{task}\" not found.",
+  "server.hookTaskMissing": "Task \"{task}\" not found - hook rejected.",
+  "common.runsCount": "runs: {count, plural, one {# run} other {# runs}}"
+}
