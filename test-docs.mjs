@@ -53,6 +53,26 @@ check("package.json: files включает locales", Array.isArray(pkg.files) &
 check("package.json: test включает test-docs.mjs", typeof pkg.scripts.test === "string" && pkg.scripts.test.includes("test-docs.mjs"));
 check("package.json: test включает test-i18n.mjs", typeof pkg.scripts.test === "string" && pkg.scripts.test.includes("test-i18n.mjs"));
 
+// Спринт 28, задача 28.6: заглушка резервного имени npm.
+const placeholderDir = path.join(root, "packages", "opencode-pipeline");
+const placeholderPkgPath = path.join(placeholderDir, "package.json");
+check("packages/opencode-pipeline/package.json существует", fs.existsSync(placeholderPkgPath));
+const placeholderPkg = fs.existsSync(placeholderPkgPath)
+  ? JSON.parse(fs.readFileSync(placeholderPkgPath, "utf8"))
+  : {};
+check("заглушка: имя opencode-pipeline", placeholderPkg.name === "opencode-pipeline");
+check("заглушка: версия 0.0.x", /^0\.0\.\d+$/.test(String(placeholderPkg.version)));
+const placeholderReadme = path.join(placeholderDir, "README.md");
+check(
+  "заглушка: README ссылается на основной пакет",
+  fs.existsSync(placeholderReadme) &&
+    fs.readFileSync(placeholderReadme, "utf8").includes("npmjs.com/package/opencode-windows-scheduler")
+);
+check(
+  "заглушка: workflow публикации существует",
+  fs.existsSync(path.join(root, ".github", "workflows", "publish-placeholder.yml"))
+);
+
 // Спринт 28: каталоги локалей обязаны совпадать по набору ключей.
 // Рассинхронизация — падение CI (см. ROADMAP, спринт 28).
 const localesDir = path.join(root, "locales");
