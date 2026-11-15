@@ -12,6 +12,7 @@
  * Никакого I/O и обращения к ОС.
  */
 import { convertCronToSchTasks } from "./cron-to-schtasks.js";
+import { t } from "../i18n.js";
 import type { CronConversion } from "../types.js";
 
 /** Ограничение на поиск ближайшего запуска. */
@@ -139,7 +140,8 @@ function expandField(token: string, min: number, max: number, names?: Record<str
   const items = token.split(",");
   for (const raw of items) {
     let item = raw.trim().toUpperCase();
-    if (!item) throw new Error(`Пустой элемент в списке «${token}».`);
+    if (!item)
+      throw new Error(t("schedule.error.cronEmptyItem", { token }));
     if (names && names[item] !== undefined) item = String(names[item]);
     // шаг: a-b/n или */n
     const stepMatch = item.match(/^(.*)\/([0-9]+)$/);
@@ -148,9 +150,15 @@ function expandField(token: string, min: number, max: number, names?: Record<str
       item = (stepMatch[1] ?? "").trim();
       step = Number(stepMatch[2]);
       if (!Number.isInteger(step) || step < 1) {
-        throw new Error(`Недопустимый шаг «/${stepMatch[2]}» в «${raw}».`);
+        throw new Error(
+          t("schedule.error.cronStepInvalid", {
+            step: stepMatch[2],
+            raw,
+          })
+        );
       }
-      if (item === "") throw new Error(`Некорректный шаг в «${raw}»: перед «/» ничего нет.`);
+      if (item === "")
+        throw new Error(t("schedule.error.cronStepMissing", { raw }));
     }
     if (item === "*" || item === "") {
       for (let v = min; v <= max; v += step) result.add(v);
@@ -165,17 +173,21 @@ function expandField(token: string, min: number, max: number, names?: Record<str
       const a = Number(aToken);
       const b = Number(bToken);
       if (!Number.isFinite(a) || !Number.isFinite(b)) {
-        throw new Error(`Недопустимый диапазон «${item}».`);
+        throw new Error(t("schedule.error.cronRangeInvalid", { item }));
       }
       if (a < min || b > max || a > b) {
-        throw new Error(`Диапазон «${item}» вне границ ${min}..${max}.`);
+        throw new Error(
+          t("schedule.error.cronRangeBounds", { item, min, max })
+        );
       }
       for (let v = a; v <= b; v += step) result.add(v);
       continue;
     }
     const num = Number(item);
     if (!Number.isInteger(num) || num < min || num > max) {
-      throw new Error(`Значение «${raw}» вне границ ${min}..${max}.`);
+      throw new Error(
+        t("schedule.error.cronValueBounds", { raw, min, max })
+      );
     }
     result.add(num);
   }
@@ -208,7 +220,9 @@ export function normalizeCron(expr: string): string {
   if (unit === "m" && n >= 1 && n < 60) return `*/${n} * * * *`;
   if (unit === "h" && n >= 1 && n <= 23) return `0 */${n} * * *`;
   if (unit === "d" && n >= 1 && n <= 31) return `0 0 */${n} * *`;
-  throw new Error(`Неподдерживаемый интервал «@every ${n}${unit}» (m: 1..59, h: 1..23, d: 1..31).`);
+  throw new Error(
+    t("schedule.error.everyInterval", { value: `${n}${unit}` })
+  );
 }
 
 /** Парсит cron-выражение; бросает Error с понятным сообщением. */
@@ -216,7 +230,9 @@ export function parseCron(expr: string): ParsedCron {
   const raw = normalizeCron(expr);
   const fields = raw.split(/\s+/);
   if (fields.length !== 5) {
-    throw new Error(`Ожидается 5 полей cron, получено ${fields.length}: «${raw}».`);
+    throw new Error(
+      t("schedule.error.cronFields", { count: fields.length, raw })
+    );
   }
   const [minF, hourF, domF, monthF, dowF] = fields;
 
@@ -252,13 +268,18 @@ export function parseCron(expr: string): ParsedCron {
         if (DOW_NAMES[dToken] !== undefined) dToken = String(DOW_NAMES[dToken]);
         const weekday = Number(dToken);
         if (!Number.isInteger(weekday) || weekday < 0 || weekday > 7) {
-          throw new Error(`День недели «${hash[1]}» вне границ 0..7 в «${dowF}».`);
+          throw new Error(
+            t("schedule.error.weekdayBounds", {
+              value: hash[1],
+              field: dowF,
+            })
+          );
         }
         nthWeekday.push({ weekday: weekday % 7, n: Number(hash[2]) });
         continue;
       }
       if (token === "L") {
-        throw new Error("«L» поддерживается только в поле дня месяца.");
+        throw new Error(t("schedule.error.lastDomOnly"));
       }
       kept.push(token);
     }
@@ -431,10 +452,12 @@ export function validateLaunchWindow(notBefore?: string | null, notAfter?: strin
   const nb = notBefore?.trim() ?? "";
   const na = notAfter?.trim() ?? "";
   if (!nb && !na) return null;
-  if (nb && !isValidDailyTime(nb)) return `notBefore должен быть в формате HH:MM, не "${nb}".`;
-  if (na && !isValidDailyTime(na)) return `notAfter должен быть в формате HH:MM, не "${na}".`;
-  if (!nb || !na) return "notBefore и notAfter задаются вместе.";
-  if (nb === na) return "notBefore и notAfter не могут совпадать (пустое окно).";
+  if (nb && !isValidDailyTime(nb))
+    return t("schedule.error.notBeforeFormat", { value: nb });
+  if (na && !isValidDailyTime(na))
+    return t("schedule.error.notAfterFormat", { value: na });
+  if (!nb || !na) return t("schedule.error.windowTogether");
+  if (nb === na) return t("schedule.error.windowEmpty");
   return null;
 }
 
@@ -536,11 +559,18 @@ export function activeWindowState(now: Date, options: ActiveWindowOptions = {}):
 
   const reasons: string[] = [];
   if (!dayOk) {
-    const names = ["Вс", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"];
-    reasons.push(`день недели не разрешён (${(normalizedDays ?? []).map((d) => names[d]).join(", ")})`);
+    const days = (normalizedDays ?? [])
+      .map((d) => t(`schedule.weekday.${d}`))
+      .join(", ");
+    reasons.push(t("schedule.reason.dayNotAllowed", { days }));
   }
   if (!windowOk) {
-    reasons.push(`время вне окна ${options.notBefore}–${options.notAfter}`);
+    reasons.push(
+      t("schedule.reason.outsideWindow", {
+        notBefore: options.notBefore,
+        notAfter: options.notAfter,
+      })
+    );
   }
   return {
     active: false,

@@ -1,6 +1,6 @@
 {
   "name": "opencode-windows-scheduler",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "description": "OpenCode v2 plugin for scheduling and orchestrating AI agent jobs: cron, one-shot runs, DAG pipelines, matrix builds, quality gates, SQLite history, metrics and a local web dashboard. Windows, macOS and Linux. Free and open source (MIT).",
   "license": "MIT",
   "author": "opencode-windows-scheduler contributors",
@@ -103,7 +103,8 @@
     "test:glob": "node test-glob.mjs",
     "test:git-trigger": "node test-git-trigger.mjs",
     "test:window-v3": "node test-window-v3.mjs",
-  "test:i18n": "node test-i18n.mjs"
+  "test:i18n": "node test-i18n.mjs",
+    "test:en": "node scripts/test-locale.mjs en"
   },
   "dependencies": {
     "@opencode/plugin": "^2.2.7",

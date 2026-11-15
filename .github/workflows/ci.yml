@@ -42,3 +42,7 @@ jobs:
 
       - name: Test
         run: npm test
+
+      - name: Test in English locale
+        if: matrix.os == 'ubuntu-latest'
+        run: npm run test:en

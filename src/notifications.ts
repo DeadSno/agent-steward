@@ -15,6 +15,7 @@ import {
 import { getHistory } from "./db/history-repo.js";
 import { sendTelegramMessage } from "./core/telegram.js";
 import { sendNativeNotification } from "./core/native-notify.js";
+import { t } from "./i18n.js";
 
 /** Статус завершения задачи, который приходит из record-history. */
 export type NotificationStatus = "success" | "error" | "timeout" | string;
@@ -100,16 +101,18 @@ export function formatNotificationMessage(
   const duration = formatDuration(durationMs);
   const isSuccess = status === "success";
   const reason =
-    typeof error === "string" && error.trim() ? `: ${error.trim()}` : "";
+    typeof error === "string" && error.trim()
+      ? t("notify.reason", { error: error.trim() })
+      : "";
   const tokens =
     typeof payload.tokens === "number" && payload.tokens > 0
-      ? String(Math.round(payload.tokens))
+      ? t("notify.usage.tokens", { tokens: String(Math.round(payload.tokens)) })
       : "";
   const cost =
     typeof payload.costUsd === "number" && payload.costUsd > 0
       ? `$${payload.costUsd.toFixed(4)}`
       : "";
-  const usage = [tokens ? `${tokens} tok` : "", cost].filter(Boolean).join(" · ");
+  const usage = [tokens, cost].filter(Boolean).join(" · ");
   const usageSuffix = usage ? ` · ${usage}` : "";
   const costVar = usageSuffix;
   const tokensVar = tokens;
@@ -138,9 +141,18 @@ export function formatNotificationMessage(
   }
 
   if (isSuccess) {
-    return `✅ Задача "${taskName}" выполнена (${duration})${usageSuffix}`;
+    return t("notify.task.success", {
+      task: taskName,
+      duration,
+      cost: usageSuffix,
+    });
   }
-  return `❌ Задача "${taskName}" упала (${duration})${reason}${usageSuffix}`;
+  return t("notify.task.error", {
+    task: taskName,
+    duration,
+    error: reason,
+    cost: usageSuffix,
+  });
 }
 
 /** Информация о завершении матрицы для уведомления. */
@@ -156,16 +168,17 @@ export interface MatrixNotificationInfo {
 /** Текст уведомления о завершении матрицы. */
 export function formatMatrixMessage(info: MatrixNotificationInfo): string {
   const { parentName, status, total, success, error } = info;
+  const params = { parent: parentName, total, success, error };
   if (status === "success") {
-    return `✅ Матрица "${parentName}" завершилась: ${success} из ${total} клонов успешно.`;
+    return t("notify.matrix.success", params);
   }
   if (status === "partial") {
-    return `⚠️ Матрица "${parentName}" завершилась частично: успешно ${success} из ${total}, ошибок ${error}.`;
+    return t("notify.matrix.partial", params);
   }
   if (total > 0 && error >= total) {
-    return `❌ Матрица "${parentName}": все ${total} клонов упали.`;
+    return t("notify.matrix.failedAll", params);
   }
-  return `❌ Матрица "${parentName}" завершилась с ошибками: успешно ${success}, ошибок ${error} из ${total}.`;
+  return t("notify.matrix.failed", params);
 }
 
 /** Ошибка отправки webhook с признаком, имеет ли смысл повторять запрос. */
@@ -194,16 +207,16 @@ const defaultSleep = (ms: number) =>
 function validateWebhookUrl(url: string): URL {
   const trimmed = (url ?? "").trim();
   if (!trimmed) {
-    throw new Error("URL вебхука не задан.");
+    throw new Error(t("notify.error.webhookUrlMissing"));
   }
   let parsed: URL;
   try {
     parsed = new URL(trimmed);
   } catch {
-    throw new Error("Некорректный URL вебхука.");
+    throw new Error(t("notify.error.webhookUrlInvalid"));
   }
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new Error("Вебхук поддерживает только http:// или https://.");
+    throw new Error(t("notify.error.webhookScheme"));
   }
   return parsed;
 }
@@ -234,7 +247,10 @@ async function postOnce(
     }
   } catch (err: any) {
     if (err?.name === "AbortError") {
-      throw new WebhookError(`Таймаут запроса (${timeoutMs / 1000} с).`, true);
+      throw new WebhookError(
+        t("notify.error.webhookTimeout", { seconds: timeoutMs / 1000 }),
+        true
+      );
     }
     if (err instanceof WebhookError) throw err;
     // Сетевые ошибки fetch (DNS, соединение) имеет смысл повторять.
@@ -389,7 +405,7 @@ async function deliverDetailed(
   if ((!only || only === "telegram") && config.enabled && telegram?.enabled) {
     const { token, chatId } = telegramCredentials(config);
     if (!token || !chatId) {
-      const text = "Telegram включён, но не заданы botToken/chatId.";
+      const text = t("notify.error.telegramNoCreds");
       console.error(`[windows-scheduler] ${text}`);
       results.push({ channel: "telegram", ok: false, error: text });
     } else {
@@ -415,14 +431,14 @@ async function deliverDetailed(
   const native = config.native;
   if ((!only || only === "native") && config.enabled && native?.enabled) {
     const result = await sendNativeNotification(
-      { title: "OpenCode Scheduler", body: message, sound: native.sound },
+      { title: t("notify.native.title"), body: message, sound: native.sound },
       {}
     );
     if (result.success) {
       console.log("[windows-scheduler] Нативное уведомление показано.");
       results.push({ channel: "native", ok: true });
     } else {
-      const text = result.error ?? "не удалось показать уведомление";
+      const text = result.error ?? t("notify.error.nativeFailed");
       console.error(`[windows-scheduler] Нативное уведомление: ${text}`);
       results.push({ channel: "native", ok: false, error: text });
     }
@@ -567,10 +583,12 @@ export function findStuckMatrixClones(
 
 /** Текст уведомления о зависшем клоне матрицы. */
 export function formatStuckMatrixMessage(stuck: StuckMatrixClone): string {
-  return (
-    `⏳ Матрица "${stuck.parentName}": клон "${stuck.cloneName}" выполняется ` +
-    `дольше ${stuck.minutes} мин (запущен ${stuck.startedAt}).`
-  );
+  return t("notify.stuck", {
+    parent: stuck.parentName,
+    clone: stuck.cloneName,
+    minutes: stuck.minutes,
+    startedAt: stuck.startedAt,
+  });
 }
 
 /** Отправляет уведомление о зависшем клоне, если матрицы включены. */
@@ -649,19 +667,33 @@ export function formatDigestMessage(
   summary: DigestSummary,
   now: Date = new Date()
 ): string {
-  const periodLabel = summary.period === "weekly" ? "за неделю" : "за сутки";
+  const periodLabel =
+    summary.period === "weekly"
+      ? t("notify.digest.period.weekly")
+      : t("notify.digest.period.daily");
   const lines = [
-    `📊 Дайджест ${periodLabel} (${formatLocalDate(now)})`,
-    `Запусков: ${summary.total} — ✅ ${summary.success}, ❌ ${summary.error}, ⚠️ ${summary.partial} (${summary.successRate}%)`,
-    `Стоимость: ${formatMoney(summary.costUsd)} · токенов: ${summary.tokens}`,
+    t("notify.digest.title", { period: periodLabel, date: formatLocalDate(now) }),
+    t("notify.digest.runs", {
+      total: summary.total,
+      success: summary.success,
+      error: summary.error,
+      partial: summary.partial,
+      rate: summary.successRate,
+    }),
+    t("notify.digest.cost", {
+      cost: formatMoney(summary.costUsd),
+      tokens: summary.tokens,
+    }),
   ];
   if (summary.topErrors.length > 0) {
-    lines.push("Топ ошибок:");
+    lines.push(t("notify.digest.topErrors"));
     for (const row of summary.topErrors) {
-      lines.push(`• ${row.message} — ${row.count}`);
+      lines.push(
+        t("notify.digest.topErrorRow", { message: row.message, count: row.count })
+      );
     }
   } else if (summary.total > 0) {
-    lines.push("Ошибок нет 🎉");
+    lines.push(t("notify.digest.noErrors"));
   }
   return lines.join("\n");
 }
@@ -707,7 +739,7 @@ export async function sendDigestNow(
     const settings = await loadSettings();
     const config = settings.notifications;
     if (!config?.enabled) {
-      return { success: false, message: "Уведомления выключены." };
+      return { success: false, message: t("notify.error.digestDisabled") };
     }
     const channels: NotificationChannel[] = [];
     if (config.webhook?.enabled && config.webhook.url.trim()) channels.push("webhook");
@@ -716,12 +748,12 @@ export async function sendDigestNow(
     if (channels.length === 0) {
       return {
         success: false,
-        message: "Все каналы выключены. Включите webhook, Telegram или нативные уведомления.",
+        message: t("notify.error.digestNoChannels"),
       };
     }
     const digest = config.digest;
     if (!digest) {
-      return { success: false, message: "Настройки дайджеста не найдены." };
+      return { success: false, message: t("notify.error.digestMissing") };
     }
 
     const records = getHistory(null, 5000) as AnalyticsRecord[];
@@ -731,7 +763,7 @@ export async function sendDigestNow(
     });
     const text = formatDigestMessage(summary, now);
     if (!(await deliver(config, text))) {
-      return { success: false, message: "Не удалось отправить дайджест ни в один канал." };
+      return { success: false, message: t("notify.error.digestFailed") };
     }
 
     if (options.updateLastSentAt) {
@@ -742,7 +774,7 @@ export async function sendDigestNow(
         },
       });
     }
-    return { success: true, message: "Дайджест отправлен." };
+    return { success: true, message: t("notify.ok.digestSent") };
   } catch (err: any) {
     return {
       success: false,
@@ -794,7 +826,7 @@ export async function sendTestNotification(
     if (!config?.enabled) {
       return {
         success: false,
-        message: "Уведомления выключены. Включите главный переключатель.",
+        message: t("notify.error.testDisabled"),
       };
     }
 
@@ -805,33 +837,42 @@ export async function sendTestNotification(
     if (enabled.length === 0) {
       return {
         success: false,
-        message:
-          "Все каналы выключены. Включите webhook, Telegram или нативные уведомления.",
+        message: t("notify.error.testNoChannels"),
       };
     }
     if (channel !== "all" && !enabled.includes(channel)) {
-      return { success: false, message: `Канал ${channel} выключен.` };
+      return {
+        success: false,
+        message: t("notify.error.testChannelOff", { channel }),
+      };
     }
 
     const results = await deliverDetailed(
       config,
-      "🧪 Тестовое уведомление от OpenCode Scheduler — канал настроен корректно.",
+      t("notify.test.body"),
       channel === "all" ? undefined : channel
     );
     const sent = results.filter((item) => item.ok).map((item) => item.channel);
     const failed = results.filter((item) => !item.ok);
     const parts: string[] = [];
-    if (sent.length > 0) parts.push(`Отправлено: ${sent.join(", ")}.`);
+    if (sent.length > 0) {
+      parts.push(t("notify.test.sent", { channels: sent.join(", ") }));
+    }
     if (failed.length > 0) {
       parts.push(
-        `Ошибки: ${failed
-          .map((item) => `${item.channel} — ${item.error ?? "неизвестная ошибка"}`)
-          .join("; ")}.`
+        t("notify.test.errors", {
+          errors: failed
+            .map(
+              (item) =>
+                `${item.channel} — ${item.error ?? t("notify.error.testUnknown")}`
+            )
+            .join("; "),
+        })
       );
     }
     return {
       success: failed.length === 0 && sent.length > 0,
-      message: parts.join(" ") || "Тестовое уведомление не отправлено.",
+      message: parts.join(" ") || t("notify.error.testNotSent"),
     };
   } catch (err: any) {
     return {

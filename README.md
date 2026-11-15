@@ -42,6 +42,17 @@ Want to see it without installing OpenCode? `node scripts/demo-dashboard.mjs` st
 | Operations | dry-run preview, export/import JSON, templates, multi-channel notifications (webhook, Telegram, native OS toasts), quiet hours, digest, encrypted secrets (`${secret:NAME}`), audit log, settings |
 | Interfaces | OpenCode GUI panel, web dashboard, 24 agent tools, built-in agent skill |
 
+### Language
+
+The interface ships in Russian (default) and English. Switch it in the sidebar settings
+(Settings → Language) or with the `manage_settings` tool (`action: "update"`,
+`locale: "en"`). The change applies immediately to the GUI, notifications and digest,
+the dashboard and agent tool results — no restart. Agent tool descriptions and schemas
+stay English by design, and diagnostics printed to the console stay Russian.
+
+Catalogs live in `locales/ru.json` and `locales/en.json`; every key must exist in both,
+otherwise CI fails.
+
 ## Install
 
 Requires OpenCode v2 and Node.js 20+.
@@ -81,7 +92,7 @@ npm run build && npm run build:gui
 
 ## Agent tools
 
-The agent gets the full feature set — 22 tools covering scheduling, pipelines, operations, observability and administration:
+The agent gets the full feature set — 24 tools covering scheduling, pipelines, operations, observability and administration:
 
 | Tool | Arguments | What it does |
 |---|---|---|
@@ -177,8 +188,12 @@ Tasks are **interactive only** by default: Task Scheduler starts them only while
 npm install
 npm run build        # tsc
 npm run build:gui    # vite
-npm test             # 29 test suites, 500+ checks
+npm test             # 33 test suites, 500+ checks
+npm run test:en      # same suites with the English locale
 ```
+
+`npm run test:en` sets `OPENCODE_SCHEDULER_LOCALE=en` for every suite; the variable is a
+service hook, not a user setting.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 

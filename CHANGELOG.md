@@ -4,6 +4,8 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-11-15
+
 ### Added
 
 - **i18n-фундамент (Спринт 28):** каталоги строк `locales/ru.json` и `locales/en.json` с плоскими ключами, загрузчик `src/i18n.ts` с fallback `en → ru → ключ` и ICU-подмножеством (`{param}`, `{count, plural, …}`) на встроенном `Intl` — без внешних зависимостей.
@@ -11,6 +13,11 @@ All notable changes to this project are documented here. Format follows [Keep a 
 - **Перевод сервера дашборда:** 404/405-ответы, отсутствующая матрица/задача, отклонённый webhook и заголовок HTML-страницы берутся из каталогов; `<html lang>` соответствует активной локали.
 - **Тесты:** `test-i18n.mjs` (43 проверки) и проверка паритета ключей локалей в `test-docs.mjs` — рассинхронизация каталогов валит CI.
 - **i18n GUI (Спринт 28.2):** все пользовательские строки GUI (`src/gui.tsx`) перенесены в каталоги `locales/*.json` — 454 ключа ru/en в паритете; в компоненте нет ни одного пользовательского кириллического литерала вне каталога. Переключение `ru`/`en` меняет язык панели без перезапуска (реактивный `localeTick`, `applyLocale` после чтения/сохранения настроек). Строки валидации, тосты, пустые состояния, подписи и подсказки формы — всё whole-phrase шаблоны, без конкатенации.
+- **i18n уведомлений (Спринт 28.3):** шаблоны success/error, матричные сообщения, stuck-clone, дайджест, заголовки Telegram и нативных тостов, ошибки webhook/Telegram вынесены в 42 ключа `notify.*` обоих каталогов. Встроенные шаблоны в `settings.json` следуют за активной локалью, пользовательские не переписываются; тесты уведомлений сравнивают `t()`, а не русские литералы.
+- **i18n dry-run и ошибок инструментов (Спринт 28.4):** 189 ключей `dryRun.*`, `gitTrigger.*`, `matrix.*`, `schedule.*`, `tool.*` покрывают предупреждения dry-run, cron/окно/дни недели, git-триггер, lifecycle и конфликты матриц, результаты и валидации инструментов агента в обеих поверхностях (MCP и plugin/RPC). Технические `console.*`-диагностики остаются русскими, описания инструментов — английскими.
+- **Тесты в двух локалях (Спринт 28.5):** локаль запуска задаётся `OPENCODE_SCHEDULER_LOCALE`; `npm run test:en` (`scripts/test-locale.mjs`) прогоняет все 33 сюиты в английской локали, CI делает это на Ubuntu. Ассерты, завязанные на русский текст, заменены на `t()` и ключи; обе локали зелёные.
+- **Резерв имени npm (Спринт 28.6):** опубликован пакет-заглушка `opencode-pipeline@0.0.1`, README ссылается на основной пакет.
+- **Документация i18n (Спринт 28.7):** в `docs/ARCHITECTURE.md` добавлен раздел Localization — каталоги и формат ключей, порядок fallback, ICU-подмножество и плюрализация через `Intl.PluralRules`, правила для переводов и тестов. README (EN/RU) описывает переключение языка, что остаётся английским и сервисную роль `OPENCODE_SCHEDULER_LOCALE`; в разделе разработки появился `npm run test:en`.
 - **Режим входа задачи (27.5.4):** новое поле `runWhenLoggedOff` (`schedule_task`, `update_task`, импорт/экспорт, RPC `create_task`) — по умолчанию `false`, задача интерактивная и выполняется только при входе пользователя. `true` регистрирует задачу как `schtasks /ru SYSTEM`: запуск без входа, в session 0 без профиля, сетевых дисков и сохранённых учётных данных; обычно требует повышенных прав. На Linux/macOS опция игнорируется (crontab работает без входа, launchd-агент — в сессии). Режим виден в `list_tasks` (`runWhenLoggedOff` + `logonMode`), `dry_run` (`runWhenLoggedOff`/`logonMode`) и RPC `get_tasks`; описан в README (EN/RU), FEATURES и FAQ.
 - **Переключатель режима входа в GUI (27.5.9):** в форме задачи появился чекбокс «Запускать без входа пользователя» (только Windows, по данным `get_platform`) с предупреждением о session 0 и необходимости прав администратора; флаг отправляется в `create_task`/`update_task`, заполняется при редактировании и сбрасывается при создании и отмене. В карточке задачи — бейдж «🌙 без входа» с фактическим `logonMode` из планировщика. Ключи добавлены в оба каталога локалей.
 - **`runWhenLoggedOff` в экспорте/импорте задач (27.5.10):** поле mode входа теперь сохраняется в экспортный JSON (`buildExportJson`) и читается при импорте (`parseImportJson`), RPC `import_tasks` прокидывает его в `schedulerCreateTask` вместе с `paused`. Перенос задачи между профилями больше не сбрасывает режим входа в интерактивный.
@@ -230,7 +237,9 @@ First public release.
 - Deleting a matrix parent deletes its family, but deleting a workspace does not touch existing matrix jobs.
 - Agent tools cover a subset of the RPC surface (see roadmap item 0.4).
 
-[Unreleased]: https://github.com/DeadSno/opencode-windows-scheduler/compare/v1.4.0...HEAD
+[Unreleased]: https://github.com/DeadSno/opencode-windows-scheduler/compare/v1.5.1...HEAD
+[1.5.1]: https://github.com/DeadSno/opencode-windows-scheduler/compare/v1.5.0...v1.5.1
+[1.5.0]: https://github.com/DeadSno/opencode-windows-scheduler/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/DeadSno/opencode-windows-scheduler/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/DeadSno/opencode-windows-scheduler/compare/v1.2.3...v1.3.0
 [1.2.3]: https://github.com/DeadSno/opencode-windows-scheduler/compare/v1.2.2...v1.2.3

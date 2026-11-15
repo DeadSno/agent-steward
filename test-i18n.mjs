@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import url from "node:url";
+import { spawnSync } from "node:child_process";
 import {
   DEFAULT_LOCALE,
   SUPPORTED_LOCALES,
@@ -34,7 +35,11 @@ function check(name, cond) {
 // --- 1. Локаль по умолчанию и нормализация ---------------------------------
 resetI18n();
 check("локаль по умолчанию — ru", DEFAULT_LOCALE === "ru");
-check("getLocale() сразу после resetI18n — ru", getLocale() === "ru");
+check(
+  "getLocale() после resetI18n — локаль запуска",
+  getLocale() === normalizeLocale(process.env.OPENCODE_SCHEDULER_LOCALE)
+);
+setLocale("ru");
 check("SUPPORTED_LOCALES = [ru, en]", SUPPORTED_LOCALES.join(",") === "ru,en");
 check("isLocale('ru')", isLocale("ru") === true);
 check("isLocale('en')", isLocale("en") === true);
@@ -69,6 +74,7 @@ check(
 
 // --- 4. Подстановка параметров ---------------------------------------------
 resetI18n();
+setLocale("ru");
 check(
   "интерполяция {parentId}",
   t("server.matrixNotFound", { parentId: "nightly" }) === 'Матрица "nightly" не найдена.'
@@ -90,6 +96,7 @@ check(
 
 // --- 5. Плюрализация ru -----------------------------------------------------
 resetI18n();
+setLocale("ru");
 check("ru plural 1 → one", t("common.runsCount", { count: 1 }) === "запусков: 1 запуск");
 check("ru plural 2 → few", t("common.runsCount", { count: 2 }) === "запусков: 2 запуска");
 check("ru plural 5 → many", t("common.runsCount", { count: 5 }) === "запусков: 5 запусков");
@@ -119,6 +126,18 @@ check("смена локали не требует resetI18n", getLocale() === "
 setLocale("en");
 check("отсутствующий в en ключ → сам ключ", t("no.such.key") === "no.such.key");
 resetI18n();
+
+// --- 9. Локаль запуска через переменную окружения ---------------------------
+const i18nUrl = url.pathToFileURL(path.join(root, "dist", "i18n.js")).href;
+const child = spawnSync(
+  process.execPath,
+  ["-e", `import(${JSON.stringify(i18nUrl)}).then((m) => console.log(m.getLocale()))`],
+  { env: { ...process.env, OPENCODE_SCHEDULER_LOCALE: "en" }, encoding: "utf8" }
+);
+check(
+  "OPENCODE_SCHEDULER_LOCALE=en задаёт локаль запуска",
+  child.stdout.trim() === "en"
+);
 
 const failed = results.filter((r) => !r.ok);
 console.log(`\ni18n: ${results.length - failed.length}/${results.length} проверок пройдено.`);

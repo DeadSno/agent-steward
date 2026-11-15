@@ -64,7 +64,7 @@ New behavior needs a test. Matrix sync and DAG logic are the most sensitive area
 2. Make focused commits with clear messages (`feat: ...`, `fix: ...`, `docs: ...`, `test: ...`).
 3. Run `npm run build && npm run build:gui && npm test`.
 4. Describe the problem, the solution and how you verified it; include screenshots for UI changes.
-5. Update `CHANGELOG.md` under `[Unreleased]` and keep English/Russian docs in sync.
+5. Update `CHANGELOG.md` (the next release section) and keep English/Russian docs in sync. New UI strings go to both `locales/ru.json` and `locales/en.json`; run `npm run test:en` when touching text.
 
 CI runs build, GUI build and tests on Windows, Ubuntu and macOS for every pull request.
 

@@ -10,6 +10,7 @@ import {
   isActiveDay,
   buildScheduleGate,
 } from "./dist/core/schedule-v2.js";
+import { t } from "./dist/i18n.js";
 
 const results = [];
 function check(name, cond) {
@@ -53,7 +54,14 @@ check("activeWindowState nextOpenAt установлен", s1.nextOpenAt !== nul
 // В выходной день (Сб) с днями [1..5].
 const s2 = activeWindowState(sat, { notBefore: "09:00", notAfter: "19:00", days: [1, 2, 3, 4, 5], timeZone: utc });
 check("activeWindowState Сб без разрешённых дней → !active", s2.active === false);
-check("activeWindowState reason про день недели", s2.reason.includes("день недели") || s2.reason.includes("день"));
+check(
+  "activeWindowState reason про день недели",
+  s2.reason.includes(
+    t("schedule.reason.dayNotAllowed", {
+      days: [1, 2, 3, 4, 5].map((d) => t(`schedule.weekday.${d}`)).join(", "),
+    })
+  )
+);
 // Через полночь: окно 22:00–06:00, время 03:00 → внутри.
 const night = new Date("2026-11-16T03:00:00Z");
 check("activeWindowState 22:00–06:00, 03:00 → active", activeWindowState(night, { notBefore: "22:00", notAfter: "06:00", timeZone: utc }).active === true);

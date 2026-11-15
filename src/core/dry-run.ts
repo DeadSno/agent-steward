@@ -12,6 +12,7 @@ import { getWorkspace } from "../workspaces.js";
 import { expandMatrixTask } from "./matrix.js";
 import { nextRun, activeWindowState } from "./schedule-v2.js";
 import { checkGitTrigger } from "./git-trigger.js";
+import { t } from "../i18n.js";
 import type { TaskDefinition } from "../task-transfer.js";
 
 export interface DryRunRoleScoped {
@@ -116,10 +117,10 @@ const ESTIMATE_SAMPLE = 10;
 /** Средняя цена за 1K токенов (должна совпадать с dashboards/server.ts). */
 export const ESTIMATED_COST_PER_1K_TOKENS_USD = 0.003;
 
-/** Опасные паттерны, о которых обязательно предупреждаем. */
-const DANGEROUS_PATTERNS: Array<{ test: RegExp; message: string }> = [
-  { test: /rm\s+-rf\s+\/(?:\s|$)/, message: "возможна рекурсивная очистка корня файловой системы (`rm -rf /`)" },
-  { test: /git\s+push\s+.*--force(?:\s|$)/, message: "принудительный push в git (`git push --force`)" },
+/** Опасные паттерны, о которых обязательно предупреждаем (ключи каталога). */
+const DANGEROUS_PATTERNS: Array<{ test: RegExp; messageKey: string }> = [
+  { test: /rm\s+-rf\s+\/(?:\s|$)/, messageKey: "dryRun.danger.rmRoot" },
+  { test: /git\s+push\s+.*--force(?:\s|$)/, messageKey: "dryRun.danger.forcePush" },
 ];
 
 /**
@@ -176,12 +177,16 @@ async function describeTrigger(opts: DescribeTriggerOptions): Promise<DryRunTrig
         base.explanation = result.message;
 
         if (result.status === "no-repo") {
-          warnings.push("Задача с git-триггером, но рабочая директория не является git-репозиторием.");
+          warnings.push(t("dryRun.git.notRepo"));
         } else if (result.status === "branch-mismatch") {
-          warnings.push(`Ветка не подходит под фильтр «${def.gitBranch ?? ""}».`);
+          warnings.push(
+            t("dryRun.git.branchMismatch", { branch: def.gitBranch ?? "" })
+          );
         }
       } catch (err: any) {
-        base.explanation = `Git-триггер: ошибка проверки — ${err instanceof Error ? err.message : String(err)}.`;
+        base.explanation = t("dryRun.git.checkError", {
+          error: err instanceof Error ? err.message : String(err),
+        });
         warnings.push(base.explanation);
       }
       break;
@@ -195,38 +200,51 @@ async function describeTrigger(opts: DescribeTriggerOptions): Promise<DryRunTrig
       };
       const parts: string[] = [];
       if (def.watchPath) parts.push(`«${def.watchPath}»`);
-      if (def.watchGlobs?.length) parts.push(`маски: ${def.watchGlobs.length}`);
-      if (def.watchIgnore?.length) parts.push(`исключения: ${def.watchIgnore.length}`);
+      if (def.watchGlobs?.length)
+        parts.push(t("dryRun.file.globs", { count: def.watchGlobs.length }));
+      if (def.watchIgnore?.length)
+        parts.push(t("dryRun.file.ignore", { count: def.watchIgnore.length }));
       base.explanation =
         parts.length > 0
-          ? `Файловый триггер: ${parts.join("; ")}.`
-          : "Файловый триггер: любое изменение подходит.";
+          ? t("dryRun.file.trigger", { parts: parts.join("; ") })
+          : t("dryRun.file.any");
       break;
     }
 
     case "mcp-event": {
       const ev = def.mcpEvent;
       base.explanation = ev && ev.event
-        ? `MCP-событие ${ev.server}:${ev.event}${ev.filter ? ` (фильтр «${ev.filter}»)` : ""}.`
-        : "MCP-событие (параметры не заданы).";
+        ? t("dryRun.mcp.event", {
+            server: ev.server,
+            event: ev.event,
+            filter: ev.filter
+              ? t("dryRun.mcp.filter", { filter: ev.filter })
+              : "",
+          })
+        : t("dryRun.mcp.missing");
       break;
     }
 
     case "cron": {
-      let text = `По расписанию «${def.schedule}»`;
-      if (def.timezone) text += ` (${def.timezone})`;
-      base.explanation = text + ".";
+      base.explanation = def.timezone
+        ? t("dryRun.cronTimezone", {
+            schedule: def.schedule,
+            timezone: def.timezone,
+          })
+        : t("dryRun.cron", { schedule: def.schedule });
       break;
     }
 
     case "once": {
-      base.explanation = def.runAt ? `Однократно в ${def.runAt}.` : "Однократный запуск.";
+      base.explanation = def.runAt
+        ? t("dryRun.once.at", { runAt: def.runAt })
+        : t("dryRun.once");
       break;
     }
 
     case "manual":
     default: {
-      base.explanation = "Запуск вручную (в составе конвейера).";
+      base.explanation = t("dryRun.manual");
       break;
     }
   }
@@ -246,21 +264,24 @@ async function describeTrigger(opts: DescribeTriggerOptions): Promise<DryRunTrig
     };
 
     if (!state.active && policy !== "run") {
+      const reason = state.reason ?? t("dryRun.window.outside");
       if (policy === "skip") {
-        warnings.push(
-          `Сейчас ${state.reason ?? "вне окна"}: при политике skip запуск будет пропущен.`
-        );
+        warnings.push(t("dryRun.window.skip", { reason }));
       } else {
         // postpone — переносим на ближайшее открытие.
         const iso = base.activeWindow.nextOpenAt ?? null;
         warnings.push(
           iso
-            ? `Сейчас ${state.reason ?? "вне окна"}: запуск будет перенесён на ${iso}.`
-            : `Сейчас ${state.reason ?? "вне окна"}: открытие окна не найдено, запуск пропущен.`
+            ? t("dryRun.window.postpone", { reason, nextOpenAt: iso })
+            : t("dryRun.window.noOpening", { reason })
         );
       }
     } else if (!state.active && policy === "run") {
-      warnings.push(`Сейчас ${state.reason ?? "вне окна"}: политика run — задача выполнится всё равно.`);
+      warnings.push(
+        t("dryRun.window.run", {
+          reason: state.reason ?? t("dryRun.window.outside"),
+        })
+      );
     }
   }
 
@@ -278,7 +299,7 @@ export async function simulatePipeline(taskName: string): Promise<DryRunReport> 
   const rootLower = taskName.trim().toLowerCase();
   const root = allDefs.find((d) => d.name.toLowerCase() === rootLower);
   if (!root) {
-    throw new Error(`Задача "${taskName}" не найдена.`);
+    throw new Error(t("dryRun.taskNotFound", { task: taskName }));
   }
 
   // Собираем подграф зависимостей рекурсивно, обнаруживая циклы.
@@ -290,7 +311,7 @@ export async function simulatePipeline(taskName: string): Promise<DryRunReport> 
   const collect = (lowerName: string): TaskDefinition | undefined => {
     if (visiting.has(lowerName)) {
       const list = warningsPerTask.get(lowerName) ?? [];
-      list.push(`Обнаружена циклическая зависимость вокруг задачи "${lowerName}" — конвейер разорван на этом узле.`);
+      list.push(t("dryRun.cycle", { task: lowerName }));
       warningsPerTask.set(lowerName, list);
       return undefined;
     }
@@ -299,7 +320,7 @@ export async function simulatePipeline(taskName: string): Promise<DryRunReport> 
     const def = byLower.get(lowerName);
     if (!def) {
       const list = warningsPerTask.get(lowerName) ?? [];
-      list.push(`Зависимость "${lowerName}" не найдена среди задач — узел пропущен.`);
+      list.push(t("dryRun.dependencyMissing", { task: lowerName }));
       warningsPerTask.set(lowerName, list);
       return undefined;
     }
@@ -361,15 +382,15 @@ export async function simulatePipeline(taskName: string): Promise<DryRunReport> 
       try {
         const clones = expandMatrixTask(def);
         warnings.push(
-          `[${def.name}] Родитель матрицы не выполняется сам — показаны ${clones.length} клон(а/ов) по workspace.`
+          t("dryRun.matrix.parent", { name: def.name, count: clones.length })
         );
         for (const clone of clones) units.push({ def: clone, matrixParent: def.name });
       } catch (err: any) {
         const list = warningsPerTask.get(def.name.toLowerCase()) ?? [];
         list.push(
-          `Матрица не может быть развёрнута: ${
-            err instanceof Error ? err.message : String(err)
-          }`
+          t("dryRun.matrix.expandError", {
+            error: err instanceof Error ? err.message : String(err),
+          })
         );
         warningsPerTask.set(def.name.toLowerCase(), list);
         warnings.push(`[${def.name}] ${list[list.length - 1]}`);
@@ -396,15 +417,15 @@ export async function simulatePipeline(taskName: string): Promise<DryRunReport> 
     const workspace = def.workspaceId ? getWorkspace(def.workspaceId) : undefined;
     const cwd = workspace?.path || def.workingDirectory || def.workdir || "";
     if (!cwd) {
-      taskWarnings.push("Рабочая директория не задана явно — будет использована папка текущего проекта.");
+      taskWarnings.push(t("dryRun.cwdImplicit"));
     } else {
       try {
         const stat = fs.statSync(cwd);
         if (!stat.isDirectory()) {
-          taskWarnings.push(`Путь "${cwd}" существует, но не является директорией.`);
+          taskWarnings.push(t("dryRun.cwdNotDir", { path: cwd }));
         }
       } catch {
-        taskWarnings.push(`Рабочая директория "${cwd}" не существует на диске.`);
+        taskWarnings.push(t("dryRun.cwdMissing", { path: cwd }));
       }
     }
 
@@ -437,7 +458,7 @@ export async function simulatePipeline(taskName: string): Promise<DryRunReport> 
     let estimatedCostUsd: number | null = null;
     let estimatedTokens: number | null = null;
     if (records.length === 0) {
-      taskWarnings.push("Нет успешных запусков в истории — оценка длительности/токенов/стоимости недоступна.");
+      taskWarnings.push(t("dryRun.noHistory"));
     } else {
       const sample = records.slice(0, ESTIMATE_SAMPLE);
       const avg = (pick: (r: (typeof sample)[number]) => number | null | undefined) => {
@@ -457,9 +478,11 @@ export async function simulatePipeline(taskName: string): Promise<DryRunReport> 
       .filter((s): s is string => typeof s === "string")
       .join("\n")
       .toLowerCase();
-    for (const { test, message } of DANGEROUS_PATTERNS) {
+    for (const { test, messageKey } of DANGEROUS_PATTERNS) {
       if (test.test(scanned)) {
-        taskWarnings.push(`Опасный паттерн: ${message}.`);
+        taskWarnings.push(
+          t("dryRun.dangerPattern", { message: t(messageKey) })
+        );
       }
     }
 
@@ -495,7 +518,9 @@ export async function simulatePipeline(taskName: string): Promise<DryRunReport> 
           cursor = next;
         }
       } catch {
-        taskWarnings.push(`Не удалось разобрать cron "${def.schedule}" для расчёта ближайших запусков.`);
+        taskWarnings.push(
+          t("dryRun.cronParseError", { schedule: def.schedule })
+        );
       }
       scheduleDetails = {
         cron: def.schedule,

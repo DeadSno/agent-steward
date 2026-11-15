@@ -52,6 +52,15 @@ check("package.json: files включает docs", Array.isArray(pkg.files) && p
 check("package.json: files включает locales", Array.isArray(pkg.files) && pkg.files.includes("locales"));
 check("package.json: test включает test-docs.mjs", typeof pkg.scripts.test === "string" && pkg.scripts.test.includes("test-docs.mjs"));
 check("package.json: test включает test-i18n.mjs", typeof pkg.scripts.test === "string" && pkg.scripts.test.includes("test-i18n.mjs"));
+check(
+  "package.json: test:en гоняет сюиты в английской локали",
+  typeof pkg.scripts["test:en"] === "string" &&
+    pkg.scripts["test:en"].includes("scripts/test-locale.mjs")
+);
+check(
+  "scripts/test-locale.mjs существует",
+  fs.existsSync(path.join(root, "scripts", "test-locale.mjs"))
+);
 
 // Спринт 28, задача 28.6: заглушка резервного имени npm.
 const placeholderDir = path.join(root, "packages", "opencode-pipeline");

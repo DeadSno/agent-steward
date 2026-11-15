@@ -27,6 +27,7 @@ const {
   planMatrixFamilyDelete,
   removeMatrixChildren,
 } = await import("./dist/core/matrix.js");
+const { t } = await import("./dist/i18n.js");
 
 const results = [];
 function check(name, cond) {
@@ -81,7 +82,7 @@ try {
   const cloneGuard = getMatrixDeletionGuard(clones[0].name);
   check(
     "getMatrixDeletionGuard запрещает удаление клона",
-    typeof cloneGuard === "string" && cloneGuard.includes("клон матрицы") && cloneGuard.includes("Deploy")
+    cloneGuard === t("matrix.deletionGuard", { name: clones[0].name, parent: "Deploy" })
   );
   check(
     "getMatrixDeletionGuard разрешает удаление родителя и обычной задачи",
@@ -143,7 +144,7 @@ try {
   check(
     "отмена клона пишет error-запись с причиной",
     getHistory(clones[2].name, 1)[0]?.status === "error" &&
-      /Отменено пользователем/.test(getHistory(clones[2].name, 1)[0]?.error ?? "")
+      (getHistory(clones[2].name, 1)[0]?.error ?? "").includes(t("matrix.cancel.defaultReason"))
   );
   check(
     "после отмены агрегат матрицы становится partial",
@@ -181,7 +182,8 @@ try {
   }
   check(
     "cancelPendingMatrixClones отклоняет не-матрицу",
-    notMatrixError && String(notMatrixError.message).includes("не является матрицей")
+    notMatrixError &&
+      String(notMatrixError.message) === t("matrix.error.notMatrix", { task: "Ordinary" })
   );
 
   // 9. failureMode stop → агрегат error после отмены.

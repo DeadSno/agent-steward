@@ -28,6 +28,7 @@ const {
 } = await import("./dist/core/matrix.js");
 const { selectDependentsToTrigger } = await import("./dist/core/record-history.js");
 const { buildExportJson, parseImportJson } = await import("./dist/task-transfer.js");
+const { t } = await import("./dist/i18n.js");
 
 const results = [];
 function check(name, cond) {
@@ -302,7 +303,12 @@ try {
   }
   check(
     "неизвестный workspace в matrix — ошибка при развёртывании",
-    unknownError && String(unknownError.message).includes("не найден")
+    unknownError &&
+      String(unknownError.message) ===
+        t("matrix.error.workspaceMissing", {
+          task: "Unknown",
+          workspace: "no-such-workspace",
+        })
   );
 
   // 15. Экспорт/импорт round-trip сохраняет matrix и matrixParentId.

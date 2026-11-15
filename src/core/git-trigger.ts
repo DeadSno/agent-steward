@@ -5,6 +5,7 @@ import { loadTaskDefinitions, type TaskDefinition } from "../task-transfer.js";
 import { getGitState, setGitState, deleteGitState } from "../db/git-state-repo.js";
 import { filterPaths } from "./glob.js";
 import { getWorkspace } from "../workspaces.js";
+import { t } from "../i18n.js";
 
 /**
  * Git-триггеры (Спринт 27).
@@ -161,7 +162,7 @@ export async function checkGitTrigger(
       status: "no-repo",
       files: [],
       matched: [],
-      message: `«${task.cwd}» не git-репозиторий — git-триггер не сработает.`,
+      message: t("gitTrigger.noRepo", { cwd: task.cwd }),
     };
   }
 
@@ -174,7 +175,7 @@ export async function checkGitTrigger(
       branch: probe.branch,
       files: [],
       matched: [],
-      message: `Запомнен текущий коммит ${probe.head.slice(0, 7)} — задача запустится на следующем изменении.`,
+      message: t("gitTrigger.baseline", { commit: probe.head.slice(0, 7) }),
     };
   }
 
@@ -186,7 +187,10 @@ export async function checkGitTrigger(
       from: state.commitSha,
       files: [],
       matched: [],
-      message: `Ветка ${probe.branch ?? "(detached)"} не подходит под фильтр «${task.branch}».`,
+      message: t("gitTrigger.branchMismatch", {
+        branch: probe.branch ?? "(detached)",
+        pattern: task.branch,
+      }),
     };
   }
 
@@ -198,7 +202,7 @@ export async function checkGitTrigger(
       from: state.commitSha,
       files: [],
       matched: [],
-      message: "Новых коммитов нет.",
+      message: t("gitTrigger.noChanges"),
     };
   }
 
@@ -216,8 +220,8 @@ export async function checkGitTrigger(
       matched: [],
       message:
         files.length === 0
-          ? "Новых коммитов нет."
-          : `Изменено файлов: ${files.length}, но ни один не подходит под фильтры.`,
+          ? t("gitTrigger.noChanges")
+          : t("gitTrigger.ignored", { count: files.length }),
     };
   }
 
@@ -229,9 +233,11 @@ export async function checkGitTrigger(
     from: state.commitSha,
     files,
     matched,
-    message: `Новый коммит ${probe.head.slice(0, 7)}: изменено файлов ${matched.length} (${matched
-      .slice(0, 3)
-      .join(", ")}${matched.length > 3 ? ", …" : ""}).`,
+    message: t("gitTrigger.changed", {
+      commit: probe.head.slice(0, 7),
+      count: matched.length,
+      files: `${matched.slice(0, 3).join(", ")}${matched.length > 3 ? ", …" : ""}`,
+    }),
   };
 }
 

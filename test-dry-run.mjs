@@ -15,6 +15,7 @@ const { initDb, closeDb } = await import("./dist/db/index.js");
 const { saveTask } = await import("./dist/db/tasks-repo.js");
 const { recordRun } = await import("./dist/db/history-repo.js");
 const { simulatePipeline } = await import("./dist/core/dry-run.js");
+const { t } = await import("./dist/i18n.js");
 
 const results = [];
 function check(name, cond) {
@@ -50,7 +51,7 @@ try {
   } catch (err) {
     threw = err instanceof Error ? err.message : String(err);
   }
-  check("неизвестная задача бросает ошибку", threw.includes("не найдена"));
+  check("неизвестная задача бросает ошибку", threw === t("dryRun.taskNotFound", { task: "Nope" }));
 
   // 2. Топологический порядок.
   const report = await simulatePipeline("Root");
@@ -78,7 +79,7 @@ try {
   // 5. Задача без истории — null + предупреждение.
   const buildItem = report.tasks.find((t) => t.name === "Build");
   check("нет истории -> null оценки", buildItem.estimatedDurationSec == null && buildItem.estimatedTokens == null && buildItem.estimatedCostUsd == null);
-  check("предупреждение об отсутствии истории", report.warnings.some((w) => w.includes("Build") && w.includes("Нет успешных запусков")));
+  check("предупреждение об отсутствии истории", report.warnings.includes(`[Build] ${t("dryRun.noHistory")}`));
 
   // 6. Опасные паттерны.
   const danger = await simulatePipeline("Danger");
@@ -88,7 +89,7 @@ try {
   // 7. Несуществующая рабочая директория.
   await saveTask({ name: "Ghost", schedule: "* * * * *", prompt: "x", workingDirectory: "Z:/definitely/not/exist" });
   const ghost = await simulatePipeline("Ghost");
-  check("предупреждение о несуществующей директории", ghost.warnings.some((w) => w.includes("не существует на диске")));
+  check("предупреждение о несуществующей директории", ghost.warnings.includes(`[Ghost] ${t("dryRun.cwdMissing", { path: "Z:/definitely/not/exist" })}`));
 
   // 8. Топологические суммы.
   check("totals длительность = 10 с", report.totals.estimatedDurationSec === 10);

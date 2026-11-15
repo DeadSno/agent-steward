@@ -21,6 +21,7 @@ import { getHistory, recordRun } from "../db/history-repo.js";
 import { notifyMatrixCompletion } from "../notifications.js";
 import { getWorkspace } from "../workspaces.js";
 import { createSchedulerBackend } from "./scheduler/index.js";
+import { t } from "../i18n.js";
 
 /** Суффикс агрегирующей задачи, запускаемой после всех клонов. */
 export const MATRIX_COMPLETE_SUFFIX = "-matrix-complete";
@@ -54,7 +55,9 @@ export function isMatrixCompleteName(name: string): boolean {
 export function expandMatrixTask(task: TaskDefinition): TaskDefinition[] {
   const matrix = task.matrix;
   if (!matrix || !Array.isArray(matrix.workspaceIds) || matrix.workspaceIds.length === 0) {
-    throw new Error(`Задача "${task.name}": matrix.workspaceIds не может быть пустым.`);
+    throw new Error(
+      t("matrix.error.workspaceIdsEmpty", { task: task.name })
+    );
   }
 
   const clones: TaskDefinition[] = [];
@@ -64,7 +67,10 @@ export function expandMatrixTask(task: TaskDefinition): TaskDefinition[] {
     const workspace = getWorkspace(workspaceId);
     if (!workspace) {
       throw new Error(
-        `Задача "${task.name}": workspace "${workspaceId}" не найден.`
+        t("matrix.error.workspaceMissing", {
+          task: task.name,
+          workspace: workspaceId,
+        })
       );
     }
     const name = matrixCloneName(task.name, workspace.name);
@@ -112,7 +118,9 @@ export function expandMatrixTask(task: TaskDefinition): TaskDefinition[] {
   }
 
   if (clones.length === 0) {
-    throw new Error(`Задача "${task.name}": не удалось создать ни одного клона матрицы.`);
+    throw new Error(
+      t("matrix.error.cloneCreation", { task: task.name })
+    );
   }
   return clones;
 }
@@ -185,22 +193,37 @@ export function aggregateMatrixResults(parentId: string): MatrixAggregate {
 
   if (totalCount === 0) {
     status = "empty";
-    message = `У матрицы "${parentId}" нет клонов.`;
+    message = t("matrix.aggregate.empty", { parent: parentId });
   } else if (pendingCount > 0) {
     status = "running";
-    message = `Выполняется: ${totalCount - pendingCount} из ${totalCount}.`;
+    message = t("matrix.aggregate.running", {
+      done: totalCount - pendingCount,
+      total: totalCount,
+    });
   } else if (errorCount === 0) {
     status = "success";
-    message = `Все ${totalCount} клонов завершились успешно.`;
+    message = t("matrix.aggregate.success", { total: totalCount });
   } else if (failureMode === "stop") {
     const firstError = results.find((r) => r.status === "error");
     status = "error";
     message =
-      `Остановлено после первой ошибки: ${errorCount} из ${totalCount} с ошибкой.` +
-      (firstError?.error ? ` Первая ошибка (${firstError.name}): ${firstError.error}` : "");
+      t("matrix.aggregate.stopped", {
+        errors: errorCount,
+        total: totalCount,
+      }) +
+      (firstError?.error
+        ? t("matrix.aggregate.stoppedFirst", {
+            name: firstError.name,
+            error: firstError.error,
+          })
+        : "");
   } else {
     status = "partial";
-    message = `Частичный успех: ${successCount} из ${totalCount} успешно, ${errorCount} с ошибкой.`;
+    message = t("matrix.aggregate.partial", {
+      success: successCount,
+      total: totalCount,
+      errors: errorCount,
+    });
   }
 
   return {
@@ -254,13 +277,11 @@ export function resolveMatrixConcurrency(
 export async function runMatrix(task: TaskDefinition): Promise<MatrixRunResult> {
   const matrix = task.matrix;
   if (!matrix) {
-    throw new Error(`Задача "${task.name}" не является матрицей.`);
+    throw new Error(t("matrix.error.notMatrix", { task: task.name }));
   }
   const clones = listMatrixClones(task.name);
   if (clones.length === 0) {
-    throw new Error(
-      `У матрицы "${task.name}" нет клонов — пересоздайте задачу, чтобы развернуть её по workspace.`
-    );
+    throw new Error(t("matrix.error.noClones", { task: task.name }));
   }
 
   const strategy = matrix.strategy === "sequential" ? "sequential" : "parallel";
@@ -471,8 +492,10 @@ export function ensureMatrixCompleteTask(parent: TaskDefinition): TaskDefinition
     schedule: parent.schedule,
     prompt:
       existing?.prompt ??
-      `Все клоны матрицы "${parent.name}" завершились. Проверь результаты: ` +
-        `${clones.map((c) => c.name).join(", ")}.`,
+      t("matrix.aggregator.prompt", {
+        parent: parent.name,
+        clones: clones.map((c) => c.name).join(", "),
+      }),
     triggerType: "file",
     watchPath: undefined,
     mcpEvent: undefined,
@@ -546,7 +569,7 @@ export interface MatrixSyncPlan {
  */
 export function planMatrixSync(parent: TaskDefinition): MatrixSyncPlan {
   if (!parent.matrix) {
-    throw new Error(`Задача "${parent.name}" не является матрицей.`);
+    throw new Error(t("matrix.error.notMatrix", { task: parent.name }));
   }
   const desired = expandMatrixTask(parent);
   const existing = listMatrixClones(parent.name);
@@ -574,7 +597,7 @@ export function planMatrixSync(parent: TaskDefinition): MatrixSyncPlan {
       running.push(current.name);
       if (cloneSignature(current) !== cloneSignature(wanted)) {
         warnings.push(
-          `Клон "${current.name}" выполняется — изменения применятся после завершения.`
+          t("matrix.clone.runningChanges", { name: current.name })
         );
       }
       continue;
@@ -590,7 +613,7 @@ export function planMatrixSync(parent: TaskDefinition): MatrixSyncPlan {
     if (latest.status === "running") {
       running.push(current.name);
       warnings.push(
-        `Клон "${current.name}" выполняется — удаление отложено до завершения.`
+        t("matrix.clone.runningDeletion", { name: current.name })
       );
       continue;
     }
@@ -693,11 +716,10 @@ export function getMatrixDeletionGuard(
   const definition = getTask(taskName);
   const parentId = definition?.matrixParentId?.trim();
   if (!parentId) return undefined;
-  return (
-    `Задача "${definition?.name ?? taskName}" — клон матрицы "${parentId}". ` +
-    `Удалите матрицу целиком (родитель + все клоны) или измените список ` +
-    `workspace-ов родителя.`
-  );
+  return t("matrix.deletionGuard", {
+    name: definition?.name ?? taskName,
+    parent: parentId,
+  });
 }
 
 /**
@@ -747,11 +769,11 @@ export interface MatrixCancelResult {
  */
 export async function cancelPendingMatrixClones(
   parentName: string,
-  reason = "Отменено пользователем."
+  reason = t("matrix.cancel.defaultReason")
 ): Promise<MatrixCancelResult> {
   const parent = getTask(parentName);
   if (!parent?.matrix) {
-    throw new Error(`Задача "${parentName}" не является матрицей.`);
+    throw new Error(t("matrix.error.notMatrix", { task: parentName }));
   }
 
   const clones = listMatrixClones(parent.name);

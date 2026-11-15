@@ -21,6 +21,7 @@ process.env.OPENCODE_SCHEDULER_HOME = path.join(
 const notifications = await import("./dist/notifications.js");
 const settingsModule = await import("./dist/settings.js");
 const analytics = await import("./dist/core/analytics.js");
+const { t, setLocale, resetI18n, messageIn } = await import("./dist/i18n.js");
 
 const {
   buildDigestSummary,
@@ -86,12 +87,18 @@ const errorPayload = {
 
 check(
   "formatNotificationMessage: дефолтный успех",
-  formatNotificationMessage(successPayload) === '✅ Задача "Test" выполнена (2.3s)'
+  formatNotificationMessage(successPayload) ===
+    t("notify.task.success", { task: "Test", duration: "2.3s", cost: "" })
 );
 check(
   "formatNotificationMessage: дефолтная ошибка",
   formatNotificationMessage(errorPayload) ===
-    '❌ Задача "Test" упала (2.3s): Quality Gate провален'
+    t("notify.task.error", {
+      task: "Test",
+      duration: "2.3s",
+      error: t("notify.reason", { error: "Quality Gate провален" }),
+      cost: "",
+    })
 );
 check(
   "formatNotificationMessage: кастомные шаблоны",
@@ -101,21 +108,29 @@ check(
   }) === "[✅] Test ok за 2.3s"
 );
 
+setLocale("en");
+check(
+  "formatNotificationMessage: текст следует за локалью",
+  formatNotificationMessage(successPayload) ===
+    t("notify.task.success", { task: "Test", duration: "2.3s", cost: "" })
+);
+resetI18n();
+
 // --- 3. Уведомления о матрицах -------------------------------------------
 check(
   "formatMatrixMessage: успех",
   formatMatrixMessage({ parentName: "M", status: "success", total: 3, success: 3, error: 0 }) ===
-    '✅ Матрица "M" завершилась: 3 из 3 клонов успешно.'
+    t("notify.matrix.success", { parent: "M", total: 3, success: 3, error: 0 })
 );
 check(
   "formatMatrixMessage: partial",
   formatMatrixMessage({ parentName: "M", status: "partial", total: 3, success: 2, error: 1 }) ===
-    '⚠️ Матрица "M" завершилась частично: успешно 2 из 3, ошибок 1.'
+    t("notify.matrix.partial", { parent: "M", total: 3, success: 2, error: 1 })
 );
 check(
   "formatMatrixMessage: все клоны упали",
   formatMatrixMessage({ parentName: "M", status: "error", total: 2, success: 0, error: 2 }) ===
-    '❌ Матрица "M": все 2 клонов упали.'
+    t("notify.matrix.failedAll", { parent: "M", total: 2, success: 0, error: 2 })
 );
 
 // --- 4. Детектор зависших клонов -----------------------------------------
@@ -136,15 +151,22 @@ check(
   "findStuckMatrixClones: порог 0 = выключено",
   findStuckMatrixClones(running, parentByClone, new Date(), 0).length === 0
 );
+const stuckStartedAt = minutesAgo(90);
 check(
   "formatStuckMatrixMessage: содержит родителя, клона и минуты",
   formatStuckMatrixMessage({
     id: 1,
     cloneName: "m-matrix-a",
     parentName: "m",
-    startedAt: minutesAgo(90),
+    startedAt: stuckStartedAt,
     minutes: 90,
-  }).includes('Матрица "m": клон "m-matrix-a" выполняется дольше 90 мин')
+  }) ===
+    t("notify.stuck", {
+      parent: "m",
+      clone: "m-matrix-a",
+      startedAt: stuckStartedAt,
+      minutes: 90,
+    })
 );
 
 // --- 5. Дайджест: сводка и текст -----------------------------------------
@@ -184,10 +206,42 @@ const weekly = buildDigestSummary(digestRecords, { frequency: "weekly", now });
 check("buildDigestSummary: weekly окно 7 дней", weekly.period === "weekly" && weekly.windowDays === 7);
 
 const dailyText = formatDigestMessage(daily, now);
-check("formatDigestMessage: заголовок «за сутки»", dailyText.includes("Дайджест за сутки (13.11.2026)"));
-check("formatDigestMessage: строка запусков", dailyText.includes("Запусков: 3 — ✅ 1, ❌ 2, ⚠️ 0"));
-check("formatDigestMessage: стоимость и токены", dailyText.includes("$0.0200") && dailyText.includes("токенов: 2000"));
-check("formatDigestMessage: топ ошибок в тексте", dailyText.includes("Quality Gate провален — 2"));
+check(
+  "formatDigestMessage: заголовок «за сутки»",
+  dailyText.includes(
+    t("notify.digest.title", {
+      period: t("notify.digest.period.daily"),
+      date: "13.11.2026",
+    })
+  )
+);
+check(
+  "formatDigestMessage: строка запусков",
+  dailyText.includes(
+    t("notify.digest.runs", {
+      total: 3,
+      success: 1,
+      error: 2,
+      partial: 0,
+      rate: daily.successRate,
+    })
+  )
+);
+check(
+  "formatDigestMessage: стоимость и токены",
+  dailyText.includes(
+    t("notify.digest.cost", { cost: "$0.0200", tokens: 2000 })
+  )
+);
+check(
+  "formatDigestMessage: топ ошибок в тексте",
+  dailyText.includes(
+    t("notify.digest.topErrorRow", {
+      message: "Quality Gate провален",
+      count: 2,
+    })
+  )
+);
 
 const emptyText = formatDigestMessage(
   {
@@ -204,7 +258,11 @@ const emptyText = formatDigestMessage(
   },
   now
 );
-check("formatDigestMessage: «за неделю» и «Ошибок нет»", emptyText.includes("за неделю") && emptyText.includes("Ошибок нет"));
+check(
+  "formatDigestMessage: «за неделю» и «Ошибок нет»",
+  emptyText.includes(t("notify.digest.period.weekly")) &&
+    emptyText.includes(t("notify.digest.noErrors"))
+);
 
 // --- 6. Расписание дайджеста ---------------------------------------------
 const digestBase = { enabled: true, frequency: "daily", time: "09:00", lastSentAt: null };
@@ -282,6 +340,30 @@ check(
     loaded.notifications.matrix?.stuckAfterMinutes === 60 &&
     loaded.notifications.digest?.frequency === "daily"
 );
+
+// Шаблоны, сохранённые как встроенные дефолты, не должны застывать на языке
+// установки: при смене локали они берутся из текущего каталога.
+setLocale("en");
+fs.writeFileSync(
+  settingsFile,
+  JSON.stringify({
+    notifications: {
+      enabled: true,
+      templates: {
+        success: messageIn("ru", "notify.task.success"),
+        error: messageIn("ru", "notify.task.error"),
+      },
+    },
+  }),
+  "utf8"
+);
+const migrated = await settingsModule.loadSettings();
+check(
+  "loadSettings: встроенные шаблоны переводятся на текущую локаль",
+  migrated.notifications.templates?.success === t("notify.task.success") &&
+    migrated.notifications.templates?.error === t("notify.task.error")
+);
+resetI18n();
 
 // --- 8. Webhook: повторы и backoff ---------------------------------------
 async function withServer(handler, fn) {

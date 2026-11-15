@@ -21,6 +21,7 @@ const telegram = await import("./dist/core/telegram.js");
 const nativeNotify = await import("./dist/core/native-notify.js");
 const notifications = await import("./dist/notifications.js");
 const settingsModule = await import("./dist/settings.js");
+const { t } = await import("./dist/i18n.js");
 
 const {
   escapeTelegramText,
@@ -61,11 +62,15 @@ check(
 );
 check(
   "MarkdownV2: ссылка на дашборд в формате [текст](url)",
-  formatTelegramText("Готово", "MarkdownV2", dash).includes(`[📊 Открыть дашборд](${dash})`)
+  formatTelegramText("Готово", "MarkdownV2", dash).includes(
+    `[${t("notify.telegram.openDashboard")}](${dash})`
+  )
 );
 check(
   "plain: ссылка добавляется текстом",
-  formatTelegramText("Готово", "", dash).includes(`Открыть дашборд: ${dash}`)
+  formatTelegramText("Готово", "", dash).includes(
+    t("notify.telegram.openDashboardUrl", { url: dash })
+  )
 );
 check(
   "без URL ссылка не добавляется",
@@ -245,7 +250,8 @@ const withUsage = formatNotificationMessage({
 });
 check(
   "formatNotificationMessage: токены и стоимость в тексте",
-  withUsage.includes("1500 tok") && withUsage.includes("$0.0060")
+  withUsage.includes(t("notify.usage.tokens", { tokens: "1500" })) &&
+    withUsage.includes("$0.0060")
 );
 const noUsage = formatNotificationMessage({
   taskName: "deploy",
@@ -254,7 +260,8 @@ const noUsage = formatNotificationMessage({
 });
 check(
   "formatNotificationMessage: без данных текст не меняется",
-  noUsage === '✅ Задача "deploy" выполнена (2.3s)'
+  noUsage ===
+    t("notify.task.success", { task: "deploy", duration: "2.3s", cost: "" })
 );
 check(
   "шаблон {cost} получает стоимость",

@@ -8,6 +8,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { checkGitTrigger } from "./dist/core/git-trigger.js";
+import { t } from "./dist/i18n.js";
 import { getDb } from "./dist/db/index.js";
 
 const results = [];
@@ -239,7 +240,7 @@ check("ignore filter: noise.log не в matched", !r6.matched.includes("noise.lo
     { persist: false }
   );
   check("no-repo: статус 'no-repo'", r.status === "no-repo");
-  check("no-repo: message о репозитории", r.message.includes("git-репозиторий"));
+  check("no-repo: message о репозитории", r.message === t("gitTrigger.noRepo", { cwd: notRepo }));
 }
 
 // Накрываем временную директорию.

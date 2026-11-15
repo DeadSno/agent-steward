@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { PLUGIN_DIR } from "./types.js";
-import { DEFAULT_LOCALE, normalizeLocale, type Locale } from "./i18n.js";
+import { DEFAULT_LOCALE, normalizeLocale, SUPPORTED_LOCALES, messageIn, t, type Locale } from "./i18n.js";
 
 /** Настройки webhook-уведомлений (Discord/Slack/generic). */
 export interface WebhookNotificationSettings {
@@ -337,8 +337,8 @@ export function defaultNotifications(): NotificationSettings {
       retryDelayMs: DEFAULT_WEBHOOK_RETRY_DELAY_MS,
     },
     templates: {
-      success: '✅ Задача "{task}" выполнена ({duration}){cost}',
-      error: '❌ Задача "{task}" упала ({duration}){error}{cost}',
+      success: t("notify.task.success"),
+      error: t("notify.task.error"),
     },
     filters: { include: [], exclude: [] },
     telegram: {
@@ -451,6 +451,23 @@ function normalizeHttpBase(value: unknown, fallback: string): string {
   }
 }
 
+/**
+ * Встроенный шаблон (ru или en) заменяется текущим переводом; пользовательский
+ * текст остаётся как есть. Иначе сохранённые при первой установке дефолты
+ * навсегда застывали бы на языке установки.
+ */
+function localizedTemplate(
+  value: unknown,
+  key: string,
+  fallback: string
+): string {
+  const raw = typeof value === "string" && value.trim() ? value : fallback;
+  const builtin = SUPPORTED_LOCALES.some(
+    (locale) => messageIn(locale, key) === raw
+  );
+  return builtin ? t(key) : raw;
+}
+
 /** Приводит настройки уведомлений к безопасному виду. */
 function normalizeNotifications(
   value: unknown,
@@ -536,14 +553,16 @@ function normalizeNotifications(
       ),
     },
     templates: {
-      success:
-        typeof rawTemplates?.success === "string" && rawTemplates.success.trim()
-          ? rawTemplates.success
-          : fallbackTemplates.success,
-      error:
-        typeof rawTemplates?.error === "string" && rawTemplates.error.trim()
-          ? rawTemplates.error
-          : fallbackTemplates.error,
+      success: localizedTemplate(
+        rawTemplates?.success,
+        "notify.task.success",
+        fallbackTemplates.success
+      ),
+      error: localizedTemplate(
+        rawTemplates?.error,
+        "notify.task.error",
+        fallbackTemplates.error
+      ),
     },
     filters: {
       include: normalizeNameList(rawFilters?.include, fallbackFilters.include),

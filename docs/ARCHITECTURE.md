@@ -16,6 +16,7 @@ model, the modules, the data model and the extension points.
 - [Triggers](#triggers)
 - [Storage](#storage)
 - [Interfaces](#interfaces)
+- [Localization](#localization)
 - [Security model](#security-model)
 - [Extension points](#extension-points)
 
@@ -315,6 +316,39 @@ never requires a manual migration.
 | RPC | Sidebar GUI | `src/rpc.ts` contracts, ~30 methods |
 | Sidebar GUI | Human | `gui-experimental.cjs` |
 | Web dashboard | Human | `startDashboardServer` (localhost, random/fixed port) |
+
+## Localization
+
+User-visible text lives in flat JSON catalogs: `locales/ru.json` (default) and
+`locales/en.json`. Keys are dot-separated and grouped by surface — `gui.*`, `notify.*`,
+`tool.*`, `dryRun.*`, `matrix.*`, `schedule.*` — and both catalogs must have the same
+key set with non-empty values.
+
+`src/i18n.ts` loads the catalogs once and caches them. It exposes `t(key, params)`,
+`setLocale(locale)`, `messageIn(locale, key)` and `hasKey(key, locale)`. Lookup order is
+active locale → `en` → `ru` → the key itself, so a missing translation never renders as
+an empty string. The `locale` setting (`ru` default, `en` optional) is applied
+immediately, without restarting OpenCode. The sidebar GUI embeds the catalogs at build
+time via `registerCatalog`, because a webview bundle cannot read package files at
+runtime.
+
+The template subset is deliberately small and dependency-free:
+
+- `{name}` — interpolation; the caller formats the value (duration, money, date).
+- `{count, plural, one {…} few {…} many {…} other {…}}` — plural forms through
+  `Intl.PluralRules` for the active locale (`ru` uses one/few/many, `en` one/other).
+
+Rules:
+
+- a user-visible message is a whole phrase in the catalog, including punctuation; never
+  concatenate translated fragments;
+- store stable codes, not localized text, in the database; translate at render time;
+- agent tool descriptions, schemas and API payloads stay English; `console.*`
+  diagnostics stay Russian;
+- add every new key to both catalogs. `test-docs.mjs` enforces parity and non-empty
+  values; `npm run test:en` replays all suites under `en` and CI runs it on Linux.
+  `OPENCODE_SCHEDULER_LOCALE` only overrides the initial locale for tests and services —
+  it is not a user-facing setting.
 
 ## Security model
 

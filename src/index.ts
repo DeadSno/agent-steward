@@ -47,7 +47,7 @@ import {
 import { SchedulerRpc } from "./rpc.js";
 import { latestHistoryByTask, loadHistory, loadMetrics } from "./history.js";
 import { loadSettings, saveSettings } from "./settings.js";
-import { setLocale, type Locale } from "./i18n.js";
+import { setLocale, t, type Locale } from "./i18n.js";
 import type {
   AuditSettings,
   HistorySettings,
@@ -442,7 +442,7 @@ export const scheduleTaskSchema = z.object({
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["schedule"],
-      message: "Для triggerType=cron нужно cron-выражение schedule.",
+      message: t("tool.error.cronSchedule"),
     });
   }
   if (
@@ -453,21 +453,21 @@ export const scheduleTaskSchema = z.object({
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["runAt"],
-      message: "Для triggerType=once нужен runAt (ISO-8601) или delaySeconds.",
+      message: t("tool.error.onceSchedule"),
     });
   }
   if (trigger === "once" && value.matrix) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["matrix"],
-      message: "One-shot нельзя комбинировать с matrix: матрица запускается только вручную.",
+      message: t("tool.error.onceMatrixSchema"),
     });
   }
   if (trigger !== "once" && (value.runAt || value.delaySeconds !== undefined)) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["runAt"],
-      message: "runAt/delaySeconds допустимы только при triggerType=once.",
+      message: t("tool.error.onceFields"),
     });
   }
 });
@@ -654,14 +654,14 @@ export const updateTaskSchema = z.object({
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["runAt"],
-      message: "runAt/delaySeconds допустимы только при triggerType=once.",
+      message: t("tool.error.onceFields"),
     });
   }
   if (value.triggerType === "once" && value.matrix) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["matrix"],
-      message: "One-shot нельзя комбинировать с matrix.",
+      message: t("tool.error.onceMatrixUpdate"),
     });
   }
 });
@@ -725,13 +725,13 @@ const manageWorkspacesSchema = z.object({
     .nullable()
     .optional()
     .describe(
-      "Env-переменные workspace (ключ → значение). Переопределяют значения из envFile; секреты маскируются в логах (add/update)."
+      "Workspace environment variables (key → value). Override envFile values; secrets are masked in logs (add/update)."
     ),
   envFile: z
     .string()
     .nullable()
     .optional()
-    .describe("Путь к .env-файлу workspace (add/update, null — очистить)."),
+    .describe("Path to the workspace .env file (add/update, null clears it)."),
 });
 
 export const matrixControlSchema = z.object({
@@ -1207,7 +1207,7 @@ const scheduleTaskExecute = wrapExecute<ScheduleArgs>(async (args) => {
       paused: false,
       nextRun,
       runWhenLoggedOff: runWhenLoggedOff === true,
-      message: `Задача "${name}" успешно создана.`,
+      message: t("tool.task.created", { name }),
       task: {
         name,
         schedule,
@@ -1252,8 +1252,8 @@ const listTasksExecute = wrapExecute<ListArgs>(async () => {
       content: JSON.stringify({
         success: true,
         message: osAvailable
-          ? "Задачи плагина не найдены."
-          : "Статус планировщика ОС недоступен — показано состояние из БД.",
+          ? t("tool.task.listEmpty")
+          : t("tool.task.listOsUnavailable"),
         tasks: [],
         osAvailable,
         ...(osError ? { osError } : {}),
@@ -1265,8 +1265,8 @@ const listTasksExecute = wrapExecute<ListArgs>(async () => {
     content: JSON.stringify({
       success: true,
       message: osAvailable
-        ? `Найдено задач: ${tasks.length}.`
-        : `Найдено задач: ${tasks.length}. Статус планировщика ОС недоступен — показано состояние из БД.`,
+        ? t("tool.task.found", { count: tasks.length })
+        : t("tool.task.foundOsUnavailable", { count: tasks.length }),
       tasks,
       osAvailable,
       ...(osError ? { osError } : {}),
@@ -1287,7 +1287,7 @@ async function cancelMatrixRun(
     (def) => def.name.toLowerCase() === name.trim().toLowerCase()
   );
   if (!definition?.matrix) {
-    throw new Error(`Задача "${name}" не является матрицей.`);
+    throw new Error(t("tool.error.matrixNotMatrix", { name }));
   }
 
   const result = await cancelPendingMatrixClones(definition.name);
@@ -1304,9 +1304,10 @@ async function cancelMatrixRun(
       await scheduler.deleteTask(clone.name);
     } catch (err: any) {
       warnings.push(
-        `${clone.name}: не удалось остановить — ${
-          err instanceof Error ? err.message : String(err)
-        }`
+        t("tool.matrix.stopFailed", {
+          clone: clone.name,
+          error: err instanceof Error ? err.message : String(err),
+        })
       );
       continue;
     }
@@ -1352,26 +1353,29 @@ async function cancelMatrixRun(
       );
     } catch (err: any) {
       warnings.push(
-        `${clone.name}: не удалось пересоздать — ${
-          err instanceof Error ? err.message : String(err)
-        }`
+        t("tool.matrix.recreateFailed", {
+          clone: clone.name,
+          error: err instanceof Error ? err.message : String(err),
+        })
       );
     }
   }
 
   const parts = [
-    `Матрица "${definition.name}": отменено ${result.cancelled.length} из ${
-      result.aggregate.totalCount
-    } клонов.`,
+    t("tool.matrix.cancelSummary", {
+      matrix: definition.name,
+      cancelled: result.cancelled.length,
+      total: result.aggregate.totalCount,
+    }),
   ];
   if (result.running.length > 0) {
-    parts.push(`Остановлено выполнявшихся: ${result.running.length}.`);
+    parts.push(t("tool.matrix.cancelRunning", { count: result.running.length }));
   }
   if (result.alreadyFinished.length > 0) {
-    parts.push(`Уже завершены и не тронуты: ${result.alreadyFinished.length}.`);
+    parts.push(t("tool.matrix.cancelFinished", { count: result.alreadyFinished.length }));
   }
   if (warnings.length > 0) {
-    parts.push(`Предупреждения: ${warnings.join("; ")}.`);
+    parts.push(t("tool.matrix.cancelWarnings", { warnings: warnings.join("; ") }));
   }
 
   return {
@@ -1559,7 +1563,7 @@ const deleteTaskExecute = wrapExecute<DeleteArgs>(async (args) => {
       return {
         content: JSON.stringify({
           success: true,
-          message: `Задача "${name}" уже отсутствует (удалена или не существовала).`,
+          message: t("tool.task.alreadyAbsent", { name }),
         }),
       };
     }
@@ -1568,8 +1572,8 @@ const deleteTaskExecute = wrapExecute<DeleteArgs>(async (args) => {
         success: true,
         message:
           removed.length > 0
-            ? `Матрица "${name}" удалена вместе с клонами: ${removed.join(", ")}.`
-            : `Задача "${name}" успешно удалена.`,
+            ? t("tool.task.matrixDeletedList", { name, list: removed.join(", ") })
+            : t("tool.task.deleted", { name }),
       }),
     };
   } catch (err: any) {
@@ -1603,8 +1607,8 @@ const runTaskNowExecute = wrapExecute<RunNowArgs>(async (args) => {
     content: JSON.stringify({
       success: true,
       message: alreadyRunning
-        ? `Задача "${name}" уже выполняется.`
-        : `Задача "${name}" запущена.`,
+        ? t("tool.task.alreadyRunning", { name })
+        : t("tool.task.started", { name }),
     }),
   };
 });
@@ -1670,12 +1674,12 @@ async function updateTaskFromInput(
 }> {
   const name = input.name?.trim();
   if (!name) {
-    return { success: false, message: "Не передано имя задачи." };
+    return { success: false, message: t("tool.error.taskNameMissing") };
   }
 
   const previous = getTask(name);
   if (!previous) {
-    return { success: false, message: `Задача "${name}" не найдена.` };
+    return { success: false, message: t("tool.error.taskNotFound", { name }) };
   }
 
   const schedule = clearableString(input.schedule ?? input.newSchedule, previous.schedule);
@@ -1688,13 +1692,13 @@ async function updateTaskFromInput(
   if (triggerType === "cron" && !schedule) {
     return {
       success: false,
-      message: `Для обновления задачи "${name}" нужен cron-график.`,
+      message: t("tool.error.updateCron", { name }),
     };
   }
   if (!prompt) {
     return {
       success: false,
-      message: `Для обновления задачи "${name}" нужен промпт.`,
+      message: t("tool.error.updatePrompt", { name }),
     };
   }
 
@@ -1715,7 +1719,7 @@ async function updateTaskFromInput(
     if (!normalized.ok) {
       return {
         success: false,
-        message: `Задача "${name}": ${normalized.error}`,
+        message: t("tool.error.taskReason", { name, error: normalized.error }),
       };
     }
     runAt = normalized.runAt;
@@ -1729,7 +1733,7 @@ async function updateTaskFromInput(
     if (!normalizedSession) {
       return {
         success: false,
-        message: `Задача "${name}": неизвестный режим сессии "${String(input.session)}".`,
+        message: t("tool.error.sessionUnknown", { name, session: String(input.session) }),
       };
     }
     session = normalizedSession;
@@ -1744,7 +1748,7 @@ async function updateTaskFromInput(
   ) {
     return {
       success: false,
-      message: `Задача "${name}": sessionMaxRuns должен быть целым числом ≥ 1.`,
+      message: t("tool.error.sessionMaxRuns", { name }),
     };
   }
   let sessionId = previous.sessionId;
@@ -1761,9 +1765,7 @@ async function updateTaskFromInput(
   if (triggerType === "once" && matrixNext) {
     return {
       success: false,
-      message:
-        `Задача "${name}": one-shot нельзя комбинировать с matrix. ` +
-        `Запустите матрицу вручную или используйте cron/file-триггер.`,
+      message: t("tool.error.oneShotMatrix", { name }),
     };
   }
 
@@ -1864,7 +1866,7 @@ async function updateTaskFromInput(
       success: true,
       paused,
       nextRun: computeTaskNextRun(updated, { paused }),
-      message: `Задача "${name}" обновлена.`,
+      message: t("tool.task.updated", { name }),
     };
   } catch (err: any) {
     const cause = err instanceof Error ? err.message : String(err);
@@ -1874,8 +1876,7 @@ async function updateTaskFromInput(
       return {
         success: false,
         restored: true,
-        message:
-          `${cause} Прежняя версия не тронута: удалить задачу из планировщика не удалось.`,
+        message: t("tool.task.rollbackKept", { cause }),
       };
     }
 
@@ -1895,7 +1896,7 @@ async function updateTaskFromInput(
       return {
         success: false,
         restored: true,
-        message: `${cause} Обновление отменено, прежняя версия восстановлена.`,
+        message: t("tool.task.rollbackRestored", { cause }),
       };
     } catch (restoreErr: any) {
       const restoreMessage =
@@ -1903,9 +1904,11 @@ async function updateTaskFromInput(
       return {
         success: false,
         restored: false,
-        message:
-          `${cause} Откат не удался: ${restoreMessage}. ` +
-          `Задача "${name}" отсутствует в планировщике — создайте её заново.`,
+        message: t("tool.task.rollbackFailed", {
+          cause,
+          restore: restoreMessage,
+          name,
+        }),
       };
     }
   }
@@ -1940,7 +1943,7 @@ async function pauseOrResumeTask(
   if (!definition) {
     return {
       success: false,
-      message: `Задача "${trimmed}" не найдена.`,
+      message: t("tool.error.taskNotFound", { name: trimmed }),
       affected: [],
       warnings: [],
       paused,
@@ -1956,7 +1959,7 @@ async function pauseOrResumeTask(
     if (Number.isNaN(parsed)) {
       return {
         success: false,
-        message: `Задача "${trimmed}": некорректная дата паузы "${until}". Нужен ISO-момент, например 2026-12-01T09:00:00Z.`,
+        message: t("tool.error.pauseDateInvalid", { name: trimmed, until }),
         affected: [],
         warnings: [],
         paused,
@@ -1967,7 +1970,7 @@ async function pauseOrResumeTask(
     if (parsed <= Date.now()) {
       return {
         success: false,
-        message: `Задача "${trimmed}": дата паузы уже прошла.`,
+        message: t("tool.error.pauseDatePast", { name: trimmed }),
         affected: [],
         warnings: [],
         paused,
@@ -1984,7 +1987,7 @@ async function pauseOrResumeTask(
   if (targets.length === 0 && definition.matrix) {
     return {
       success: false,
-      message: `У матрицы "${trimmed}" нет клонов.`,
+      message: t("tool.error.matrixNoClones", { name: trimmed }),
       affected: [],
       warnings: [],
       paused,
@@ -2024,22 +2027,36 @@ async function pauseOrResumeTask(
       saveTask({ ...definition, ...definitionUpdates });
     } catch (err: any) {
       warnings.push(
-        `не удалось сохранить автопродолжение: ${
-          err instanceof Error ? err.message : String(err)
-        }`
+        t("tool.task.autosave", {
+          error: err instanceof Error ? err.message : String(err),
+        })
       );
     }
   }
 
   const untilText = pausedUntil
-    ? ` до ${new Date(pausedUntil).toLocaleString()}`
+    ? t("tool.task.until", { date: new Date(pausedUntil).toLocaleString() })
     : "";
-  const verb = paused ? "поставлена на паузу" : "возобновлена";
+  const verb = paused ? t("tool.task.paused") : t("tool.task.resumed");
   const message = definition.matrix
-    ? `Матрица "${trimmed}" ${verb}${untilText}: ${affected.length} из ${targets.length} клонов.` +
-      (warnings.length > 0 ? ` Ошибки: ${warnings.join("; ")}.` : "")
-    : `Задача "${trimmed}" ${verb}${untilText}.` +
-      (warnings.length > 0 ? ` Ошибка: ${warnings.join("; ")}.` : "");
+    ? t("tool.task.matrixPaused", {
+        name: trimmed,
+        verb,
+        until: untilText,
+        affected: affected.length,
+        total: targets.length,
+      }) +
+      (warnings.length > 0
+        ? t("tool.task.matrixPauseErrors", { warnings: warnings.join("; ") })
+        : "")
+    : t("tool.task.pausedText", {
+        name: trimmed,
+        verb,
+        until: untilText,
+      }) +
+      (warnings.length > 0
+        ? t("tool.task.pauseError", { warnings: warnings.join("; ") })
+        : "");
 
   // Спринт 27.5.2: состояние и ближайший запуск считаем из определения —
   // schtasks после /change (особенно /enable) отдаёт nextRunTime с задержкой.
@@ -2269,7 +2286,7 @@ const manageWorkspacesExecute = wrapExecute<WorkspacesArgs>(async (args) => {
           return {
             content: JSON.stringify({
               success: false,
-              error: "Для action=add нужен path.",
+              error: t("tool.workspace.needPath"),
             }),
           };
         }
@@ -2296,7 +2313,7 @@ const manageWorkspacesExecute = wrapExecute<WorkspacesArgs>(async (args) => {
           return {
             content: JSON.stringify({
               success: false,
-              error: "Для action=update нужен id.",
+              error: t("tool.workspace.needUpdateId"),
             }),
           };
         }
@@ -2311,7 +2328,7 @@ const manageWorkspacesExecute = wrapExecute<WorkspacesArgs>(async (args) => {
           return {
             content: JSON.stringify({
               success: false,
-              error: "Workspace не найден.",
+              error: t("tool.workspace.notFound"),
             }),
           };
         }
@@ -2335,7 +2352,7 @@ const manageWorkspacesExecute = wrapExecute<WorkspacesArgs>(async (args) => {
           return {
             content: JSON.stringify({
               success: false,
-              error: "Для action=delete нужен id.",
+              error: t("tool.workspace.needDeleteId"),
             }),
           };
         }
@@ -2344,8 +2361,8 @@ const manageWorkspacesExecute = wrapExecute<WorkspacesArgs>(async (args) => {
           content: JSON.stringify({
             success: deleted,
             message: deleted
-              ? "Workspace удалён. Задачи сохранены, привязка очищена."
-              : "Workspace не найден.",
+              ? t("tool.workspace.deleted")
+              : t("tool.workspace.notFound"),
           }),
         };
       }
@@ -2393,8 +2410,8 @@ const matrixControlExecute = wrapExecute<MatrixControlArgs>(async (args) => {
         success: true,
         message:
           removed.length > 0
-            ? `Удалено осиротевших задач: ${removed.length}.`
-            : "Осиротевших задач не найдено.",
+            ? t("tool.matrix.orphansRemoved", { count: removed.length })
+            : t("tool.matrix.orphansNone"),
         removed,
       }),
     };
@@ -2405,7 +2422,7 @@ const matrixControlExecute = wrapExecute<MatrixControlArgs>(async (args) => {
     return {
       content: JSON.stringify({
         success: false,
-        error: `Для action=${args.action} нужен name матрицы.`,
+        error: t("tool.matrix.actionName", { action: args.action }),
       }),
     };
   }
@@ -2484,8 +2501,7 @@ const manageSettingsExecute = wrapExecute<SettingsArgs>(async (args) => {
     return {
       content: JSON.stringify({
         success: false,
-        error:
-          "Для action=update передайте хотя бы одно поле: maxConcurrent, locale, winterMode, notifications, history, integrations или audit.",
+        error: t("tool.settings.updateFields"),
         settings: current,
       }),
     };
@@ -2514,7 +2530,7 @@ const manageTemplatesExecute = wrapExecute<TemplatesArgs>(async (args) => {
   if (args.action === "delete") {
     const id = args.id?.trim();
     if (!id) {
-      return { content: JSON.stringify({ success: false, error: "Для action=delete нужен id шаблона." }) };
+      return { content: JSON.stringify({ success: false, error: t("tool.template.needDeleteId") }) };
     }
     const before = await loadTemplates();
     const existed = before.some((template) => template.id === id);
@@ -2522,7 +2538,9 @@ const manageTemplatesExecute = wrapExecute<TemplatesArgs>(async (args) => {
     return {
       content: JSON.stringify({
         success: existed,
-        message: existed ? `Шаблон ${id} удалён.` : `Шаблон ${id} не найден.`,
+        message: existed
+          ? t("tool.template.deleted", { id })
+          : t("tool.template.notFound", { id }),
       }),
     };
   }
@@ -2532,7 +2550,7 @@ const manageTemplatesExecute = wrapExecute<TemplatesArgs>(async (args) => {
     return {
       content: JSON.stringify({
         success: false,
-        error: "Для action=save нужны непустые name и prompt.",
+        error: t("tool.template.saveRequired"),
       }),
     };
   }
@@ -2558,7 +2576,7 @@ const manageProfilesExecute = wrapExecute<ProfilesArgs>(async (args) => {
     return {
       content: JSON.stringify({
         success: false,
-        error: `Для action=${args.action} нужно имя профиля.`,
+        error: t("tool.profile.nameRequired", { action: args.action }),
       }),
     };
   }
@@ -2569,7 +2587,7 @@ const manageProfilesExecute = wrapExecute<ProfilesArgs>(async (args) => {
     return {
       content: JSON.stringify({
         success: true,
-        message: `Профиль "${meta.name}" создан (порт дашборда ${meta.port}).`,
+        message: t("tool.profile.created", { name: meta.name, port: meta.port }),
         profile: profile ?? {
           name: meta.name,
           dir: getProfileDir(meta.name),
@@ -2590,8 +2608,8 @@ const manageProfilesExecute = wrapExecute<ProfilesArgs>(async (args) => {
         current,
         restartRequired: true,
         message: isProfilePinnedByEnv()
-          ? `Профиль задан переменной OPENCODE_SCHEDULER_PROFILE=${current}. Перезапустите OpenCode.`
-          : `Активный профиль: ${sanitizeProfileName(name)}. Перезапустите OpenCode, чтобы применить изменения.`,
+          ? t("tool.profile.envVar", { name: current })
+          : t("tool.profile.active", { name: sanitizeProfileName(name) }),
       }),
     };
   }
@@ -2601,8 +2619,8 @@ const manageProfilesExecute = wrapExecute<ProfilesArgs>(async (args) => {
     content: JSON.stringify({
       success: removed,
       message: removed
-        ? `Профиль "${sanitizeProfileName(name)}" удалён вместе с его БД и настройками.`
-        : "Профиль не найден.",
+        ? t("tool.profile.deleted", { name: sanitizeProfileName(name) })
+        : t("tool.profile.notFound"),
     }),
   };
 });
@@ -2618,14 +2636,14 @@ const transferTasksExecute = wrapExecute<TransferArgs>(async (args) => {
   }
 
   if (!args.data) {
-    return { content: JSON.stringify({ success: false, error: "Для action=import нужны данные экспорта." }) };
+    return { content: JSON.stringify({ success: false, error: t("tool.transfer.importData") }) };
   }
   const parsed = parseImportJson(args.data);
   if (parsed.tasks.length === 0) {
     return {
       content: JSON.stringify({
         success: false,
-        error: "В данных нет задач для импорта.",
+        error: t("tool.transfer.noTasks"),
         errors: parsed.errors,
       }),
     };
@@ -2713,7 +2731,12 @@ const cleanupHistoryExecute = wrapExecute<CleanupHistoryArgs>(async (args) => {
       success: true,
       message: report.skipped
         ? report.skipped
-        : `Удалено ${report.deleted} записей (по возрасту: ${report.deletedByAge}, по лимиту: ${report.deletedByCount}), осталось ${report.kept}.`,
+        : t("tool.history.cleaned", {
+            deleted: report.deleted,
+            byAge: report.deletedByAge,
+            byCount: report.deletedByCount,
+            kept: report.kept,
+          }),
       report,
     }),
   };
@@ -2723,7 +2746,7 @@ const cleanupHistoryExecute = wrapExecute<CleanupHistoryArgs>(async (args) => {
 const emitEventExecute = wrapExecute<EmitEventArgs>(async (args) => {
   const eventName = args.eventName?.trim();
   if (!eventName) {
-    return { content: JSON.stringify({ success: false, error: "Не передано имя события." }) };
+    return { content: JSON.stringify({ success: false, error: t("tool.event.nameRequired") }) };
   }
   const payload = args.payload ?? {};
   const definitions = await loadTaskDefinitions();
@@ -2753,8 +2776,8 @@ const emitEventExecute = wrapExecute<EmitEventArgs>(async (args) => {
       success: true,
       message:
         triggered.length > 0
-          ? `Запущено задач: ${triggered.length}.`
-          : `Нет задач, подписанных на событие "${eventName}".`,
+          ? t("tool.event.triggered", { count: triggered.length })
+          : t("tool.event.none", { event: eventName }),
       triggered,
     }),
   };
@@ -2771,7 +2794,7 @@ const manageSecretsExecute = wrapExecute<SecretsArgs>(async (args) => {
     return {
       content: JSON.stringify({
         success: false,
-        error: "Для set/delete нужно имя секрета.",
+        error: t("tool.secret.nameRequired"),
       }),
     };
   }
@@ -2783,8 +2806,8 @@ const manageSecretsExecute = wrapExecute<SecretsArgs>(async (args) => {
       content: JSON.stringify({
         success: existed,
         message: existed
-          ? `Секрет ${name} удалён.`
-          : `Секрет ${name} не найден.`,
+          ? t("tool.secret.deleted", { name })
+          : t("tool.secret.notFound", { name }),
       }),
     };
   }
@@ -2794,7 +2817,7 @@ const manageSecretsExecute = wrapExecute<SecretsArgs>(async (args) => {
     return {
       content: JSON.stringify({
         success: false,
-        error: "Для action=set нужно непустое значение value.",
+        error: t("tool.secret.valueRequired"),
       }),
     };
   }
@@ -2803,7 +2826,7 @@ const manageSecretsExecute = wrapExecute<SecretsArgs>(async (args) => {
   return {
     content: JSON.stringify({
       success: true,
-      message: `Секрет ${item.name} сохранён в зашифрованном виде.`,
+      message: t("tool.secret.saved", { name: item.name }),
       secret: item,
     }),
   };
@@ -3679,7 +3702,7 @@ export default Plugin.define({
         if (triggerType === "once") {
           const normalized = normalizeOneShotRunAt({ runAt, delaySeconds });
           if (!normalized.ok) {
-            return { success: false, message: `Задача "${name}": ${normalized.error}` };
+            return { success: false, message: t("tool.error.taskReason", { name, error: normalized.error }) };
           }
           effectiveRunAt = normalized.runAt;
         }
@@ -3687,7 +3710,7 @@ export default Plugin.define({
         if (session !== undefined) {
           const normalizedSession = normalizeSessionMode(session);
           if (!normalizedSession) {
-            return { success: false, message: `Задача "${name}": неизвестный режим сессии "${String(session)}".` };
+            return { success: false, message: t("tool.error.sessionUnknown", { name, session: String(session) }) };
           }
           effectiveSession = normalizedSession;
         }
@@ -3695,7 +3718,7 @@ export default Plugin.define({
           sessionMaxRuns !== undefined &&
           (!Number.isInteger(sessionMaxRuns) || sessionMaxRuns < 1)
         ) {
-          return { success: false, message: `Задача "${name}": sessionMaxRuns должен быть целым числом ≥ 1.` };
+          return { success: false, message: t("tool.error.sessionMaxRuns", { name }) };
         }
         const effectiveSessionId =
           effectiveSession === "reuse" ? generateSessionId() : undefined;
@@ -3748,7 +3771,7 @@ export default Plugin.define({
             success: true,
             paused: false,
             nextRun,
-            message: `Задача "${name}" успешно создана.`,
+            message: t("tool.task.created", { name }),
           };
         } catch (err: any) {
           const message = err instanceof Error ? err.message : String(err);
@@ -3763,8 +3786,11 @@ export default Plugin.define({
             success: true,
             message:
               removed.length > 0
-                ? `Матрица "${name}" удалена вместе с ${removed.length} задачами (клоны и агрегатор).`
-                : `Задача "${name}" успешно удалена.`,
+                ? t("tool.task.matrixDeletedCount", {
+                    name,
+                    count: removed.length,
+                  })
+                : t("tool.task.deleted", { name }),
           };
         } catch (err: any) {
           return { success: false, message: err instanceof Error ? err.message : String(err) };
@@ -3794,8 +3820,8 @@ export default Plugin.define({
             success: true,
             message:
               removed.length > 0
-                ? `Удалено осиротевших задач: ${removed.length}.`
-                : "Осиротевших задач не найдено.",
+                ? t("tool.matrix.orphansRemoved", { count: removed.length })
+                : t("tool.matrix.orphansNone"),
             removed,
           };
         } catch (err: any) {
@@ -3817,9 +3843,21 @@ export default Plugin.define({
             const matrixResult = await runMatrix(definition);
             const total = definition.matrix.workspaceIds.length;
             const message =
-              `Матрица "${name}": запущено ${matrixResult.started.length} из ${total}` +
-              (matrixResult.skipped.length ? `, пропущено ${matrixResult.skipped.length}` : "") +
-              (matrixResult.errors.length ? `. Ошибки: ${matrixResult.errors.join("; ")}` : ".");
+              t("tool.matrix.started", {
+                name,
+                started: matrixResult.started.length,
+                total,
+              }) +
+              (matrixResult.skipped.length
+                ? t("tool.matrix.startedSkipped", {
+                    count: matrixResult.skipped.length,
+                  })
+                : "") +
+              (matrixResult.errors.length
+                ? t("tool.matrix.startedErrors", {
+                    errors: matrixResult.errors.join("; "),
+                  })
+                : ".");
             return { success: matrixResult.success, message };
           }
           // Контроль параллелизма: не позволяем запускать новую задачу,
@@ -3834,7 +3872,7 @@ export default Plugin.define({
               return {
                 success: false,
                 message:
-                  "Достигнут лимит одновременных задач. Дождитесь завершения текущих.",
+                  t("tool.matrix.limit"),
               };
             }
           }
@@ -3844,9 +3882,9 @@ export default Plugin.define({
           // в том числе инициированном из GUI, — дублировать запись здесь не нужно.
           if (result.alreadyRunning) {
             // Мягкое предупреждение: задача уже идёт, это не ошибка запуска.
-            return { success: true, message: `Задача "${name}" уже выполняется.` };
+            return { success: true, message: t("tool.task.alreadyRunning", { name }) };
           }
-          return { success: true, message: `Задача "${name}" запущена.` };
+          return { success: true, message: t("tool.task.started", { name }) };
         } catch (err: any) {
           return { success: false, message: `schtasks error: ${err instanceof Error ? err.message : String(err)}` };
         }
@@ -3858,7 +3896,7 @@ export default Plugin.define({
         };
         const normalized = eventName?.trim();
         if (!normalized) {
-          return { success: false, message: "Не передано имя события (eventName).", triggered: [] };
+          return { success: false, message: t("tool.event.nameRequiredShort"), triggered: [] };
         }
 
         // Ищем задачи с MCP-триггером, совпадающим по имени события и фильтру.
@@ -3895,7 +3933,7 @@ export default Plugin.define({
         return {
           success: true,
           triggered,
-          message: `Событие "${normalized}" обработано. Запущено задач: ${triggered.length}.`,
+          message: t("tool.event.processed", { event: normalized, count: triggered.length }),
         };
       },
       pause_task: async (input: unknown) => {
@@ -3949,8 +3987,12 @@ export default Plugin.define({
           const report = await runHistoryRetention({ retentionDays, maxRecords });
           const message = report.skipped
             ? report.skipped
-            : `Удалено ${report.deleted} записей (по возрасту: ${report.deletedByAge}, по лимиту: ` +
-              `${report.deletedByCount}), осталось ${report.kept}.`;
+            : t("tool.history.cleaned", {
+                deleted: report.deleted,
+                byAge: report.deletedByAge,
+                byCount: report.deletedByCount,
+                kept: report.kept,
+              });
           return {
             success: true,
             message,
@@ -3965,9 +4007,9 @@ export default Plugin.define({
         } catch (err: any) {
           return {
             success: false,
-            message: `Не удалось очистить историю: ${
-              err instanceof Error ? err.message : String(err)
-            }`,
+            message: t("tool.history.cleanFailed", {
+              error: err instanceof Error ? err.message : String(err),
+            }),
             deleted: 0,
             deletedByAge: 0,
             deletedByCount: 0,
@@ -4051,7 +4093,7 @@ export default Plugin.define({
         const { parentId } = input as { parentId?: string; name?: string };
         const target = (parentId ?? "").trim();
         if (!target) {
-          return { success: false, error: "Не передан parentId матрицы." };
+          return { success: false, error: t("tool.matrix.parentMissing") };
         }
         try {
           const report = aggregateMatrixResults(target);
@@ -4144,7 +4186,7 @@ export default Plugin.define({
           };
           const workspace = updateWorkspace(id, { name, path: workspacePath, color, env, envFile });
           if (!workspace) {
-            return { success: false, error: "Workspace не найден." };
+            return { success: false, error: t("tool.workspace.notFound") };
           }
           // env-файлы существующих задач перегенерируются сразу (Спринт 21).
           await refreshWorkspaceEnvFiles(workspace.id);
@@ -4167,8 +4209,8 @@ export default Plugin.define({
           return {
             success: deleted,
             message: deleted
-              ? "Workspace удалён. Задачи сохранены, привязка очищена."
-              : "Workspace не найден.",
+              ? t("tool.workspace.deleted")
+              : t("tool.workspace.notFound"),
           };
         } catch (err: any) {
           return { success: false, message: err instanceof Error ? err.message : String(err) };
@@ -4191,8 +4233,8 @@ export default Plugin.define({
             current,
             restartRequired: true,
             message: isProfilePinnedByEnv()
-              ? `Профиль задан переменной OPENCODE_SCHEDULER_PROFILE=${current}. Перезапустите OpenCode, чтобы применить изменения.`
-              : `Активный профиль: ${sanitizeProfileName(name)}. Перезапустите OpenCode, чтобы применить изменения.`,
+              ? t("tool.profile.envVarLong", { name: current })
+              : t("tool.profile.active", { name: sanitizeProfileName(name) }),
           };
         } catch (err: any) {
           return {
@@ -4210,7 +4252,7 @@ export default Plugin.define({
           const profile = listProfiles().find((item) => item.name === meta.name);
           return {
             success: true,
-            message: `Профиль "${meta.name}" создан (порт дашборда ${meta.port}).`,
+            message: t("tool.profile.created", { name: meta.name, port: meta.port }),
             profile: profile ?? {
               name: meta.name,
               dir: getProfileDir(meta.name),
@@ -4233,8 +4275,8 @@ export default Plugin.define({
           return {
             success: removed,
             message: removed
-              ? `Профиль "${sanitizeProfileName(name)}" удалён вместе с его БД и настройками.`
-              : "Профиль не найден.",
+              ? t("tool.profile.deleted", { name: sanitizeProfileName(name) })
+              : t("tool.profile.notFound"),
           };
         } catch (err: any) {
           return { success: false, message: err instanceof Error ? err.message : String(err) };
@@ -4313,15 +4355,15 @@ export default Plugin.define({
           const source = (input ?? {}) as { name?: string; value?: string };
           const name = (source.name ?? "").trim();
           if (!name) {
-            return { success: false, message: "Нужно имя секрета." };
+            return { success: false, message: t("tool.secret.needName") };
           }
           if (typeof source.value !== "string" || source.value.length === 0) {
-            return { success: false, message: "Нужно непустое значение секрета." };
+            return { success: false, message: t("tool.secret.needValue") };
           }
           const secret = setSecret(name, source.value);
           return {
             success: true,
-            message: `Секрет ${secret.name} сохранён в зашифрованном виде.`,
+            message: t("tool.secret.saved", { name: secret.name }),
             secret,
           };
         } catch (err: any) {
@@ -4335,15 +4377,15 @@ export default Plugin.define({
         try {
           const name = (((input ?? {}) as { name?: string }).name ?? "").trim();
           if (!name) {
-            return { success: false, message: "Нужно имя секрета." };
+            return { success: false, message: t("tool.secret.needName") };
           }
           const existed = hasSecret(name);
           deleteSecret(name);
           return {
             success: existed,
             message: existed
-              ? `Секрет ${name} удалён.`
-              : `Секрет ${name} не найден.`,
+              ? t("tool.secret.deleted", { name })
+              : t("tool.secret.notFound", { name }),
           };
         } catch (err: any) {
           return {
@@ -4388,7 +4430,7 @@ export default Plugin.define({
           if (!source?.name?.trim() || !source?.prompt?.trim()) {
             return {
               success: false,
-              error: "Нужны непустые название шаблона и промпт.",
+              error: t("tool.template.namePromptRequired"),
             };
           }
           const template = await saveTemplate({
@@ -4415,7 +4457,7 @@ export default Plugin.define({
       delete_template: async (input: unknown) => {
         const { id } = input as { id?: string };
         if (!id) {
-          return { success: false, error: "Не передан id шаблона." };
+          return { success: false, error: t("tool.template.needId") };
         }
         try {
           await deleteTemplate(id);
@@ -4443,14 +4485,14 @@ export default Plugin.define({
       import_tasks: async (input: unknown) => {
         const { data } = input as { data?: string };
         if (!data) {
-          return { success: false, error: "Не переданы данные для импорта." };
+          return { success: false, error: t("tool.transfer.noData") };
         }
         try {
           const parsed = parseImportJson(data);
           if (parsed.tasks.length === 0) {
             return {
               success: false,
-              error: "В файле нет задач для импорта.",
+              error: t("tool.transfer.noTasksInFile"),
               errors: parsed.errors,
             };
           }
@@ -4592,7 +4634,7 @@ function resolveMatrixExtraConfig(
       matrix.concurrency < 1
     ) {
       throw new Error(
-        `Задача "${name}": matrix.concurrency должен быть числом не меньше 1.`
+        t("tool.error.matrixConcurrency", { task: name })
       );
     }
     extra.concurrency = Math.floor(matrix.concurrency);
@@ -4605,8 +4647,10 @@ function resolveMatrixExtraConfig(
       const workspaceKey = key.trim();
       if (!allowed.has(workspaceKey)) {
         throw new Error(
-          `Задача "${name}": matrix.overrides содержит workspace "${workspaceKey}", ` +
-            `которого нет в workspaceIds.`
+          t("tool.error.matrixOverride", {
+            task: name,
+            workspace: workspaceKey,
+          })
         );
       }
       if (!value || typeof value !== "object") continue;
@@ -4769,7 +4813,7 @@ async function schedulerCreateTask(
   if (effectiveTriggerType === "once") {
     const normalized = normalizeOneShotRunAt({ runAt });
     if (!normalized.ok) {
-      throw new Error(`Задача "${name}": ${normalized.error}`);
+      throw new Error(t("tool.error.taskReason", { name, error: normalized.error }));
     }
     effectiveRunAt = normalized.runAt;
   }
@@ -4780,7 +4824,12 @@ async function schedulerCreateTask(
   if (session !== undefined) {
     const normalizedSession = normalizeSessionMode(session);
     if (!normalizedSession) {
-      throw new Error(`Задача "${name}": неизвестный режим сессии "${String(session)}".`);
+      throw new Error(
+      t("tool.error.sessionUnknown", {
+        name,
+        session: String(session),
+      })
+    );
     }
     effectiveSession = normalizedSession;
   }
@@ -4805,7 +4854,7 @@ async function schedulerCreateTask(
   };
   if (Array.isArray(allowedTools) && allowedTools.filter((t) => typeof t === "string" && t.trim()).length === 0) {
     throw new Error(
-      `Задача "${name}": пустой allowedTools запрещён — задайте список инструментов или уберите поле.`
+      t("tool.error.allowedToolsEmpty", { task: name })
     );
   }
   const normalizedAllowedTools = normalizeToolList(allowedTools);
@@ -4817,7 +4866,7 @@ async function schedulerCreateTask(
   if (matrix) {
     if (workspaceId?.trim()) {
       throw new Error(
-        `Задача "${name}": нельзя одновременно workspaceId и matrix.workspaceIds.`
+        t("tool.error.workspaceIdConflict", { task: name })
       );
     }
     const ids = Array.from(
@@ -4829,18 +4878,26 @@ async function schedulerCreateTask(
       )
     );
     if (ids.length === 0) {
-      throw new Error(`Задача "${name}": matrix.workspaceIds не может быть пустым.`);
+      throw new Error(
+        t("tool.error.workspaceIdsEmpty", { task: name })
+      );
     }
     for (const id of ids) {
       const ws = getWorkspace(id);
       if (!ws) {
-        throw new Error(`Задача "${name}": workspace "${id}" не найден.`);
+        throw new Error(
+          t("tool.error.workspaceMissing", { task: name, id })
+        );
       }
       try {
         validateWorkspacePath(ws.path);
       } catch {
         throw new Error(
-          `Задача "${name}": workspace "${ws.name}" недоступен по пути "${ws.path}".`
+          t("tool.error.workspaceUnavailable", {
+            task: name,
+            workspace: ws.name,
+            path: ws.path,
+          })
         );
       }
     }
@@ -4862,7 +4919,7 @@ async function schedulerCreateTask(
 
   // MCP-триггер без имени события бессмыслен — валидируем до создания файлов.
   if (effectiveTriggerType === "mcp-event" && !normalizedMcpEvent) {
-    throw new Error("Для MCP-триггера нужно указать имя события (mcpEvent.event).");
+    throw new Error(t("tool.error.mcpEventRequired"));
   }
   // Спринт 27: git-триггеру нужен git-репозиторий в рабочей директории.
   if (effectiveTriggerType === "git") {
@@ -4871,12 +4928,12 @@ async function schedulerCreateTask(
       : workingDirectory?.trim() || projectDirectory || process.cwd();
     if (!gitCwd) {
       throw new Error(
-        `Задача "${name}": для git-триггера нужна рабочая директория или workspace.`
+        t("tool.error.gitCwdRequired", { task: name })
       );
     }
     if (!readGitBranch(gitCwd)) {
       throw new Error(
-        `Задача "${name}": git-триггер требует git-репозиторий в "${gitCwd}".`
+        t("tool.error.gitNoRepo", { task: name, path: gitCwd })
       );
     }
   }
@@ -4892,8 +4949,10 @@ async function schedulerCreateTask(
     }
     if (normalizedTz && !isValidIanaTimeZone(normalizedTz)) {
       throw new Error(
-        `Задача "${name}": неизвестный часовой пояс "${normalizedTz}". ` +
-          `Укажите IANA-зону, например Europe/Moscow.`
+        t("tool.error.timezone", {
+          task: name,
+          timezone: normalizedTz,
+        })
       );
     }
     const windowError = validateLaunchWindow(
@@ -4901,7 +4960,7 @@ async function schedulerCreateTask(
       normalizedNotAfter
     );
     if (windowError) {
-      throw new Error(`Задача "${name}": ${windowError}`);
+      throw new Error(t("tool.error.window", { task: name, error: windowError }));
     }
   }
   // Спринт 27: окно и дни недели применимы и к событийным триггерам
@@ -4909,7 +4968,7 @@ async function schedulerCreateTask(
   if (effectiveTriggerType !== "cron") {
     const windowError = validateLaunchWindow(normalizedNotBefore, normalizedNotAfter);
     if (windowError) {
-      throw new Error(`Задача "${name}": ${windowError}`);
+      throw new Error(t("tool.error.window", { task: name, error: windowError }));
     }
   }
 
@@ -4942,13 +5001,22 @@ async function schedulerCreateTask(
   const normalizedWorkspaceId = workspaceId?.trim() || undefined;
   const workspace = normalizedWorkspaceId ? getWorkspace(normalizedWorkspaceId) : undefined;
   if (normalizedWorkspaceId && !workspace) {
-    throw new Error(`Workspace '${normalizedWorkspaceId}' не найден.`);
+    throw new Error(
+      t("tool.error.workspaceIdMissing", {
+        id: normalizedWorkspaceId,
+      })
+    );
   }
   if (workspace) {
     try {
       validateWorkspacePath(workspace.path);
     } catch {
-      throw new Error(`Workspace '${workspace.name}' недоступен по пути '${workspace.path}'`);
+      throw new Error(
+        t("tool.error.workspacePathMissing", {
+          name: workspace.name,
+          path: workspace.path,
+        })
+      );
     }
     if (workingDirectory?.trim() && workingDirectory.trim() !== workspace.path) {
       console.warn(
@@ -4973,7 +5041,11 @@ async function schedulerCreateTask(
     await fs.mkdir(LOG_DIR, { recursive: true });
     await fs.writeFile(logFile, "", "utf8");
   } catch (err: any) {
-    throw new Error(`Не удалось подготовить файлы задачи: ${err.message || String(err)}`);
+    throw new Error(
+      t("tool.error.prepareFiles", {
+        error: err.message || String(err),
+      })
+    );
   }
 
   // Обёртка зависит от платформы:
@@ -5031,7 +5103,11 @@ async function schedulerCreateTask(
       });
     }
   } catch (err: any) {
-    throw new Error(`Не удалось создать обёртку задачи: ${err.message || String(err)}`);
+    throw new Error(
+      t("tool.error.wrapper", {
+        error: err.message || String(err),
+      })
+    );
   }
 
   // 27.5.5.3: при сбое создания новой задачи убираем подготовленные файлы.
@@ -5090,10 +5166,14 @@ async function schedulerCreateTask(
   if (listedTasks && !isListed(listedTasks)) {
     await rollbackArtifacts();
     throw new Error(
-      `Планировщик не подтвердил создание задачи "${name}": её нет в списке ${scheduler.title}. ` +
+      t("tool.error.schedulerNotConfirmed", {
+        task: name,
+        scheduler: scheduler.title,
+      }) +
+        " " +
         (definitionExisted
-          ? "Файлы обёртки оставлены для диагностики."
-          : "Файлы задачи удалены, запись в БД не создана.")
+          ? t("tool.error.schedulerKeptFiles")
+          : t("tool.error.schedulerRemovedFiles"))
     );
   }
   if (!listedTasks && verifyQueryError) {
@@ -5259,8 +5339,10 @@ async function schedulerCreateTask(
       await schedulerCreateTask(
         aggregatorName,
         schedule,
-        `Матрица "${name}" завершена. Проверь результаты клонов: ` +
-          `${cloneNames.join(", ")}.`,
+        t("tool.matrix.completed", {
+          name,
+          clones: cloneNames.join(", "),
+        }),
         timeoutSeconds,
         undefined,
         undefined,
@@ -5318,9 +5400,11 @@ async function schedulerCreateTask(
               ? getWorkspace(clone.workspaceId)?.name ?? clone.workspaceId
               : "без workspace";
             throw new Error(
-              `клон "${clone.name}" (workspace "${workspaceLabel}"): ${
-                err instanceof Error ? err.message : String(err)
-              }`
+              t("tool.error.matrixCloneFailed", {
+                clone: clone.name,
+                workspace: workspaceLabel,
+                error: err instanceof Error ? err.message : String(err),
+              })
             );
           }
         }
@@ -5349,9 +5433,10 @@ async function schedulerCreateTask(
           await rollbackArtifacts();
         }
         throw new Error(
-          `Не удалось развернуть матрицу "${name}": ${
-            err instanceof Error ? err.message : String(err)
-          }. Созданные клоны удалены.`
+          t("tool.error.matrixExpandRuntime", {
+            name,
+            error: err instanceof Error ? err.message : String(err),
+          })
         );
       }
     }

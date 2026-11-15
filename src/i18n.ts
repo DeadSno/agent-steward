@@ -42,7 +42,15 @@ function candidateCatalogDirs(): string[] {
 const catalogs = new Map<Locale, Record<string, string>>();
 const pluralRules = new Map<Locale, Intl.PluralRules>();
 
-let currentLocale: Locale = DEFAULT_LOCALE;
+/**
+ * Локаль запуска: `OPENCODE_SCHEDULER_LOCALE=en` позволяет прогнать набор
+ * тестов на английском без правки настроек. Не задана — русский.
+ */
+const INITIAL_LOCALE: Locale = normalizeLocale(
+  process.env.OPENCODE_SCHEDULER_LOCALE
+);
+
+let currentLocale: Locale = INITIAL_LOCALE;
 
 /** true, если значение — поддерживаемая локаль. */
 export function isLocale(value: unknown): value is Locale {
@@ -144,6 +152,11 @@ export function hasKey(key: string, locale: Locale = currentLocale): boolean {
   return Object.prototype.hasOwnProperty.call(readCatalog(locale), key);
 }
 
+/** Значение ключа в конкретной локали без fallback; undefined — ключа нет. */
+export function messageIn(locale: Locale, key: string): string | undefined {
+  return readCatalog(locale)[key];
+}
+
 /**
  * Ключи, которых не хватает относительно русской локали.
  * Пустой массив — каталог полный.
@@ -159,11 +172,11 @@ export function absentKeys(locale: Locale): string[] {
   return catalogKeys(DEFAULT_LOCALE).filter((key) => !target.has(key));
 }
 
-/** Сбрасывает кэш каталогов и локаль (для тестов). */
+/** Сбрасывает кэш каталогов и локаль к локали запуска (для тестов). */
 export function resetI18n(): void {
   catalogs.clear();
   pluralRules.clear();
-  currentLocale = DEFAULT_LOCALE;
+  currentLocale = INITIAL_LOCALE;
 }
 
 /** Категория плюрализации для числа (`one`/`few`/`many`/`other`). */

@@ -1,3 +1,5 @@
+import { t } from "../i18n.js";
+
 /**
  * Telegram Bot API: отправка уведомлений (Спринт 25).
  *
@@ -74,29 +76,29 @@ export function formatTelegramText(
   if (!url) return body;
 
   if (parseMode === "HTML") {
-    return `${body}\n\n<a href="${escapeHtmlAttribute(url)}">📊 Открыть дашборд</a>`;
+    return `${body}\n\n<a href="${escapeHtmlAttribute(url)}">${t("notify.telegram.openDashboard")}</a>`;
   }
   if (parseMode === "MarkdownV2") {
     const escapedUrl = url.replace(/[)\\]/g, "\\$&");
-    return `${body}\n\n[📊 Открыть дашборд](${escapedUrl})`;
+    return `${body}\n\n[${t("notify.telegram.openDashboard")}](${escapedUrl})`;
   }
   if (parseMode === "Markdown") {
     const escapedUrl = url.replace(/[)]/g, "\\)");
-    return `${body}\n\n[📊 Открыть дашборд](${escapedUrl})`;
+    return `${body}\n\n[${t("notify.telegram.openDashboard")}](${escapedUrl})`;
   }
-  return `${body}\n\n📊 Открыть дашборд: ${url}`;
+  return `${body}\n\n${t("notify.telegram.openDashboardUrl", { url })}`;
 }
 
 /** Проверяет формат токена бота; возвращает trimmed-значение. */
 export function validateTelegramToken(token: string): string {
   const value = (token ?? "").trim();
   if (!value) {
-    throw new Error("Не задан токен Telegram-бота.");
+    throw new Error(t("notify.error.telegramTokenMissing"));
   }
   // Формат BotFather: <digits>:<base64-ish>. Проверяем достаточно мягко,
   // чтобы не ломать тестовые токены, но отсекать явный мусор.
   if (!/^\d+:[A-Za-z0-9_-]{5,}$/.test(value)) {
-    throw new Error("Некорректный токен Telegram-бота.");
+    throw new Error(t("notify.error.telegramTokenInvalid"));
   }
   return value;
 }
@@ -125,10 +127,10 @@ function resolveApiBase(apiBase?: string): string {
   try {
     parsed = new URL(value);
   } catch {
-    throw new Error("Некорректный адрес Telegram API.");
+    throw new Error(t("notify.error.telegramApiBaseInvalid"));
   }
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new Error("Telegram API поддерживает только http:// или https://.");
+    throw new Error(t("notify.error.telegramScheme"));
   }
   return value;
 }
@@ -148,7 +150,7 @@ export async function sendTelegramMessage(
   const safeToken = validateTelegramToken(token);
   const target = (chatId ?? "").trim();
   if (!target) {
-    throw new Error("Не задан chat_id Telegram.");
+    throw new Error(t("notify.error.telegramChatMissing"));
   }
 
   const apiBase = resolveApiBase(options.apiBase);
@@ -209,7 +211,11 @@ export async function sendTelegramMessage(
     }
   } catch (err: any) {
     if (err?.name === "AbortError") {
-      throw new Error(`Таймаут Telegram API (${Math.floor(timeoutMs / 1000)} с).`);
+      throw new Error(
+        t("notify.error.telegramTimeout", {
+          seconds: Math.floor(timeoutMs / 1000),
+        })
+      );
     }
     const message = err instanceof Error ? err.message : String(err);
     throw new Error(sanitizeErrorText(message, safeToken));
