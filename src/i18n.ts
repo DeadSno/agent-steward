@@ -28,15 +28,26 @@ export const SUPPORTED_LOCALES: readonly Locale[] = ["ru", "en"];
 /** Русский остаётся локалью по умолчанию (см. ROADMAP, спринт 28). */
 export const DEFAULT_LOCALE: Locale = "ru";
 
-/** Каталог модуля: `src/` при запуске из исходников, `dist/` из сборки. */
-const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
+/**
+ * Каталог модуля: `src/` при запуске из исходников, `dist/` из сборки.
+ *
+ * В GUI-бандле (renderer Electron/webview) нет ни `import.meta.url` с реальным
+ * путём к пакету, ни `process`; любой бросок на этапе загрузки модуля валит
+ * весь плагин, поэтому путь вычисляется лениво и молча.
+ */
+function moduleDir(): string | null {
+  try {
+    return path.dirname(fileURLToPath(import.meta.url));
+  } catch {
+    return null;
+  }
+}
 
 /** Каталоги, где может лежать `locales/` (оба варианта дают корень пакета). */
 function candidateCatalogDirs(): string[] {
-  return [
-    path.resolve(MODULE_DIR, "../locales"),
-    path.resolve(MODULE_DIR, "locales"),
-  ];
+  const dir = moduleDir();
+  if (!dir) return [];
+  return [path.resolve(dir, "../locales"), path.resolve(dir, "locales")];
 }
 
 const catalogs = new Map<Locale, Record<string, string>>();
@@ -45,10 +56,22 @@ const pluralRules = new Map<Locale, Intl.PluralRules>();
 /**
  * Локаль запуска: `OPENCODE_SCHEDULER_LOCALE=en` позволяет прогнать набор
  * тестов на английском без правки настроек. Не задана — русский.
+ *
+ * `process` отсутствует в GUI-бандле (renderer), поэтому обращение к нему
+ * защищено: иначе `ReferenceError: process is not defined` ломает загрузку
+ * всего плагина ещё до регистрации панели.
  */
-const INITIAL_LOCALE: Locale = normalizeLocale(
-  process.env.OPENCODE_SCHEDULER_LOCALE
-);
+function envLocale(): string | undefined {
+  try {
+    return typeof process !== "undefined" && process.env
+      ? process.env.OPENCODE_SCHEDULER_LOCALE
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+const INITIAL_LOCALE: Locale = normalizeLocale(envLocale());
 
 let currentLocale: Locale = INITIAL_LOCALE;
 

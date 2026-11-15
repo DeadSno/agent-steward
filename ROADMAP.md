@@ -1,6 +1,6 @@
 # 🗺️ Roadmap — opencode-windows-scheduler
 
-Текущая версия: **1.5.2** (15.11.2026). Плагин опубликован в npm, CI зелёный на Windows / macOS / Linux, 24 инструмента агента, 37 тестовых сюит.
+Текущая версия: **1.5.2** (15.11.2026). Плагин опубликован в npm, CI зелёный на Windows / macOS / Linux, 24 инструмента агента, 38 тестовых сюит.
 
 - Стратегия и позиционирование — [ROADMAP-STRATEGY.md](./ROADMAP-STRATEGY.md).
 - Что уже выпущено — [CHANGELOG.md](./CHANGELOG.md).

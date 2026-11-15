@@ -13,6 +13,10 @@ All notable changes to this project are documented here. Format follows [Keep a 
 - **Цепочка деградации LLM → правила → fail-open (Спринт 30.5):** `src/core/triage-chain.ts` применяет триаж к каждому уведомлению задачи. LLM классифицирует, но сам не подавляет: при уверенности ниже `confidenceThreshold`, таймауте, сетевой ошибке или битом JSON решение принимают правила (`fallback: "rules"`) либо уведомление отправляется без них (`fallback: "skip"`). Недоступный классификатор не теряет уведомление; `test-triage-chain.mjs` — 18 проверок, включая реальную доставку в webhook при мёртвом endpoint и подавление по правилу.
 - **Shadow-режим триажа (Спринт 30.6):** `notifications.triage.shadow` (`enabled`, `days` по умолчанию 14, `startedAt`). В активном периоде решения триажа записываются в память (`src/core/triage-shadow.ts`), а уведомления не подавляются: `notifyTaskCompletion` фиксирует вердикт и пропускает фильтр. Отчёт (`total`, `skips`/`wouldSuppress`, `bySource`) отдаётся через `rpc.get_shadow_report` и сбрасывается `rpc.reset_shadow_report`; в GUI — чекбокс, длительность периода и счётчики. Включение режима без даты старта автоматически начинает период при сохранении, выключение сбрасывает дату, истёкший период возвращает обычную фильтрацию. `test-triage-shadow.mjs` — 26 проверок.
 
+### Fixed
+
+- **Панель «Планировщик» исчезала из GUI:** в бандле `gui-experimental.cjs` на этапе загрузки исполнялся `process.env.OPENCODE_SCHEDULER_LOCALE` (из `src/i18n.ts`), а в renderer OpenCode глобального `process` нет. Модуль падал с `ReferenceError: process is not defined`, `setup()` не вызывался, панель `scheduler-jobs` не регистрировалась — раздел пропадал из списка без единого тоста. Локаль запуска теперь читается через `typeof process`-guard, путь к каталогу `locales/` вычисляется лениво и молча (GUI берёт каталоги из встроенного JSON). Добавлен регресс-тест `test-gui-bundle.mjs`: бандл грузится в `vm`-контексте **без** `process` и обязан зарегистрировать панель.
+
 ## [1.5.2] - 2026-11-15
 
 ### Security
