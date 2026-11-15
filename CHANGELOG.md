@@ -4,6 +4,15 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ## [Unreleased]
 
+## [1.5.2] - 2026-11-15
+
+### Security
+
+- **Enforced tool permissions (Спринт 29.1–29.2):** `allowedTools`/`deniedTools` больше не advisory. Обёртки bash и PowerShell передают task-scoped `permissions`-правила через `OPENCODE_CONFIG_CONTENT` до запуска `opencode run --auto`; файл `opencode.jsonc` не создаётся, поэтому конфиг проекта не перезаписывается. `deniedTools` важнее `allowedTools`, маппинг инструментов на действия OpenCode описан в `docs/ARCHITECTURE.md`. Известные ограничения (проектный/системный конфиг, вложенные subagent-вызовы) зафиксированы там же.
+- **Scoped-инъекция секретов (Спринт 29.3):** `${secret:NAME}` собираются только из промпта, `beforeScript`, `afterScript` и `qualityGate`; в env workspace попадают только реально используемые секреты, остальные ссылки остаются как есть. Задача без ссылок не получает ни одного секрета.
+- **Аудит блокировок (Спринт 29.4):** при сохранении определения задачи пишутся события `tool.blocked` с именем задачи и инструментом (`details.tool`, `details.reason`, `allowedTools`, `deniedTools`); в режиме allow-list пишется одно событие с `tool: "*"`. Изменение политики задачи обновляет детали при следующем сохранении.
+- **Документация security (Спринт 29.5):** в `docs/FEATURES.md` раздел ограничений инструментов переписан с advisory на enforced; в `docs/ARCHITECTURE.md` добавлена модель прав (порядок приоритетов, таблица маппинга) и уточнены ограничения.
+
 ## [1.5.1] - 2026-11-15
 
 ### Added
@@ -237,7 +246,8 @@ First public release.
 - Deleting a matrix parent deletes its family, but deleting a workspace does not touch existing matrix jobs.
 - Agent tools cover a subset of the RPC surface (see roadmap item 0.4).
 
-[Unreleased]: https://github.com/DeadSno/opencode-windows-scheduler/compare/v1.5.1...HEAD
+[Unreleased]: https://github.com/DeadSno/opencode-windows-scheduler/compare/v1.5.2...HEAD
+[1.5.2]: https://github.com/DeadSno/opencode-windows-scheduler/compare/v1.5.1...v1.5.2
 [1.5.1]: https://github.com/DeadSno/opencode-windows-scheduler/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/DeadSno/opencode-windows-scheduler/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/DeadSno/opencode-windows-scheduler/compare/v1.3.0...v1.4.0

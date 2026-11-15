@@ -278,13 +278,18 @@ export function listSecrets(): SecretListItem[] {
     });
 }
 
-/** Подставляет все ссылки `${secret:NAME}` в строку. */
-export function expandSecretRefs(value: string): {
-  value: string;
-  missing: string[];
-} {
+/** Подставляет все ссылки `${secret:NAME}` в строку. Если задан allowedSecretNames — заменяются только ссылки на имена из этого списка (scoped-инъекция), остальные оставляются без изменений. */
+export function expandSecretRefs(
+  value: string,
+  allowedSecretNames?: string[]
+): { value: string; missing: string[] } {
   const missing = new Set<string>();
+  const allowed = allowedSecretNames ? new Set(allowedSecretNames) : null;
   const result = String(value ?? "").replace(SECRET_REF_RE, (_match, name: string) => {
+    if (allowed && !allowed.has(name)) {
+      // Секрет не разрешён для этой задачи — оставляем ссылку как есть.
+      return _match;
+    }
     const secret = getSecret(name);
     if (secret === undefined) {
       missing.add(name);
@@ -298,15 +303,16 @@ export function expandSecretRefs(value: string): {
 /**
  * Разворачивает ссылки во всех значениях env. Отсутствующие секреты дают
  * пустую строку и попадают в `missing` (только имена — без значений).
+ * Если задан allowedSecretNames — инжектит в env только реально используемые секреты.
  */
-export function resolveSecretRefs(env: Record<string, string>): {
-  env: Record<string, string>;
-  missing: string[];
-} {
+export function resolveSecretRefs(
+  env: Record<string, string>,
+  allowedSecretNames?: string[]
+): { env: Record<string, string>; missing: string[] } {
   const resolved: Record<string, string> = {};
   const missing = new Set<string>();
   for (const [key, value] of Object.entries(env ?? {})) {
-    const result = expandSecretRefs(String(value ?? ""));
+    const result = expandSecretRefs(String(value ?? ""), allowedSecretNames);
     resolved[key] = result.value;
     for (const name of result.missing) missing.add(name);
   }
@@ -382,4 +388,22 @@ export function resetSecretsCache(): void {
   cache = null;
   keyCache = null;
   valuesCache = null;
+}
+
+/**
+ * Собирает уникальные имена секретов из всех переданных строк, содержащих
+ * ссылки вида ${secret:NAME}. Возвращает отсортированный список имён.
+ * Используется для scoped-инъекции: только упомянутые секреты попадают в env задачи.
+ */
+export function collectSecretNames(...values: (string | undefined)[]): string[] {
+  const names = new Set<string>();
+  for (const value of values) {
+    if (!value) continue;
+    SECRET_REF_RE.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = SECRET_REF_RE.exec(value)) !== null) {
+      names.add(match[1]);
+    }
+  }
+  return [...names].sort();
 }

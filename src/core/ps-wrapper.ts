@@ -261,18 +261,53 @@ try {
         Write-Log "[workspace] name=$WorkspaceName, cwd=$Workdir, branch=$gitBranch, remote=$gitRemote"
     }
 
-    # Role-scoped tools: ограничения хранятся в определении задачи. Текущая
-    # версия opencode run не поддерживает --allow-tool/--deny-tool, поэтому
-    # это предупреждение + запись в историю, а не реальное блокирование.
-    if ($AllowedTools -or $DeniedTools) {
-        Write-Log "[role-scoped] allowed=[$AllowedTools], denied=[$DeniedTools]"
+    # Спринт 29.2: права задачи передаются через OPENCODE_CONFIG_CONTENT.
+    # opencode run CLI (v2.2.3) не поддерживает --allow-tool/--deny-tool, а файл
+    # opencode.jsonc в Workdir мог бы перезаписать проектный конфиг.
+    $toolToAction = @{
+        "read" = "read"; "write" = "edit"; "edit" = "edit"; "apply_patch" = "edit"; "remove" = "edit"
+        "bash" = "shell"; "shell" = "shell"; "glob" = "glob"; "grep" = "grep"
+        "webfetch" = "webfetch"; "websearch" = "websearch"; "question" = "question"
+        "subagent" = "subagent"; "skill" = "skill"
+    }
+    $defaultPermissions = @(
+        @{ action = "read"; resource = "*"; effect = "allow" },
+        @{ action = "edit"; resource = "*"; effect = "allow" },
+        @{ action = "glob"; resource = "*"; effect = "allow" },
+        @{ action = "grep"; resource = "*"; effect = "allow" },
+        @{ action = "shell"; resource = "*"; effect = "allow" },
+        @{ action = "subagent"; resource = "*"; effect = "allow" },
+        @{ action = "skill"; resource = "*"; effect = "allow" },
+        @{ action = "question"; resource = "*"; effect = "allow" },
+        @{ action = "webfetch"; resource = "*"; effect = "allow" },
+        @{ action = "websearch"; resource = "*"; effect = "allow" }
+    )
+    $permissions = @()
+    foreach ($p in $defaultPermissions) { $permissions += $p }
+    if ($DeniedTools) {
         $deniedList = @($DeniedTools -split ',' | ForEach-Object { $_.Trim().ToLower() } | Where-Object { $_ })
-        $dangerous = @('write', 'edit', 'bash', 'apply_patch', 'remove')
-        $hit = @($dangerous | Where-Object { $deniedList -contains $_ })
-        if ($hit.Count -gt 0) {
-            Write-Log "[role-scoped] ВНИМАНИЕ: deniedTools содержит опасные инструменты ($($hit -join ', ')), но opencode run их не ограничивает. Проверьте результаты задачи."
+        foreach ($tool in $deniedList) {
+            $action = $toolToAction[$tool]
+            if ($action) {
+                $idx = $permissions | Where-Object { $_.action -eq $action }
+                if ($idx) { $idx.effect = "deny" }
+            }
         }
     }
+    if ($AllowedTools) {
+        $allowedList = @($AllowedTools -split ',' | ForEach-Object { $_.Trim().ToLower() } | Where-Object { $_ })
+        $allowedActions = @{}
+        foreach ($tool in $allowedList) {
+            $action = $toolToAction[$tool]
+            if ($action) { $allowedActions[$action] = $true }
+        }
+        foreach ($p in $permissions) {
+            if (-not $allowedActions.ContainsKey($p.action)) { $p.effect = "deny" }
+        }
+    }
+    $config = @{ "$schema" = "https://opencode.ai/config.json"; "permissions" = $permissions }
+    $env:OPENCODE_CONFIG_CONTENT = ($config | ConvertTo-Json -Depth 3 -Compress)
+    Write-Log "[role-scoped] opencode config passed via OPENCODE_CONFIG_CONTENT"
 
     # Pre-flight: выполняется ДО основной задачи. Ненулевой код отменяет запуск.
     if ($BeforeScript) {
@@ -312,7 +347,9 @@ try {
     $opencodeCmd = Get-Command opencode | Select-Object -ExpandProperty Source
 
     # Формируем аргументы для opencode run (Спринт 24: сессия).
-    $opencodeArgs = @("run")
+    # Спринт 29.2: --auto автоодобряет не запрещённые права, а ограничения
+    # берутся из сгенерированного opencode.jsonc в Workdir.
+    $opencodeArgs = @("run", "--auto")
     if ($Model) {
         $opencodeArgs += @("--model", $Model)
     }

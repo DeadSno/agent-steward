@@ -355,9 +355,23 @@ Rules:
 - The dashboard has **no authentication** and binds to localhost. Do not expose it.
 - A job definition is **code**: prompts, hooks, Quality Gates and wrappers all execute
   with your user privileges. Treat task creation like granting shell access.
-- `allowedTools` / `deniedTools` are **metadata passed to the run**, not a sandbox.
-  They are recorded in history for audit, but they do not constrain `opencode` at the
-  OS level.
+- `allowedTools` / `deniedTools` are **enforced at the run-wrapper level** (спринт 29.2).
+  Before each `opencode run`, the wrapper passes `permissions` rules through
+  `OPENCODE_CONFIG_CONTENT`: `deniedTools` are mapped to `effect: "deny"` for the
+  corresponding OpenCode action (`shell`, `edit`, `glob`, `grep`, `webfetch`,
+  `websearch`, `question`, `subagent`, `skill`), and `allowedTools` (if specified)
+  additionally denies every action not in the list. No config file is written, so a
+  project-level `opencode.jsonc` is preserved and parallel tasks in one workdir do not
+  race. The wrapper passes `--auto` so non-denied permissions are auto-approved.
+  `allowedTools`/`deniedTools` metadata is still recorded in history for audit.
+- **Audit of blocked tools (спринт 29.4):** when a task definition is saved,
+  `recordTaskToolBlocks()` writes one `tool.blocked` audit event per entry in
+  `deniedTools` (`target` = task name, `details.tool` = tool, plus `allowedTools`,
+  `deniedTools` and `reason`). In allow-list mode one event with `tool: "*"` records
+  that every unlisted tool is denied. The event is emitted on create and on update, so
+  changing the task policy also changes the audited details. Because the wrapper runs
+  `opencode` as an external process, the plugin cannot observe individual blocked
+  attempts at runtime; the audit reflects the enforced policy, not each refusal.
 - Task prompts, hooks and Quality Gate scripts are **plain text** executed with your
   user privileges; only secrets (in `secrets.json`, AES-256-GCM) are encrypted.
   Workspace `env` can reference secrets as `${secret:NAME}`; values are masked in
@@ -368,6 +382,49 @@ Rules:
   history and audit.
 - Workspace paths are validated, but hooks are not sandboxed: only schedule jobs from
   repositories you trust.
+
+### Permission model
+
+The effective policy is resolved in this order (later wins):
+
+1. Task `allowedTools` — if present, every action not listed is denied.
+2. Task `deniedTools` — always denied and takes priority over `allowedTools`.
+3. The generated `opencode.jsonc` — written into the task workdir for the run.
+4. Project `opencode.json(c)` and system config — merged by OpenCode; a closer or
+   system-level config can weaken task-scoped denies (see limitations below).
+5. `--auto` — auto-approves everything that remains, so no interactive prompts block
+   an unattended run.
+
+Tool mapping used by both wrappers:
+
+| Task tool | OpenCode action |
+| --- | --- |
+| `bash`, `shell` | `shell` |
+| `write`, `edit`, `apply_patch`, `remove` | `edit` |
+| `glob`, `grep`, `webfetch`, `websearch` | same name |
+| `question`, `subagent`, `skill` | same name |
+
+Hooks, Quality Gates and wrapper scripts are outside this model: they run before or
+after the agent with the user's privileges and are not filtered by tool policy.
+
+### Permission enforcement — known limitations (spike 29.1 findings)
+
+- `opencode run` CLI (v2.2.3) supports only `--auto` (auto-approve non-denied
+  permissions). There are **no** `--allow-tool` / `--deny-tool` CLI flags, so
+  per-task restrictions cannot be passed via arguments. Enforcement is done by
+  generating a task-scoped config and passing it through `OPENCODE_CONFIG_CONTENT`.
+- OpenCode merges `opencode.json(c)` from the current directory up to the filesystem
+  root. A project-level `opencode.jsonc` with permissive rules can override or weaken
+  task-scoped denies (last matching rule wins, closer directory wins for merge).
+  System config (`/etc/opencode`, `%ProgramData%\opencode`) overrides project config.
+- Nested agent calls (subagents) use their **own** permissions, not a subset of the
+  parent's. A task that denies `subagent` prevents launching subagents, but a launched
+  subagent is not further restricted by the parent task's policy.
+- **Plan B**: if the task-scoped config passed via `OPENCODE_CONFIG_CONTENT` proves
+  insufficient, enforcement can be moved to wrapper-level tool filtering (intercepting
+  `opencode run` invocation and refusing to start when a denied tool would be needed)
+  or to a managed system-level `policies` entry that hard-denies specific tools
+  globally.
 
 ## Extension points
 

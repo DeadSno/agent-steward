@@ -251,9 +251,17 @@ the scheduler entry.
 
 ### Tool restrictions
 
-`allowedTools` and `deniedTools` declare the intended role of the job. They are
-recorded in history for audit. They are **metadata, not a sandbox**: they do not
-restrict `opencode` at runtime today.
+`allowedTools` and `deniedTools` are enforced for the `opencode run` process that the
+task wrapper starts. The wrapper passes the generated `permissions` rules to the
+process through `OPENCODE_CONFIG_CONTENT`; no file is written to the task workdir, so a
+project-level `opencode.jsonc` is never overwritten. Each `deniedTools` entry becomes an
+`effect: "deny"` rule for the matching OpenCode action, and `allowedTools` (when set)
+denies every action that is not listed. The wrapper runs `opencode` with `--auto`, so
+only non-denied permissions are auto-approved. Restrictions apply to the agent process,
+not to hooks, Quality Gates or scripts, which still run with your user privileges. See
+[ARCHITECTURE.md](ARCHITECTURE.md#permission-enforcement--known-limitations-spike-291-findings)
+for the exact action mapping and known limitations (project/system config, nested
+subagents).
 
 ## Orchestration
 
@@ -585,7 +593,9 @@ plugin, no installation step required.
 - **No authentication on the dashboard.** Localhost only by design.
 - **Secrets are not encrypted.** Use environment variables or an external secret
   manager.
-- **`allowedTools` / `deniedTools` are advisory.** They document intent and are
-  recorded in history; enforcement is not implemented.
+- **`allowedTools` / `deniedTools` restrict the agent process, not the whole job.**
+  Hooks, Quality Gates and wrapper scripts still run with your user privileges, and a
+  project-level or system `opencode.jsonc` can weaken task-scoped denies. See the
+  permission-enforcement limitations in ARCHITECTURE.md.
 - **Matrix clones are separate tasks.** They appear in the task list (grouped under the
   parent) and consume global concurrency slots like any other run.

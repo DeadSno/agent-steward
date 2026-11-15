@@ -14,7 +14,7 @@ process.env.OPENCODE_SCHEDULER_HOME = path.join(tempRoot, "opencode", "windows-s
 const audit = await import("./dist/core/audit.js");
 const dbModule = await import("./dist/db/index.js");
 
-const { recordAudit, readAuditLog, cleanupAuditLog, clearAuditLog, resetAuditCleanupThrottle } = audit;
+const { recordAudit, readAuditLog, cleanupAuditLog, clearAuditLog, resetAuditCleanupThrottle, recordToolBlocked, recordTaskToolBlocks } = audit;
 
 const results = [];
 function check(name, cond) {
@@ -120,7 +120,37 @@ resetAuditCleanupThrottle();
 clearAuditLog();
 check("clearAuditLog удаляет все", readAuditLog({}).records.length === 0);
 
-// --- 7. Итог ------------------------------------------------------------------
+// --- 7. Аудит блокировок инструментов -----------------------------------------
+resetAuditCleanupThrottle();
+clearAuditLog();
+
+const blocksWritten = recordTaskToolBlocks("scraper", ["read"], ["write", "bash"], "mcp", "schedule_task");
+check("recordTaskToolBlocks пишет событие на каждый denied-инструмент", blocksWritten === 2);
+
+const blocked = readAuditLog({ action: "tool.blocked" });
+check("tool.blocked виден в аудите", blocked.records.length === 2 && blocked.total === 2);
+check("tool.blocked привязан к задаче", blocked.records.every((r) => r.targetType === "task" && r.target === "scraper"));
+check("tool.blocked хранит инструмент", blocked.records.map((r) => r.details.tool).sort().join(",") === "bash,write");
+const blockedDetails = blocked.records[0].details;
+check("tool.blocked хранит причину", blockedDetails.reason === "deniedTools");
+check("tool.blocked хранит allowedTools", Array.isArray(blockedDetails.allowedTools) && blockedDetails.allowedTools.join(",") === "read");
+check("tool.blocked хранит deniedTools", Array.isArray(blockedDetails.deniedTools) && blockedDetails.deniedTools.length === 2);
+
+const directId = recordToolBlocked({ task: "deploy", tool: "shell", details: { reason: "nested", attempt: 1 } });
+const direct = readAuditLog({}).records.find((r) => r.id === directId);
+check("recordToolBlocked пишет отдельное событие", direct?.action === "tool.blocked" && direct.details.attempt === 1);
+check("recordToolBlocked не перетирает tool", direct?.details.tool === "shell");
+
+clearAuditLog();
+const allowedOnly = recordTaskToolBlocks("report", ["read", "grep"], [], "system", "policy");
+const allowedRecords = readAuditLog({ action: "tool.blocked" }).records;
+check("allowedTools без deniedTools даёт одно событие", allowedOnly === 1 && allowedRecords.length === 1);
+check("allowedTools-событие помечено звёздочкой", allowedRecords[0]?.details.tool === "*" && allowedRecords[0]?.details.reason === "allowedTools");
+
+clearAuditLog();
+check("пустая политика не пишет событий", recordTaskToolBlocks("plain", [], []) === 0);
+
+// --- 8. Итог ------------------------------------------------------------------
 const failures = results.filter((item) => !item.ok);
 console.log(`\nAudit: ${results.length - failures.length}/${results.length} проверок пройдено.`);
 if (failures.length > 0) {

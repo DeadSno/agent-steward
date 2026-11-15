@@ -174,6 +174,95 @@ function rowToRecord(row: any): AuditRecord {
   };
 }
 
+export interface ToolBlockedInput {
+  /** Имя задачи, для которой действует запрет. */
+  task: string;
+  /** Заблокированный инструмент (например, shell или write). */
+  tool: string;
+  actor?: AuditActor;
+  source?: string | null;
+  /** Дополнительные детали события; можно переопределить/дополнить. */
+  details?: Record<string, unknown>;
+}
+
+/**
+ * Записывает событие tool.blocked для задачи и инструмента.
+ *
+ * Детали события — обычный объект, поэтому вызывающая сторона может добавить
+ * причину, список разрешённых инструментов и любые другие поля.
+ * Возвращает id записи или null, если журнал недоступен.
+ */
+export function recordToolBlocked(input: ToolBlockedInput): number | null {
+  return recordAudit({
+    action: "tool.blocked",
+    targetType: "task",
+    target: input.task,
+    actor: input.actor ?? "system",
+    source: input.source ?? "policy",
+    details: { tool: input.tool, ...(input.details ?? {}) },
+  });
+}
+
+/**
+ * Фиксирует запреты задачи из её политики allowedTools/deniedTools.
+ *
+ * Явно запрещённые инструменты попадают в аудит по одному событию на
+ * инструмент. Для режима «только разрешённые» пишется одно событие с
+ * инструментом `*`, потому что список заблокированных в этом режиме
+ * неограничен. Возвращает число записанных событий.
+ */
+export function recordTaskToolBlocks(
+  task: string,
+  allowedTools: readonly string[] | null | undefined,
+  deniedTools: readonly string[] | null | undefined,
+  actor: AuditActor = "system",
+  source = "policy"
+): number {
+  const normalizedDenied = Array.from(
+    new Set(
+      (deniedTools ?? [])
+        .map((tool) => String(tool).trim())
+        .filter(Boolean)
+    )
+  );
+  const normalizedAllowed = Array.from(
+    new Set(
+      (allowedTools ?? [])
+        .map((tool) => String(tool).trim())
+        .filter(Boolean)
+    )
+  );
+  const details = {
+    reason: "deniedTools",
+    allowedTools: normalizedAllowed.length > 0 ? normalizedAllowed : null,
+    deniedTools: normalizedDenied.length > 0 ? normalizedDenied : null,
+  };
+  let written = 0;
+  for (const tool of normalizedDenied) {
+    if (recordToolBlocked({ task, tool, actor, source, details }) != null) {
+      written++;
+    }
+  }
+  if (normalizedDenied.length === 0 && normalizedAllowed.length > 0) {
+    if (
+      recordToolBlocked({
+        task,
+        tool: "*",
+        actor,
+        source,
+        details: {
+          reason: "allowedTools",
+          allowedTools: normalizedAllowed,
+          deniedTools: null,
+        },
+      }) != null
+    ) {
+      written++;
+    }
+  }
+  return written;
+}
+
 /** Читает журнал аудита (новые сверху). */
 export function readAuditLog(filter: ReadAuditFilter = {}): ReadAuditResult {
   const limit = Math.max(1, Math.min(5000, Math.floor(filter.limit ?? 200) || 200));

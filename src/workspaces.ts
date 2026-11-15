@@ -139,13 +139,16 @@ export function readWorkspaceEnvFile(envFile?: string): Record<string, string> {
  * зашифрованного хранилища (Спринт 26); отсутствующий секрет даёт пустую
  * строку и предупреждение с именем — без значения. Никогда не бросает.
  */
-export function resolveWorkspaceEnv(workspace: Workspace | undefined): Record<string, string> {
+export function resolveWorkspaceEnv(
+  workspace: Workspace | undefined,
+  allowedSecretNames?: string[]
+): Record<string, string> {
   if (!workspace) return {};
   const merged = {
     ...readWorkspaceEnvFile(workspace.envFile),
     ...(workspace.env ?? {}),
   };
-  const resolved = resolveSecretRefs(merged);
+  const resolved = resolveSecretRefs(merged, allowedSecretNames);
   if (resolved.missing.length > 0) {
     console.warn(
       `[workspace] "${workspace.name}": не найдены секреты: ${resolved.missing.join(", ")}`
@@ -196,10 +199,12 @@ export function workspaceEnvDir(pluginDir: string): string {
 export function writeWorkspaceEnvFile(
   workspace: Workspace | undefined,
   pluginDir: string,
-  sanitizedName: string
+  sanitizedName: string,
+  allowedSecretNames?: string[]
 ): string | undefined {
+  if (!workspace) return undefined;
   const file = join(workspaceEnvDir(pluginDir), `${sanitizedName}.env`);
-  const env = resolveWorkspaceEnv(workspace);
+  const env = resolveWorkspaceEnv(workspace, allowedSecretNames);
   const keys = Object.keys(env);
   if (!keys.length) {
     try {

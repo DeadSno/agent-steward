@@ -71,8 +71,11 @@ try {
   const psText = fs.readFileSync(psScriptPath, "utf8");
   check("PowerShell-обёртка получает -AllowedTools", cmdText.includes("-AllowedTools"));
   check("PowerShell-обёртка получает -DeniedTools", cmdText.includes("-DeniedTools"));
-  check("PowerShell-скрипт пишет [role-scoped] в лог", psText.includes("[role-scoped] allowed="));
-  check("PowerShell-скрипт предупреждает об опасных denied", psText.includes("ВНИМАНИЕ: deniedTools содержит опасные инструменты"));
+  // Спринт 29.2: PowerShell-скрипт передаёт конфиг прав через переменную окружения,
+  // не создавая файл opencode.jsonc в рабочей директории.
+  check("PowerShell-скрипт передаёт OPENCODE_CONFIG_CONTENT", psText.includes("$env:OPENCODE_CONFIG_CONTENT ="));
+  check("PowerShell-скрипт не создаёт opencode.jsonc", !psText.includes("$opencodeConfigFile"));
+  check("PowerShell-скрипт задаёт --auto для opencode run", psText.includes('$opencodeArgs = @("run", "--auto")'));
 
   const shFile = await writeBashWrapper({
     sanitizedName: "Scraper", taskName: "Scraper", promptFile, timeoutSeconds: 3600,
@@ -80,7 +83,9 @@ try {
     allowedTools: ["read"], deniedTools: ["bash"],
   });
   const shText = fs.readFileSync(shFile, "utf8");
-  check("bash-обёртка пишет [role-scoped] в лог", shText.includes("[role-scoped] allowed="));
+  // Спринт 29.2: bash-обёртка передаёт конфиг прав через OPENCODE_CONFIG_CONTENT.
+  check("bash-обёртка передаёт OPENCODE_CONFIG_CONTENT", shText.includes('OPENCODE_CONFIG_CONTENT='));
+  check("bash-обёртка не создаёт opencode.jsonc", !shText.includes("OPENCODE_CONFIG_FILE") && !shText.includes("opencode.jsonc"));
   check("bash-обёртка определяет ALLOWED_TOOLS", shText.includes("ALLOWED_TOOLS=") && shText.includes("DENIED_TOOLS="));
 
   // 5. recordRun сохраняет ограничения в историю.

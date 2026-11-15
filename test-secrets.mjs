@@ -19,6 +19,7 @@ const {
   hasSecret,
   deleteSecret,
   listSecrets,
+  collectSecretNames,
   expandSecretRefs,
   resolveSecretRefs,
   redactSecretsInText,
@@ -82,7 +83,72 @@ check("resolveSecretRefs расшифровывает env", envRes.env.DB_URL ==
 check("resolveSecretRefs оставляет обычное значение", envRes.env.PLAIN === "visible");
 check("resolveSecretRefs missing пуст", envRes.missing.length === 0);
 
-// --- 4. redactSecretsInText -------------------------------------------------
+// --- 4. Спринт 29.3: scoped-инъекция секретов ---------------------
+resetSecretsCache();
+await setSecret("API_KEY", "sk-1234567890abcdef");
+await setSecret("GH_TOKEN", "ghp_abcdef1234567890");
+
+check(
+  "collectSecretNames: извлекает имена из prompt",
+  JSON.stringify(collectSecretNames("покажи ${secret:API_KEY} и ${secret:GH_TOKEN}")) ===
+    JSON.stringify(["API_KEY", "GH_TOKEN"])
+);
+
+check(
+  "collectSecretNames: из пустой строки — пусто",
+  collectSecretNames("").length === 0
+);
+
+check(
+  "collectSecretNames: без ссылок — пусто",
+  collectSecretNames("просто текст без секретов").length === 0
+);
+
+check(
+  "collectSecretNames: дедуплицирует",
+  JSON.stringify(collectSecretNames("${secret:API_KEY} и ещё ${secret:API_KEY}")) ===
+    JSON.stringify(["API_KEY"])
+);
+
+// expandSecretRefs без ограничений — подставляет все
+const allRefs = expandSecretRefs("ключ=${secret:API_KEY}, токен=${secret:GH_TOKEN}");
+check(
+  "expandSecretRefs: без allowed подставляет все",
+  allRefs.value === "ключ=sk-1234567890abcdef, токен=ghp_abcdef1234567890" &&
+    allRefs.missing.length === 0
+);
+
+// expandSecretRefs с allowed — только разрешённые
+const scopedRefs = expandSecretRefs(
+  "ключ=${secret:API_KEY}, токен=${secret:GH_TOKEN}",
+  ["API_KEY"]
+);
+check(
+  "expandSecretRefs: с allowed подставляет только разрешённый",
+  scopedRefs.value === "ключ=sk-1234567890abcdef, токен=${secret:GH_TOKEN}" &&
+    scopedRefs.missing.length === 0
+);
+
+// resolveSecretRefs с allowed — только разрешённые секреты в env
+const scopedEnv = resolveSecretRefs(
+  { CMD: "запусти ${secret:API_KEY}", HOOK: "${secret:GH_TOKEN}" },
+  ["API_KEY"]
+);
+check(
+  "resolveSecretRefs: scoped инжектит только разрешённые",
+  scopedEnv.env.CMD === "запусти sk-1234567890abcdef" &&
+    scopedEnv.env.HOOK === "${secret:GH_TOKEN}" &&
+    scopedEnv.missing.length === 0
+);
+
+// Задача без ссылок на секреты не получает ни одного значения
+const noRefsEnv = resolveSecretRefs({ CMD: "просто команда" }, []);
+check(
+  "resolveSecretRefs: без ссылок — пустой env",
+  noRefsEnv.env.CMD === "просто команда" && noRefsEnv.missing.length === 0
+);
+
+// --- 5. redactSecretsInText -------------------------------------------------
 resetSecretsCache();
 setSecret("telegram_token", "123456:ABCdefGhIJKlmNopQRSTUVWX");
 setSecret("api_secret", "s3cr3t_k3y");
@@ -105,7 +171,7 @@ setSecret("short", "abc");
 redacted = redactSecretsInText("short=abc");
 check("redactSecretsInText короткое значение не маскируется", redacted === "short=abc");
 
-// --- 5. Зашифрованный файл не содержит plaintext -----------------------------
+// --- 6. Зашифрованный файл не содержит plaintext -----------------------------
 const secretsFile = path.join(process.env.OPENCODE_SCHEDULER_HOME, "secrets.json");
 const keyFile = path.join(process.env.OPENCODE_SCHEDULER_HOME, "secrets.key");
 fs.mkdirSync(path.dirname(secretsFile), { recursive: true });
@@ -126,7 +192,7 @@ check("secrets.json существует и валидный JSON", !!parsedSecr
 const keyData = fs.readFileSync(keyFile);
 check("secrets.key 32 байта", keyData.length === 32);
 
-// --- 6. Несуществующий/повреждённый ключ -------------------------------------
+// --- 7. Несуществующий/повреждённый ключ -------------------------------------
 resetSecretsCache();
 const corruptedKey = path.join(process.env.OPENCODE_SCHEDULER_HOME, "secrets.key");
 fs.writeFileSync(corruptedKey, "not-32-bytes");
@@ -137,7 +203,7 @@ try {
   check("getSecret с повреждённым ключом не бросает", false);
 }
 
-// --- 7. Итог -----------------------------------------------------------------
+// --- 8. Итог -----------------------------------------------------------------
 const failures = results.filter((item) => !item.ok);
 console.log(`\nSecrets: ${results.length - failures.length}/${results.length} проверок пройдено.`);
 if (failures.length > 0) {

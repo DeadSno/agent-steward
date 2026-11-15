@@ -133,7 +133,12 @@ export function buildBashWrapperScript(options: BashWrapperOptions): string {
     `SCHEDULE_DEFER_FILE=${shellQuote(scheduleGate?.deferFile ?? "")}`,
     `SCHEDULE_FORCE_FILE=${shellQuote(scheduleGate?.forceFile ?? "")}`,
     `ENV_FILE=${shellQuote(envFile ?? "")}`,
-    "",
+    // Спринт 29.2: права задачи передаются в opencode через переменную окружения.
+    // opencode run CLI не поддерживает --allow-tool/--deny-tool, а файл
+    // opencode.jsonc в Workdir мог бы перезаписать проектный конфиг.
+    `export OPENCODE_CONFIG_CONTENT=${shellQuote(buildOpencodeConfig(allowedTools, deniedTools))}`,
+    'log "[role-scoped] opencode config passed via OPENCODE_CONFIG_CONTENT"',
+    '',
     "# cron запускает задачи с минимальным PATH — добавляем типовые каталоги.",
     'export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$HOME/.bun/bin:$PATH"',
     "",
@@ -270,9 +275,9 @@ export function buildBashWrapperScript(options: BashWrapperOptions): string {
     '      ;;',
     '  esac',
     '  if [ -n "$MODEL" ]; then',
-    '    opencode run "${SESSION_ARGS[@]}" --model "$MODEL" "$PROMPT"',
+    '    opencode run --auto "${SESSION_ARGS[@]}" --model "$MODEL" "$PROMPT"',
     "  else",
-    '    opencode run "${SESSION_ARGS[@]}" "$PROMPT"',
+    '    opencode run --auto "${SESSION_ARGS[@]}" "$PROMPT"',
     "  fi",
     "}",
     "",
@@ -286,10 +291,12 @@ export function buildBashWrapperScript(options: BashWrapperOptions): string {
     '  kill "$WATCHDOG" 2>/dev/null || true',
     '  wait "$WATCHDOG" 2>/dev/null || true',
     "else",
-    '  run_opencode >> "$LOG_FILE" 2>&1',
+    '  opencode run --auto "${SESSION_ARGS[@]}" "$PROMPT"',
     "  EXIT_CODE=$?",
     "fi",
-    "",
+    '',
+    '# Конфиг прав живёт только в переменной окружения — файл не создаётся.',
+    '',
     'if [ "$EXIT_CODE" -ne 0 ]; then',
     '  log "[scheduler] Задача \'$TASK_NAME\' завершилась с кодом $EXIT_CODE."',
     '  ERROR_MESSAGE="Код возврата $EXIT_CODE"',
@@ -379,4 +386,104 @@ export async function writeBashWrapper(
 /** Путь к bash-обёртке задачи (для диагностики/тестов). */
 export function bashWrapperPath(sanitizedName: string): string {
   return path.join(WRAPPER_DIR, `run-${sanitizedName}.sh`);
+}
+
+// Спринт 29.2: генерация содержимого opencode.jsonc с правами для задачи.
+// opencode run CLI (v2.2.3) не поддерживает --allow-tool/--deny-tool, поэтому
+// права задаются через временный opencode.jsonc в WORKDIR.
+//
+// Actions OpenCode v2: read, edit, glob, grep, shell, subagent, skill, question,
+// webfetch, websearch. deny для shell покрывает bash/Shell, deny для edit покрывает
+// write/edit/apply_patch/remove.
+//
+// Политика: всё разрешено по умолчанию (как в OpenCode), deniedTools добавляют
+// deny-правила, allowedTools (если задан) запрещает всё, чего нет в списке.
+// Задаёт только допустимые/actions из известного набора — неизвестные игнорируются.
+export function buildOpencodeConfig(
+  allowedTools?: string[],
+  deniedTools?: string[]
+): string {
+  const actions: Array<{ action: string; effect: "allow" | "deny" }> = [
+    { action: "read", effect: "allow" },
+    { action: "edit", effect: "allow" },
+    { action: "glob", effect: "allow" },
+    { action: "grep", effect: "allow" },
+    { action: "shell", effect: "allow" },
+    { action: "subagent", effect: "allow" },
+    { action: "skill", effect: "allow" },
+    { action: "question", effect: "allow" },
+    { action: "webfetch", effect: "allow" },
+    { action: "websearch", effect: "allow" },
+  ];
+
+  const deniedSet = new Set(
+    (deniedTools ?? [])
+      .map((t) => t.trim().toLowerCase())
+      .filter(Boolean)
+  );
+  const allowedSet = new Set(
+    (allowedTools ?? [])
+      .map((t) => t.trim().toLowerCase())
+      .filter(Boolean)
+  );
+
+  const toolToAction = new Map<string, string>([
+    ["read", "read"],
+    ["write", "edit"],
+    ["edit", "edit"],
+    ["apply_patch", "edit"],
+    ["remove", "edit"],
+    ["bash", "shell"],
+    ["shell", "shell"],
+    ["glob", "glob"],
+    ["grep", "grep"],
+    ["webfetch", "webfetch"],
+    ["websearch", "websearch"],
+    ["question", "question"],
+    ["subagent", "subagent"],
+    ["skill", "skill"],
+    ["WebFetch", "webfetch"],
+  ]);
+
+  // Применяем deniedTools.
+  for (const [tool, action] of toolToAction) {
+    if (deniedSet.has(tool)) {
+      const idx = actions.findIndex((a) => a.action === action);
+      if (idx >= 0) actions[idx].effect = "deny";
+    }
+  }
+
+  // Если задан allowedTools — всё, чего нет в списке, запрещаем.
+  // deniedTools имеет приоритет (последнее правило выигрывает в OpenCode),
+  // поэтому применяем allowedTools ПОСЛЕ deniedTools — denied не перебивается.
+  if (allowedSet.size > 0) {
+    for (const entry of actions) {
+      // Если действие уже запрещено deniedTools, оставляем deny.
+      if (entry.effect === "deny") continue;
+      const tool = [...toolToAction.entries()].find(
+        ([, a]) => a === entry.action
+      )?.[0];
+      if (tool && !allowedSet.has(tool)) {
+        entry.effect = "deny";
+      }
+    }
+  }
+
+  // Убираем дубликаты actions (оставляем последний эффект).
+  const deduped = new Map<string, "allow" | "deny">();
+  for (const { action, effect } of actions) deduped.set(action, effect);
+
+  const permissions = [...deduped.entries()].map(
+    ([action, effect]) =>
+      `    { "action": "${action}", "resource": "*", "effect": "${effect}" }`
+  );
+
+  return JSON.stringify(
+    {
+      $schema: "https://opencode.ai/config.json",
+      permissions: permissions.map((p) => JSON.parse(p)),
+    },
+    null,
+    2
+  );
 }

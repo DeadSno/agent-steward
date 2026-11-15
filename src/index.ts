@@ -112,6 +112,7 @@ import {
 } from "./workspaces.js";
 import {
   deleteSecret,
+  collectSecretNames,
   hasSecret,
   listSecrets,
   setSecret,
@@ -120,6 +121,7 @@ import {
   cleanupAuditLog,
   readAuditLog,
   recordAudit,
+  recordTaskToolBlocks,
 } from "./core/audit.js";
 import type { AuditEntryInput } from "./core/audit.js";
 
@@ -5029,8 +5031,19 @@ async function schedulerCreateTask(
     workspace?.path || workingDirectory?.trim() || projectDirectory || process.cwd();
 
   // Спринт 21: env-переменные workspace → отдельный файл, который читает обёртка.
-  // Значения не логируются; в лог попадает только факт загрузки.
-  const taskEnvFile = writeWorkspaceEnvFile(workspace, PLUGIN_DIR, sanitized);
+  // Спринт 29.3: инжектит в env только реально используемые секреты (scoped-инъекция).
+  const usedSecretNames = collectSecretNames(
+    prompt,
+    beforeScript,
+    afterScript,
+    qualityGate
+  );
+  const taskEnvFile = writeWorkspaceEnvFile(
+    workspace,
+    PLUGIN_DIR,
+    sanitized,
+    usedSecretNames
+  );
   if (taskEnvFile) {
     console.log(`[workspace] Задача "${name}": env-переменные workspace подключены.`);
   }
@@ -5263,6 +5276,8 @@ async function schedulerCreateTask(
   };
   try {
     await saveTaskDefinition(taskDefinition);
+    // Аудит политики прав: фиксируем, какие инструменты задача блокирует.
+    recordTaskToolBlocks(name, normalizedAllowedTools, normalizedDeniedTools);
   } catch {
     // Не критично — основная задача уже создана.
   }
