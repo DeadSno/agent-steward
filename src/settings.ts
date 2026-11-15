@@ -49,6 +49,28 @@ export interface MatrixNotificationSettings {
 /** Периодичность дайджеста. */
 export type DigestFrequency = "daily" | "weekly";
 
+/** Режим локального триажа уведомлений. */
+export type TriageMode = "off" | "rules" | "llm" | "auto";
+
+/** Что делать, если LLM-триаж недоступен или не уверен. */
+export type TriageFallback = "rules" | "skip";
+
+/** Настройки локального триажа уведомлений (Спринт 30). */
+export interface TriageSettings {
+  /** off — триаж выключен; rules — только правила; llm — только модель; auto — модель, затем правила. */
+  mode: TriageMode;
+  /** База Ollama/OpenAI-совместимого API; по умолчанию локальная Ollama. */
+  baseUrl: string;
+  /** Идентификатор модели, например qwen3:4b. */
+  model: string;
+  /** Таймаут запроса к модели в мс (1000..120000). */
+  timeoutMs: number;
+  /** Поведение при отказе модели: правила или пропустить триаж (fail-open). */
+  fallback: TriageFallback;
+  /** Минимальная уверенность модели (0..1); ниже порога срабатывает fallback. */
+  confidenceThreshold: number;
+}
+
 /** Дайджест по истории запусков (Спринт 20). */
 export interface DigestSettings {
   /** Включён ли дайджест. */
@@ -131,6 +153,8 @@ export interface NotificationSettings {
   matrix?: MatrixNotificationSettings;
   /** Периодический дайджест. */
   digest?: DigestSettings;
+  /** Локальный триаж уведомлений. */
+  triage?: TriageSettings;
 }
 
 /**
@@ -373,6 +397,14 @@ export function defaultNotifications(): NotificationSettings {
       time: "09:00",
       lastSentAt: null,
     },
+    triage: {
+      mode: "off",
+      baseUrl: "http://127.0.0.1:11434",
+      model: "qwen3:4b",
+      timeoutMs: 45_000,
+      fallback: "rules",
+      confidenceThreshold: 0.6,
+    },
   };
 }
 
@@ -468,6 +500,25 @@ function localizedTemplate(
   return builtin ? t(key) : raw;
 }
 
+/** Приводит режим триажа к допустимому значению. */
+function normalizeTriageMode(value: unknown, fallback: TriageMode): TriageMode {
+  return value === "off" || value === "rules" || value === "llm" || value === "auto"
+    ? value
+    : fallback;
+}
+
+/** Приводит fallback триажа к допустимому значению. */
+function normalizeTriageFallback(value: unknown, fallback: TriageFallback): TriageFallback {
+  return value === "rules" || value === "skip" ? value : fallback;
+}
+
+/** Приводит порог уверенности к диапазону 0..1. */
+function normalizeConfidence(value: unknown, fallback: number): number {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(1, Math.max(0, n));
+}
+
 /** Приводит настройки уведомлений к безопасному виду. */
 function normalizeNotifications(
   value: unknown,
@@ -481,6 +532,7 @@ function normalizeNotifications(
   const fallbackTelegram = fallback.telegram ?? defaultNotifications().telegram!;
   const fallbackNative = fallback.native ?? defaultNotifications().native!;
   const fallbackQuiet = fallback.quietHours ?? defaultNotifications().quietHours!;
+  const fallbackTriage = fallback.triage ?? defaultNotifications().triage!;
 
   const raw = asRecord(value);
   if (!raw) {
@@ -497,6 +549,7 @@ function normalizeNotifications(
       telegram: { ...fallbackTelegram },
       native: { ...fallbackNative },
       quietHours: { ...fallbackQuiet },
+      triage: { ...fallbackTriage },
       dashboardUrl: fallback.dashboardUrl ?? "",
     };
   }
@@ -509,6 +562,7 @@ function normalizeNotifications(
   const rawTelegram = asRecord(raw.telegram);
   const rawNative = asRecord(raw.native);
   const rawQuiet = asRecord(raw.quietHours);
+  const rawTriage = asRecord(raw.triage);
 
   const frequency: DigestFrequency =
     rawDigest?.frequency === "weekly" || rawDigest?.frequency === "daily"
@@ -651,6 +705,28 @@ function normalizeNotifications(
       frequency,
       time: normalizeDailyTime(rawDigest?.time, fallbackDigest.time),
       lastSentAt,
+    },
+    triage: {
+      mode: normalizeTriageMode(rawTriage?.mode, fallbackTriage.mode),
+      baseUrl: normalizeHttpBase(rawTriage?.baseUrl, fallbackTriage.baseUrl),
+      model:
+        typeof rawTriage?.model === "string" && rawTriage.model.trim()
+          ? rawTriage.model.trim().slice(0, 200)
+          : fallbackTriage.model,
+      timeoutMs: normalizeIntInRange(
+        rawTriage?.timeoutMs,
+        fallbackTriage.timeoutMs,
+        1_000,
+        120_000
+      ),
+      fallback: normalizeTriageFallback(
+        rawTriage?.fallback,
+        fallbackTriage.fallback
+      ),
+      confidenceThreshold: normalizeConfidence(
+        rawTriage?.confidenceThreshold,
+        fallbackTriage.confidenceThreshold
+      ),
     },
   };
 }

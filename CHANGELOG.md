@@ -4,6 +4,12 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ## [Unreleased]
 
+### Added
+
+- **Спайк локальной модели (Спринт 30.1):** проверен structured output Qwen3-4B через Ollama: 10/10 ответов валидны по JSON Schema, средняя латентность ~20 с, холодный старт ~42 с. Зафиксировано: формат `format: <JSON Schema>` надёжен, но нужна собственная валидация, один retry только на таймаут/сеть/битый JSON и fail-open на правила. Дефолтный таймаут триажа 15 с для такой модели слишком мал — нужен 45–60 с или асинхронный триаж. Протокол, окружение и воспроизведение — в `docs/spikes/local-model-structured-output.md`.
+- **Схема настроек триажа (Спринт 30.2):** `notifications.triage` с `mode` (`off`/`rules`/`llm`/`auto`), `baseUrl`, `model`, `timeoutMs`, `fallback` и `confidenceThreshold`. Дефолт — `off` и Ollama на `http://127.0.0.1:11434` с `qwen3:4b`; старые `settings.json` получают `off` без миграции. Значения валидируются: неизвестные enum-ы откатываются, таймаут зажимается в 1–120 с, порог — в 0–1, частичное сохранение не сбрасывает остальные уведомления.
+- **LLM-классификатор (Спринт 30.3):** `src/core/triage.ts` — провайдер-агностик клиент для Ollama (`/api/chat`, `format` со схемой) и OpenAI-совместимых endpoint-ов (`/v1/chat/completions`, `response_format: json_schema`). Вердикт `{category, severity, confidence, reason}` валидируется по схеме, markdown-заборы разбираются, ответ никогда не бросает исключение: ошибки возвращаются как `failure` (`timeout`, `network`, `invalid-json`, `invalid-schema`, `http` и т.д.). Один retry только на таймаут/сеть/битый JSON/HTTP 429 и 5xx; `timeoutMs` по умолчанию поднят до 45 с по итогам спайка. `test-triage.mjs` — 20 проверок.
+
 ## [1.5.2] - 2026-11-15
 
 ### Security

@@ -1,0 +1,28 @@
+{
+  "generatedAt": "2026-11-15T13:08:19.631Z",
+  "baseUrl": "http://127.0.0.1:11434",
+  "model": "hf.co/Qwen/Qwen3-4B-GGUF:Q4_K_M",
+  "runs": 1,
+  "jsonValid": 1,
+  "schemaValid": 1,
+  "schemaValidRate": 1,
+  "avgLatencyMs": 41655,
+  "p95LatencyMs": 41655,
+  "results": [
+    {
+      "run": 1,
+      "ok": true,
+      "jsonValid": true,
+      "schemaValid": true,
+      "latencyMs": 41655,
+      "content": "{\n\n\"category\":\"quality\",\"severity\":\"high\",\"confidence\":0.95,\"reason\":\"Quality Gate вернул код 1: 3 теста не прошли в auth-модуле.\"}",
+      "parsed": {
+        "category": "quality",
+        "severity": "high",
+        "confidence": 0.95,
+        "reason": "Quality Gate вернул код 1: 3 теста не прошли в auth-модуле."
+      },
+      "error": ""
+    }
+  ]
+}

@@ -315,6 +315,15 @@ check(
   "defaultNotifications: дайджест выключен, 09:00",
   defaults.digest?.enabled === false && defaults.digest?.time === "09:00"
 );
+check(
+  "defaultNotifications: триаж выключен и указывает на Ollama",
+  defaults.triage?.mode === "off" &&
+    defaults.triage?.baseUrl === "http://127.0.0.1:11434" &&
+    defaults.triage?.model === "qwen3:4b" &&
+    defaults.triage?.timeoutMs === 45000 &&
+    defaults.triage?.fallback === "rules" &&
+    defaults.triage?.confidenceThreshold === 0.6
+);
 
 const settingsFile = path.join(process.env.OPENCODE_SCHEDULER_HOME, "settings.json");
 fs.mkdirSync(path.dirname(settingsFile), { recursive: true });
@@ -339,6 +348,55 @@ check(
     Array.isArray(loaded.notifications.filters?.include) &&
     loaded.notifications.matrix?.stuckAfterMinutes === 60 &&
     loaded.notifications.digest?.frequency === "daily"
+);
+check(
+  "loadSettings: старый settings.json получает triage off",
+  loaded.notifications.triage?.mode === "off" &&
+    loaded.notifications.triage?.baseUrl === "http://127.0.0.1:11434"
+);
+
+// Некорректные значения триажа не должны ломать загрузку: enum-ы
+// откатываются к fallback, числа зажимаются в диапазон.
+fs.writeFileSync(
+  settingsFile,
+  JSON.stringify({
+    notifications: {
+      enabled: true,
+      onlyOnError: true,
+      triage: {
+        mode: "auto",
+        baseUrl: "ftp://bad",
+        model: "  qwen3:4b  ",
+        timeoutMs: 500,
+        fallback: "nonsense",
+        confidenceThreshold: 2.5,
+      },
+    },
+  }),
+  "utf8"
+);
+const clamped = await settingsModule.loadSettings();
+check(
+  "loadSettings: triage валидирует enum-ы и зажимает числа",
+  clamped.notifications.triage?.mode === "auto" &&
+    clamped.notifications.triage?.baseUrl === "http://127.0.0.1:11434" &&
+    clamped.notifications.triage?.model === "qwen3:4b" &&
+    clamped.notifications.triage?.timeoutMs === 1000 &&
+    clamped.notifications.triage?.fallback === "rules" &&
+    clamped.notifications.triage?.confidenceThreshold === 1
+);
+
+await settingsModule.saveSettings({
+  notifications: { enabled: true, onlyOnError: true, triage: { mode: "rules" } },
+});
+const partial = await settingsModule.loadSettings();
+check(
+  "saveSettings: частичный triage сохраняет остальные настройки",
+  partial.notifications.triage?.mode === "rules" &&
+    partial.notifications.enabled === true &&
+    partial.notifications.onlyOnError === true &&
+    partial.notifications.webhook?.timeoutMs === 10000 &&
+    partial.notifications.digest?.frequency === "daily"
 );
 
 // Шаблоны, сохранённые как встроенные дефолты, не должны застывать на языке

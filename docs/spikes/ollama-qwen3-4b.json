@@ -1,0 +1,163 @@
+{
+  "generatedAt": "2026-11-15T13:11:46.276Z",
+  "baseUrl": "http://127.0.0.1:11434",
+  "model": "hf.co/Qwen/Qwen3-4B-GGUF:Q4_K_M",
+  "runs": 10,
+  "jsonValid": 10,
+  "schemaValid": 10,
+  "schemaValidRate": 1,
+  "avgLatencyMs": 20336,
+  "p95LatencyMs": 20927,
+  "results": [
+    {
+      "run": 1,
+      "ok": true,
+      "jsonValid": true,
+      "schemaValid": true,
+      "latencyMs": 20037,
+      "content": "{\n\n\"category\":\"quality\",\"severity\":\"high\",\"confidence\":0.95,\"reason\":\"Quality Gate вернул код 1: 3 теста не прошли в auth-модуле.\"}",
+      "parsed": {
+        "category": "quality",
+        "severity": "high",
+        "confidence": 0.95,
+        "reason": "Quality Gate вернул код 1: 3 теста не прошли в auth-модуле."
+      },
+      "error": ""
+    },
+    {
+      "run": 2,
+      "ok": true,
+      "jsonValid": true,
+      "schemaValid": true,
+      "latencyMs": 20248,
+      "content": "{\n\n\"category\":\"quality\",\"severity\":\"high\",\"confidence\":0.95,\"reason\":\"Quality Gate вернул код 1: 3 теста не прошли в auth-модуле.\"}",
+      "parsed": {
+        "category": "quality",
+        "severity": "high",
+        "confidence": 0.95,
+        "reason": "Quality Gate вернул код 1: 3 теста не прошли в auth-модуле."
+      },
+      "error": ""
+    },
+    {
+      "run": 3,
+      "ok": true,
+      "jsonValid": true,
+      "schemaValid": true,
+      "latencyMs": 19961,
+      "content": "{\n\n\"category\":\"quality\",\"severity\":\"high\",\"confidence\":0.95,\"reason\":\"Quality Gate вернул код 1: 3 теста не прошли в auth-модуле.\"}",
+      "parsed": {
+        "category": "quality",
+        "severity": "high",
+        "confidence": 0.95,
+        "reason": "Quality Gate вернул код 1: 3 теста не прошли в auth-модуле."
+      },
+      "error": ""
+    },
+    {
+      "run": 4,
+      "ok": true,
+      "jsonValid": true,
+      "schemaValid": true,
+      "latencyMs": 20927,
+      "content": "{\n\n\"category\":\"quality\",\"severity\":\"high\",\"confidence\":0.95,\"reason\":\"Quality Gate вернул код 1: 3 теста не прошли в auth-модуле.\"}",
+      "parsed": {
+        "category": "quality",
+        "severity": "high",
+        "confidence": 0.95,
+        "reason": "Quality Gate вернул код 1: 3 теста не прошли в auth-модуле."
+      },
+      "error": ""
+    },
+    {
+      "run": 5,
+      "ok": true,
+      "jsonValid": true,
+      "schemaValid": true,
+      "latencyMs": 20444,
+      "content": "{\n\n\"category\":\"quality\",\"severity\":\"high\",\"confidence\":0.95,\"reason\":\"Quality Gate вернул код 1: 3 теста не прошли в auth-модуле.\"}",
+      "parsed": {
+        "category": "quality",
+        "severity": "high",
+        "confidence": 0.95,
+        "reason": "Quality Gate вернул код 1: 3 теста не прошли в auth-модуле."
+      },
+      "error": ""
+    },
+    {
+      "run": 6,
+      "ok": true,
+      "jsonValid": true,
+      "schemaValid": true,
+      "latencyMs": 20365,
+      "content": "{\n\n\"category\":\"quality\",\"severity\":\"high\",\"confidence\":0.95,\"reason\":\"Quality Gate вернул код 1: 3 теста не прошли в auth-модуле.\"}",
+      "parsed": {
+        "category": "quality",
+        "severity": "high",
+        "confidence": 0.95,
+        "reason": "Quality Gate вернул код 1: 3 теста не прошли в auth-модуле."
+      },
+      "error": ""
+    },
+    {
+      "run": 7,
+      "ok": true,
+      "jsonValid": true,
+      "schemaValid": true,
+      "latencyMs": 20325,
+      "content": "{\n\n\"category\":\"quality\",\"severity\":\"high\",\"confidence\":0.95,\"reason\":\"Quality Gate вернул код 1: 3 теста не прошли в auth-модуле.\"}",
+      "parsed": {
+        "category": "quality",
+        "severity": "high",
+        "confidence": 0.95,
+        "reason": "Quality Gate вернул код 1: 3 теста не прошли в auth-модуле."
+      },
+      "error": ""
+    },
+    {
+      "run": 8,
+      "ok": true,
+      "jsonValid": true,
+      "schemaValid": true,
+      "latencyMs": 20300,
+      "content": "{\n\n\"category\":\"quality\",\"severity\":\"high\",\"confidence\":0.95,\"reason\":\"Quality Gate вернул код 1: 3 теста не прошли в auth-модуле.\"}",
+      "parsed": {
+        "category": "quality",
+        "severity": "high",
+        "confidence": 0.95,
+        "reason": "Quality Gate вернул код 1: 3 теста не прошли в auth-модуле."
+      },
+      "error": ""
+    },
+    {
+      "run": 9,
+      "ok": true,
+      "jsonValid": true,
+      "schemaValid": true,
+      "latencyMs": 20250,
+      "content": "{\n\n\"category\":\"quality\",\"severity\":\"high\",\"confidence\":0.95,\"reason\":\"Quality Gate вернул код 1: 3 теста не прошли в auth-модуле.\"}",
+      "parsed": {
+        "category": "quality",
+        "severity": "high",
+        "confidence": 0.95,
+        "reason": "Quality Gate вернул код 1: 3 теста не прошли в auth-модуле."
+      },
+      "error": ""
+    },
+    {
+      "run": 10,
+      "ok": true,
+      "jsonValid": true,
+      "schemaValid": true,
+      "latencyMs": 20500,
+      "content": "{\n\n\"category\":\"quality\",\"severity\":\"high\",\"confidence\":0.95,\"reason\":\"Quality Gate вернул код 1: 3 теста не прошли в auth-модуле.\"}",
+      "parsed": {
+        "category": "quality",
+        "severity": "high",
+        "confidence": 0.95,
+        "reason": "Quality Gate вернул код 1: 3 теста не прошли в auth-модуле."
+      },
+      "error": ""
+    }
+  ]
+}
