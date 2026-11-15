@@ -6,6 +6,7 @@ import {
   type NotificationFilters,
   type NotificationSettings,
   type NotificationTemplates,
+  isShadowActive,
 } from "./settings.js";
 import {
   buildAnalytics,
@@ -15,6 +16,7 @@ import {
 import { getHistory } from "./db/history-repo.js";
 import { sendTelegramMessage } from "./core/telegram.js";
 import { sendNativeNotification } from "./core/native-notify.js";
+import { decideTriage, recordShadow } from "./core/triage-chain.js";
 import { t } from "./i18n.js";
 
 /** Статус завершения задачи, который приходит из record-history. */
@@ -484,6 +486,20 @@ export async function notifyTaskCompletion(
     ) {
       return;
     }
+
+    // Триаж может подавить уведомление (LLM → правила → fail-open).
+    // В shadow-режиме решение фиксируется, но уведомление не подавляется.
+    const shadow = config.triage?.shadow;
+    const triage = await decideTriage(
+      { taskName, status, error, durationMs, tokens, costUsd },
+      config.triage
+    );
+    recordShadow(
+      { taskName, status, error, durationMs, tokens, costUsd },
+      triage,
+      shadow
+    );
+    if (!isShadowActive(shadow) && triage.action === "skip") return;
 
     const message = formatNotificationMessage(
       { taskName, status, durationMs, error, tokens, costUsd },

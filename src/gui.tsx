@@ -428,6 +428,12 @@ export default Plugin.define({
     const [digestFrequency, setDigestFrequency] = createSignal<"daily" | "weekly">("daily")
     const [digestTime, setDigestTime] = createSignal("09:00")
     const [digestLastSentAt, setDigestLastSentAt] = createSignal<string | null>(null)
+    // Спринт 30.6: shadow-режим триажа.
+    const [shadowEnabled, setShadowEnabled] = createSignal(false)
+    const [shadowDays, setShadowDays] = createSignal(14)
+    const [shadowStartedAt, setShadowStartedAt] = createSignal<string | null>(null)
+    const [shadowReportData, setShadowReportData] = createSignal<{ total: number; skips: number; active: boolean } | null>(null)
+    const [shadowBusy, setShadowBusy] = createSignal(false)
     // Спринт 25: Telegram, нативные уведомления и тихие часы.
     const [telegramEnabled, setTelegramEnabled] = createSignal(false)
     const [telegramBotToken, setTelegramBotToken] = createSignal("")
@@ -528,6 +534,9 @@ export default Plugin.define({
       setQuietEnabled(Boolean(n?.quietHours?.enabled))
       setQuietFrom(n?.quietHours?.from ?? "22:00")
       setQuietTo(n?.quietHours?.to ?? "08:00")
+      setShadowEnabled(Boolean(n?.triage?.shadow?.enabled !== false))
+      setShadowDays(Number(n?.triage?.shadow?.days ?? 14))
+      setShadowStartedAt(n?.triage?.shadow?.startedAt ?? null)
       const a = n?.audit
       setAuditRetentionEnabled(Boolean(a?.enabled !== false))
       setAuditRetentionDays(Number(a?.retentionDays ?? 90))
@@ -552,6 +561,18 @@ export default Plugin.define({
         applyLocale((s as { locale?: string }).locale)
       } catch (err: any) {
         console.error("RPC Error (get_settings):", err)
+      }
+      try {
+        const report = await rpc.get_shadow_report({})
+        if (report?.success) {
+          setShadowReportData({
+            total: Number(report.total ?? 0),
+            skips: Number(report.skips ?? 0),
+            active: Boolean(report.active),
+          })
+        }
+      } catch (err: any) {
+        console.error("RPC Error (get_shadow_report):", err)
       }
 
       void loadSecretsGui()
@@ -616,6 +637,13 @@ export default Plugin.define({
           frequency: digestFrequency(),
           time: (digestTime() || "09:00").trim(),
           lastSentAt: digestLastSentAt(),
+        },
+        triage: {
+          shadow: {
+            enabled: shadowEnabled(),
+            days: Math.max(1, Math.min(365, Math.floor(Number(shadowDays()) || 14))),
+            startedAt: shadowStartedAt(),
+          },
         },
         audit: {
           enabled: auditRetentionEnabled(),
@@ -3223,6 +3251,60 @@ export default Plugin.define({
                     </div>
                     <div style="font-size:11px;color:#8e8e93">
                       {gt("gui.digestHint")}
+                    </div>
+                  </div>
+
+                  {/* Shadow-режим триажа (Спринт 30.6) */}
+                  <div style="border-top:1px solid #333;padding-top:10px;display:flex;flex-direction:column;gap:8px">
+                    <label style={`display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;opacity:${notificationsEnabled() ? 1 : 0.5}`}>
+                      <input
+                        type="checkbox"
+                        checked={shadowEnabled()}
+                        disabled={!notificationsEnabled()}
+                        onChange={(e) => {
+                          setShadowEnabled(e.currentTarget.checked)
+                          void saveNotificationSettings()
+                        }}
+                        style="accent-color:#5ac8fa;cursor:pointer;margin:0"
+                      />
+                      {shadowEnabled() ? gt("shadow.enabled") : gt("shadow.disabled")}
+                    </label>
+                    <div style={`display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;color:#b0b0b0;opacity:${notificationsEnabled() && shadowEnabled() ? 1 : 0.5}`}>
+                      <label style="font-size:12px;color:#e0e0e0;white-space:nowrap">{gt("gui.days")}</label>
+                      <input
+                        type="number"
+                        min="1"
+                        max="365"
+                        value={shadowDays()}
+                        disabled={!notificationsEnabled() || !shadowEnabled()}
+                        onChange={(e) => {
+                          setShadowDays(Math.max(1, Math.min(365, Math.floor(Number(e.currentTarget.value) || 14))))
+                          void saveNotificationSettings()
+                        }}
+                        style="width:70px;padding:4px 6px;background:#1e1e1e;border:1px solid #333;border-radius:4px;color:#fff;font-size:12px;outline:none"
+                      />
+                      <span style="font-size:11px;color:#8e8e93">{shadowStartedAt() ? gt("shadow.active", { days: shadowDays() }) : gt("shadow.expired")}</span>
+                    </div>
+                    <div style={`display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;color:${shadowEnabled() ? "#e0e0e0" : "#666666"}`}>
+                      <span style="font-weight:600">{shadowReportData()?.total ?? 0} {gt("shadow.total", { count: shadowReportData()?.total ?? 0 }).split(":")[0]}</span>
+                      <span style="color:#ff6b6b">{shadowReportData()?.skips ?? 0} {gt("shadow.skips", { count: shadowReportData()?.skips ?? 0 }).split(":")[0]}</span>
+                      <button
+                        onClick={async () => {
+                          setShadowBusy(true)
+                          try {
+                            await rpc.reset_shadow_report({})
+                            setShadowReportData({ total: 0, skips: 0, active: shadowEnabled() })
+                          } catch (err: any) {
+                            console.error("RPC Error (reset_shadow_report):", err)
+                          } finally {
+                            setShadowBusy(false)
+                          }
+                        }}
+                        disabled={shadowBusy()}
+                        style={`padding:4px 8px;background:#2d7d46;color:white;border:none;border-radius:4px;cursor:${shadowBusy() ? "not-allowed" : "pointer"};font-size:12px;opacity:${shadowBusy() ? 0.6 : 1}`}
+                      >
+                        {gt("shadow.reset")}
+                      </button>
                     </div>
                   </div>
 

@@ -123,7 +123,22 @@ export interface TriageSettings {
    * пустой массив — правил нет.
    */
   rules?: TriageRule[];
+  /** Shadow-режим триажа (Спринт 30.6): решения логируются, но не подавляются. */
+  shadow?: TriageShadowSettings;
 }
+
+/** Shadow-режим триажа (Спринт 30.6). */
+export interface TriageShadowSettings {
+  /** Включён ли shadow-режим. По умолчанию true. */
+  enabled: boolean;
+  /** Сколько дней длится shadow-период. По умолчанию 14. */
+  days: number;
+  /** Момент начала shadow-периода (ISO). null — ещё не Started. */
+  startedAt: string | null;
+}
+
+/** Дни shadow-периода по умолчанию. */
+export const DEFAULT_SHADOW_DAYS = 14;
 
 /** Дайджест по истории запусков (Спринт 20). */
 export interface DigestSettings {
@@ -458,6 +473,11 @@ export function defaultNotifications(): NotificationSettings {
       timeoutMs: 45_000,
       fallback: "rules",
       confidenceThreshold: 0.6,
+      shadow: {
+        enabled: true,
+        days: DEFAULT_SHADOW_DAYS,
+        startedAt: null,
+      },
     },
   };
 }
@@ -663,6 +683,59 @@ function normalizeTriageRules(
     .filter((rule): rule is TriageRule => rule !== null);
 }
 
+/** Нормализует настройки shadow-режима триажа. */
+function normalizeTriageShadow(
+  value: unknown,
+  fallback: TriageShadowSettings
+): TriageShadowSettings {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { ...fallback };
+  }
+  const raw = value as Partial<TriageShadowSettings>;
+  return {
+    enabled: typeof raw.enabled === "boolean" ? raw.enabled : fallback.enabled,
+    days: normalizeIntInRange(raw.days, fallback.days, 1, 365),
+    startedAt:
+      typeof raw.startedAt === "string" && raw.startedAt.trim()
+        ? raw.startedAt.trim()
+        : null,
+  };
+}
+
+/** Текущий shadow-период ещё активен? (ничего не меняет, только читает). */
+export function isShadowActive(shadow: TriageShadowSettings | undefined): boolean {
+  if (!shadow || !shadow.enabled || !shadow.startedAt) return false;
+  const started = new Date(shadow.startedAt).getTime();
+  if (!Number.isFinite(started)) return false;
+  const now = Date.now();
+  const days = Number.isFinite(shadow.days) && shadow.days > 0 ? shadow.days : DEFAULT_SHADOW_DAYS;
+  return now - started < days * 24 * 60 * 60 * 1000;
+}
+
+/** Начать shadow-период, если ещё не Started. Возвращает нормализованные настройки shadow. */
+export function startShadow(shadow: TriageShadowSettings | undefined): TriageShadowSettings {
+  const nowIso = new Date().toISOString();
+  if (!shadow) {
+    return { enabled: true, days: DEFAULT_SHADOW_DAYS, startedAt: nowIso };
+  }
+  if (!shadow.startedAt) {
+    return { ...shadow, startedAt: nowIso };
+  }
+  return { ...shadow };
+}
+
+/**
+ * Настройки shadow после сохранения: включённый режим без даты старта
+ * получает текущий момент, выключенный — сбрасывает дату.
+ */
+export function settleShadowOnSave(
+  shadow: TriageShadowSettings | undefined
+): TriageShadowSettings {
+  if (!shadow) return startShadow(undefined);
+  if (!shadow.enabled) return { ...shadow, startedAt: null };
+  return startShadow(shadow);
+}
+
 /** Приводит настройки уведомлений к безопасному виду. */
 function normalizeNotifications(
   value: unknown,
@@ -677,6 +750,7 @@ function normalizeNotifications(
   const fallbackNative = fallback.native ?? defaultNotifications().native!;
   const fallbackQuiet = fallback.quietHours ?? defaultNotifications().quietHours!;
   const fallbackTriage = fallback.triage ?? defaultNotifications().triage!;
+  const fallbackShadow = fallbackTriage.shadow ?? defaultNotifications().triage!.shadow!;
 
   const raw = asRecord(value);
   if (!raw) {
@@ -696,6 +770,7 @@ function normalizeNotifications(
       triage: {
         ...fallbackTriage,
         rules: fallbackTriage.rules?.map((rule) => ({ ...rule })),
+        shadow: { ...fallbackShadow },
       },
       dashboardUrl: fallback.dashboardUrl ?? "",
     };
@@ -875,6 +950,10 @@ function normalizeNotifications(
         fallbackTriage.confidenceThreshold
       ),
       rules: normalizeTriageRules(rawTriage?.rules, fallbackTriage.rules),
+      shadow: normalizeTriageShadow(
+        rawTriage?.shadow,
+        fallbackShadow
+      ),
     },
   };
 }
@@ -1008,6 +1087,13 @@ export async function saveSettings(
       if (!next.integrations.hooks.token) next.integrations.hooks.token = generated.token;
       if (!next.integrations.hooks.secret) next.integrations.hooks.secret = generated.secret;
     }
+  }
+
+  // Удобство: включённый shadow-режим без даты старта стартует при первом сохранении.
+  // Иначе shadow не логировал бы решения, а триаж реально подавлял бы уведомления.
+  const triage = next.notifications.triage;
+  if (triage) {
+    triage.shadow = settleShadowOnSave(triage.shadow);
   }
 
   await fs.mkdir(PLUGIN_DIR, { recursive: true });

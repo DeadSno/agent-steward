@@ -66,6 +66,10 @@ import {
   sendTestNotification,
 } from "./notifications.js";
 import {
+  shadowReport,
+  resetShadowDecisions,
+} from "./core/triage-shadow.js";
+import {
   loadTaskDefinitions,
   saveTaskDefinition,
   removeTaskDefinition,
@@ -4346,6 +4350,26 @@ export default Plugin.define({
       send_digest: async () => {
         // Ручная отправка не сдвигает плановое расписание дайджеста.
         return await sendDigestNow({ updateLastSentAt: false });
+      },
+
+      // --- Спринт 30.6: shadow-режим триажа ---------------------------------
+      get_shadow_report: async () => {
+        const settings = await loadSettings();
+        const shadow = shadowReport(settings.notifications.triage?.shadow);
+        return {
+          success: true,
+          active: shadow.active,
+          startedAt: shadow.startedAt,
+          days: shadow.days,
+          total: shadow.total,
+          skips: shadow.skips,
+          wouldSuppress: shadow.wouldSuppress,
+          bySource: shadow.bySource,
+        };
+      },
+      reset_shadow_report: async () => {
+        resetShadowDecisions();
+        return { success: true };
       },
 
       // --- Спринт 26: секреты и аудит -------------------------------------
