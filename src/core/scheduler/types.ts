@@ -38,6 +38,12 @@ export interface CreateTaskOptions {
   notBefore?: string;
   /** Окно запуска «не позже» (HH:MM, 24ч). Парно с notBefore. */
   notAfter?: string;
+  /**
+   * Windows: запускать задачу и без входа пользователя (/ru SYSTEM).
+   * По умолчанию задача интерактивная — выполняется только при активном входе.
+   * На Linux/macOS не используется: cron и так работает без входа, launchd-агент — только при входе.
+   */
+  runWhenLoggedOff?: boolean;
   /** Аргументы schedule-gate для обёртки (расширенный cron / окно). */
   scheduleGate?: {
     cron?: string;

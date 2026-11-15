@@ -23,11 +23,11 @@ export const WINDOWS_TASK_PREFIX = `\\${TASK_FOLDER}\\${TASK_FOLDER_NAME}\\`;
 /**
  * Декодирует вывод консольных утилит Windows.
  *
- * cmd.exe запускается с `chcp 65001`, поэтому штатный вывод — UTF-8.
- * Но сам schtasks при ошибке (и при перенаправлении вывода) может отдать
- * байты в OEM-кодировке русской Windows (CP866), из-за чего Node, читающий
- * их как UTF-8, показывает «?????». Поэтому: если байты — валидный UTF-8,
- * декодируем как UTF-8, иначе пробуем CP866.
+ * `schtasks.exe` запускается напрямую, без `cmd.exe`, поэтому метасимволы
+ * в аргументах не исполняются. Вывод утилиты на русской Windows приходит
+ * в OEM-кодировке (CP866), из-за чего Node, читающий его как UTF-8,
+ * показывает «?????». Поэтому: если байты — валидный UTF-8, декодируем
+ * как UTF-8, иначе пробуем CP866.
  */
 function decodeConsoleOutput(buf: Buffer | string | undefined | null): string {
   if (!buf) return "";
@@ -81,13 +81,16 @@ export class SchtasksError extends Error {
 }
 
 /**
- * Выполняет команду schtasks через cmd.exe с chcp 65001 (стабильные
- * англоязычные ключи вывода) и windowsHide: true (без окон консоли).
+ * Выполняет `schtasks.exe` напрямую с массивом аргументов.
+ *
+ * Раньше команда собиралась в строку и запускалась через `cmd.exe /c`,
+ * из-за чего метасимволы (`&`, `|`, `"`) в имени задачи исполнялись
+ * оболочкой: можно было получить command injection и «фантомную» задачу.
+ * `execFile` передаёт каждый аргумент отдельно — оболочки в цепочке нет.
  */
 export async function runSchtasks(args: string[]): Promise<SchtasksResult> {
   try {
-    const command = ["chcp", "65001", ">nul", "&", "schtasks", ...args].join(" ");
-    const { stdout, stderr } = (await execFileAsync("cmd.exe", ["/c", command], {
+    const { stdout, stderr } = (await execFileAsync("schtasks", args, {
       windowsHide: true,
       encoding: "buffer",
       maxBuffer: MAX_OUTPUT_BUFFER,
@@ -167,6 +170,11 @@ export class WindowsScheduler implements SchedulerBackend {
     }
 
     const fullName = taskFullName(name);
+    // Спринт 27.5.4: по умолчанию задача интерактивная — schtasks запускает её
+    // только при активном входе пользователя (Interactive only). Для работы без
+    // входа нужен SYSTEM: он не требует пароля, но работает в session 0 без
+    // профиля пользователя (нет доступа к пользовательским файлам/сети/ключам).
+    const logonFlags = options.runWhenLoggedOff ? ["/ru", "SYSTEM"] : [];
     const args: string[] = [
       "/create",
       "/tn",
@@ -174,6 +182,7 @@ export class WindowsScheduler implements SchedulerBackend {
       "/tr",
       `"${command}"`,
       ...scheduleFlags,
+      ...logonFlags,
       "/f",
     ];
 
@@ -225,7 +234,9 @@ export class WindowsScheduler implements SchedulerBackend {
   }
 
   async listTasks(): Promise<ScheduledTaskInfo[]> {
-    const args = ["/query", "/fo", "LIST"];
+    // /v нужен, чтобы ОС отдала «Режим входа» (Logon Mode): без него
+    // schtasks печатает только имя, время и состояние, а logonMode остаётся null.
+    const args = ["/query", "/v", "/fo", "LIST"];
 
     let result: SchtasksResult;
     try {
@@ -284,6 +295,8 @@ export class WindowsScheduler implements SchedulerBackend {
         const alreadyGone =
           text.includes("cannot find") ||
           text.includes("не удалось найти") ||
+          text.includes("не удается найти") ||
+          text.includes("не может найти") ||
           text.includes("не найдено") ||
           text.includes("the system cannot find the file specified") ||
           text.includes("no tasks") ||
@@ -477,6 +490,8 @@ function setTaskField(task: any, key: string, value: string): void {
     "следующее время запуска": "nextRunTime",
     состояние: "status",
     "режим входа": "logonMode",
+    // RU Windows 10/11 в /v печатает полную формулировку.
+    "режим входа в систему": "logonMode",
     "последнее время запуска": "lastRunTime",
     "последний результат": "lastResult",
     автор: "author",

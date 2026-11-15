@@ -6,8 +6,16 @@ import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { LockManager } from "./core/lock.js";
-import { LOCK_DIR, LOG_DIR, PLUGIN_DIR, sanitizeName } from "./types.js";
-import { parseCron, buildScheduleGate, isValidIanaTimeZone, validateLaunchWindow, prevRun, normalizeActiveDays, activeWindowState, nextWindowOpenDelayMs } from "./core/schedule-v2.js";
+import {
+  LOCK_DIR,
+  LOG_DIR,
+  PLUGIN_DIR,
+  STALE_LOCK_MAX_AGE_MS,
+  WRAPPER_DIR,
+  sanitizeName,
+  validateTaskName,
+} from "./types.js";
+import { parseCron, buildScheduleGate, isValidIanaTimeZone, validateLaunchWindow, prevRun, nextRun as cronNextRun, normalizeActiveDays, activeWindowState, nextWindowOpenDelayMs } from "./core/schedule-v2.js";
 import {
   buildLaunchdOneShotCleanup,
   normalizeOneShotRunAt,
@@ -90,7 +98,7 @@ import {
 import { closeDb, initDb } from "./db/index.js";
 import { migrateJsonToDb } from "./db/migrate.js";
 import { checkJsonBackups, recoverInterruptedRuns } from "./db/recovery.js";
-import { getTask, listMatrixClones, saveTask } from "./db/tasks-repo.js";
+import { getTask, listMatrixClones, listTasks as listTaskDefinitions, saveTask } from "./db/tasks-repo.js";
 import {
   addWorkspace,
   deleteWorkspace,
@@ -212,7 +220,11 @@ export const matrixSchema = z.object({
 
 /** Zod-схема аргументов schedule_task */
 export const scheduleTaskSchema = z.object({
-  name: z.string().describe("Unique task name (the plugin prefix is applied automatically)."),
+  name: z
+    .string()
+    .describe(
+      "Unique task name (the plugin prefix is applied automatically). Allowed: letters (including Cyrillic), digits, space, dot, underscore and hyphen."
+    ),
   schedule: z
     .string()
     .optional()
@@ -413,6 +425,12 @@ export const scheduleTaskSchema = z.object({
     .describe(
       "Role-scoped tool deny-list (takes precedence over allowedTools). Metadata-only."
     ),
+  runWhenLoggedOff: z
+    .boolean()
+    .optional()
+    .describe(
+      "Windows only: run the task even when no user is logged on (/ru SYSTEM). The task runs in session 0 without the user's profile, mapped drives or saved credentials, so tasks that need the user's environment may fail. Creating such a task usually requires an elevated shell. Default false: interactive only — the task runs only while the user is logged on."
+    ),
   matrix: matrixSchema
     .optional()
     .describe(
@@ -521,6 +539,12 @@ export const updateTaskSchema = z.object({
     .enum(["skip", "postpone", "run"])
     .optional()
     .describe("New behaviour outside the window: postpone (default), skip or run."),
+  runWhenLoggedOff: z
+    .boolean()
+    .optional()
+    .describe(
+      "Windows only: true runs the task without a logged-on user (/ru SYSTEM, session 0 without the user profile, mapped drives or saved credentials; usually requires an elevated shell). false/omitted keeps the task interactive-only."
+    ),
   watchGlobs: z
     .array(z.string())
     .optional()
@@ -957,6 +981,90 @@ function wrapExecute<Args>(
   };
 }
 
+/**
+ * Спринт 27.5.2: ближайший запуск по определению задачи, без чтения ОС.
+ *
+ * - `once` → `runAt` (запланированный момент);
+ * - пауза (`paused` или будущий `pausedUntil`) → null;
+ * - `cron` → ближайшее совпадение cron с учётом окна и дней недели:
+ *     * `run` — окно игнорируется;
+ *     * `skip` — ищем следующее совпадение внутри окна;
+ *     * `postpone` (по умолчанию) — перенос на открытие окна, как в schedule-gate;
+ * - `file`/`git`/`mcp-event` → null (расписания нет).
+ */
+function computeTaskNextRun(
+  def:
+    | Pick<
+        TaskDefinition,
+        | "schedule"
+        | "triggerType"
+        | "runAt"
+        | "timezone"
+        | "notBefore"
+        | "notAfter"
+        | "activeDays"
+        | "windowPolicy"
+        | "pausedUntil"
+      >
+    | undefined,
+  options: { paused?: boolean; now?: Date } = {}
+): string | null {
+  if (!def) return null;
+  if (options.paused) return null;
+
+  const now = options.now ?? new Date();
+  if (def.pausedUntil) {
+    const until = Date.parse(def.pausedUntil);
+    if (Number.isFinite(until) && until > now.getTime()) return null;
+  }
+
+  const type = def.triggerType ?? "cron";
+  if (type === "once") {
+    if (!def.runAt) return null;
+    const at = Date.parse(def.runAt);
+    return Number.isFinite(at) ? new Date(at).toISOString() : null;
+  }
+  if (type !== "cron") return null;
+
+  const schedule = (def.schedule || "").trim();
+  if (!schedule) return null;
+
+  const timeZone = def.timezone?.trim() || undefined;
+  const policy =
+    def.windowPolicy === "skip" || def.windowPolicy === "run"
+      ? def.windowPolicy
+      : "postpone";
+  const windowOptions = {
+    notBefore: def.notBefore,
+    notAfter: def.notAfter,
+    days: Array.isArray(def.activeDays) ? def.activeDays : undefined,
+    timeZone,
+  };
+
+  let tick: Date | null;
+  try {
+    tick = cronNextRun(schedule, now, timeZone);
+  } catch {
+    // Некорректное выражение не должно ломать ответ инструмента.
+    return null;
+  }
+
+  // skip-политика может пропустить сколько угодно тиков вне окна;
+  // ограничение защищает от бесконечного перебора (5-летнее окно cron).
+  for (let guard = 0; tick && guard < 600; guard += 1) {
+    if (policy === "run") return tick.toISOString();
+    const state = activeWindowState(tick, windowOptions);
+    if (state.active) return tick.toISOString();
+    if (policy === "skip") {
+      tick = cronNextRun(schedule, tick, timeZone);
+      continue;
+    }
+    // postpone: gate ждёт открытия окна и запускает задачу тогда же.
+    return state.nextOpenAt ? state.nextOpenAt.toISOString() : null;
+  }
+  return null;
+}
+
 /** schedule_task — создаёт задачу в schtasks через общий schedulerCreateTask. */
 const scheduleTaskExecute = wrapExecute<ScheduleArgs>(async (args) => {
   const {
@@ -997,6 +1105,7 @@ const scheduleTaskExecute = wrapExecute<ScheduleArgs>(async (args) => {
     gitPaths,
     gitIgnore,
     gitPollSeconds,
+    runWhenLoggedOff,
   } = args;
 
   let effectiveRunAt: string | undefined;
@@ -1060,7 +1169,9 @@ const scheduleTaskExecute = wrapExecute<ScheduleArgs>(async (args) => {
         gitPaths,
         gitIgnore,
         gitPollSeconds,
-      }
+      },
+      // Спринт 27.5.4: Windows — работать без входа (/ru SYSTEM).
+      runWhenLoggedOff === true
     );
   } catch (err: any) {
     return {
@@ -1078,13 +1189,31 @@ const scheduleTaskExecute = wrapExecute<ScheduleArgs>(async (args) => {
   const workspace = workspaceId ? getWorkspace(workspaceId) : undefined;
   const effectiveWorkdir =
     workspace?.path || workingDirectory?.trim() || projectDirectory || process.cwd();
+  // Спринт 27.5.2: отдаём ближайший запуск сразу, не дожидаясь обновления
+  // списка задач планировщика ОС (schtasks иногда отдаёт nextRunTime с задержкой).
+  const nextRun = computeTaskNextRun({
+    schedule: schedule ?? "",
+    triggerType: triggerType ?? "cron",
+    runAt: effectiveRunAt,
+    timezone,
+    notBefore,
+    notAfter,
+    activeDays,
+    windowPolicy,
+  });
   return {
     content: JSON.stringify({
       success: true,
+      paused: false,
+      nextRun,
+      runWhenLoggedOff: runWhenLoggedOff === true,
       message: `Задача "${name}" успешно создана.`,
       task: {
         name,
         schedule,
+        nextRun,
+        paused: false,
+        runWhenLoggedOff: runWhenLoggedOff === true,
         timeoutSeconds: timeoutSeconds ?? 3600,
         model: model?.trim() || null,
         priority: priority ?? 5,
@@ -1116,14 +1245,18 @@ const scheduleTaskExecute = wrapExecute<ScheduleArgs>(async (args) => {
 
 /** list_tasks — список задач плагина (та же логика, что и у get_tasks). */
 const listTasksExecute = wrapExecute<ListArgs>(async () => {
-  const tasks = await collectTasksView();
+  const { tasks, osAvailable, osError } = await collectTasksView();
 
   if (tasks.length === 0) {
     return {
       content: JSON.stringify({
         success: true,
-        message: "Задачи плагина не найдены.",
+        message: osAvailable
+          ? "Задачи плагина не найдены."
+          : "Статус планировщика ОС недоступен — показано состояние из БД.",
         tasks: [],
+        osAvailable,
+        ...(osError ? { osError } : {}),
       }),
     };
   }
@@ -1131,8 +1264,12 @@ const listTasksExecute = wrapExecute<ListArgs>(async () => {
   return {
     content: JSON.stringify({
       success: true,
-      message: `Найдено задач: ${tasks.length}.`,
+      message: osAvailable
+        ? `Найдено задач: ${tasks.length}.`
+        : `Найдено задач: ${tasks.length}. Статус планировщика ОС недоступен — показано состояние из БД.`,
       tasks,
+      osAvailable,
+      ...(osError ? { osError } : {}),
     }),
   };
 });
@@ -1204,7 +1341,14 @@ async function cancelMatrixRun(
         clone.timezone,
         clone.notBefore,
         clone.notAfter,
-        clone.pausedUntil
+        clone.pausedUntil,
+        clone.runAt,
+        clone.session,
+        clone.sessionId,
+        clone.sessionMaxRuns,
+        undefined,
+        clone.runWhenLoggedOff,
+        clone.paused
       );
     } catch (err: any) {
       warnings.push(
@@ -1272,6 +1416,83 @@ async function cleanupOrphanedMatrixTasks(): Promise<string[]> {
  *  - удаление родителя-матрицы каскадно удаляет клоны и агрегатор;
  *  - удаление клона поодиночке запрещено (защита от «сирот» и вечного running).
  */
+/**
+ * Удаляет файлы-артефакты задачи (wrapper, prompt, log, lock, env).
+ * Отсутствующие файлы игнорируются — операция идемпотентна.
+ */
+async function removeTaskArtifacts(name: string): Promise<void> {
+  const sanitized = sanitizeName(name);
+  const candidates = [
+    path.join(WRAPPER_DIR, `run-${sanitized}.cmd`),
+    path.join(WRAPPER_DIR, `run-${sanitized}.sh`),
+    path.join(PLUGIN_DIR, "prompts", `${sanitized}.txt`),
+    path.join(LOG_DIR, `${sanitized}.log`),
+    path.join(PLUGIN_DIR, "env", `${sanitized}.env`),
+    path.join(LOCK_DIR, `${sanitized}.lock`),
+    path.join(LOCK_DIR, `${sanitized}.lock.defer`),
+    path.join(LOCK_DIR, `${sanitized}.lock.force`),
+  ];
+  await Promise.all(candidates.map((file) => fs.unlink(file).catch(() => undefined)));
+}
+
+/**
+ * Сборщик мусора по wrapper-ам при старте: удаляет файлы задач, которых
+ * больше нет ни в БД, ни в планировщике ОС. Активные (свежий lock) не трогает.
+ */
+async function garbageCollectTaskArtifacts(): Promise<void> {
+  let entries: string[];
+  try {
+    entries = await fs.readdir(WRAPPER_DIR);
+  } catch {
+    return;
+  }
+  const wrappers = entries.filter((file) => /^run-.+\.(cmd|sh)$/.test(file));
+  if (wrappers.length === 0) return;
+
+  const known = new Set<string>();
+  try {
+    for (const task of listTaskDefinitions()) known.add(sanitizeName(task.name));
+  } catch {
+    // БД может быть ещё не готова — тогда опираемся на ОС.
+  }
+  try {
+    for (const task of await scheduler.listTasks()) {
+      known.add(sanitizeName(task.taskName || ""));
+    }
+  } catch {
+    // Планировщик недоступен — не удаляем ничего, чтобы не потерять данные.
+    return;
+  }
+
+  let cleaned = 0;
+  for (const file of wrappers) {
+    const stem = file.replace(/^run-/, "").replace(/\.(cmd|sh)$/, "");
+    const lockPath = path.join(LOCK_DIR, `${stem}.lock`);
+    if (known.has(stem)) continue;
+    try {
+      const stat = await fs.stat(lockPath);
+      if (Date.now() - stat.mtimeMs < STALE_LOCK_MAX_AGE_MS) continue;
+    } catch {
+      // lock-файла нет — можно удалять.
+    }
+    const candidates = [
+      path.join(WRAPPER_DIR, `run-${stem}.cmd`),
+      path.join(WRAPPER_DIR, `run-${stem}.sh`),
+      path.join(PLUGIN_DIR, "prompts", `${stem}.txt`),
+      path.join(LOG_DIR, `${stem}.log`),
+      path.join(PLUGIN_DIR, "env", `${stem}.env`),
+      path.join(LOCK_DIR, `${stem}.lock`),
+      path.join(LOCK_DIR, `${stem}.lock.defer`),
+      path.join(LOCK_DIR, `${stem}.lock.force`),
+    ];
+    await Promise.all(candidates.map((pathToFile) => fs.unlink(pathToFile).catch(() => undefined)));
+    cleaned += 1;
+  }
+  if (cleaned > 0) {
+    console.log(`[gc] Вычищено мусорных файлов задач: ${cleaned}`);
+  }
+}
+
 async function deleteTaskWithFamily(
   name: string
 ): Promise<{ removed: string[]; existed: boolean }> {
@@ -1309,6 +1530,8 @@ async function deleteTaskWithFamily(
       } catch {
         // Не критично.
       }
+      removeTaskArtifacts(child);
+
       removed.push(child);
     }
   }
@@ -1319,6 +1542,7 @@ async function deleteTaskWithFamily(
   } catch {
     // Определения могло уже не быть — задача всё равно удалена из ОС.
   }
+  removeTaskArtifacts(trimmed);
 
   return { removed, existed };
 }
@@ -1334,8 +1558,8 @@ const deleteTaskExecute = wrapExecute<DeleteArgs>(async (args) => {
     if (!existed && removed.length === 0) {
       return {
         content: JSON.stringify({
-          success: false,
-          error: `Задача "${name}" не найдена — удалять нечего.`,
+          success: true,
+          message: `Задача "${name}" уже отсутствует (удалена или не существовала).`,
         }),
       };
     }
@@ -1432,7 +1656,18 @@ async function removeMatrixChildrenFromScheduler(name: string): Promise<string[]
  */
 async function updateTaskFromInput(
   input: UpdateArgs & { newSchedule?: string; newPrompt?: string }
-): Promise<{ success: boolean; message: string }> {
+): Promise<{
+  success: boolean;
+  message: string;
+  /** Спринт 27.5.2: состояние и ближайший запуск после обновления. */
+  paused?: boolean;
+  nextRun?: string | null;
+  /**
+   * Спринт 27.5.6: при ошибке обновления — удалось ли сохранить прежнюю
+   * версию задачи в планировщике (true — старая версия на месте).
+   */
+  restored?: boolean;
+}> {
   const name = input.name?.trim();
   if (!name) {
     return { success: false, message: "Не передано имя задачи." };
@@ -1560,9 +1795,18 @@ async function updateTaskFromInput(
     gitPollSeconds: input.gitPollSeconds ?? previous.gitPollSeconds,
   };
 
+  // Спринт 27.5.8: update = пересоздание задачи, поэтому паузу нужно вернуть
+  // после create — иначе задача молча начинает выполняться по расписанию.
+  const wasPaused = Boolean(
+    previous.paused === true ||
+      (previous.pausedUntil && Date.parse(previous.pausedUntil) > Date.now())
+  );
+
+  let previousDeleted = false;
   try {
     // Обновление = пересоздание в планировщике с сохранением старых значений.
     await scheduler.deleteTask(name);
+    previousDeleted = true;
     await schedulerCreateTask(
       name,
       schedule ?? "",
@@ -1598,7 +1842,9 @@ async function updateTaskFromInput(
       session,
       sessionId,
       sessionMaxRuns,
-      triggerExtras
+      triggerExtras,
+      input.runWhenLoggedOff ?? previous.runWhenLoggedOff,
+      wasPaused
     );
 
     // Матрица отключена при обновлении — убираем клонов и агрегатор.
@@ -1610,12 +1856,58 @@ async function updateTaskFromInput(
     // пересобираем набор файловых watcher-ов.
     await refreshTriggers();
 
-    return { success: true, message: `Задача "${name}" обновлена.` };
-  } catch (err: any) {
+    // Спринт 27.5.2: после пересоздания задачи сообщаем ближайший запуск,
+    // рассчитанный из нового определения, не дожидаясь ОС.
+    const updated = getTask(name);
+    const paused = wasPaused;
     return {
-      success: false,
-      message: err instanceof Error ? err.message : String(err),
+      success: true,
+      paused,
+      nextRun: computeTaskNextRun(updated, { paused }),
+      message: `Задача "${name}" обновлена.`,
     };
+  } catch (err: any) {
+    const cause = err instanceof Error ? err.message : String(err);
+
+    // Спринт 27.5.6: задача удалена из ОС, но новую версию создать не удалось.
+    if (!previousDeleted) {
+      return {
+        success: false,
+        restored: true,
+        message:
+          `${cause} Прежняя версия не тронута: удалить задачу из планировщика не удалось.`,
+      };
+    }
+
+    // Убираем возможный частичный результат новой попытки: обёртка могла
+    // успеть зарегистрироваться, хотя create вернул ошибку.
+    try {
+      await scheduler.deleteTask(name);
+    } catch {
+      // Задачи могло не быть — это ожидаемо.
+    }
+
+    // Определение в БД ещё не перезаписано, поэтому восстанавливаем ровно
+    // прежнюю версию: расписание, промпт, обёртку и паузу.
+    try {
+      await recreateTaskFromDefinition(previous);
+      await refreshTriggers().catch(() => undefined);
+      return {
+        success: false,
+        restored: true,
+        message: `${cause} Обновление отменено, прежняя версия восстановлена.`,
+      };
+    } catch (restoreErr: any) {
+      const restoreMessage =
+        restoreErr instanceof Error ? restoreErr.message : String(restoreErr);
+      return {
+        success: false,
+        restored: false,
+        message:
+          `${cause} Откат не удался: ${restoreMessage}. ` +
+          `Задача "${name}" отсутствует в планировщике — создайте её заново.`,
+      };
+    }
   }
 }
 
@@ -1633,7 +1925,16 @@ async function pauseOrResumeTask(
   name: string,
   paused: boolean,
   until?: string
-): Promise<{ success: boolean; message: string; affected: string[]; warnings: string[] }> {
+): Promise<{
+  success: boolean;
+  message: string;
+  affected: string[];
+  warnings: string[];
+  /** Спринт 27.5.2: состояние и ближайший запуск после мутации. */
+  paused: boolean;
+  nextRun: string | null;
+  pausedUntil: string | null;
+}> {
   const trimmed = name.trim();
   const definition = getTask(trimmed);
   if (!definition) {
@@ -1642,6 +1943,9 @@ async function pauseOrResumeTask(
       message: `Задача "${trimmed}" не найдена.`,
       affected: [],
       warnings: [],
+      paused,
+      nextRun: null,
+      pausedUntil: null,
     };
   }
 
@@ -1655,6 +1959,9 @@ async function pauseOrResumeTask(
         message: `Задача "${trimmed}": некорректная дата паузы "${until}". Нужен ISO-момент, например 2026-12-01T09:00:00Z.`,
         affected: [],
         warnings: [],
+        paused,
+        nextRun: null,
+        pausedUntil: definition.pausedUntil ?? null,
       };
     }
     if (parsed <= Date.now()) {
@@ -1663,6 +1970,9 @@ async function pauseOrResumeTask(
         message: `Задача "${trimmed}": дата паузы уже прошла.`,
         affected: [],
         warnings: [],
+        paused,
+        nextRun: null,
+        pausedUntil: definition.pausedUntil ?? null,
       };
     }
     pausedUntil = new Date(parsed).toISOString();
@@ -1677,6 +1987,9 @@ async function pauseOrResumeTask(
       message: `У матрицы "${trimmed}" нет клонов.`,
       affected: [],
       warnings: [],
+      paused,
+      nextRun: null,
+      pausedUntil: definition.pausedUntil ?? null,
     };
   }
 
@@ -1697,14 +2010,14 @@ async function pauseOrResumeTask(
     }
   }
 
-  // Фиксируем (или снимаем) автопродолжение в определении задачи. У матрицы
+  // Фиксируем (или снимаем) паузу в определении задачи. У матрицы
   // родитель хранит pausedUntil за всех клонов — их включает авто-resume.
-  const definitionUpdates = paused
-    ? pausedUntil
-      ? { pausedUntil }
-      : undefined
-    : definition.pausedUntil
-      ? { pausedUntil: undefined }
+  // Спринт 27.5.8: бессрочная пауза тоже сохраняется в определении, иначе
+  // update_task пересоздаёт задачу включённой и пауза теряется.
+  const definitionUpdates: Partial<TaskDefinition> | undefined = paused
+    ? { paused: true, ...(pausedUntil ? { pausedUntil } : {}) }
+    : definition.paused || definition.pausedUntil
+      ? { paused: false, pausedUntil: undefined }
       : undefined;
   if (definitionUpdates && affected.length > 0) {
     try {
@@ -1728,11 +2041,24 @@ async function pauseOrResumeTask(
     : `Задача "${trimmed}" ${verb}${untilText}.` +
       (warnings.length > 0 ? ` Ошибка: ${warnings.join("; ")}.` : "");
 
+  // Спринт 27.5.2: состояние и ближайший запуск считаем из определения —
+  // schtasks после /change (особенно /enable) отдаёт nextRunTime с задержкой.
+  const effectivePausedUntil = paused
+    ? pausedUntil ?? definition.pausedUntil ?? null
+    : null;
+  const after = definitionUpdates
+    ? { ...definition, ...definitionUpdates }
+    : { ...definition, paused: false, pausedUntil: undefined };
+  const nextRun = paused ? null : computeTaskNextRun(after);
+
   return {
     success: warnings.length === 0,
     message,
     affected,
     warnings,
+    paused,
+    nextRun,
+    pausedUntil: effectivePausedUntil,
   };
 }
 
@@ -1772,7 +2098,11 @@ async function resumeExpiredPauses(): Promise<void> {
       for (const target of targets) {
         await scheduler.resumeTask(target);
       }
-      await saveTaskDefinition({ ...definition, pausedUntil: undefined });
+      await saveTaskDefinition({
+        ...definition,
+        pausedUntil: undefined,
+        paused: false,
+      });
       console.log(
         `[windows-scheduler] Автопродолжение: задача "${definition.name}" включена (пауза истекла).`
       );
@@ -2768,6 +3098,9 @@ export default Plugin.define({
       );
     }
     checkJsonBackups();
+    void garbageCollectTaskArtifacts().catch((err) => {
+      console.log(`[gc] Не удалось вычистить мусорные файлы: ${err instanceof Error ? err.message : String(err)}`);
+    });
 
     // Спринт 18: ежедневная очистка истории. Ошибка ретеншна не должна мешать
     // плагину стартовать — пишем в лог и продолжаем.
@@ -3272,7 +3605,12 @@ export default Plugin.define({
     // schedule_task и create_task использовали один и тот же путь.
     const rpcHandlers = {
       get_tasks: async () => {
-        return { tasks: await collectTasksView() };
+        const view = await collectTasksView();
+        return {
+          tasks: view.tasks,
+          osAvailable: view.osAvailable,
+          ...(view.osError ? { osError: view.osError } : {}),
+        };
       },
       create_task: async (input: unknown) => {
         console.log("[windows-scheduler] create_task input:", input);
@@ -3305,6 +3643,7 @@ export default Plugin.define({
           delaySeconds,
           session,
           sessionMaxRuns,
+          runWhenLoggedOff,
         } = input as {
           name: string;
           schedule?: string;
@@ -3334,6 +3673,7 @@ export default Plugin.define({
           delaySeconds?: number;
           session?: "new" | "reuse" | "last";
           sessionMaxRuns?: number;
+          runWhenLoggedOff?: boolean;
         };
         let effectiveRunAt: string | undefined;
         if (triggerType === "once") {
@@ -3392,9 +3732,24 @@ export default Plugin.define({
             effectiveRunAt,
             effectiveSession,
             effectiveSessionId,
-            sessionMaxRuns
+            sessionMaxRuns,
+            undefined,
+            runWhenLoggedOff === true
           );
-          return { success: true, message: `Задача "${name}" успешно создана.` };
+          const nextRun = computeTaskNextRun({
+            schedule: schedule ?? "",
+            triggerType: triggerType ?? "cron",
+            runAt: effectiveRunAt,
+            timezone,
+            notBefore,
+            notAfter,
+          });
+          return {
+            success: true,
+            paused: false,
+            nextRun,
+            message: `Задача "${name}" успешно создана.`,
+          };
         } catch (err: any) {
           const message = err instanceof Error ? err.message : String(err);
           return { success: false, message };
@@ -3546,12 +3901,12 @@ export default Plugin.define({
       pause_task: async (input: unknown) => {
         const { name, until } = input as { name: string; until?: string };
         const result = await pauseOrResumeTask(name, true, until);
-        return { success: result.success, message: result.message };
+        return result;
       },
       resume_task: async (input: unknown) => {
         const { name } = input as { name: string };
         const result = await pauseOrResumeTask(name, false);
-        return { success: result.success, message: result.message };
+        return result;
       },
       update_task: async (input: unknown) => {
         return await updateTaskFromInput(input as UpdateArgs);
@@ -4134,7 +4489,22 @@ export default Plugin.define({
                 def.notBefore,
                 def.notAfter,
                 def.pausedUntil,
-                def.runAt
+                def.runAt,
+                def.session ?? "new",
+                def.sessionId,
+                def.sessionMaxRuns,
+                {
+                  activeDays: def.activeDays,
+                  windowPolicy: def.windowPolicy,
+                  watchGlobs: def.watchGlobs,
+                  watchIgnore: def.watchIgnore,
+                  gitBranch: def.gitBranch,
+                  gitPaths: def.gitPaths,
+                  gitIgnore: def.gitIgnore,
+                  gitPollSeconds: def.gitPollSeconds,
+                },
+                def.runWhenLoggedOff === true,
+                def.paused === true
               );
               await saveTaskDefinition(def);
               imported.push(def.name);
@@ -4173,7 +4543,7 @@ export default Plugin.define({
     // Повторный вызов не создаёт второй сервер — защита от двойного запуска
     // реализована внутри startDashboardServer.
     const dashboard = await startDashboardServer({
-      getTasks: collectTasksView,
+      getTasks: async () => (await collectTasksView()).tasks,
       runTask: (name) => runTaskEntry(name),
       deleteTask: async (name) => {
         await deleteTaskWithFamily(name);
@@ -4321,8 +4691,28 @@ async function schedulerCreateTask(
   /** Сколько запусков переживает reuse-сессия до ротации (0/undefined — без ограничения). */
   sessionMaxRuns?: number,
   /** Спринт 27: дни недели, политика окна, glob- и git-фильтры. */
-  triggerExtras?: TriggerExtras
+  triggerExtras?: TriggerExtras,
+  /** Спринт 27.5.4: Windows — запускать без входа пользователя (/ru SYSTEM). */
+  runWhenLoggedOff?: boolean,
+  /**
+   * Спринт 27.5.8: пересоздать задачу сразу отключённой (пауза переживает
+   * update). Для матрицы пауза применяется к клонам.
+   */
+  paused?: boolean
 ): Promise<void> {
+  // Спринт 27.5 (hotfix 1.5.1): проверяем имя до создания wrapper/prompt и записи
+  // в БД. Недопустимые символы отклоняются с понятным сообщением, а не ошибкой
+  // schtasks; имя нормализуется (trim) для всех путей: MCP, RPC и импорт.
+  const normalizedName = name.trim();
+  const nameError = validateTaskName(normalizedName);
+  if (nameError) {
+    throw new Error(nameError);
+  }
+  name = normalizedName;
+  // Для отката файлов: при обновлении существующей задачи файлы переиспользуются,
+  // удалять их при сбое нельзя — в БД остаётся прежнее определение.
+  const definitionExisted = Boolean(getTask(normalizedName));
+
   const normalizedModel = model?.trim() || undefined;
   const normalizedPriority = normalizePriority(priority);
   const normalizedBefore = beforeScript?.trim() || undefined;
@@ -4331,6 +4721,10 @@ async function schedulerCreateTask(
   const normalizedNotBefore = notBefore?.trim() || undefined;
   const normalizedNotAfter = notAfter?.trim() || undefined;
   const normalizedPausedUntil = pausedUntil?.trim() || undefined;
+  // Спринт 27.5.4: true → задача работает без входа (Windows /ru SYSTEM).
+  const normalizedRunWhenLoggedOff = runWhenLoggedOff === true ? true : undefined;
+  // Спринт 27.5.8: пауза сохраняется при пересоздании задачи.
+  const normalizedPaused = paused === true ? true : undefined;
   // Спринт 27: дни недели, политика окна и glob/git-фильтры.
   const normalizeGlobList = (raw?: string[]): string[] | undefined => {
     if (!Array.isArray(raw)) return undefined;
@@ -4640,6 +5034,17 @@ async function schedulerCreateTask(
     throw new Error(`Не удалось создать обёртку задачи: ${err.message || String(err)}`);
   }
 
+  // 27.5.5.3: при сбое создания новой задачи убираем подготовленные файлы.
+  // При обновлении файлы переиспользуются существующей задачей — не удаляем.
+  const rollbackArtifacts = async (): Promise<void> => {
+    if (definitionExisted) return;
+    await Promise.all(
+      [wrapperPath, promptFile, logFile, taskEnvFile].map((file) =>
+        file ? fs.unlink(file).catch(() => undefined) : Promise.resolve()
+      )
+    );
+  };
+
   try {
     // Бэкенд сам преобразует cron в родное расписание ОС.
     await scheduler.createTask({
@@ -4656,9 +5061,49 @@ async function schedulerCreateTask(
       timezone: normalizedTz,
       notBefore: normalizedNotBefore,
       notAfter: normalizedNotAfter,
+      runWhenLoggedOff: normalizedRunWhenLoggedOff,
     });
   } catch (err: any) {
+    await rollbackArtifacts();
     throw new Error(err instanceof Error ? err.message : String(err));
+  }
+
+  // Проверяем фактическое наличие задачи в планировщике: до 3 попыток с паузой
+  // 200 мс. Это ловит случай, когда ОС/обёртка вернула код 0, но задачи нет.
+  const isListed = (tasks: Awaited<ReturnType<typeof scheduler.listTasks>>): boolean =>
+    tasks.some(
+      (task) => (task.taskName || "").trim().toLowerCase() === name.toLowerCase()
+    );
+  let listedTasks: Awaited<ReturnType<typeof scheduler.listTasks>> | undefined;
+  let verifyQueryError: unknown;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      listedTasks = await scheduler.listTasks();
+      if (isListed(listedTasks)) break;
+    } catch (err) {
+      verifyQueryError = err;
+    }
+    if (attempt < 2) {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+  }
+  if (listedTasks && !isListed(listedTasks)) {
+    await rollbackArtifacts();
+    throw new Error(
+      `Планировщик не подтвердил создание задачи "${name}": её нет в списке ${scheduler.title}. ` +
+        (definitionExisted
+          ? "Файлы обёртки оставлены для диагностики."
+          : "Файлы задачи удалены, запись в БД не создана.")
+    );
+  }
+  if (!listedTasks && verifyQueryError) {
+    // Список получить не удалось — не удаляем возможно созданную задачу,
+    // но явно предупреждаем: проверка наличия не выполнена.
+    console.warn(
+      `[windows-scheduler] Задача "${name}" создана, но проверить её в планировщике не удалось: ${
+        verifyQueryError instanceof Error ? verifyQueryError.message : String(verifyQueryError)
+      }`
+    );
   }
 
   // Сохраняем определение задачи для последующего экспорта/импорта.
@@ -4701,6 +5146,10 @@ async function schedulerCreateTask(
     timezone: normalizedTz,
     notBefore: normalizedNotBefore,
     notAfter: normalizedNotAfter,
+    // Спринт 27.5.4: режим входа (Windows: /ru SYSTEM при true).
+    runWhenLoggedOff: normalizedRunWhenLoggedOff,
+    // Спринт 27.5.8: бессрочная пауза переживает пересоздание.
+    paused: normalizedPaused,
     // Спринт 27: дни недели, политика окна, glob- и git-фильтры.
     activeDays: normalizedActiveDays,
     windowPolicy: normalizedWindowPolicy,
@@ -4772,7 +5221,14 @@ async function schedulerCreateTask(
         clone.timezone,
         clone.notBefore,
         clone.notAfter,
-        clone.pausedUntil
+        clone.pausedUntil,
+        clone.runAt,
+        clone.session,
+        clone.sessionId,
+        clone.sessionMaxRuns,
+        undefined,
+        clone.runWhenLoggedOff,
+        clone.paused
       );
     };
 
@@ -4787,6 +5243,8 @@ async function schedulerCreateTask(
       } catch {
         // Не критично.
       }
+      // Спринт 27.5.7: при откате прогона не оставляем и файлы клона.
+      await removeTaskArtifacts(child);
     };
 
     // Создаёт/обновляет/удаляет matrix-complete по текущему определению.
@@ -4844,13 +5302,141 @@ async function schedulerCreateTask(
       for (const child of removeMatrixChildren(name)) {
         await removeChild(child);
       }
-      const clones = expandMatrixTask(taskDefinition);
-      for (const clone of clones) {
-        await createClone(clone);
+      // Спринт 27.5.7: если клон не создался, откатываем весь прогон. Иначе
+      // остаётся родитель с половиной клонов — он выглядит рабочим, но часть
+      // workspace никогда не запускается. Ошибку expandMatrixTask (неизвестный
+      // workspace) обрабатываем там же: родитель уже записан в БД.
+      const createdInRun: string[] = [];
+      try {
+        const clones = expandMatrixTask(taskDefinition);
+        for (const clone of clones) {
+          try {
+            await createClone(clone);
+            createdInRun.push(clone.name);
+          } catch (err: any) {
+            const workspaceLabel = clone.workspaceId
+              ? getWorkspace(clone.workspaceId)?.name ?? clone.workspaceId
+              : "без workspace";
+            throw new Error(
+              `клон "${clone.name}" (workspace "${workspaceLabel}"): ${
+                err instanceof Error ? err.message : String(err)
+              }`
+            );
+          }
+        }
+        await syncAggregator();
+      } catch (err: any) {
+        for (const child of [...createdInRun].reverse()) {
+          await removeChild(child);
+        }
+        const aggregatorName = matrixCompleteName(name);
+        if (getTask(aggregatorName)) {
+          await removeChild(aggregatorName);
+        }
+        // Новая матрица: без клонов родитель бесполезен — убираем и его,
+        // вместе с подготовленными файлами обёртки.
+        if (!definitionExisted) {
+          try {
+            await scheduler.deleteTask(name);
+          } catch {
+            // Задачи могло не быть: бэкенд уже вернул ошибку.
+          }
+          try {
+            await removeTaskDefinition(name);
+          } catch {
+            // Не критично: запись могла не сохраниться.
+          }
+          await rollbackArtifacts();
+        }
+        throw new Error(
+          `Не удалось развернуть матрицу "${name}": ${
+            err instanceof Error ? err.message : String(err)
+          }. Созданные клоны удалены.`
+        );
       }
-      await syncAggregator();
     }
   }
+
+  // Спринт 27.5.8: пересозданная задача должна остаться на паузе. У матрицы
+  // пауза применяется к клонам — родитель сам никогда не выполняется.
+  if (normalizedPaused) {
+    const pauseTargets = normalizedMatrix
+      ? listMatrixClones(name).map((clone) => clone.name)
+      : [name];
+    for (const target of pauseTargets) {
+      try {
+        await scheduler.pauseTask(target);
+      } catch (err: any) {
+        console.warn(
+          `[windows-scheduler] Задача "${target}": пауза не восстановлена после пересоздания: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        );
+      }
+    }
+  }
+}
+
+/**
+ * Спринт 27.5.6: восстановление задачи из определения в БД.
+ *
+ * update_task пересоздаёт задачу в планировщике (delete + create). Раньше при
+ * сбое create после успешного delete старая версия терялась навсегда: в ОС её
+ * уже нет, а в БД лежит новое (не применённое) определение. Здесь мы заново
+ * создаём задачу из прежнего определения — обёртка, промпт, расписание и
+ * пауза восстанавливаются тем же путём, что и при обычном create.
+ */
+async function recreateTaskFromDefinition(definition: TaskDefinition): Promise<void> {
+  const paused = Boolean(
+    definition.paused === true ||
+      (definition.pausedUntil && Date.parse(definition.pausedUntil) > Date.now())
+  );
+  await schedulerCreateTask(
+    definition.name,
+    definition.schedule ?? "",
+    definition.prompt,
+    definition.timeoutSeconds,
+    definition.workingDirectory,
+    definition.retryCount,
+    definition.retryDelay,
+    definition.qualityGate,
+    definition.nextTaskOnSuccess,
+    definition.nextTaskOnError,
+    definition.triggerType ?? "cron",
+    definition.watchPath,
+    Array.isArray(definition.dependsOn) ? definition.dependsOn : undefined,
+    definition.model,
+    definition.priority,
+    definition.beforeScript,
+    definition.afterScript,
+    definition.mcpEvent,
+    definition.workspaceId,
+    definition.allowedTools,
+    definition.deniedTools,
+    definition.matrix,
+    definition.matrixParentId,
+    "create",
+    definition.timezone,
+    definition.notBefore,
+    definition.notAfter,
+    definition.pausedUntil,
+    definition.runAt,
+    definition.session ?? "new",
+    definition.sessionId,
+    definition.sessionMaxRuns,
+    {
+      activeDays: definition.activeDays,
+      windowPolicy: definition.windowPolicy,
+      watchGlobs: definition.watchGlobs,
+      watchIgnore: definition.watchIgnore,
+      gitBranch: definition.gitBranch,
+      gitPaths: definition.gitPaths,
+      gitIgnore: definition.gitIgnore,
+      gitPollSeconds: definition.gitPollSeconds,
+    },
+    definition.runWhenLoggedOff,
+    paused
+  );
 }
 
 /**
@@ -4884,19 +5470,59 @@ async function runTaskEntry(name: string): Promise<{ alreadyRunning: boolean }> 
 }
 
 /**
+ * Спринт 27.5.3: чтение задач ОС с одним повтором.
+ *
+ * Сразу после мутации (create/delete/pause/resume) `schtasks /query` иногда
+ * отдаёт пустой список, хотя в БД задачи уже есть, или падает. Один короткий
+ * retry убирает ложный «задач нет»; если ОС так и не ответила осмысленно —
+ * возвращаем `osAvailable: false`, и вызывающий код показывает состояние БД.
+ */
+async function readOsTasksWithRetry(
+  expectNonEmpty: boolean,
+  delayMs = 300
+): Promise<{
+  tasks: Awaited<ReturnType<typeof scheduler.listTasks>>;
+  osAvailable: boolean;
+  osError?: string;
+}> {
+  let lastError: string | undefined;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    if (attempt > 0) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+    try {
+      const tasks = await scheduler.listTasks();
+      if (tasks.length > 0 || !expectNonEmpty) {
+        return { tasks, osAvailable: true };
+      }
+      lastError = "планировщик ОС вернул пустой список, хотя в БД есть задачи";
+    } catch (err) {
+      lastError = err instanceof Error ? err.message : String(err);
+    }
+  }
+  return { tasks: [], osAvailable: false, osError: lastError };
+}
+
+/**
  * Собирает задачи плагина в формате, который отдают оба потребителя:
  * RPC get_tasks (GUI) и инструмент list_tasks (агент).
+ *
+ * Спринт 27.5.3: возвращает также состояние чтения ОС. Если ОС недоступна,
+ * `tasks` — состояние из БД (задачи помечены `orphaned: true`), а не пустой
+ * массив: иначе GUI и агент решали бы, что задач нет.
  */
 async function collectTasksView() {
-  const tasks = await scheduler.listTasks();
+  const defs = await loadTaskDefinitions();
+  const osRead = await readOsTasksWithRetry(defs.length > 0);
+  const tasks = osRead.tasks;
 
   // Читаем историю один раз, чтобы определить финальный статус по последней записи.
   const history = await loadHistory();
   // loadHistory() отдаёт записи от новых к старым; helper оставляет самую свежую.
   const lastByTask = latestHistoryByTask(history);
 
-  // Читаем определения задач один раз (расписание, повторы, цепочки, директория).
-  const defs = await loadTaskDefinitions();
+  // Определения задач читаются один раз заранее (см. выше) — расписание,
+  // повторы, цепочки, директория.
   const workspaces = listWorkspaces();
   const workspaceById = new Map(workspaces.map((workspace) => [workspace.id, workspace]));
 
@@ -4941,7 +5567,7 @@ async function collectTasksView() {
     })),
   ];
 
-  return sources.map(({ task: t, orphaned }) => {
+  const view = sources.map(({ task: t, orphaned }) => {
     // Все бэкенды возвращают короткие имена (без папки планировщика).
     const name = t.taskName || "";
 
@@ -4984,6 +5610,15 @@ async function collectTasksView() {
           partial: 0,
         };
 
+    // Спринт 27.5.2: пауза учитывает и флаг ОС, и активный pausedUntil.
+    // nextRun считаем из определения — schtasks после мутации отдаёт
+    // nextRunTime с задержкой, из-за чего API показывал null после resume.
+    const pausedUntil = def?.pausedUntil ?? null;
+    const paused =
+      Boolean(t.paused) ||
+      def?.paused === true ||
+      Boolean(pausedUntil && Date.parse(pausedUntil) > Date.now());
+
     return {
       name,
       schedule: def?.schedule ?? "",
@@ -4992,15 +5627,15 @@ async function collectTasksView() {
       // Спринт 24 (фикс): явный признак паузы. Раньше GUI пытался вывести его
       // из текстового статуса, но mapStatus() превращает "disabled" в "unknown",
       // поэтому кнопка «возобновить» была недоступна.
-      paused: Boolean(t.paused),
+      paused,
       runsTotal: counts.total,
       runsSuccess: counts.success,
       runsError: counts.error,
       runsPartial: counts.partial,
-      // Для разовой задачи показываем запланированное время, а не пустое расписание.
-      nextRun: def?.triggerType === "once"
-        ? def?.runAt ?? (t.nextRunTime ? String(t.nextRunTime) : null)
-        : t.nextRunTime ? String(t.nextRunTime) : null,
+      nextRun: paused
+        ? null
+        : computeTaskNextRun(def) ??
+          (t.nextRunTime ? String(t.nextRunTime) : null),
       runAt: def?.runAt ?? null,
       session: def?.session ?? "new",
       sessionId: def?.sessionId ?? null,
@@ -5023,6 +5658,10 @@ async function collectTasksView() {
       notBefore: def?.notBefore ?? null,
       notAfter: def?.notAfter ?? null,
       pausedUntil: def?.pausedUntil ?? null,
+      // Спринт 27.5.4: режим входа — из ОС (Interactive/Background) и из
+      // определения (запуск без входа через /ru SYSTEM).
+      logonMode: t.logonMode ?? null,
+      runWhenLoggedOff: Boolean(def?.runWhenLoggedOff),
       workingDirectory: workspace?.path ?? def?.workingDirectory ?? def?.workdir ?? null,
       workspaceId: workspace?.id ?? def?.workspaceId ?? null,
       workspaceName: workspace?.name ?? null,
@@ -5045,6 +5684,8 @@ async function collectTasksView() {
       prompt: def?.prompt ?? "",
     };
   });
+
+  return { tasks: view, osAvailable: osRead.osAvailable, osError: osRead.osError };
 }
 
 /**

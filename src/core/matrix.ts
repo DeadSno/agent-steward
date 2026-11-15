@@ -29,7 +29,11 @@ export const MATRIX_COMPLETE_SUFFIX = "-matrix-complete";
 export function matrixCloneName(parentName: string, workspaceName: string): string {
   const parent = parentName.trim();
   const ws = workspaceName.trim() || "workspace";
-  const safeWs = ws.replace(/[\\/:*?"<>|]+/g, "-").replace(/\s+/g, "-");
+  const safeWs = ws
+    // Спринт 27.5: метасимволы оболочки и недопустимые для имени задачи
+    // символы заменяем на дефис, чтобы имя клона проходило validateTaskName.
+    .replace(/[\\/:*?"<>|&^%'`;()]+/g, "-")
+    .replace(/\s+/g, "-");
   return `${parent}-matrix-${safeWs}`;
 }
 

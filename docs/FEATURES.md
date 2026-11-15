@@ -191,6 +191,24 @@ Events are emitted through the `emit_event` RPC method.
 - `pause_task` / `resume_task` disable and re-enable the OS entry. For a matrix parent
   every clone is paused.
 
+### Logon mode (Windows)
+
+By default a task is **interactive only**: Task Scheduler runs it only while the user
+who created it is logged on. That is the safe default — the job sees the user profile,
+mapped drives, the project's `opencode.json` and saved credentials.
+
+Some jobs must run outside business hours or on a locked/signed-out machine. Pass
+`runWhenLoggedOff: true` (agent tool `schedule_task` / `update_task`, or the sidebar) to
+register the task as `schtasks /ru SYSTEM` instead. The run then happens in session 0,
+without the user's profile, mapped drives, network shares or saved credentials. Tasks
+that depend on the user environment can fail with `Access is denied` or missing files,
+so check them with `dry_run` first and prefer absolute paths.
+
+`runWhenLoggedOff` is Windows-only: Linux crontab already runs without a logged-on user,
+and a macOS launchd agent runs only inside a user session. `list_tasks` reports both the
+OS value (`logonMode`) and the plugin setting (`runWhenLoggedOff`); `dry_run` shows the
+same pair before the task is registered.
+
 ## Execution policy
 
 ### Timeout and no-overlap
@@ -554,6 +572,7 @@ plugin, no installation step required.
 | File triggers | chokidar | chokidar | chokidar |
 | History, metrics, dashboard | yes | yes | yes |
 | Agent tools and skill | yes | yes | yes |
+| Runs without a logged-on user | opt-in (`runWhenLoggedOff`) | always (crontab) | no (per-user agent) |
 
 ## Limits and non-goals
 

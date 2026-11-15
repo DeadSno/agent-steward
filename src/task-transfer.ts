@@ -203,6 +203,19 @@ export interface TaskDefinition {
   watchIgnore?: string[];
   /** Пауза до даты (ISO, Спринт 19): плагин включит задачу автоматически. */
   pausedUntil?: string;
+  /**
+   * Бессрочная пауза (Спринт 27.5.8): true — задача отключена в планировщике
+   * без даты автовозобновления. Флаг переживает update (пересоздание) и
+   * degraded-режим, когда список задач ОС недоступен.
+   */
+  paused?: boolean;
+  /**
+   * Windows-режим входа (Спринт 27.5.4): true — задача запускается и без входа
+   * пользователя (schtasks /ru SYSTEM, session 0). По умолчанию false —
+   * интерактивная задача (Interactive only, только при активном входе).
+   * На Linux/macOS игнорируется: cron работает без входа, launchd — при входе.
+   */
+  runWhenLoggedOff?: boolean;
   /** Когда задача была создана — защита от ложного catch-up сразу после создания. */
   createdAt?: string;
 }
@@ -371,6 +384,9 @@ export async function buildExportJson(
         ? { watchIgnore: definition.watchIgnore }
         : {}),
       ...(definition?.pausedUntil ? { pausedUntil: definition.pausedUntil } : {}),
+      ...(definition?.paused === true ? { paused: true } : {}),
+      // Спринт 27.5.10: режим входа переживает перенос между профилями.
+      ...(definition?.runWhenLoggedOff === true ? { runWhenLoggedOff: true } : {}),
       ...(Array.isArray(definition?.allowedTools) && definition.allowedTools.length > 0
         ? { allowedTools: definition.allowedTools }
         : {}),
@@ -690,6 +706,11 @@ export function parseImportJson(raw: string): ParsedImport {
           `датой в формате ISO (например 2026-12-01T09:00:00Z).`
       );
     }
+    // Спринт 27.5.8: бессрочная пауза импортируется вместе с задачей.
+    const pausedFlag = source.paused === true;
+    // Спринт 27.5.10: режим входа. Только явный `true` делает задачу фоновой;
+    // всё остальное (false, null, строка) означает интерактивную задачу.
+    const runWhenLoggedOffFlag = source.runWhenLoggedOff === true;
 
     // Ограничения инструментов (Спринт 14): массив непустых строк без дублей.
     // Пустой allowedTools отклоняется с явной ошибкой (избегаем «запрещено всё»).
@@ -901,6 +922,9 @@ export function parseImportJson(raw: string): ParsedImport {
       ...(watchGlobs !== undefined ? { watchGlobs } : {}),
       ...(watchIgnore !== undefined ? { watchIgnore } : {}),
       ...(pausedUntil !== undefined ? { pausedUntil } : {}),
+      ...(pausedFlag ? { paused: true } : {}),
+      // Спринт 27.5.10: сохраняем режим входа при переносе задачи.
+      ...(runWhenLoggedOffFlag ? { runWhenLoggedOff: true } : {}),
       ...(mcpEvent ? { mcpEvent } : {}),
       ...(allowedTools !== undefined ? { allowedTools } : {}),
       ...(deniedTools !== undefined ? { deniedTools } : {}),

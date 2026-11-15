@@ -115,6 +115,25 @@ function readCatalog(locale: Locale): Record<string, string> {
   return parsed;
 }
 
+/**
+ * Регистрирует каталог, встроенный в GUI-бандл.
+ *
+ * В webview OpenCode нет доступа к файлам пакета: `document.currentScript`
+ * указывает на ресурс приложения, поэтому `catalogPath()` не находит
+ * `locales/*.json` и `t()` возвращает сырые ключи. GUI импортирует JSON на
+ * этапе сборки и кладёт его сюда — файлы на диске больше не нужны.
+ */
+export function registerCatalog(
+  locale: Locale,
+  messages: Record<string, unknown>
+): void {
+  const parsed: Record<string, string> = {};
+  for (const [key, value] of Object.entries(messages)) {
+    if (typeof value === "string" && value.length > 0) parsed[key] = value;
+  }
+  catalogs.set(locale, parsed);
+}
+
 /** Список ключей каталога (отсортированный). */
 export function catalogKeys(locale: Locale = currentLocale): string[] {
   return Object.keys(readCatalog(locale)).sort();

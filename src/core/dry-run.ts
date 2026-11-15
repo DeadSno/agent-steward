@@ -70,6 +70,16 @@ export interface DryRunTaskItem {
   /** Идентификатор переиспользуемой сессии (только для session=reuse). */
   sessionId?: string | null;
   /**
+   * Windows-режим входа (Спринт 27.5.4): false — задача интерактивная и идёт
+   * только при активном входе пользователя (Interactive only); true — запуск
+   * без входа через `/ru SYSTEM` (session 0, без профиля пользователя).
+   * На Linux/macOS поле всегда false: cron работает без входа, launchd-агент —
+   * только при входе.
+   */
+  runWhenLoggedOff?: boolean;
+  /** Человекочитаемое пояснение к режиму входа (для отчёта dry-run). */
+  logonMode?: string | null;
+  /**
    * Эффективное расписание cron-задачи (Спринт 19): пояс, окно запуска и
    * ближайшие срабатывания с учётом часового пояса. Позволяет проверить
    * пересчёт cron до регистрации в ОС.
@@ -503,6 +513,9 @@ export async function simulatePipeline(taskName: string): Promise<DryRunReport> 
       trigger,
       session: def.session ?? "new",
       sessionId: def.session === "reuse" ? def.sessionId ?? null : null,
+      // Спринт 27.5.4: показываем режим входа до регистрации в ОС.
+      runWhenLoggedOff: def.runWhenLoggedOff === true,
+      logonMode: def.runWhenLoggedOff === true ? "background" : "interactive",
       cwd,
       command,
       workspace: workspace ? { name: workspace.name, path: workspace.path } : undefined,

@@ -2,7 +2,14 @@ import { createSignal, onCleanup, ErrorBoundary } from "solid-js"
 import { Panel, Plugin } from "@opencode/plugin/gui"
 import { SchedulerRpc } from "./rpc.js"
 import { loadHistory, loadMetrics, type HistoryRecord } from "./history.js"
-import { setLocale, t, type TranslateParams, type Locale } from "./i18n.js"
+import { registerCatalog, setLocale, t, type TranslateParams, type Locale } from "./i18n.js"
+// Каталоги встраиваются в бандл на этапе сборки: в webview OpenCode нет
+// доступа к файлам пакета, поэтому ленивый fs-загрузчик из i18n.ts не работает.
+import ruCatalog from "../locales/ru.json"
+import enCatalog from "../locales/en.json"
+
+registerCatalog("ru", ruCatalog)
+registerCatalog("en", enCatalog)
 
 /** Счётчик смены локали: чтение в JSX-геттерах делает строки реактивными. */
 const [localeTick, setLocaleTick] = createSignal(0)
@@ -176,6 +183,10 @@ interface Job {
   gitPollSeconds?: number | null
   /** Пауза до даты (ISO) — задача включится автоматически. */
   pausedUntil?: string | null
+  /** Windows: задача запускается и без входа пользователя (/ru SYSTEM). */
+  runWhenLoggedOff?: boolean | null
+  /** Windows: фактический режим входа из планировщика (Interactive/Background). */
+  logonMode?: string | null
 }
 
 /** Пользовательский шаблон, сохранённый в templates.json. */
@@ -470,11 +481,14 @@ export default Plugin.define({
     // Название планировщика приходит с бэкенда: на Windows — «Планировщик Windows»,
     // на macOS/Linux — «OpenCode Scheduler». GUI не зависит от ОС напрямую.
     const [schedulerTitle, setSchedulerTitle] = createSignal(gt("gui.app.title"))
+    // Платформа нужна форме: режим входа есть только у Планировщика Windows.
+    const [schedulerPlatform, setSchedulerPlatform] = createSignal<NodeJS.Platform | "">("")
 
     async function loadPlatformGui() {
       try {
         const info = await rpc.get_platform({})
         if (info?.title) setSchedulerTitle(info.title)
+        if (info?.platform) setSchedulerPlatform(info.platform)
       } catch (err: any) {
         console.error("RPC Error (get_platform):", err)
       }
@@ -873,6 +887,9 @@ export default Plugin.define({
     // Сессия OpenCode (Спринт 24): new / reuse (сохраняем sessionId на задаче) / last (--continue).
     const [session, setSession] = createSignal<"new" | "reuse" | "last">("new")
     const [sessionMaxRuns, setSessionMaxRuns] = createSignal("")
+    // Спринт 27.5.9: режим входа (Windows). false — только при активном входе,
+    // true — задача работает и без входа (/ru SYSTEM, session 0).
+    const [runWhenLoggedOff, setRunWhenLoggedOff] = createSignal(false)
     // Часовой пояс и окно запуска (Спринт 19). Пусто = системный пояс / без окна.
     const [timezone, setTimezone] = createSignal("")
     const [notBefore, setNotBefore] = createSignal("")
@@ -1655,6 +1672,7 @@ export default Plugin.define({
           workspaceId: (workspaceId() || "").trim() || undefined,
           allowedTools: allowedTools().length > 0 ? allowedTools() : undefined,
           deniedTools: deniedTools().length > 0 ? deniedTools() : undefined,
+          runWhenLoggedOff: runWhenLoggedOff(),
           matrix: matrixPayload(),
         })
         if (!result.success) {
@@ -1687,9 +1705,10 @@ export default Plugin.define({
         setDelaySeconds("")
         setSession("new")
         setSessionMaxRuns("")
-    setTimezone("")
-    setNotBefore("")
-    setNotAfter("")
+        setRunWhenLoggedOff(false)
+        setTimezone("")
+        setNotBefore("")
+        setNotAfter("")
         setMcpServer("")
         setMcpEventName("")
         setMcpFilter("")
@@ -1924,6 +1943,7 @@ export default Plugin.define({
           workspaceId: (workspaceId() || "").trim() || undefined,
           allowedTools: allowedTools().length > 0 ? allowedTools() : [],
           deniedTools: deniedTools().length > 0 ? deniedTools() : [],
+          runWhenLoggedOff: runWhenLoggedOff(),
           matrix: matrixPayload(),
         })
         if (!result.success) {
@@ -1949,9 +1969,10 @@ export default Plugin.define({
         setDelaySeconds("")
         setSession("new")
         setSessionMaxRuns("")
-    setTimezone("")
-    setNotBefore("")
-    setNotAfter("")
+        setRunWhenLoggedOff(false)
+        setTimezone("")
+        setNotBefore("")
+        setNotAfter("")
         setMcpServer("")
         setMcpEventName("")
         setMcpFilter("")
@@ -2002,6 +2023,7 @@ export default Plugin.define({
       setRunAt(job.runAt ?? "")
       setDelaySeconds("")
       setSession(job.session === "reuse" || job.session === "last" ? job.session : "new")
+      setRunWhenLoggedOff(job.runWhenLoggedOff === true)
       setSessionMaxRuns(
         typeof job.sessionMaxRuns === "number" ? String(job.sessionMaxRuns) : ""
       )
@@ -2227,6 +2249,16 @@ export default Plugin.define({
               )}
               {job.pausedUntil && (
                 <span title={gt("gui.job.pausedUntilTitle", { date: new Date(job.pausedUntil).toLocaleString() })} style="font-size:11px;font-weight:600;flex-shrink:0;cursor:help;white-space:nowrap;padding:2px 7px;border-radius:999px;border:1px solid #ffd60a;color:#ffd60a;background:rgba(255,214,10,0.12)">{gt("gui.job.pausedUntilShort", { date: new Date(job.pausedUntil).toLocaleDateString() })}</span>
+              )}
+              {job.runWhenLoggedOff && (
+                <span
+                  title={gt("gui.job.runWhenLoggedOffTitle", {
+                    mode: job.logonMode ?? gt("gui.job.logonModeUnknown"),
+                  })}
+                  style="font-size:11px;font-weight:600;flex-shrink:0;cursor:help;white-space:nowrap;padding:2px 7px;border-radius:999px;border:1px solid #ff9f0a;color:#ff9f0a;background:rgba(255,159,10,0.12)"
+                >
+                  🌙 {gt("gui.job.runWhenLoggedOffShort")}
+                </span>
               )}
               {(job.beforeScript || job.afterScript) && (
                 <span
@@ -2540,7 +2572,9 @@ export default Plugin.define({
               {gt("gui.uiError", { message: err.message })}
             </div>
           )}>
-            <div style={`display:flex;flex-direction:column;width:100%;height:100%;max-height:100vh;min-height:0;box-sizing:border-box;overflow-y:auto;overflow-x:hidden;gap:24px;padding:20px;font-size:13px;font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;color:#e0e0e0;transition:background 0.3s ease;scrollbar-width:thin;scrollbar-color:#444 transparent;background:${winterMode() ? "linear-gradient(180deg, #0f172a 0%, #000000 100%)" : "#0f0f0f"}`}>
+            <div class="scheduler-panel-root" style={`display:flex;flex-direction:column;width:100%;height:100%;max-height:100vh;min-height:0;box-sizing:border-box;overflow-y:auto;overflow-x:hidden;gap:24px;padding:20px;font-size:13px;font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;color:#e0e0e0;transition:background 0.3s ease;scrollbar-width:thin;scrollbar-color:#444 transparent;background:${winterMode() ? "linear-gradient(180deg, #0f172a 0%, #000000 100%)" : "#0f0f0f"}`}>
+            {/* Прокручивается корень, а не дети: иначе короткий viewport сжимает карточки до 2px. */}
+            <style>{`.scheduler-panel-root > * { flex-shrink: 0; }`}</style>
             <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
               <div style="min-width:0">
                 <h2 style="margin:0;font-size:22px;font-weight:800;letter-spacing:0.2px;line-height:1.2;color:#ffffff">
@@ -3505,11 +3539,11 @@ export default Plugin.define({
               </button>
             ) : (
             <div style="display:block;width:100%;max-width:700px;box-sizing:border-box;background:#1e1e1e;padding:20px;border-radius:10px;box-shadow:0 4px 12px rgba(0,0,0,0.2)">
-              <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:16px">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:16px;flex-wrap:wrap">
                 <h3 style="margin:0;font-size:14px;font-weight:600;color:#ffffff">
                   {isEditing ? gt("gui.editingTask") : gt("gui.newTask")}
                 </h3>
-                <div style="display:flex;align-items:center;gap:8px">
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
                   <button
                     onClick={handleSaveAsTemplate}
                     title={gt("gui.saveAsTemplateTitle")}
@@ -4009,6 +4043,34 @@ export default Plugin.define({
                 )}
               </div>
 
+              {schedulerPlatform() === "win32" && (
+                <div style="display:block;width:100%;margin-bottom:12px">
+                  <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">
+                    <input
+                      type="checkbox"
+                      checked={runWhenLoggedOff()}
+                      onChange={(e) => setRunWhenLoggedOff(e.currentTarget.checked)}
+                      style="accent-color:#007acc;margin-top:3px"
+                    />
+                    <span>
+                      <span style="display:block;font-size:12px;color:#b0b0b0;font-weight:500">
+                        {gt("gui.runWhenLoggedOffLabel")}
+                      </span>
+                      <span
+                        style={{
+                          display: "block",
+                          "font-size": "11px",
+                          "margin-top": "4px",
+                          color: runWhenLoggedOff() ? "#ffd60a" : "#8e8e93",
+                        }}
+                      >
+                        {gt("gui.runWhenLoggedOffHint")}
+                      </span>
+                    </span>
+                  </label>
+                </div>
+              )}
+
               <div
                 style={{
                   display: triggerType() !== "cron" ? "none" : "block",
@@ -4095,13 +4157,13 @@ export default Plugin.define({
                     <label style="display:block;margin-bottom:8px;font-size:12px;color:#b0b0b0;font-weight:500">{gt("gui.weekdaysLabel")}</label>
                     <div style="display:flex;gap:10px;flex-wrap:wrap">
                       {[
-                        { value: 1, day: "gui.weekdayShort.1" },
-                        { value: 2, day: "gui.weekdayShort.2" },
-                        { value: 3, day: "gui.weekdayShort.3" },
-                        { value: 4, day: "gui.weekdayShort.4" },
-                        { value: 5, day: "gui.weekdayShort.5" },
-                        { value: 6, day: "gui.weekdayShort.6" },
-                        { value: 0, day: "gui.weekdayShort.0" },
+                        { value: 1, day: "gui.weekday.1" },
+                        { value: 2, day: "gui.weekday.2" },
+                        { value: 3, day: "gui.weekday.3" },
+                        { value: 4, day: "gui.weekday.4" },
+                        { value: 5, day: "gui.weekday.5" },
+                        { value: 6, day: "gui.weekday.6" },
+                        { value: 0, day: "gui.weekday.0" },
                       ].map((day) => (
                         <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:12px;color:#d0d0d5">
                           <input
@@ -4438,7 +4500,7 @@ export default Plugin.define({
                 </button>
                 {isEditing && (
                   <button
-                    onClick={() => { setEditingJob(null); setName(""); setSchedule("* * * * *"); setPrompt(""); setModel(""); setPriority(DEFAULT_PRIORITY); setRetryCount(0); setRetryDelay(60); setQualityGate(""); setDependsOn([]); setBeforeScript(""); setAfterScript(""); setTriggerType("cron"); setWatchPath(""); setRunAt(""); setDelaySeconds(""); setSession("new"); setSessionMaxRuns(""); setTimezone(""); setNotBefore(""); setNotAfter(""); setMcpServer(""); setMcpEventName(""); setMcpFilter(""); setWorkingDirectory(""); setWorkspaceId(""); setAllowedTools([]); setDeniedTools([]); resetMatrixForm(); setCronPreset("* * * * *"); setCronError("") }}
+                    onClick={() => { setEditingJob(null); setName(""); setSchedule("* * * * *"); setPrompt(""); setModel(""); setPriority(DEFAULT_PRIORITY); setRetryCount(0); setRetryDelay(60); setQualityGate(""); setDependsOn([]); setBeforeScript(""); setAfterScript(""); setTriggerType("cron"); setWatchPath(""); setRunAt(""); setDelaySeconds(""); setSession("new"); setSessionMaxRuns(""); setRunWhenLoggedOff(false); setTimezone(""); setNotBefore(""); setNotAfter(""); setMcpServer(""); setMcpEventName(""); setMcpFilter(""); setWorkingDirectory(""); setWorkspaceId(""); setAllowedTools([]); setDeniedTools([]); resetMatrixForm(); setCronPreset("* * * * *"); setCronError("") }}
                     style="background:transparent;border:1px solid #333;border-radius:6px;padding:8px 16px;color:#ff3b30;cursor:pointer;font-size:13px;width:100%"
                   >
                       {gt("gui.cancel")}

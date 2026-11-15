@@ -167,6 +167,10 @@ src/
 
 Job wrappers run `opencode run` in the task working directory, so project MCP servers are picked up automatically.
 
+### Logon mode (Windows)
+
+Tasks are **interactive only** by default: Task Scheduler starts them only while the user who created them is logged on, with the normal profile, drives and saved credentials. Pass `runWhenLoggedOff: true` to run a job without a logged-on user (`schtasks /ru SYSTEM`). Such a task runs in session 0 — no user profile, mapped drives, network shares or saved credentials — so jobs that need your environment may fail; test them with `dry_run` first. On Linux crontab already runs without a login, and a macOS launchd agent runs only inside a user session.
+
 ## Development
 
 ```bash
@@ -189,6 +193,9 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
 **Does it work when OpenCode is closed?**
 Yes. Jobs are registered with the native OS scheduler, so they run without an open OpenCode window.
+
+**Do jobs run when nobody is logged on?**
+On Windows, only if you opt in with `runWhenLoggedOff: true`: the task is then registered as `schtasks /ru SYSTEM` and runs in session 0 without your profile, mapped drives or saved credentials. The default is interactive only — the job runs while the user is logged on. Linux crontab always runs without a login; a macOS launchd agent runs only inside a user session.
 
 **Which platforms are supported?**
 Windows (Task Scheduler), macOS (launchd) and Linux (crontab). Backend differences are documented in [CROSS_PLATFORM.md](CROSS_PLATFORM.md).

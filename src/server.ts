@@ -1355,22 +1355,46 @@ function renderPage(): string {
     100% { transform: translateY(110vh) rotate(360deg); }
   }
   .wrap { position: relative; z-index: 1; max-width: 1740px; margin: 0 auto; padding: 28px 20px 60px; }
-  .table-scroll { overflow-x: auto; }
-  /* Подсказка о горизонтальном скролле: на широких экранах таблица влезает целиком. */
-  .scroll-hint { display: none; margin-top: 6px; font-size: 11px; color: var(--muted); }
-  @media (max-width: 1000px) { .scroll-hint { display: block; } }
+  .table-scroll {
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+  /* Полоса прокрутки всегда видна (в overlay-режиме её не замечают):
+     подсказываем, что справа есть ещё колонки. */
+  .table-scroll::-webkit-scrollbar { height: 10px; }
+  .table-scroll::-webkit-scrollbar-track { background: transparent; }
+  .table-scroll::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 6px;
+  }
+  .table-scroll::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+  /* Рамку и скругление держит контейнер: overflow:hidden на самой таблице
+     ломает position:sticky у первой колонки. */
+  /* Первая колонка (имя задачи) закреплена: при горизонтальной прокрутке
+     видно, к какой задаче относятся остальные ячейки. */
+  .table-scroll thead th:first-child,
+  .table-scroll tbody td:first-child {
+    position: sticky; left: 0; z-index: 2;
+    background: var(--panel);
+    box-shadow: 1px 0 0 var(--border);
+  }
+  .table-scroll thead th:first-child { background: var(--panel2); z-index: 3; }
+  /* Подсказка о горизонтальном скролле: скрываем только на очень широких экранах. */
+  .scroll-hint { margin-top: 6px; font-size: 11px; color: var(--muted); }
+  @media (min-width: 1320px) { .scroll-hint { display: none; } }
   header { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 22px; }
   h1 { margin: 0; font-size: 24px; font-weight: 800; letter-spacing: .2px; }
   .sub { margin-top: 5px; font-size: 11px; font-weight: 600; letter-spacing: 1.2px; text-transform: uppercase; color: var(--muted); }
-  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 22px; }
-  @media (min-width: 900px) { .cards { grid-template-columns: repeat(4, 1fr); } }
-  @media (min-width: 1200px) { .cards { grid-template-columns: repeat(7, 1fr); } }
-  @media (max-width: 520px) { .cards { grid-template-columns: repeat(2, 1fr); } }
+  /* auto-fill: карточки одинаковой ширины, последний ряд не растягивается. */
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; margin-bottom: 22px; }
   .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; min-width: 0; }
   .card .num { font-size: 26px; font-weight: 800; }
   .card .lbl { margin-top: 2px; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; }
   .ok { color: var(--ok); } .err { color: var(--err); } .neu { color: var(--accent); } .run { color: var(--run); }
-  table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  table { width: 100%; border-collapse: collapse; background: var(--panel); }
   th, td { padding: 9px 9px; text-align: left; font-size: 13px; border-bottom: 1px solid var(--border); vertical-align: middle; }
   th { background: var(--panel2); color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .8px; }
   tr:last-child td { border-bottom: none; }
@@ -1400,18 +1424,23 @@ function renderPage(): string {
   .an-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
   .an-actions { display: flex; gap: 6px; }
   .an-actions .btn { padding: 3px 8px; font-size: 11px; }
-  .an-kpis { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 12px; font-size: 12px; color: var(--muted); }
+  .an-kpis { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; font-size: 12px; color: var(--muted); }
   .an-kpis b { color: var(--text); font-size: 14px; }
-  .an-chart { display: flex; align-items: flex-end; gap: 4px; height: 120px; padding: 6px 0 0; border-bottom: 1px solid var(--border); overflow-x: auto; }
+  .an-partial { font-size: 11px; color: var(--muted); }
+  .an-chart { display: flex; align-items: flex-end; gap: 4px; height: 132px; padding: 6px 0 0; border-bottom: 1px solid var(--border); overflow-x: auto; }
   /* min-width: подпись даты "MM-DD" не наезжает на соседнюю; на узком экране график скроллится. */
   .an-bar { flex: 1 1 0; min-width: 34px; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; cursor: default; }
   .an-bar-fill { width: 100%; border-radius: 3px 3px 0 0; background: var(--accent); opacity: .85; }
+  /* Значение над столбцом: график читается без наведения на tooltip. */
+  .an-value { font-size: 9px; line-height: 1; color: var(--muted); margin-bottom: 2px; min-height: 9px; }
   .an-label { font-size: 9px; color: var(--muted); margin-top: 4px; white-space: nowrap; }
-  .an-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-top: 14px; }
+  .an-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 16px; margin-top: 14px; }
   .an-grid h3 { margin: 0 0 6px; font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
-  .an-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  /* table-layout: fixed + ellipsis: длинные имена не рвутся посреди слова. */
+  .an-table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 12px; }
   .an-table th { text-align: left; color: var(--muted); font-weight: 600; padding: 3px 6px; border-bottom: 1px solid var(--border); }
   .an-table td { padding: 3px 6px; border-bottom: 1px solid var(--border); color: var(--text); }
+  .an-table td:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .an-table tr:last-child td { border-bottom: none; }
   .an-rate.okr { color: var(--ok); }
   .an-rate.midr { color: var(--run); }
@@ -1435,9 +1464,9 @@ function renderPage(): string {
   .graph-hint { font-size: 11px; color: var(--muted); margin-bottom: 8px; }
   .graph-scroll { overflow-x: auto; overflow-y: hidden; padding-bottom: 4px; }
   .graph-canvas { position: relative; }
-  .graph-node { position: absolute; box-sizing: border-box; display: flex; flex-direction: column; justify-content: center; gap: 2px; padding: 6px 9px; background: var(--bg2); border: 1px solid var(--border); border-left: 3px solid var(--muted); border-radius: 8px; font-size: 12px; }
-  .graph-node .g-name { color: var(--text); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .graph-node .g-meta { color: var(--muted); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .graph-node { position: absolute; box-sizing: border-box; display: flex; flex-direction: column; justify-content: center; gap: 2px; padding: 6px 9px; background: var(--bg2); border: 1px solid var(--border); border-left: 3px solid var(--muted); border-radius: 8px; font-size: 12px; overflow: hidden; }
+  .graph-node .g-name { max-width: 100%; color: var(--text); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .graph-node .g-meta { max-width: 100%; color: var(--muted); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .graph-node.okg { border-left-color: #3fb950; }
   .graph-node.errg { border-left-color: #ff3b30; }
   .graph-node.partg { border-left-color: #f5a623; }
@@ -1562,7 +1591,7 @@ function renderPage(): string {
         </div>
       </div>
       <div class="an-kpis" id="an-kpis"><span>Загрузка…</span></div>
-      <div class="an-chart" id="an-chart"></div>
+      <div class="an-chart" id="an-chart" role="img" aria-label="Количество запусков по дням за период"></div>
       <div class="an-grid">
         <div><h3>Топ задач по стоимости</h3><div id="an-top"></div></div>
         <div><h3>Матрицы</h3><div id="an-matrices"></div></div>
@@ -1716,8 +1745,8 @@ function renderPage(): string {
       : 'var(--run)';
     return '<div class="matrix-badge" style="color:' + color + '" title="' + esc(s.message) + '">' +
       '📦 Matrix: ' + s.successCount + '/' + s.totalCount + ' успешных' +
-      (s.errorCount ? ' · ❌ ' + s.errorCount : '') +
-      (s.pendingCount ? ' · ⏳ ' + s.pendingCount : '') +
+      (s.errorCount ? ' · ❌ ошибок: ' + s.errorCount : '') +
+      (s.pendingCount ? ' · ⏳ в работе: ' + s.pendingCount : '') +
       '</div>';
   }
 
@@ -1770,7 +1799,7 @@ function renderPage(): string {
         '<span class="hist-time">' + esc(new Date(r.startedAt).toLocaleString('ru-RU')) + '</span>' +
         '<span class="hist-task">' + esc(r.taskName) + '</span>' +
         badge(r.status, null, true) +
-        '<span class="metrics">' + (r.durationMs != null ? r.durationMs + ' мс' : '—') + '</span>' +
+        '<span class="metrics">' + durationText(r.durationMs) + '</span>' +
         (r.model ? '<span class="hist-model" title="Модель">🧠 ' + esc(r.model) + '</span>' : '') +
         (r.preFlightStatus && r.preFlightStatus !== 'skipped'
           ? '<span class="hist-hook ' + (r.preFlightStatus === 'success' ? 'okh' : 'errh') + '" title="Pre-flight: ' + esc(r.preFlightStatus) + '">⚡ pre: ' + (r.preFlightStatus === 'success' ? '✅' : '❌') + '</span>'
@@ -1799,15 +1828,21 @@ function renderPage(): string {
 
   function money(value) {
     var n = Number(value) || 0;
-    return '$' + n.toFixed(n >= 1 ? 2 : 4);
+    return '$' + n.toFixed(n >= 0.01 ? 2 : 4);
   }
 
   function durationText(ms) {
     var n = Number(ms) || 0;
     if (n <= 0) return '—';
-    if (n < 1000) return n + ' мс';
-    if (n < 60000) return (n / 1000).toFixed(1) + ' с';
-    return Math.round(n / 60000) + ' мин';
+    if (n < 1000) return Math.round(n) + ' мс';
+    if (n < 60000) {
+      // 46.0 с → «46 с», но 31.5 с остаётся «31.5 с».
+      return (n / 1000).toFixed(1).replace(/\.0$/, '') + ' с';
+    }
+    var minutes = n / 60000;
+    // До 10 минут показываем десятые (76125 мс → 1.3 мин), дальше — целые.
+    if (minutes < 10) return minutes.toFixed(1).replace(/\.0$/, '') + ' мин';
+    return Math.round(minutes) + ' мин';
   }
 
   function renderAnalytics(an) {
@@ -1828,12 +1863,12 @@ function renderPage(): string {
     var t = an.totals;
     kpis.innerHTML =
       '<span>Запусков: <b>' + t.total + '</b></span>' +
-      '<span>Успех: <b class="an-rate ' + rateClass(t.successRate) + '">' + t.successRate + '%</b></span>' +
-      '<span>Средняя длительность: <b>' + durationText(t.avgDurationMs) + '</b></span>' +
+      '<span>Успех: <b class="an-rate ' + rateClass(t.successRate) + '">' + t.successRate + '%</b>' +
+        (t.partial ? ' <span class="an-partial">· частично: ' + t.partial + '</span>' : '') + '</span>' +
+      '<span>Ср. длительность: <b>' + durationText(t.avgDurationMs) + '</b></span>' +
       '<span>Токены: <b>' + Number(t.tokens || 0).toLocaleString('ru-RU') + '</b></span>' +
       '<span>Стоимость: <b>' + money(t.costUsd) + '</b></span>' +
-      '<span>Окно: <b>' + an.windowDays + ' дн.</b></span>' +
-      (t.partial ? '<span>Частично: <b>' + t.partial + '</b></span>' : '');
+      '<span>Окно: <b>' + an.windowDays + ' дн.</b></span>';
 
     var daily = an.daily || [];
     var max = 1;
@@ -1843,11 +1878,13 @@ function renderPage(): string {
     var bars = '';
     for (var j = 0; j < daily.length; j++) {
       var d = daily[j];
-      var h = d.total > 0 ? Math.max(3, Math.round((d.total / max) * 92)) : 2;
+      // 78% — оставляем место под значение и подпись даты внутри 132px.
+      var h = d.total > 0 ? Math.max(3, Math.round((d.total / max) * 78)) : 2;
       var isPartialOnly = d.error === 0 && d.partial > 0;
       var color = d.total === 0 ? 'var(--border)' : (d.error > 0 ? 'var(--err)' : (isPartialOnly ? 'var(--run)' : 'var(--ok)'));
       var tip = d.date + ': всего ' + d.total + ', успех ' + d.success + ', ошибок ' + d.error + ', частично ' + d.partial + ', ' + money(d.costUsd);
       bars += '<div class="an-bar" title="' + esc(tip) + '">' +
+        '<div class="an-value">' + (d.total > 0 ? d.total : '') + '</div>' +
         '<div class="an-bar-fill" style="height:' + h + '%' + ';background:' + esc(color) + '"></div>' +
         '<div class="an-label">' + esc(String(d.date).slice(5)) + '</div>' +
         '</div>';
@@ -1861,11 +1898,11 @@ function renderPage(): string {
     if (topRows.length === 0) {
       top.innerHTML = '<div class="empty" style="padding:10px">Нет запусков за период.</div>';
     } else {
-      var html = '<table class="an-table"><thead><tr><th scope="col">Задача</th><th scope="col">Запусков</th><th scope="col">Успех</th><th scope="col">Стоимость</th></tr></thead><tbody>';
+      var html = '<table class="an-table"><thead><tr><th scope="col" style="width:46%">Задача</th><th scope="col" style="width:18%">Запусков</th><th scope="col" style="width:18%">Успех</th><th scope="col" style="width:18%">Стоимость</th></tr></thead><tbody>';
       for (var k = 0; k < topRows.length; k++) {
         var row = topRows[k];
         html += '<tr>' +
-          '<td>' + (row.isMatrixClone ? '↳ ' : '') + esc(row.taskName) + '</td>' +
+          '<td title="' + esc(row.taskName) + '">' + (row.isMatrixClone ? '↳ ' : '') + esc(row.taskName) + '</td>' +
           '<td>' + row.total + '</td>' +
           '<td class="an-rate ' + rateClass(row.successRate) + '">' + row.successRate + '%</td>' +
           '<td>' + money(row.costUsd) + '</td>' +
@@ -1878,11 +1915,11 @@ function renderPage(): string {
     if (matrixRows.length === 0) {
       matrices.innerHTML = '<div class="empty" style="padding:10px">Матриц за период не запускалось.</div>';
     } else {
-      var mhtml = '<table class="an-table"><thead><tr><th scope="col">Матрица</th><th scope="col">Клонов</th><th scope="col">Запусков</th><th scope="col">Успех</th><th scope="col">Стоимость</th></tr></thead><tbody>';
+      var mhtml = '<table class="an-table"><thead><tr><th scope="col" style="width:40%">Матрица</th><th scope="col" style="width:15%">Клонов</th><th scope="col" style="width:15%">Запусков</th><th scope="col" style="width:15%">Успех</th><th scope="col" style="width:15%">Стоимость</th></tr></thead><tbody>';
       for (var q = 0; q < matrixRows.length; q++) {
         var m = matrixRows[q];
         mhtml += '<tr>' +
-          '<td>📦 ' + esc(m.parentId) + '</td>' +
+          '<td title="' + esc(m.parentId) + '">📦 ' + esc(m.parentId) + '</td>' +
           '<td>' + m.clones + '</td>' +
           '<td>' + m.total + '</td>' +
           '<td class="an-rate ' + rateClass(m.successRate) + '">' + m.successRate + '%</td>' +
@@ -1915,8 +1952,8 @@ function renderPage(): string {
         '<td class="wi-model">🧠 ' + esc(m.model) + '</td>' +
         '<td>' + m.totalRuns + '</td>' +
         '<td>' + Number(m.totalTokens || 0).toLocaleString('ru-RU') + '</td>' +
-        '<td>$' + Number(m.totalCost || 0).toFixed(4) + '</td>' +
-        '<td>' + (m.avgDuration != null ? m.avgDuration + ' мс' : '—') + '</td>' +
+        '<td>' + money(m.totalCost) + '</td>' +
+        '<td>' + durationText(m.avgDuration) + '</td>' +
         '<td>' + (m.successRate != null ? m.successRate + '%' : '—') + '</td>' +
         '</tr>';
     }
@@ -1931,12 +1968,12 @@ function renderPage(): string {
     }
     var parts = [];
     if (gpt) {
-      parts.push('Если бы все запуски выполнялись через <b>openai/gpt-4o</b>, это стоило бы ~<b>$' + Number(gpt.cost).toFixed(4) + '</b> (' + gpt.pricePerMillion + ' $/1M токенов).');
+      parts.push('Если бы все запуски выполнялись через <b>openai/gpt-4o</b>, это стоило бы ~<b>' + money(gpt.cost) + '</b> (' + gpt.pricePerMillion + ' $/1M токенов).');
     }
     if (deepseek) {
-      parts.push('Если через <b>deepseek/deepseek-coder</b> — <b>$' + Number(deepseek.cost).toFixed(4) + '</b> (' + deepseek.pricePerMillion + ' $/1M токенов).');
+      parts.push('Если через <b>deepseek/deepseek-coder</b> — <b>' + money(deepseek.cost) + '</b> (' + deepseek.pricePerMillion + ' $/1M токенов).');
     }
-    parts.push('Всего запусков: <b>' + totals.totalRuns + '</b>, токенов: <b>' + Number(totals.totalTokens || 0).toLocaleString('ru-RU') + '</b>, фактическая стоимость: <b>$' + Number(totals.totalCost || 0).toFixed(4) + '</b>.');
+    parts.push('Всего запусков: <b>' + totals.totalRuns + '</b>, токенов: <b>' + Number(totals.totalTokens || 0).toLocaleString('ru-RU') + '</b>, фактическая стоимость: <b>' + money(totals.totalCost) + '</b>.');
     text.innerHTML = parts.join(' ');
   }
 
@@ -2451,7 +2488,7 @@ function renderPage(): string {
         if (t.estimatedDurationSec != null || t.estimatedTokens != null) {
           est = (t.estimatedDurationSec != null ? t.estimatedDurationSec + ' с' : '') +
             (t.estimatedTokens != null ? ' · ' + t.estimatedTokens + ' ток.' : '') +
-            (t.estimatedCostUsd != null ? ' · $' + Number(t.estimatedCostUsd).toFixed(4) : '');
+            (t.estimatedCostUsd != null ? ' · ' + money(t.estimatedCostUsd) : '');
         }
         var ws = t.workspace ? '📦 ' + esc(t.workspace.name) : '—';
         var matrixParent = t.matrixParent ? '<div class="matrix-badge">↳ matrix ' + esc(t.matrixParent) + '</div>' : '';
@@ -2470,7 +2507,7 @@ function renderPage(): string {
         html += '<div class="metrics" style="margin-top:8px">Σ Оценка конвейера: ' +
           (totals.estimatedDurationSec != null ? totals.estimatedDurationSec + ' с · ' : '') +
           (totals.estimatedTokens != null ? totals.estimatedTokens + ' токенов · ' : '') +
-          (totals.estimatedCostUsd != null ? '~$' + Number(totals.estimatedCostUsd).toFixed(4) : '') + '</div>';
+          (totals.estimatedCostUsd != null ? '~' + money(totals.estimatedCostUsd) : '') + '</div>';
       }
       if (body) body.innerHTML = html;
     } catch (err) {
