@@ -399,6 +399,46 @@ check(
     partial.notifications.digest?.frequency === "daily"
 );
 
+check(
+  "defaultNotifications: правила триажа не заданы (действуют встроенные)",
+  defaults.triage?.rules === undefined
+);
+
+fs.writeFileSync(
+  settingsFile,
+  JSON.stringify({
+    notifications: {
+      enabled: true,
+      triage: {
+        mode: "rules",
+        rules: [
+          { id: "keep", field: "task", operator: "equals", value: "deploy", priority: "50" },
+          { id: "bad-op", field: "cost", operator: "contains", value: 1 },
+          { id: "bad-regex", field: "error", operator: "regex", value: "[bad" },
+          { id: "bad-field", field: "unknown", operator: "equals", value: "x" },
+        ],
+      },
+    },
+  }),
+  "utf8"
+);
+const withRules = await settingsModule.loadSettings();
+check(
+  "loadSettings: правила триажа нормализуются и отбрасывают невалидные",
+  withRules.notifications.triage?.rules?.length === 1 &&
+    withRules.notifications.triage?.rules?.[0].id === "keep" &&
+    withRules.notifications.triage?.rules?.[0].priority === 50
+);
+
+await settingsModule.saveSettings({
+  notifications: { enabled: true, onlyOnError: true, triage: { rules: [] } },
+});
+const noRules = await settingsModule.loadSettings();
+check(
+  "saveSettings: пустой массив правил сохраняется и отключает встроенные",
+  Array.isArray(noRules.notifications.triage?.rules) && noRules.notifications.triage?.rules?.length === 0
+);
+
 // Шаблоны, сохранённые как встроенные дефолты, не должны застывать на языке
 // установки: при смене локали они берутся из текущего каталога.
 setLocale("en");

@@ -55,6 +55,55 @@ export type TriageMode = "off" | "rules" | "llm" | "auto";
 /** Что делать, если LLM-триаж недоступен или не уверен. */
 export type TriageFallback = "rules" | "skip";
 
+/** Поле уведомления, по которому проверяется правило. */
+export type TriageRuleField = "status" | "task" | "error" | "cost";
+
+/** Оператор сравнения правила. */
+export type TriageRuleOperator =
+  | "equals"
+  | "contains"
+  | "regex"
+  | "gt"
+  | "lt"
+  | "gte"
+  | "lte";
+
+/** Что делать с уведомлением при совпадении правила. */
+export type TriageRuleAction = "notify" | "skip";
+
+/** Категория и серьёзность, которые выставляет правило. */
+export type TriageRuleCategory =
+  | "quality"
+  | "timeout"
+  | "permission"
+  | "network"
+  | "unknown";
+export type TriageRuleSeverity = "low" | "medium" | "high";
+
+/**
+ * Правило триажа (Спринт 30.4).
+ *
+ * Правила проверяются по убыванию `priority`; при равном приоритете —
+ * в порядке массива. Срабатывает только первое совпавшее правило.
+ */
+export interface TriageRule {
+  /** Стабильный идентификатор для логов и отчётов. */
+  id?: string;
+  field: TriageRuleField;
+  operator: TriageRuleOperator;
+  /** Строка для status/task/error, число для cost. */
+  value: string | number;
+  category?: TriageRuleCategory;
+  severity?: TriageRuleSeverity;
+  /** Уверенность правила (0..1), по умолчанию 0.8. */
+  confidence?: number;
+  action?: TriageRuleAction;
+  /** Человекочитаемая причина; иначе собирается из id и условия. */
+  reason?: string;
+  /** Чем больше, тем раньше проверяется. По умолчанию 0. */
+  priority?: number;
+}
+
 /** Настройки локального триажа уведомлений (Спринт 30). */
 export interface TriageSettings {
   /** off — триаж выключен; rules — только правила; llm — только модель; auto — модель, затем правила. */
@@ -69,6 +118,11 @@ export interface TriageSettings {
   fallback: TriageFallback;
   /** Минимальная уверенность модели (0..1); ниже порога срабатывает fallback. */
   confidenceThreshold: number;
+  /**
+   * Пользовательские правила. `undefined` — встроенный набор,
+   * пустой массив — правил нет.
+   */
+  rules?: TriageRule[];
 }
 
 /** Дайджест по истории запусков (Спринт 20). */
@@ -519,6 +573,96 @@ function normalizeConfidence(value: unknown, fallback: number): number {
   return Math.min(1, Math.max(0, n));
 }
 
+const TRIAGE_RULE_FIELDS: readonly TriageRuleField[] = ["status", "task", "error", "cost"];
+const TRIAGE_RULE_OPERATORS: readonly TriageRuleOperator[] = [
+  "equals",
+  "contains",
+  "regex",
+  "gt",
+  "lt",
+  "gte",
+  "lte",
+];
+const TRIAGE_RULE_CATEGORIES: readonly TriageRuleCategory[] = [
+  "quality",
+  "timeout",
+  "permission",
+  "network",
+  "unknown",
+];
+const TRIAGE_RULE_SEVERITIES: readonly TriageRuleSeverity[] = ["low", "medium", "high"];
+
+/** Допустимые операторы для поля: текст сравнивается строками, cost — числами. */
+function ruleOperatorAllowed(field: TriageRuleField, operator: TriageRuleOperator): boolean {
+  return field === "cost"
+    ? operator !== "contains" && operator !== "regex"
+    : operator === "equals" || operator === "contains" || operator === "regex";
+}
+
+/** Нормализует одно правило; невалидное возвращает null (правило отбрасывается). */
+function normalizeTriageRule(value: unknown): TriageRule | null {
+  const raw = asRecord(value);
+  if (!raw) return null;
+
+  const field = TRIAGE_RULE_FIELDS.includes(raw.field as TriageRuleField)
+    ? (raw.field as TriageRuleField)
+    : null;
+  const operator = TRIAGE_RULE_OPERATORS.includes(raw.operator as TriageRuleOperator)
+    ? (raw.operator as TriageRuleOperator)
+    : null;
+  if (!field || !operator || !ruleOperatorAllowed(field, operator)) return null;
+
+  let ruleValue: string | number;
+  if (field === "cost") {
+    const n = Number(raw.value);
+    if (!Number.isFinite(n) || n < 0) return null;
+    ruleValue = n;
+  } else {
+    if (typeof raw.value !== "string" || !raw.value.trim()) return null;
+    ruleValue = raw.value.trim().slice(0, 500);
+  }
+
+  if (operator === "regex") {
+    try {
+      new RegExp(String(ruleValue), "i");
+    } catch {
+      return null;
+    }
+  }
+
+  const rule: TriageRule = { field, operator, value: ruleValue };
+  if (typeof raw.id === "string" && raw.id.trim()) rule.id = raw.id.trim().slice(0, 64);
+  if (TRIAGE_RULE_CATEGORIES.includes(raw.category as TriageRuleCategory)) {
+    rule.category = raw.category as TriageRuleCategory;
+  }
+  if (TRIAGE_RULE_SEVERITIES.includes(raw.severity as TriageRuleSeverity)) {
+    rule.severity = raw.severity as TriageRuleSeverity;
+  }
+  if (raw.confidence !== undefined) rule.confidence = normalizeConfidence(raw.confidence, 0.8);
+  if (raw.action === "notify" || raw.action === "skip") rule.action = raw.action;
+  if (typeof raw.reason === "string" && raw.reason.trim()) {
+    rule.reason = raw.reason.trim().slice(0, 300);
+  }
+  const priority = Number(raw.priority);
+  rule.priority = Number.isFinite(priority)
+    ? Math.min(10_000, Math.max(-10_000, Math.trunc(priority)))
+    : 0;
+  return rule;
+}
+
+/** Нормализует массив правил; undefined сохраняет встроенный набор. */
+function normalizeTriageRules(
+  value: unknown,
+  fallback: TriageRule[] | undefined
+): TriageRule[] | undefined {
+  if (value === undefined) return fallback?.map((rule) => ({ ...rule }));
+  if (!Array.isArray(value)) return fallback?.map((rule) => ({ ...rule }));
+  return value
+    .slice(0, 200)
+    .map(normalizeTriageRule)
+    .filter((rule): rule is TriageRule => rule !== null);
+}
+
 /** Приводит настройки уведомлений к безопасному виду. */
 function normalizeNotifications(
   value: unknown,
@@ -549,7 +693,10 @@ function normalizeNotifications(
       telegram: { ...fallbackTelegram },
       native: { ...fallbackNative },
       quietHours: { ...fallbackQuiet },
-      triage: { ...fallbackTriage },
+      triage: {
+        ...fallbackTriage,
+        rules: fallbackTriage.rules?.map((rule) => ({ ...rule })),
+      },
       dashboardUrl: fallback.dashboardUrl ?? "",
     };
   }
@@ -727,6 +874,7 @@ function normalizeNotifications(
         rawTriage?.confidenceThreshold,
         fallbackTriage.confidenceThreshold
       ),
+      rules: normalizeTriageRules(rawTriage?.rules, fallbackTriage.rules),
     },
   };
 }
