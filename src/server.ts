@@ -271,30 +271,70 @@ export function getDashboardPort(): number | null {
   return running?.port ?? null;
 }
 
+/** Локальные имена, которым разрешено обращаться к дашборду. */
+const LOCAL_HOSTNAMES = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
+
+/**
+ * Извлекает hostname из значения заголовка Host/Origin.
+ * Понимает `http://host:port`, `host:port`, `[::1]:port`, userinfo.
+ */
+function parseLocalHostname(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  let raw = value.trim();
+  if (!raw) return undefined;
+  // Отбрасываем схему и userinfo.
+  raw = raw.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "");
+  const at = raw.lastIndexOf("@");
+  if (at >= 0) raw = raw.slice(at + 1);
+  // Путь/query в Origin не входят, но на всякий случай отрезаем.
+  raw = raw.split(/[/?#]/)[0];
+  if (raw.startsWith("[")) {
+    const end = raw.indexOf("]");
+    if (end > 0) return raw.slice(0, end + 1).toLowerCase();
+  }
+  const colon = raw.lastIndexOf(":");
+  const host = (colon > 0 ? raw.slice(0, colon) : raw).replace(/\.$/, "");
+  return host.toLowerCase();
+}
+
 /**
  * Проверяет, что запрос к дашборду исходит из доверенного источника,
  * чтобы защититься от CSRF и DNS-ребиндинга.
- * Доверен запрос:
- *  - с кастомным заголовком X-Scheduler-Client (без него обычный
- *    браузерный fetch/form не сможет сделать preflight и отправить тело),
- *  - или с Origin/Host, входящим в {127.0.0.1, localhost} (любой порт).
- * /api/hooks исключается — оно защищено HMAC отдельно.
+ *
+ * Правила:
+ *  - кастомный заголовок X-Scheduler-Client считается доверенным (браузер
+ *    не отправит его межсайтово без preflight, которого сервер не даёт);
+ *  - при наличии Origin он ОБЯЗАН быть локальным — проверка Host при этом
+ *    не спасает, потому что Host всегда равен адресату запроса;
+ *  - без Origin (не-браузерный клиент, curl, свои fetch) требует локальный Host —
+ *    это защита от DNS-rebinding;
+ *  - Origin: null, чужие схемы и чужие хосты отклоняются.
  */
 export function isDashboardRequestTrusted(req: http.IncomingMessage): boolean {
   const headers = req.headers ?? {};
   if (headers["x-scheduler-client"]) return true;
 
-  const allowed = new Set(["127.0.0.1", "localhost"]);
+  const origin = typeof headers.origin === "string" ? headers.origin : undefined;
+  if (origin !== undefined) {
+    // "null" (sandbox/file://) и любые не-localhost Origin — не доверяем.
+    const originHost = parseLocalHostname(origin);
+    return Boolean(originHost && LOCAL_HOSTNAMES.has(originHost));
+  }
 
-  const originHost = (typeof headers.origin === "string"
-    ? headers.origin.replace(/^https?:\/\//, "").split(":")[0]
-    : undefined) ?? undefined;
-  const hostHost = typeof headers.host === "string" ? headers.host.split(":")[0] : undefined;
+  // Origin отсутствует — это не браузерный cross-origin запрос. Проверяем Host,
+  // чтобы запрос не пришёл через DNS-rebinding на чужое имя.
+  const hostHost = parseLocalHostname(typeof headers.host === "string" ? headers.host : undefined);
+  return Boolean(hostHost && LOCAL_HOSTNAMES.has(hostHost));
+}
 
-  return (
-    Boolean(originHost && allowed.has(originHost.toLowerCase())) ||
-    Boolean(hostHost && allowed.has(hostHost.toLowerCase()))
-  );
+/**
+ * Путь защищён проверкой источника: весь /api/*, кроме /api/hooks/*
+ * (hooks аутентифицируются HMAC и должны принимать внешние вызовы).
+ */
+export function needsDashboardSourceCheck(pathname: string): boolean {
+  if (!/^\/api(?:\/|$)/.test(pathname)) return false;
+  if (pathname === "/api/hooks" || pathname.startsWith("/api/hooks/")) return false;
+  return true;
 }
 
 /**
@@ -684,18 +724,14 @@ async function handleRequest(
       return;
     }
 
-    // --- CSRF / DNS-rebinding защита для мутирующих POST --- //
+    // --- CSRF / DNS-rebinding защита для всего /api/* (кроме /api/hooks) --- //
     // Требуем либо кастомный заголовок X-Scheduler-Client (браузер не отправит
     // его межсайтово без ответа на preflight, которого сервер не даёт),
-    // либо Origin/Host из локального списка (127.0.0.1 или localhost, любой порт).
+    // либо локальный Origin, либо (для не-браузерных клиентов) локальный Host.
+    // GET-запросы защищены тоже: иначе DNS-rebinding позволяет прочитать
+    // /api/export-db (вся SQLite-база), историю, аудит и настройки.
     // POST /api/hooks остаётся без этой проверки: он защищён HMAC отдельно.
-    const mutationPost =
-      req.method === "POST" &&
-      (pathname.startsWith("/api/run/") ||
-        pathname.startsWith("/api/delete/") ||
-        pathname.startsWith("/api/cancel-matrix/") ||
-        pathname === "/api/matrix-cleanup");
-    if (mutationPost && !isDashboardRequestTrusted(req)) {
+    if (needsDashboardSourceCheck(pathname) && !isDashboardRequestTrusted(req)) {
       sendJson(res, 403, { error: "Запрос не прошёл проверку источника (CSRF/DNS-rebinding)." });
       return;
     }
@@ -1922,6 +1958,16 @@ function renderPage(): string {
     }
 
     var t = an.totals;
+    var savings = an.savings || null;
+    var savingsChip = '';
+    if (savings && savings.savedUsd > 0) {
+      var savingsTip = 'Оценка: ' + Number(savings.runs) + ' запусков, ' +
+        Number(savings.tokens || 0).toLocaleString('ru-RU') + ' токенов без записанной стоимости, ' +
+        'по эталонной цене $' + Number(savings.referenceCostPer1kTokensUsd || 0) + ' за 1k токенов.';
+      savingsChip = '<span title="' + esc(savingsTip) + '">Сэкономлено: <b>' +
+        money(savings.savedUsd) + '</b> <span class="an-partial">оценка</span> <a href="' +
+        esc(savings.methodologyUrl) + '" target="_blank" rel="noopener noreferrer">методика</a></span>';
+    }
     kpis.innerHTML =
       '<span>Запусков: <b>' + t.total + '</b></span>' +
       '<span>Успех: <b class="an-rate ' + rateClass(t.successRate) + '">' + t.successRate + '%</b>' +
@@ -1929,6 +1975,7 @@ function renderPage(): string {
       '<span>Ср. длительность: <b>' + durationText(t.avgDurationMs) + '</b></span>' +
       '<span>Токены: <b>' + Number(t.tokens || 0).toLocaleString('ru-RU') + '</b></span>' +
       '<span>Стоимость: <b>' + money(t.costUsd) + '</b></span>' +
+      savingsChip +
       '<span>Окно: <b>' + an.windowDays + ' дн.</b></span>';
 
     var daily = an.daily || [];
@@ -2339,6 +2386,10 @@ function renderPage(): string {
       '</tr>';
   }
 
+  // Заголовок, подтверждающий, что запрос отправлен самим дашбордом.
+  // Без него кросс-сайтовый fetch не пройдёт (нужен CORS-preflight, которого нет).
+  var CLIENT_HEADERS = { 'X-Scheduler-Client': 'dashboard' };
+
   // Устойчивая загрузка: антивирусы иногда блокируют отдельные URL
   // (например, /api/metrics) статусом 499 и картинкой вместо JSON.
   // Один сбой не должен ломать весь дашборд.
@@ -2445,7 +2496,7 @@ function renderPage(): string {
     if (act === 'cleanup-orphans') {
       btn.disabled = true;
       try {
-        var cleanRes = await fetch('/api/matrix-cleanup', { method: 'POST', cache: 'no-store' });
+        var cleanRes = await fetch('/api/matrix-cleanup', { method: 'POST', cache: 'no-store', headers: CLIENT_HEADERS });
         var cleanData = await readJson(cleanRes);
         toast(cleanData.success ? (cleanData.message || 'Готово') : (cleanData.error || 'Ошибка очистки'), cleanData.success ? 'ok2' : 'err2');
       } catch (err) {
@@ -2492,7 +2543,7 @@ function renderPage(): string {
         btn.disabled = false;
         return;
       }
-      var res = await fetch(url, { method: 'POST', cache: 'no-store' });
+      var res = await fetch(url, { method: 'POST', cache: 'no-store', headers: CLIENT_HEADERS });
       var data = await readJson(res);
       if (data.success) {
         toast(data.message || 'Готово', 'ok2');

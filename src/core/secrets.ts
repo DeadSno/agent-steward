@@ -121,7 +121,38 @@ function emptyFile(): SecretsFile {
   return { version: 1, secrets: {} };
 }
 
-/** Читает secrets.json с кэшем по mtime/size. Битый файл — пустое хранилище. */
+/**
+ * Причина, по которой запись в secrets.json заблокирована: файл повреждён и
+ * его не удалось отложить в сторону. Иначе первая же запись заменила бы
+ * хранилище пустым объектом и уничтожила все секреты.
+ */
+let corruptedStore: string | null = null;
+
+/**
+ * Уносит повреждённый secrets.json в сторону, чтобы следующая запись не
+ * затёрла его пустым хранилищем. Возвращает true, если файл удалось убрать.
+ */
+function quarantineCorruptStore(err: unknown): boolean {
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const target = `${SECRETS_FILE}.corrupt-${stamp}`;
+  cache = null;
+  try {
+    fs.renameSync(SECRETS_FILE, target);
+    corruptedStore = null;
+    warn(`secrets.json повреждён и перемещён в ${target}`, err);
+    return true;
+  } catch (renameErr) {
+    corruptedStore = target;
+    warn(
+      `secrets.json повреждён, но его не удалось переместить в ${target}. ` +
+        `Запись новых секретов заблокирована, чтобы не потерять данные.`,
+      renameErr
+    );
+    return false;
+  }
+}
+
+/** Читает secrets.json с кэшем по mtime/size. Битый файл откладывается в сторону. */
 function readFileSafe(): SecretsFile {
   try {
     const stat = fs.statSync(SECRETS_FILE);
@@ -158,7 +189,9 @@ function readFileSafe(): SecretsFile {
     cache = { stamp, file };
     return file;
   } catch (err: any) {
-    if (err?.code !== "ENOENT") warn("не удалось прочитать secrets.json", err);
+    if (err?.code === "ENOENT") return emptyFile();
+    // Не глотаем повреждение молча: иначе setSecret запишет пустой файл поверх.
+    quarantineCorruptStore(err);
     return emptyFile();
   }
 }
@@ -212,6 +245,12 @@ function decryptValue(name: string, entry: StoredSecret, key: Buffer): string {
 
 /** Сохраняет (или перезаписывает) секрет. Значение не логируется. */
 export function setSecret(name: string, value: string): SecretListItem {
+  if (corruptedStore) {
+    throw new Error(
+      `Хранилище секретов повреждено (${corruptedStore}). ` +
+        "Устраните проблему с файлом перед записью новых секретов."
+    );
+  }
   const secretName = validateSecretName(name);
   const text = String(value ?? "");
   const key = loadKey();
@@ -292,8 +331,10 @@ export function expandSecretRefs(
     }
     const secret = getSecret(name);
     if (secret === undefined) {
+      // Не подменяем значение пустой строкой: молчаливая пустая переменная
+      // маскирует ошибку. Ссылка остаётся как есть, имя попадает в missing.
       missing.add(name);
-      return "";
+      return _match;
     }
     return secret;
   });
@@ -301,8 +342,9 @@ export function expandSecretRefs(
 }
 
 /**
- * Разворачивает ссылки во всех значениях env. Отсутствующие секреты дают
- * пустую строку и попадают в `missing` (только имена — без значений).
+ * Разворачивает ссылки во всех значениях env. Отсутствующие секреты остаются
+ * в виде `${secret:NAME}` и попадают в `missing` (только имена — без значений):
+ * пустая подстановка скрывала бы ошибку конфигурации.
  * Если задан allowedSecretNames — инжектит в env только реально используемые секреты.
  */
 export function resolveSecretRefs(

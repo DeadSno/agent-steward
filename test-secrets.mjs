@@ -4,6 +4,7 @@
  * Реальные секреты не записываются: конфиг-домен подменяется temp-директорией.
  */
 import fs from "node:fs";
+import crypto from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 
@@ -66,9 +67,12 @@ check("expandSecretRefs не оставляет пропусков", expanded.mi
 const embedded = expandSecretRefs("pref ${secret:api_key} suff");
 check("expandSecretRefs встроенная ссылка", embedded.value === "pref sk-1234567890abcdef suff");
 
-// Отсутствующий секрет → пустая строка + имя в missing.
+// Отсутствующий секрет → ссылка остаётся + имя в missing.
 const missing = expandSecretRefs("${secret:missing_key} и ${secret:api_key}");
-check("expandSecretRefs отсутствующий → пустая строка", missing.value === " и sk-1234567890abcdef");
+check(
+  "expandSecretRefs отсутствующий → ссылка сохраняется",
+  missing.value === "${secret:missing_key} и sk-1234567890abcdef"
+);
 check("expandSecretRefs missing содержит имя", missing.missing.includes("missing_key"));
 check("expandSecretRefs missing не содержит найденный", !missing.missing.includes("api_key"));
 
@@ -203,7 +207,26 @@ try {
   check("getSecret с повреждённым ключом не бросает", false);
 }
 
-// --- 8. Итог -----------------------------------------------------------------
+// --- 8. Повреждённый secrets.json не затирается ------------------------------
+resetSecretsCache();
+fs.writeFileSync(corruptedKey, crypto.randomBytes(32));
+fs.writeFileSync(secretsFile, "{ это не json");
+let corruptReadThrew = false;
+try {
+  getSecret("hidden");
+} catch {
+  corruptReadThrew = true;
+}
+check("getSecret на битом secrets.json не бросает", corruptReadThrew === false);
+const pluginDir = path.dirname(secretsFile);
+const quarantined = fs
+  .readdirSync(pluginDir)
+  .filter((name) => name.startsWith("secrets.json.corrupt-"));
+check("битый secrets.json отложен в .corrupt-*", quarantined.length === 1);
+setSecret("after_corruption", "value12345");
+check("после повреждения запись снова работает", getSecret("after_corruption") === "value12345");
+
+// --- 9. Итог -----------------------------------------------------------------
 const failures = results.filter((item) => !item.ok);
 console.log(`\nSecrets: ${results.length - failures.length}/${results.length} проверок пройдено.`);
 if (failures.length > 0) {

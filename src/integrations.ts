@@ -7,8 +7,14 @@ import type { HookSettings } from "./settings.js";
  *
  * Контракт:
  *   POST /api/hooks/<task>?token=<token>
- *   X-Scheduler-Signature: sha256=<hex hmac по сырому телу>
- *   X-Scheduler-Timestamp: <unix seconds|milliseconds>  (необязательно)
+ *   X-Scheduler-Signature: sha256=<hex hmac>
+ *   X-Scheduler-Timestamp: <unix seconds|milliseconds>
+ *
+ * При включённой подписи и ненулевом timestampToleranceSeconds заголовок
+ * X-Scheduler-Timestamp обязателен и входит в HMAC: подписывается строка
+ * `<timestamp>.<сырое тело>`. Так перехваченный запрос нельзя переиграть,
+ * подставив свежий timestamp. При toleranceSeconds = 0 (проверка времени
+ * отключена явно) подпись считается по одному телу — legacy-режим.
  *
  * Для совместимости с GitHub Actions принимается также `X-Hub-Signature-256`,
  * для GitLab — `X-Gitlab-Token` вместо query-параметра.
@@ -57,6 +63,20 @@ export function signHookPayload(secret: string, body: Buffer | string): string {
   return `sha256=${digest}`;
 }
 
+/**
+ * HMAC с привязкой к timestamp: подписывается `<timestamp>.<сырое тело>`.
+ * Используется, когда защита от replay включена (toleranceSeconds > 0).
+ */
+export function signHookPayloadWithTimestamp(
+  secret: string,
+  timestamp: string,
+  body: Buffer | string
+): string {
+  const payload = Buffer.isBuffer(body) ? body : Buffer.from(body, "utf8");
+  const prefixed = Buffer.concat([Buffer.from(`${timestamp}.`, "utf8"), payload]);
+  return signHookPayload(secret, prefixed);
+}
+
 /** Достаёт подпись из поддерживаемых заголовков. */
 export function extractHookSignature(headers: HeaderMap): string | null {
   for (const name of SIGNATURE_HEADERS) {
@@ -78,11 +98,15 @@ export function extractHookToken(headers: HeaderMap): string | null {
 /**
  * Проверяет HMAC-подпись. Принимает `sha256=<hex>` и «голый» hex;
  * алгоритмы кроме SHA-256 намеренно не поддерживаются.
+ *
+ * Если передан timestamp, подпись проверяется по схеме `<timestamp>.<body>`
+ * (защита от replay). Без timestamp — legacy-подпись по одному телу.
  */
 export function verifyHookSignature(
   secret: string,
   body: Buffer | string,
-  signature: string | null
+  signature: string | null,
+  timestamp?: string | null
 ): boolean {
   if (!secret || !signature) return false;
   const normalized = signature.trim();
@@ -91,7 +115,9 @@ export function verifyHookSignature(
   }
   const provided = normalized.replace(/^sha256=/i, "").trim().toLowerCase();
   if (!/^[a-f0-9]{64}$/.test(provided)) return false;
-  const expected = signHookPayload(secret, body).replace(/^sha256=/, "");
+  const expected = (
+    timestamp ? signHookPayloadWithTimestamp(secret, timestamp, body) : signHookPayload(secret, body)
+  ).replace(/^sha256=/, "");
   return timingSafeStringEqual(expected, provided);
 }
 
@@ -162,6 +188,10 @@ export function authenticateHookRequest(input: HookAuthInput): HookAuthResult {
   if (!verifyHookToken(settings.token, input.token)) {
     return { ok: false, status: 401, error: "Неверный token." };
   }
+  const timestampValue = input.timestamp?.trim() || null;
+  // Защита от replay включается только вместе с подписью и ненулевым окном.
+  const needsSignedTimestamp =
+    settings.requireSignature && settings.timestampToleranceSeconds > 0;
   if (settings.requireSignature) {
     if (!settings.secret) {
       return {
@@ -177,12 +207,26 @@ export function authenticateHookRequest(input: HookAuthInput): HookAuthResult {
         error: "Не передана HMAC-подпись (X-Scheduler-Signature).",
       };
     }
-    if (!verifyHookSignature(settings.secret, input.body, input.signature)) {
+    if (needsSignedTimestamp && !timestampValue) {
+      return {
+        ok: false,
+        status: 401,
+        error: "Не передан X-Scheduler-Timestamp: при включённой подписи он обязателен.",
+      };
+    }
+    if (
+      !verifyHookSignature(
+        settings.secret,
+        input.body,
+        input.signature,
+        needsSignedTimestamp ? timestampValue : null
+      )
+    ) {
       return { ok: false, status: 401, error: "Неверная HMAC-подпись." };
     }
   }
   const timestamp = verifyHookTimestamp(
-    input.timestamp,
+    timestampValue,
     settings.timestampToleranceSeconds,
     input.nowMs
   );

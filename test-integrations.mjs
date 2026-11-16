@@ -30,6 +30,7 @@ const {
 } = await import("./dist/core/structured-log.js");
 const {
   signHookPayload,
+  signHookPayloadWithTimestamp,
   verifyHookSignature,
   verifyHookToken,
   verifyHookTimestamp,
@@ -115,6 +116,22 @@ assert(!verifyHookTimestamp("not-a-number", 300).ok, "нечисловой times
 assert(verifyHookTimestamp(null, 300).ok, "без timestamp проверка пропускается");
 assert(verifyHookTimestamp(String(nowSeconds - 1000), 0).ok, "нулевой tolerance выключает проверку");
 
+// HMAC, привязанный к timestamp: перехваченный запрос нельзя переиграть.
+const tsNow = String(nowSeconds);
+const tsSignature = signHookPayloadWithTimestamp(secret, tsNow, body);
+assert(
+  verifyHookSignature(secret, body, tsSignature, tsNow),
+  "подпись с timestamp принимается по схеме <timestamp>.<body>"
+);
+assert(
+  !verifyHookSignature(secret, body, tsSignature, String(nowSeconds + 60)),
+  "подпись, посчитанная для другого timestamp, отклоняется"
+);
+assert(
+  !verifyHookSignature(secret, body, tsSignature),
+  "timestamp-подпись не принимается как legacy body-only"
+);
+
 const headers = {
   "x-scheduler-signature": signature,
   "x-gitlab-token": token,
@@ -155,6 +172,32 @@ assert(
     settings: { ...authBase.settings, secret: "" },
   }).status === 403,
   "authenticateHookRequest: без secret -> 403"
+);
+
+// Подпись + обязательный timestamp: replay невозможен.
+const signedAuth = {
+  settings: { ...enabledSettings.integrations.hooks, timestampToleranceSeconds: 300 },
+  token,
+  signature: tsSignature,
+  timestamp: tsNow,
+  body,
+  nowMs: nowSeconds * 1000,
+};
+assert(
+  authenticateHookRequest(signedAuth).ok,
+  "authenticateHookRequest принимает подпись с timestamp"
+);
+assert(
+  authenticateHookRequest({ ...signedAuth, timestamp: null }).status === 401,
+  "authenticateHookRequest: без timestamp при включённой подписи -> 401"
+);
+assert(
+  authenticateHookRequest({ ...signedAuth, signature }).status === 401,
+  "authenticateHookRequest: legacy body-only подпись при обязательном timestamp -> 401"
+);
+assert(
+  authenticateHookRequest({ ...signedAuth, timestamp: String(nowSeconds + 60) }).status === 401,
+  "authenticateHookRequest: переигранный запрос со свежим timestamp -> 401"
 );
 
 // --- 3. JSONL-логи -------------------------------------------------------
@@ -334,7 +377,8 @@ assert(!!startedServer && getDashboardPort() === 4370, "дашборд стар�
 const base = `http://127.0.0.1:${getDashboardPort()}`;
 const hookUrl = `${base}/api/hooks/HOOK-TASK?token=${encodeURIComponent(token)}`;
 const hookBody = JSON.stringify({ event: "push", ref: "refs/heads/main" });
-const hookSignature = signHookPayload(secret, hookBody);
+const hookTimestamp = String(Math.floor(Date.now() / 1000));
+const hookSignature = signHookPayloadWithTimestamp(secret, hookTimestamp, hookBody);
 
 const getHook = await fetch(`${base}/api/hooks/hook-task`);
 assert(getHook.status === 405, "GET на /api/hooks/:task -> 405");
@@ -376,7 +420,7 @@ const accepted = await fetch(hookUrl, {
   headers: {
     "content-type": "application/json",
     "x-scheduler-signature": hookSignature,
-    "x-scheduler-timestamp": String(Math.floor(Date.now() / 1000)),
+    "x-scheduler-timestamp": hookTimestamp,
   },
   body: hookBody,
 });
@@ -391,6 +435,7 @@ const gitlab = await fetch(`${base}/api/hooks/hook-task`, {
     "content-type": "application/json",
     "x-gitlab-token": token,
     "x-hub-signature-256": hookSignature,
+    "x-scheduler-timestamp": hookTimestamp,
   },
   body: hookBody,
 });
@@ -399,18 +444,24 @@ assert(runCalls === 2, "повторный hook снова запускает з
 
 const unknown = await fetch(`${base}/api/hooks/no-such-task?token=${encodeURIComponent(token)}`, {
   method: "POST",
-  headers: { "content-type": "application/json", "x-scheduler-signature": hookSignature },
+  headers: {
+    "content-type": "application/json",
+    "x-scheduler-signature": hookSignature,
+    "x-scheduler-timestamp": hookTimestamp,
+  },
   body: hookBody,
 });
 assert(unknown.status === 404, "hook для неизвестной задачи -> 404");
 
+const oversizedBody = "x".repeat(2000);
 const oversized = await fetch(hookUrl, {
   method: "POST",
   headers: {
     "content-type": "application/json",
-    "x-scheduler-signature": signHookPayload(secret, "x".repeat(2000)),
+    "x-scheduler-signature": signHookPayloadWithTimestamp(secret, hookTimestamp, oversizedBody),
+    "x-scheduler-timestamp": hookTimestamp,
   },
-  body: "x".repeat(2000),
+  body: oversizedBody,
 });
 assert(oversized.status === 413, "тело больше maxBodyBytes -> 413");
 
