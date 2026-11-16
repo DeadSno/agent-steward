@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import fs from "node:fs";
 import { pathToFileURL } from "node:url";
 import { createSchedulerBackend } from "./scheduler/index.js";
 import { notifyTaskCompletion } from "../notifications.js";
@@ -16,6 +17,94 @@ import {
 type Status = "success" | "error" | "timeout";
 
 const RETRY_STATE_KEY = "retry_state";
+
+/** Сколько последних строк лога сканировать при поиске токенов/стоимости. */
+const LOG_TAIL_LINES = 500;
+
+/**
+ * Читает последние `maxLines` строк текстового файла.
+ * Возвращает пустой массив, если файл недоступен.
+ */
+function readLogTail(filePath: string, maxLines: number): string[] {
+  try {
+    const content = fs.readFileSync(filePath, "utf8");
+    const lines = content.split(/\r?\n/);
+    if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+    return lines.slice(-maxLines);
+  } catch {
+    return [];
+  }
+}
+
+export interface UsageInfo {
+  tokens?: number;
+  costUsd?: number;
+}
+
+const USAGE_PREFIX = '^\\s*(?:\\[.*?\\]\\s*)?';
+const TOKEN_PATTERNS: RegExp[] = [
+  new RegExp(USAGE_PREFIX + '(?:tokens?|token\\s+usage|usage)\\s*[:=]\\s*([0-9][0-9.,]*)\\s*([kKmM])?\\b', 'i'),
+  new RegExp(USAGE_PREFIX + '(?:input|output|total)\\s+tokens?\\s*[:=]?\\s*([0-9][0-9.,]*)\\s*([kKmM])?\\b', 'i'),
+];
+const COST_PATTERNS: RegExp[] = [
+  new RegExp(USAGE_PREFIX + '(?:cost|total\\s+cost)\\s*[:=]?\\s*\\$\\s*([0-9]+(?:[.,][0-9]+)?)', 'i'),
+  new RegExp(USAGE_PREFIX + '(?:cost|total\\s+cost)\\s*[:=]\\s*([0-9]+(?:[.,][0-9]+)?)\\s*(?:usd|\\$)', 'i'),
+];
+
+function parseUsageValue(raw: string, suffix?: string): number | undefined {
+  const value = parseFloat(raw.replace(',', '.'));
+  if (!Number.isFinite(value)) return undefined;
+  let mult = 1;
+  if (suffix) {
+    const s = suffix.toLowerCase();
+    if (s === 'k') mult = 1000;
+    else if (s === 'm') mult = 1000000;
+  }
+  return Math.round(value * mult);
+}
+
+/**
+ * Извлекает информацию о расходе токенов и стоимости из хвоста лога задачи.
+ * Шаблоны «якорные»: метка должна стоять в начале строки (допускается префикс
+ * времени лога), чтобы не ловить конфиг-дампы и прочую прозу ИИ.
+ * Идёт с конца: OpenCode печатает итог последним.
+ */
+export function parseUsageFromLog(logFile: string): UsageInfo {
+  const result: UsageInfo = {};
+  if (!logFile) return result;
+
+  const lines = readLogTail(logFile, LOG_TAIL_LINES);
+  if (!lines.length) return result;
+
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const text = lines[i];
+    if (/opencode\.json|OPENCODE_CONFIG/i.test(text)) continue;
+
+    if (result.tokens === undefined) {
+      for (const pattern of TOKEN_PATTERNS) {
+        const m = text.match(pattern);
+        if (m) {
+          const v = parseUsageValue(m[1], m[2]);
+          if (v !== undefined) { result.tokens = v; break; }
+        }
+      }
+    }
+
+    if (result.costUsd === undefined) {
+      for (const pattern of COST_PATTERNS) {
+        const m = text.match(pattern);
+        if (m) {
+          result.costUsd = parseFloat(m[1].replace(',', '.'));
+          break;
+        }
+      }
+    }
+
+    if (result.tokens !== undefined && result.costUsd !== undefined) break;
+  }
+
+  return result;
+}
 
 /**
  * Ищет настройку повторов задачи в БД.
@@ -248,6 +337,7 @@ async function main() {
     ninth,
     tenth,
     eleventh,
+    twelfth,
   ] = process.argv;
 
   // Режим повтора: node record-history.js --retry "<task>" <delaySec>
@@ -304,8 +394,23 @@ async function main() {
     }
     const durationMs = Number(fifth) || 0;
     const error = sixth !== undefined ? sixth : null;
+    // 12-й аргумент — путь к лог-файлу задачи (добавлен в T-08 / D-08).
+    const logFile = twelfth;
     const tokens = parseOptionalNumber(seventh);
     const costUsd = parseOptionalNumber(eighth);
+    // Если обёртка не передала токены/стоимость ("-"), пробуем распарсить из лога.
+    // Это даёт одинаковое поведение для Windows (ps-wrapper) и POSIX (bash).
+    let tokensResolved = tokens;
+    let costResolved = costUsd;
+    if ((tokensResolved === undefined || costResolved === undefined) && logFile) {
+      const usage = parseUsageFromLog(logFile);
+      if (tokensResolved === undefined && usage.tokens !== undefined) {
+        tokensResolved = usage.tokens;
+      }
+      if (costResolved === undefined && usage.costUsd !== undefined) {
+        costResolved = usage.costUsd;
+      }
+    }
     const model = ninth && ninth !== "-" ? ninth.trim() || undefined : undefined;
     const preFlightStatus = parseHookStatus(tenth);
     const postFlightStatus = parseHookStatus(eleventh);
@@ -324,8 +429,8 @@ async function main() {
       durationMs,
       error,
       chainTarget,
-      tokens,
-      costUsd,
+      tokensResolved,
+      costResolved,
       model,
       preFlightStatus,
       postFlightStatus
@@ -337,7 +442,7 @@ async function main() {
       return;
     }
 
-    await handleCompletion(taskName, st, chainTarget, error, durationMs, tokens, costUsd);
+    await handleCompletion(taskName, st, chainTarget, error, durationMs, tokensResolved, costResolved);
     return;
   }
 

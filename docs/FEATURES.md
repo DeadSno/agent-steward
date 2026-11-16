@@ -439,6 +439,28 @@ token/signature/timestamp), 403 (channel disabled or credentials missing), 404
 (unknown task), 413 (body over `maxBodyBytes`). The dashboard still binds to
 localhost only, so external CI needs a tunnel or self-hosted runner.
 
+#### Replay protection guidance for senders
+
+Both remaining authentication modes are replayable at the transport level, so
+senders should be chosen with that in mind:
+
+- **Signature with `timestampToleranceSeconds = 0` (legacy).** The HMAC covers
+  only the body, so any intercepted request can be replayed verbatim, forever.
+  Set a non-zero tolerance and send `X-Scheduler-Timestamp` (unix seconds or
+  milliseconds): the signature then covers `<timestamp>.<body>` and a captured
+  request stops working outside the window.
+- **Token-only mode.** A bearer token in a query parameter or header is also
+  replayable — the scheduler cannot distinguish a repeat from a replay. If you
+  cannot switch to timestamp-signed HMAC, mitigate instead: keep the token in
+  CI secrets (not in code), rotate it regularly, scope one token per task, and
+  make the target task idempotent so an accidental replay does no harm.
+- **GitHub Actions.** GitHub does not send `X-Scheduler-Timestamp` itself, so
+  `X-Hub-Signature-256` alone runs in legacy (replayable) mode. Prefer a
+  workflow step that signs `<timestamp>.<body>` with the shared secret, or rely
+  on short-lived workflow runs and idempotent tasks.
+- The scheduler itself performs no replay cache: unique-request deduplication
+  (e.g. event IDs) is the sender's responsibility.
+
 ### OpenTelemetry
 
 History can be exported as OTLP/JSON: one span per run, deterministic 32-hex
@@ -539,6 +561,27 @@ substituted at run time (missing secrets resolve to an empty string with a
 name-only warning). Secret references survive masking — they are shown verbatim in
 the GUI env editor — while literal secret-like values (`TOKEN=`, `PASSWORD=`, …)
 are masked as `***` in logs, structured logs, history and audit.
+
+#### Recovering a quarantined secrets store
+
+If `secrets.json` fails to parse, it is quarantined, not deleted: the file is
+renamed to `secrets.json.corrupt-<timestamp>` next to the original. This is a
+side effect of a read operation — recovery is **manual by design** so that no
+automatic rewrite can destroy data:
+
+1. Find the quarantined file in the plugin directory: `secrets.json.corrupt-*`
+   (Windows: `%APPDATA%\opencode\windows-scheduler\`, macOS/Linux:
+   `~/.config/opencode/windows-scheduler/` or `$XDG_CONFIG_HOME`).
+2. Inspect it: the corruption is usually truncated JSON (interrupted write) or
+   manual editing. Fix the JSON syntax in a text editor.
+3. Copy the fixed file back to `secrets.json` (keep the `.corrupt-*` copy as a
+   backup) and verify with `manage_secrets` (`action: "list"`).
+4. If the file cannot be repaired, secrets are re-set with `manage_secrets`
+   (`action: "set"`); values encrypted with a lost `secrets.key` cannot be
+   recovered — re-enter them.
+5. In the rarer case where even the rename failed, writes stay blocked
+   (`corruptedStore` is set) until the `.corrupt-*` path is cleared manually —
+   move the broken file away yourself, then re-set the secrets.
 
 ### Audit log (Спринт 26)
 

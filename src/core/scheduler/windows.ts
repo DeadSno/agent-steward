@@ -21,15 +21,66 @@ const MAX_OUTPUT_BUFFER = 10 * 1024 * 1024;
 export const WINDOWS_TASK_PREFIX = `\\${TASK_FOLDER}\\${TASK_FOLDER_NAME}\\`;
 
 /**
- * Декодирует вывод консольных утилит Windows.
- *
- * `schtasks.exe` запускается напрямую, без `cmd.exe`, поэтому метасимволы
- * в аргументах не исполняются. Вывод утилиты на русской Windows приходит
- * в OEM-кодировке (CP866), из-за чего Node, читающий его как UTF-8,
- * показывает «?????». Поэтому: если байты — валидный UTF-8, декодируем
- * как UTF-8, иначе пробуем CP866.
+ * Кэш OEM-кодовой страницы системы. Заполняется один раз через реестр
+ * HKLM\SYSTEM\CurrentControlSet\Control\Nls\CodePage (значение OEMCP).
  */
-function decodeConsoleOutput(buf: Buffer | string | undefined | null): string {
+let oemCodePageCache: number | null = null;
+
+/**
+ * Определяет OEM-кодовую страницу системы из реестра Windows.
+ *
+ * schtasks.exe и другие консольные утилиты выводят текст в OEM-кодировке
+ * системы (CP866 на русской Windows, 850/852 на западноевропейской, 437 на
+ * английской и т.д.). Жёсткий фолбэк на cp866 ломает вывод на DE/FR/ES/IT/PL
+ * и других локалях: акцентные ключи (nächste Ausführung, última ejecución и т.д.)
+ * превращаются в кракозябры и не распознаются парсером.
+ *
+ * Фолбэк — cp866 (историческое поведение на русской Windows).
+ */
+export async function getOemCodePage(): Promise<number> {
+  if (oemCodePageCache !== null) {
+    return oemCodePageCache;
+  }
+  try {
+    const { stdout } = await execFileAsync("reg", [
+      "query",
+      "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Nls\\CodePage",
+      "/v",
+      "OEMCP",
+    ], {
+      windowsHide: true,
+      encoding: "buffer",
+      maxBuffer: 64 * 1024,
+    });
+    // reg query выводит в OEM-кодировке, но цифры кода страницы — ASCII,
+    // поэтому декодировать можно через cp866/utf8 — цифры не пострадают.
+    const text = decodeConsoleOutputSync(stdout);
+    // Значение может быть REG_DWORD (0x362) или REG_SZ (866 / "866").
+    const hexMatch = text.match(/0x([0-9A-Fa-f]{1,8})/i);
+    const decMatch = text.match(/\b(\d{2,5})\b/);
+    let cp: number | null = null;
+    if (hexMatch) {
+      cp = parseInt(hexMatch[1], 16);
+    } else if (decMatch) {
+      cp = parseInt(decMatch[1], 10);
+    }
+    if (cp && cp > 0 && cp < 65536) {
+      oemCodePageCache = cp;
+      return cp;
+    }
+  } catch {
+    // реестр недоступен — фолбэк ниже
+  }
+  oemCodePageCache = 866;
+  return 866;
+}
+
+/**
+ * Синхронная обёртка для начального определения OEMCP (используется внутри
+ * getOemCodePage для декодирования вывода reg query). Цифры кода страницы —
+ * ASCII, поэтому cp866/utf8 безопасны для этого шага.
+ */
+export function decodeConsoleOutputSync(buf: Buffer | string | undefined | null): string {
   if (!buf) return "";
   if (typeof buf === "string") return buf;
   if (buf.length === 0) return "";
@@ -40,6 +91,33 @@ function decodeConsoleOutput(buf: Buffer | string | undefined | null): string {
   }
 
   return iconv.decode(buf, "cp866");
+}
+
+/**
+ * Декодирует вывод консольных утилит Windows.
+ *
+ * `schtasks.exe` запускается напрямую, без `cmd.exe`, поэтому метасимволы
+ * в аргументах не исполняются. Вывод утилиты приходит в OEM-кодировке системы,
+ * из-за чего Node, читающий его как UTF-8, показывает «?????». Поэтому:
+ * если байты — валидный UTF-8, декодируем как UTF-8, иначе пробуем OEMCP
+ * системы (определяется из реестра Nls\CodePage), с фолбэком на cp866.
+ */
+export async function decodeConsoleOutput(buf: Buffer | string | undefined | null): Promise<string> {
+  if (!buf) return "";
+  if (typeof buf === "string") return buf;
+  if (buf.length === 0) return "";
+
+  const utf8 = buf.toString("utf8");
+  if (!utf8.includes("\uFFFD")) {
+    return utf8;
+  }
+
+  const cp = await getOemCodePage();
+  try {
+    return iconv.decode(buf, `cp${cp}`);
+  } catch {
+    return iconv.decode(buf, "cp866");
+  }
 }
 
 /** Достаёт Buffer из ошибки execFile (при encoding: "buffer"). */
@@ -96,14 +174,14 @@ export async function runSchtasks(args: string[]): Promise<SchtasksResult> {
       maxBuffer: MAX_OUTPUT_BUFFER,
     })) as unknown as { stdout: Buffer; stderr: Buffer };
     return {
-      stdout: decodeConsoleOutput(stdout),
-      stderr: decodeConsoleOutput(stderr),
+      stdout: await decodeConsoleOutput(stdout),
+      stderr: await decodeConsoleOutput(stderr),
       code: 0,
     };
   } catch (err) {
     const e = err as { message?: string; code?: number | null };
-    const stdout = decodeConsoleOutput(errorBuffer(err, "stdout"));
-    const stderr = decodeConsoleOutput(errorBuffer(err, "stderr"));
+    const stdout = await decodeConsoleOutput(errorBuffer(err, "stdout"));
+    const stderr = await decodeConsoleOutput(errorBuffer(err, "stderr"));
     throw new SchtasksError(
       `schtasks error: ${buildErrorDetails(err, stdout, stderr)}`,
       e.code ?? null,
@@ -383,8 +461,8 @@ export class WindowsScheduler implements SchedulerBackend {
       return { alreadyRunning: false };
     } catch (err) {
       const e = err as { message?: string; code?: number | null };
-      const stdout = decodeConsoleOutput(errorBuffer(err, "stdout"));
-      const stderr = decodeConsoleOutput(errorBuffer(err, "stderr"));
+      const stdout = await decodeConsoleOutput(errorBuffer(err, "stdout"));
+      const stderr = await decodeConsoleOutput(errorBuffer(err, "stderr"));
       const errorDetails = buildErrorDetails(err, stdout, stderr);
 
       const text = errorDetails.toLowerCase();

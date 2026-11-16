@@ -151,17 +151,29 @@ if ($LockFile) {
             } catch {}
         }
         if ($stale) {
-            try { Remove-Item -LiteralPath $LockFile -Force } catch {}
+            # T-03: не удаляем lock напрямую. Remove-Item + CreateNew давал
+            # гонку: второй воркер мог снести lock, который первый только что
+            # создал, и запустить ту же задачу повторно. Атомарно уводим старый
+            # файл в уникальное имя; если rename не удался — чужой lock не трогаем.
+            $staleLockPath = "$LockFile.stale-$PID-$([DateTime]::UtcNow.Ticks)"
+            $staleMoved = $false
             try {
-                $lockStream = [System.IO.File]::Open($LockFile, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
-                try {
-                    $lockBytes = [System.Text.Encoding]::UTF8.GetBytes("$startedAtIso|$PID")
-                    $lockStream.Write($lockBytes, 0, $lockBytes.Length)
-                } finally {
-                    $lockStream.Dispose()
-                }
-                $script:lockAcquired = $true
+                Move-Item -LiteralPath $LockFile -Destination $staleLockPath -Force -ErrorAction Stop
+                $staleMoved = $true
             } catch {}
+            if ($staleMoved) {
+                try {
+                    $lockStream = [System.IO.File]::Open($LockFile, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+                    try {
+                        $lockBytes = [System.Text.Encoding]::UTF8.GetBytes("$startedAtIso|$PID")
+                        $lockStream.Write($lockBytes, 0, $lockBytes.Length)
+                    } finally {
+                        $lockStream.Dispose()
+                    }
+                    $script:lockAcquired = $true
+                } catch {}
+                try { Remove-Item -LiteralPath $staleLockPath -Force -ErrorAction SilentlyContinue } catch {}
+            }
         }
         if (-not $script:lockAcquired) {
             Write-Log "[windows-scheduler] Запуск задачи '$TaskName' пропущен: удерживается активная блокировка."
@@ -306,25 +318,27 @@ function Invoke-OpenCodeOnce {
     $script:inServiceBlock = $false
     $script:inComment = $false
     try {
+        # Живой стриминг: вывод opencode проходит через конвейер и пишется в лог
+        # (Out-File -Append) или консоль (Out-Host) построчно, по мере поступления.
+        # Раньше вывод сначала копился в $output и сбрасывался одним куском только
+        # после завершения процесса: дашборд/get_task_logs были слепы во время
+        # долгих запусков, росла память, а при kill обёртки лог терялся целиком.
+        # $LASTEXITCODE после конвейера сохраняет код последней нативной команды.
         if ($LogFile) {
             if ($CommandPath -like "*.ps1") {
-                $output = & powershell.exe -ExecutionPolicy Bypass -NoProfile -File $CommandPath @Arguments *>&1
+                & powershell.exe -ExecutionPolicy Bypass -NoProfile -File $CommandPath @Arguments *>&1 | ForEach-Object { Format-LogLine $_ } | Out-File -FilePath $LogFile -Append -Encoding utf8
                 $script:attemptExitCode = $LASTEXITCODE
-                $output | ForEach-Object { Format-LogLine $_ } | Out-File -FilePath $LogFile -Append -Encoding utf8
             } else {
-                $output = & $CommandPath @Arguments *>&1
+                & $CommandPath @Arguments *>&1 | ForEach-Object { Format-LogLine $_ } | Out-File -FilePath $LogFile -Append -Encoding utf8
                 $script:attemptExitCode = $LASTEXITCODE
-                $output | ForEach-Object { Format-LogLine $_ } | Out-File -FilePath $LogFile -Append -Encoding utf8
             }
         } else {
             if ($CommandPath -like "*.ps1") {
-                $output = & powershell.exe -ExecutionPolicy Bypass -NoProfile -File $CommandPath @Arguments *>&1
+                & powershell.exe -ExecutionPolicy Bypass -NoProfile -File $CommandPath @Arguments *>&1 | ForEach-Object { Format-LogLine $_ } | Out-Host
                 $script:attemptExitCode = $LASTEXITCODE
-                $output | ForEach-Object { Format-LogLine $_ } | Out-Host
             } else {
-                $output = & $CommandPath @Arguments *>&1
+                & $CommandPath @Arguments *>&1 | ForEach-Object { Format-LogLine $_ } | Out-Host
                 $script:attemptExitCode = $LASTEXITCODE
-                $output | ForEach-Object { Format-LogLine $_ } | Out-Host
             }
         }
     } finally {
@@ -708,11 +722,11 @@ try {
     if ($RecorderFile) {
         try {
             if ($script:runId) {
-                & node "$RecorderFile" --finish "$script:runId" "$TaskName" "$status" $durationMs "$errorArg" $tokensArg $costArg "$modelArg" "$script:preFlightStatus" "$script:postFlightStatus"
+                & node "$RecorderFile" --finish "$script:runId" "$TaskName" "$status" $durationMs "$errorArg" $tokensArg $costArg "$modelArg" "$script:preFlightStatus" "$script:postFlightStatus" "$LogFile"
             } else {
                 # Fallback: --start не удался (например, старая установка) —
                 # пишем завершённую запись старым способом, без потери истории.
-                & node "$RecorderFile" "$TaskName" "$status" "$startedAtIso" $durationMs "$errorArg" $tokensArg $costArg "$modelArg" "$script:preFlightStatus" "$script:postFlightStatus"
+                & node "$RecorderFile" "$TaskName" "$status" "$startedAtIso" $durationMs "$errorArg" $tokensArg $costArg "$modelArg" "$script:preFlightStatus" "$script:postFlightStatus" "$LogFile"
             }
         } catch {}
     }

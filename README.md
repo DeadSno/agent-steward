@@ -12,6 +12,15 @@
 
 ---
 
+## Quickstart
+
+1. Install the plugin (see [Install](#install)) and restart OpenCode.
+2. Ask the agent to schedule your first job — one call is enough:
+
+   > Schedule a task "morning-report" that runs every day at 09:00 with the prompt: "Summarize yesterday's git commits and write the report to ~/reports/".
+
+3. Open the dashboard to watch it run: the agent prints the URL when the task is created (default `http://localhost:4380`), or ask for it later with the `get_dashboard_info` tool. Prefer a preview without installing anything? `node scripts/demo-dashboard.mjs` starts a demo dashboard at `http://localhost:4380`.
+
 ## Why
 
 Most schedulers for AI agents are cron wrappers: they run a prompt on a timer and write a log file. This plugin treats agent jobs as **workflows**:
@@ -46,8 +55,9 @@ Want to see it without installing OpenCode? `node scripts/demo-dashboard.mjs` st
 
 The interface ships in Russian (default) and English. Switch it in the sidebar settings
 (Settings → Language) or with the `manage_settings` tool (`action: "update"`,
-`locale: "en"`). The change applies immediately to the GUI, notifications and digest,
-the dashboard and agent tool results — no restart. Agent tool descriptions and schemas
+`locale: "en"`). The switch applies without a restart to the GUI, notifications,
+digest and agent tool results. Dashboard localization is still being rolled out:
+some client-side strings remain Russian for now. Agent tool descriptions and schemas
 stay English by design, and diagnostics printed to the console stay Russian.
 
 Catalogs live in `locales/ru.json` and `locales/en.json`; every key must exist in both,
@@ -74,12 +84,6 @@ Or add the plugin to `opencode.jsonc` manually:
 ```
 
 `experimental.schedules: false` disables the built-in OpenCode scheduler so the agent does not confuse built-in job tools with this plugin's tools. Restart OpenCode after changing the config.
-
-Alternatively, install globally with npm:
-
-```bash
-npm install -g opencode-windows-scheduler
-```
 
 From source:
 

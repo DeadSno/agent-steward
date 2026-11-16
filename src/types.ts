@@ -88,9 +88,13 @@ export function validateTaskName(raw: string): string | null {
       "Разрешены буквы (включая кириллицу), цифры, пробел, «_», «-» и «.»."
     );
   }
-  // schtasks ограничивает /tn в 237 символов вместе с папкой планировщика.
-  // Префикс "\OpenCode\windows-scheduler\" занимает 28 символов, остаётся 209 на имя задачи.
-  const MAX_TASK_NAME_LENGTH = 209;
+  // schtasks ограничивает /tn в 237 символов вместе с полным путём задачи.
+  // Полный путь: \OpenCode\<TASK_FOLDER_NAME>\<taskName>
+  // leading \ + TASK_FOLDER + \ + TASK_FOLDER_NAME + \ — префикс перед именем задачи.
+  // Для default: \OpenCode\windows-scheduler\ = 30 символов → 207 на имя.
+  // Для не-default профиля: \OpenCode\windows-scheduler-<profile>\ →чем длиннее профиль, тем меньше места.
+  const prefixLength = 1 + TASK_FOLDER.length + 1 + TASK_FOLDER_NAME.length + 1;
+  const MAX_TASK_NAME_LENGTH = 237 - prefixLength;
   if (name.length > MAX_TASK_NAME_LENGTH) {
     return (
       `Имя задачи "${name}" слишком длинное (${name.length} символов, максимум ${MAX_TASK_NAME_LENGTH} ` +

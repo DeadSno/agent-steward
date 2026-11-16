@@ -57,6 +57,7 @@ import type {
 } from "./settings.js";
 import { runHistoryRetention, maybeRunHistoryRetention } from "./core/retention.js";
 import { buildAnalytics } from "./core/analytics.js";
+import { generateSelfAnalysisReport } from "./core/self-analysis.js";
 import { getHistory, listRunningRecords } from "./db/history-repo.js";
 import { getAllMetrics } from "./db/metrics-repo.js";
 import {
@@ -793,6 +794,36 @@ export const getAnalyticsSchema = z.object({
     .describe("How many top tasks to include (default 10)."),
 });
 
+/** self_analysis — система самоанализа: здоровье, аномалии, тренды, рекомендации. */
+export const selfAnalysisSchema = z.object({
+  days: z
+    .number()
+    .int()
+    .min(1)
+    .max(365)
+    .optional()
+    .describe("Analysis window in days (default 14)."),
+  topLimit: z
+    .number()
+    .int()
+    .min(1)
+    .max(50)
+    .optional()
+    .describe("How many top tasks to include (default 10)."),
+  includeAnomalies: z
+    .boolean()
+    .optional()
+    .describe("Include anomaly detection (default true)."),
+  includeTrends: z
+    .boolean()
+    .optional()
+    .describe("Include trend analysis (default true)."),
+  includeRecommendations: z
+    .boolean()
+    .optional()
+    .describe("Include recommendations (default true)."),
+});
+
 /** manage_settings — глобальные настройки планировщика. */
 export const manageSettingsSchema = z.object({
   action: z
@@ -1010,6 +1041,9 @@ type WorkspacesArgs = z.infer<typeof manageWorkspacesSchema>;
 type MatrixControlArgs = z.infer<typeof matrixControlSchema>;
 type MetricsArgs = z.infer<typeof getMetricsSchema>;
 type AnalyticsArgs = z.infer<typeof getAnalyticsSchema>;
+
+/** self_analysis — аргументы системы самоанализа. */
+type SelfAnalysisArgs = z.infer<typeof selfAnalysisSchema>;
 type SettingsArgs = z.infer<typeof manageSettingsSchema>;
 type LocalAiArgs = z.infer<typeof manageLocalAiSchema>;
 type TemplatesArgs = z.infer<typeof manageTemplatesSchema>;
@@ -2159,6 +2193,7 @@ const resumeTaskExecute = wrapExecute<ResumeArgs>(async (args) => {
 });
 
 /** Периодичность проверки автопродолжения задач (Спринт 19). */
+const POSIX_MAX_PROMPT_BYTES = 131072; // 128 KiB: MAX_ARG_STRLEN на одном аргументе в Linux; запас под обёртку.
 const PAUSED_UNTIL_CHECK_MS = 5 * 60 * 1000;
 /** Период проверки дайджеста и зависших матриц (Спринт 20). */
 const NOTIFICATION_CHECK_MS = 60 * 1000;
@@ -2551,6 +2586,43 @@ const getAnalyticsExecute = wrapExecute<AnalyticsArgs>(async (args) => {
   return { content: JSON.stringify({ success: true, report }) };
 });
 
+/** self_analysis — система самоанализа: здоровье, аномалии, тренды, рекомендации. */
+const selfAnalysisExecute = wrapExecute<SelfAnalysisArgs>(async (args) => {
+  const windowDays = Math.min(365, Math.max(1, Math.floor(Number(args.days) || 14)));
+  const records = getHistory(null, 20000);
+  const definitions = await loadTaskDefinitions();
+  
+  const report = generateSelfAnalysisReport(records, {
+    days: windowDays,
+    topLimit: Math.max(1, Math.floor(Number(args.topLimit) || 10)),
+    tasks: definitions.map((definition) => ({
+      name: definition.name,
+      matrixParentId: definition.matrixParentId,
+    })),
+  });
+
+  // Фильтруем секции если нужно
+  const result: any = {
+    generatedAt: report.generatedAt,
+    windowDays: report.windowDays,
+    health: report.health,
+    summary: report.summary,
+    sources: report.sources,
+  };
+
+  if (args.includeAnomalies !== false) {
+    result.anomalies = report.anomalies;
+  }
+  if (args.includeTrends !== false) {
+    result.trends = report.trends;
+  }
+  if (args.includeRecommendations !== false) {
+    result.recommendations = report.recommendations;
+  }
+
+  return { content: JSON.stringify({ success: true, report: result }) };
+});
+
 /** manage_settings — чтение и изменение глобальных настроек. */
 const manageSettingsExecute = wrapExecute<SettingsArgs>(async (args) => {
   const current = await loadSettings();
@@ -2783,7 +2855,7 @@ const manageProfilesExecute = wrapExecute<ProfilesArgs>(async (args) => {
     };
   }
 
-  const removed = deleteProfile(name);
+  const removed = await deleteProfile(name);
   return {
     content: JSON.stringify({
       success: removed,
@@ -3622,6 +3694,16 @@ export default Plugin.define({
       });
 
       editor.add({
+        name: "self_analysis",
+        input: selfAnalysisSchema,
+        description:
+          "Generates a self-analysis report: system health score, anomaly detection, trend analysis and optimization recommendations. " +
+          "Helps identify performance issues, cost spikes and reliability problems.",
+        options: { codemode: true },
+        execute: selfAnalysisExecute as any,
+      });
+
+      editor.add({
         name: "manage_settings",
         input: manageSettingsSchema,
         description:
@@ -4233,6 +4315,58 @@ export default Plugin.define({
           };
         }
       },
+      self_analysis: async (input: unknown) => {
+        const { days, topLimit, includeAnomalies, includeTrends, includeRecommendations } = input as {
+          days?: number;
+          topLimit?: number;
+          includeAnomalies?: boolean;
+          includeTrends?: boolean;
+          includeRecommendations?: boolean;
+        };
+        try {
+          const windowDays = Math.min(
+            365,
+            Math.max(1, Math.floor(Number(days) || 14))
+          );
+          const records = getHistory(null, 20000);
+          const definitions = await loadTaskDefinitions();
+          const report = generateSelfAnalysisReport(records, {
+            days: windowDays,
+            topLimit: Math.max(1, Math.floor(Number(topLimit) || 10)),
+            tasks: definitions.map((definition) => ({
+              name: definition.name,
+              matrixParentId: definition.matrixParentId,
+            })),
+          });
+
+          // Фильтруем секции если нужно
+          const result: any = {
+            generatedAt: report.generatedAt,
+            windowDays: report.windowDays,
+            health: report.health,
+            summary: report.summary,
+            sources: report.sources,
+          };
+
+          if (includeAnomalies !== false) {
+            result.anomalies = report.anomalies;
+          }
+          if (includeTrends !== false) {
+            result.trends = report.trends;
+          }
+          if (includeRecommendations !== false) {
+            result.recommendations = report.recommendations;
+          }
+
+          return { success: true, report: result };
+        } catch (err: any) {
+          return {
+            success: false,
+            report: null,
+            error: err instanceof Error ? err.message : String(err),
+          };
+        }
+      },
       get_dashboard_port: async () => {
         return { port: getDashboardPort() };
       },
@@ -4458,7 +4592,7 @@ export default Plugin.define({
       delete_profile: async (input: unknown) => {
         const { name } = input as { name: string };
         try {
-          const removed = deleteProfile(name);
+          const removed = await deleteProfile(name);
           return {
             success: removed,
             message: removed
@@ -5003,13 +5137,24 @@ async function schedulerCreateTask(
     throw new Error(nameError);
   }
   name = normalizedName;
-  // Windows передаёт промпт через argv (CreateProcess), где лимит командной
-  // строки ~32767 символов. Проверяем до записи файлов, чтобы не оставить
-  // полусозданную задачу и дать понятную ошибку вместо сбоя schtasks.
-  if (process.platform === "win32" && prompt.length > 30000) {
-    throw new Error(
-      `Промпт задачи "${normalizedName}" слишком длинный для командной строки Windows: ${prompt.length} символов (максимум 30000). Сократите промпт или вынесите инструкции в файл.`
-    );
+  // Обе платформы передают промпт через argv. Windows (CreateProcess) даёт
+  // ~32767 символов на командную строку, POSIX — MAX_ARG_STRLEN (128 КиБ на
+  // один аргумент в Linux; macOS ограничивает суммарный ARG_MAX). Проверяем до
+  // записи файлов, чтобы не оставить полусозданную задачу и дать понятную
+  // ошибку вместо сбоя schtasks/cron.
+  if (process.platform === "win32") {
+    if (prompt.length > 30000) {
+      throw new Error(
+        `Промпт задачи "${normalizedName}" слишком длинный для командной строки Windows: ${prompt.length} символов (максимум 30000). Сократите промпт или вынесите инструкции в файл.`
+      );
+    }
+  } else {
+    const promptBytes = Buffer.byteLength(prompt, "utf8");
+    if (promptBytes > POSIX_MAX_PROMPT_BYTES) {
+      throw new Error(
+        `Промпт задачи "${normalizedName}" слишком длинный для командной строки POSIX: ${promptBytes} байт (максимум ${POSIX_MAX_PROMPT_BYTES}). Сократите промпт или вынесите инструкции в файл.`
+      );
+    }
   }
   // Для отката файлов: при обновлении существующей задачи файлы переиспользуются,
   // удалять их при сбое нельзя — в БД остаётся прежнее определение.

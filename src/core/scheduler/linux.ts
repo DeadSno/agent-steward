@@ -1,8 +1,11 @@
 import { execFile, spawn } from "node:child_process";
+import path from "node:path";
 import { promisify } from "node:util";
 import { buildAtTimestamp } from "../one-shot.js";
 import { needsPollMode } from "../schedule-v2.js";
 import { TASK_FOLDER_NAME } from "../../types.js";
+import { LockManager, withLockWait } from "../lock.js";
+import { getBasePluginDir } from "../../profiles.js";
 import { PosixSchedulerBase, shellQuote } from "./posix.js";
 import type { RegistryEntry } from "./registry.js";
 
@@ -122,15 +125,31 @@ export class LinuxScheduler extends PosixSchedulerBase {
 
   /** Перегенерирует блок плагина из реестра. */
   private async rebuildCrontab(): Promise<void> {
-    const entries = await this.registry.load();
-    const current = await this.readCrontab();
-    const base = this.stripBlock(current);
-    const block = this.renderBlock(entries);
+    // T-17: crontab общий для всех профилей пользователя, а read-modify-write
+    // не атомарен — параллельные операции разных профилей могли затирать блоки
+    // друг друга. Кросс-процессный замок живёт в базовой директории плагина
+    // (общей для всех профилей) и ждёт освобождения вместо пропуска.
+    const crontabLock = new LockManager(
+      path.join(getBasePluginDir(), "locks")
+    );
+    await withLockWait(
+      crontabLock,
+      "crontab",
+      async () => {
+        const entries = await this.registry.load();
+        const current = await this.readCrontab();
+        const base = this.stripBlock(current);
+        const block = this.renderBlock(entries);
 
-    // Пустой блок (нет задач) не пишем, чтобы не оставлять мусор в crontab.
-    const hasTasks = block.split("\n").some((line) => line.trim().startsWith("# task:"));
-    const next = [base, hasTasks ? block : ""].filter(Boolean).join("\n");
-    await this.writeCrontab(next);
+        // Пустой блок (нет задач) не пишем, чтобы не оставлять мусор в crontab.
+        const hasTasks = block
+          .split("\n")
+          .some((line) => line.trim().startsWith("# task:"));
+        const next = [base, hasTasks ? block : ""].filter(Boolean).join("\n");
+        await this.writeCrontab(next);
+      },
+      { timeoutMs: 15000, staleMs: 60000 }
+    );
   }
 
   /** Строка команды one-shot для stdin `at`. */

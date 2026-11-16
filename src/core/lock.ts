@@ -27,6 +27,11 @@ export class LockManager {
     return path.join(this.lockDir, this.lockFileName(taskName));
   }
 
+  /** Публичный путь к lock-файлу (для ожидания/вытеснения зависших lock). */
+  pathFor(taskName: string): string {
+    return this.lockFilePath(taskName);
+  }
+
   /**
    * Инициализация директории блокировок и очистка зависших (старых) файлов.
    * Вызывается при старте плагина.
@@ -43,15 +48,33 @@ export class LockManager {
       // После kill -9 он остаётся навсегда, поэтому чистим его так же, как .lock.
       const isLockFile = file.endsWith(".lock");
       const isLockDir = file.endsWith(".lock.d");
-      if (!isLockFile && !isLockDir) continue;
+      const isStaleArtifact = /\.lock(\.d)?\.stale-/.test(file);
+      if (!isLockFile && !isLockDir && !isStaleArtifact) continue;
       try {
+        // Артефакт предыдущего вытеснения валидным lock быть не может,
+        // поэтому убираем его независимо от возраста.
+        if (isStaleArtifact) {
+          await fs.rm(fullPath, { recursive: true, force: true }).catch(() => {});
+          continue;
+        }
         const stat = await fs.stat(fullPath);
         const age = now - stat.mtimeMs;
         if (age > STALE_LOCK_MAX_AGE_MS) {
-          await fs.rm(fullPath, { recursive: true, force: true }).catch(() => {});
+          // T-03: не удаляем lock напрямую. Два воркера могли одновременно
+          // снести один и тот же файл, после чего один из них удалял свежий
+          // lock, созданный другим, и задача запускалась повторно. Атомарный
+          // rename в уникальное имя выигрывает только один процесс; второй
+          // получает ENOENT и не трогает чужой lock.
+          const stalePath = `${fullPath}.stale-${process.pid}-${Date.now()}`;
+          try {
+            await fs.rename(fullPath, stalePath);
+          } catch {
+            continue;
+          }
+          await fs.rm(stalePath, { recursive: true, force: true }).catch(() => {});
           // eslint-disable-next-line no-console
           console.log(
-            `[windows-scheduler] Удалён зависший lock: ${file} (возраст ${Math.round(
+            `[windows-scheduler] Вытеснен зависший lock: ${file} (возраст ${Math.round(
               age / 1000
             )} с)`
           );
@@ -128,6 +151,64 @@ export async function withLock<T>(
       `[windows-scheduler] Запуск задачи "${taskName}" пропущен: удерживается активная блокировка.`
     );
     return null;
+  }
+
+  try {
+    return await fn();
+  } finally {
+    await lockManager.release(taskName);
+  }
+}
+
+/**
+ * Выполняет функцию с ожиданием освобождения файловой блокировки.
+ * В отличие от withLock не пропускает выполнение, а ждёт: критично для
+ * read-modify-write операций (crontab), где пропуск ломает состояние.
+ * Если lock удерживается дольше staleMs — считается осиротевшим и вытесняется
+ * атомарным rename (как в T-03), чтобы зависший процесс не блокировал навсегда.
+ */
+export async function withLockWait<T>(
+  lockManager: LockManager,
+  taskName: string,
+  fn: () => Promise<T>,
+  options: { timeoutMs?: number; retryDelayMs?: number; staleMs?: number } = {}
+): Promise<T> {
+  const timeoutMs = options.timeoutMs ?? 15000;
+  const retryDelayMs = options.retryDelayMs ?? 50;
+  const staleMs = options.staleMs ?? 60000;
+  const deadline = Date.now() + timeoutMs;
+  const lockPath = lockManager.pathFor(taskName);
+
+  for (;;) {
+    if (await lockManager.acquire(taskName)) break;
+
+    // Осиротевший lock: короткая операция не может длиться дольше staleMs.
+    if (staleMs > 0) {
+      try {
+        const stat = await fs.stat(lockPath);
+        if (Date.now() - stat.mtimeMs > staleMs) {
+          // T-03-совместимое вытеснение: атомарный rename выигрывает ровно
+          // один процесс, остальные получают ENOENT и повторяют попытку.
+          const stalePath = `${lockPath}.stale-${process.pid}-${Date.now()}`;
+          try {
+            await fs.rename(lockPath, stalePath);
+            await fs.rm(stalePath, { force: true }).catch(() => {});
+          } catch {
+            // Кто-то успел раньше — просто повторяем acquire.
+          }
+          continue;
+        }
+      } catch {
+        // lock исчез — сразу пробуем acquire снова.
+      }
+    }
+
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `Не удалось получить блокировку "${taskName}" за ${timeoutMs} мс.`
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
   }
 
   try {

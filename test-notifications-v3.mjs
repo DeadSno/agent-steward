@@ -146,6 +146,146 @@ check(
     apiError.message.includes("***")
 );
 
+// --- 4b. Telegram: длинный текст режется ДО форматирования ----------------
+{
+  const chunks = [];
+  const captureFetch = async (url, init) => {
+    chunks.push(JSON.parse(init.body));
+    return {
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ ok: true, result: {} }),
+    };
+  };
+
+  // HTML: много & < > — раньше сущности рвались между чанками.
+  const rawHtml = "A & B <tag> ".repeat(900);
+  chunks.length = 0;
+  await sendTelegramMessage(token, "42", rawHtml, {
+    fetchImpl: captureFetch,
+    parseMode: "HTML",
+    dashboardUrl: dash,
+  });
+
+  check("HTML long: текст разбит на несколько сообщений", chunks.length > 1);
+  check(
+    "HTML long: каждый чанк в пределах лимита",
+    chunks.every((c) => c.text.length <= telegram.TELEGRAM_MAX_MESSAGE_LENGTH)
+  );
+  check(
+    "HTML long: сущности не разорваны между чанками",
+    chunks.every((c) => {
+      const rest = c.text
+        .replace(/&amp;/g, "")
+        .replace(/&lt;/g, "")
+        .replace(/&gt;/g, "")
+        .replace(/&quot;/g, "")
+        .replace(/&#39;/g, "");
+      return !rest.includes("&");
+    })
+  );
+  check(
+    "HTML long: ссылка на дашборд только в последнем чанке",
+    !chunks.slice(0, -1).some((c) => c.text.includes("<a href=")) &&
+      chunks[chunks.length - 1].text.includes("<a href=")
+  );
+  const htmlJoined = chunks
+    .map((c) =>
+      c.text
+        .replace(/\n\n<a href="[^"]*">[^<]*<\/a>$/, "")
+        .replace(/&amp;/g, "&")
+        .replace(/&lt;/g, "<")
+        .replace(/&gt;/g, ">")
+    )
+    .join("");
+  check(
+    "HTML long: после де-экранирования текст совпадает с исходным",
+    htmlJoined === rawHtml
+  );
+
+  // MarkdownV2: *_[]() — раньше '\' и '*' могли разъехаться по чанкам.
+  const rawMd = "a_b*c[d](e). ".repeat(900);
+  chunks.length = 0;
+  await sendTelegramMessage(token, "42", rawMd, {
+    fetchImpl: captureFetch,
+    parseMode: "MarkdownV2",
+    dashboardUrl: dash,
+  });
+
+  check("MarkdownV2 long: текст разбит на несколько сообщений", chunks.length > 1);
+  check(
+    "MarkdownV2 long: каждый чанк в пределах лимита",
+    chunks.every((c) => c.text.length <= telegram.TELEGRAM_MAX_MESSAGE_LENGTH)
+  );
+  check(
+    "MarkdownV2 long: нет висящего обратного слэша в конце чанка",
+    chunks.every((c) => !c.text.endsWith("\\"))
+  );
+  check(
+    "MarkdownV2 long: ссылка только в последнем чанке",
+    !chunks.slice(0, -1).some((c) => c.text.includes(`](${dash})`)) &&
+      chunks[chunks.length - 1].text.includes(`](${dash})`)
+  );
+
+  // HTTP 400 «can't parse entities» → повтор того же чанка без parse_mode.
+  let attempts400 = 0;
+  const downgradeFetch = async (url, init) => {
+    attempts400 += 1;
+    const requestBody = JSON.parse(init.body);
+    if (requestBody.parse_mode) {
+      return {
+        ok: false,
+        status: 400,
+        text: async () =>
+          JSON.stringify({
+            ok: false,
+            description: "Bad Request: can't parse entities: unexpected end tag",
+          }),
+      };
+    }
+    return {
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ ok: true, result: {} }),
+    };
+  };
+  await sendTelegramMessage(token, "42", "Hello <world>", {
+    fetchImpl: downgradeFetch,
+    parseMode: "HTML",
+  });
+  check("400 parse entities: повтор без parse_mode", attempts400 === 2);
+}
+
+// --- 4c. Telegram: 429-ретрай не теряет уведомления --------------------------
+{
+  let attempts429 = 0;
+  const retryFetch = async (url, init) => {
+    attempts429 += 1;
+    if (attempts429 === 1) {
+      return {
+        ok: false,
+        status: 429,
+        text: async () =>
+          JSON.stringify({
+            ok: false,
+            description: "Too Many Requests: retry after 1",
+            parameters: { retry_after: 1 },
+          }),
+      };
+    }
+    return {
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ ok: true, result: {} }),
+    };
+  };
+  await sendTelegramMessage(token, "42", "Hello after 429", {
+    fetchImpl: retryFetch,
+    parseMode: "HTML",
+  });
+  check("429 retry: ровно 2 попытки (первая 429, вторая 200)", attempts429 === 2);
+}
+
 // --- 5. Нативные команды --------------------------------------------------
 const win = buildNativeNotificationCommand("win32", {
   title: "Scheduler",

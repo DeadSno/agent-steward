@@ -12,7 +12,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "sched-exec-hardening-"));
 process.env.APPDATA = tempRoot;
@@ -277,6 +277,54 @@ const readLog = (file) => (fs.existsSync(file) ? fs.readFileSync(file, "utf8") :
       `timeoutSeconds=${task?.timeoutSeconds}`
     );
   }
+}
+
+// --- 6. Живой стриминг лога: строки появляются ДО завершения задачи ---
+// Регрессия: обёртка копила весь вывод в $output и сбрасывала его одним куском
+// только после выхода opencode. Проверяем, что первая строка видна в логе, пока
+// процесс ещё работает.
+if (process.platform === "win32") {
+  const spec = {
+    name: "Exec Hardening Streaming",
+    sanitized: "exec-hardening-streaming",
+    timeoutSeconds: 30,
+  };
+  const { wrapperPath, logFile } = await prepareTask(spec);
+  const child = spawn("cmd.exe", ["/c", wrapperPath], {
+    env: { ...process.env, FAKE_MODE: "sleep", FAKE_SLEEP: "6" },
+    windowsHide: true,
+    stdio: "ignore",
+  });
+  const exited = new Promise((resolve) => child.on("exit", () => resolve()));
+
+  // Ждём появления первой строки, пока задача ещё выполняется (ping ~5 с).
+  const sawFirstLineEarly = await new Promise((resolve) => {
+    const deadline = Date.now() + 4000;
+    const poll = () => {
+      if (readLog(logFile).includes("FAKE-OPENCODE-SLEEP-START")) {
+        resolve(true);
+        return;
+      }
+      if (child.exitCode !== null || Date.now() > deadline) {
+        resolve(false);
+        return;
+      }
+      setTimeout(poll, 100);
+    };
+    poll();
+  });
+
+  await exited;
+
+  check(
+    "стриминг: первая строка видна до завершения задачи",
+    sawFirstLineEarly,
+    "лог не пополнился, пока задача ещё работала"
+  );
+  check(
+    "стриминг: финальная строка лога записана",
+    readLog(logFile).includes("FAKE-OPENCODE-SLEEP-DONE")
+  );
 }
 
 const failed = results.filter((r) => !r.ok);

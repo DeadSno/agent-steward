@@ -174,11 +174,120 @@ export function splitTelegramMessage(
   return chunks;
 }
 
+/** Спецсимволы MarkdownV2 (должны совпадать с escapeTelegramText). */
+const MARKDOWN_V2_SPECIAL = new Set("\\_*[]()~`>#+-=|{}.!".split(""));
+/** Спецсимволы legacy Markdown. */
+const MARKDOWN_SPECIAL = new Set("\\_*[]`".split(""));
+
+/** Сколько UTF-16 code units займёт символ после экранирования. */
+function escapedCharLength(ch: string, parseMode: TelegramParseMode): number {
+  if (parseMode === "HTML") {
+    if (ch === "&") return 5;
+    if (ch === "<" || ch === ">") return 4;
+    return ch.length;
+  }
+  if (parseMode === "MarkdownV2") {
+    return MARKDOWN_V2_SPECIAL.has(ch) ? ch.length + 1 : ch.length;
+  }
+  if (parseMode === "Markdown") {
+    return MARKDOWN_SPECIAL.has(ch) ? ch.length + 1 : ch.length;
+  }
+  return ch.length;
+}
+
+/** Длина текста после экранирования под parse_mode. */
+function formattedLength(text: string, parseMode: TelegramParseMode): number {
+  let total = 0;
+  for (const ch of String(text ?? "")) {
+    total += escapedCharLength(ch, parseMode);
+  }
+  return total;
+}
+
+/**
+ * Возвращает индекс конца сырого чанка, который после экранирования
+ * укладывается в maxFormatted. Старается рвать по переводу строки и никогда
+ * не разрывает surrogate pair.
+ */
+function cutRawChunk(
+  text: string,
+  start: number,
+  maxFormatted: number,
+  parseMode: TelegramParseMode
+): number {
+  let index = start;
+  let used = 0;
+  let lastNewline = -1;
+  while (index < text.length) {
+    const codePoint = text.codePointAt(index) as number;
+    const ch = String.fromCodePoint(codePoint);
+    const cost = escapedCharLength(ch, parseMode);
+    if (used + cost > maxFormatted) break;
+    used += cost;
+    index += ch.length;
+    if (ch === "\n") lastNewline = index;
+  }
+  if (index < text.length && index > start && lastNewline > start) {
+    const consumed = index - start;
+    if (lastNewline - start > consumed * 0.5) index = lastNewline;
+  }
+  if (index <= start) {
+    // Гарантируем прогресс хотя бы на один code point.
+    const codePoint = text.codePointAt(start) as number;
+    index = start + String.fromCodePoint(codePoint).length;
+  }
+  return index;
+}
+
+/**
+ * Режет СЫРОЙ текст так, чтобы каждый отформатированный чанк укладывался в
+ * лимит Telegram. Резать уже экранированный текст нельзя: HTML-сущности
+ * (&amp;, &lt;) и MarkdownV2-экранирование (\*) могут разорваться между
+ * сообщениями, и Bot API отвечает 400 «can't parse entities».
+ * linkReserve — запас под ссылку на дашборд в последнем чанке.
+ */
+function splitRawMessageForSend(
+  text: string,
+  limit: number,
+  parseMode: TelegramParseMode,
+  linkReserve = 0
+): string[] {
+  const value = String(text ?? "");
+  const max = Math.max(1, Math.floor(limit));
+  if (!value) return [""];
+
+  const chunks: string[] = [];
+  let start = 0;
+  while (start < value.length) {
+    const end = cutRawChunk(value, start, max, parseMode);
+    chunks.push(value.slice(start, end));
+    start = end;
+  }
+
+  if (linkReserve > 0 && chunks.length > 0) {
+    const maxLast = Math.max(1, max - linkReserve);
+    const lastStart = value.length - chunks[chunks.length - 1].length;
+    if (formattedLength(value.slice(lastStart), parseMode) > maxLast) {
+      // Пересобираем хвост с меньшим лимитом, чтобы влезла ссылка.
+      chunks.splice(chunks.length - 1, 1);
+      let tailStart = lastStart;
+      while (tailStart < value.length) {
+        const end = cutRawChunk(value, tailStart, maxLast, parseMode);
+        chunks.push(value.slice(tailStart, end));
+        tailStart = end;
+      }
+    }
+  }
+  return chunks;
+}
+
 /** Пауза без утечки таймера. */
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     const timer = setTimeout(resolve, ms);
-    timer.unref?.();
+    // timer.unref?.() УБРАН: процесс не должен завершаться во время 429-ретрая,
+    // иначе уведомление теряется (record-history — короткоживущий процесс,
+    // event loop не удерживается unref-таймером).
   });
 }
 
@@ -204,10 +313,18 @@ export async function sendTelegramMessage(
 
   const apiBase = resolveApiBase(options.apiBase);
   const parseMode = options.parseMode ?? "";
-  const formatted = formatTelegramText(
+  const dashboardUrl =
+    options.includeDashboardLink === false ? null : options.dashboardUrl;
+  // Ссылку добавляем только в последний чанк, поэтому её длину резервируем
+  // заранее: formatTelegramText("") возвращает ровно суффикс со ссылкой.
+  const linkSuffix = dashboardUrl
+    ? formatTelegramText("", parseMode, dashboardUrl)
+    : "";
+  const rawChunks = splitRawMessageForSend(
     text,
+    TELEGRAM_MAX_MESSAGE_LENGTH,
     parseMode,
-    options.includeDashboardLink === false ? null : options.dashboardUrl
+    linkSuffix.length
   );
 
   const timeoutMs = Math.max(
@@ -217,19 +334,30 @@ export async function sendTelegramMessage(
   const fetchImpl = options.fetchImpl ?? fetch;
   const url = `${apiBase}/bot${safeToken}/sendMessage`;
 
-  for (const chunk of splitTelegramMessage(formatted)) {
-    const body: Record<string, unknown> = { chat_id: target, text: chunk };
-    if (parseMode) body.parse_mode = parseMode;
-    if (options.disableNotification) body.disable_notification = true;
-    if (
-      typeof options.messageThreadId === "number" &&
-      Number.isFinite(options.messageThreadId) &&
-      options.messageThreadId > 0
-    ) {
-      body.message_thread_id = Math.floor(options.messageThreadId);
-    }
+  for (let chunkIndex = 0; chunkIndex < rawChunks.length; chunkIndex++) {
+    const isLastChunk = chunkIndex === rawChunks.length - 1;
+    // Форматируем каждый сырой чанк отдельно: экранированные сущности
+    // (&amp;, \*) никогда не разрываются между сообщениями.
+    const chunk = formatTelegramText(
+      rawChunks[chunkIndex],
+      parseMode,
+      isLastChunk ? dashboardUrl : null
+    );
+    let parseModeForChunk = parseMode;
+    let downgradedParseMode = false;
 
     for (let attempt = 0; ; attempt++) {
+      const body: Record<string, unknown> = { chat_id: target, text: chunk };
+      if (parseModeForChunk) body.parse_mode = parseModeForChunk;
+      if (options.disableNotification) body.disable_notification = true;
+      if (
+        typeof options.messageThreadId === "number" &&
+        Number.isFinite(options.messageThreadId) &&
+        options.messageThreadId > 0
+      ) {
+        body.message_thread_id = Math.floor(options.messageThreadId);
+      }
+
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
@@ -257,11 +385,28 @@ export async function sendTelegramMessage(
           continue;
         }
 
+        const description =
+          (typeof parsed?.description === "string" && parsed.description) ||
+          raw.slice(0, 200) ||
+          `HTTP ${response.status}`;
+
+        // Страховка: если Telegram всё равно не разобрал разметку, повторяем
+        // тот же чанк без parse_mode — лучше без форматирования, чем потерять
+        // уведомление целиком.
+        if (
+          response.status === 400 &&
+          parseModeForChunk &&
+          !downgradedParseMode &&
+          /parse entities|can't parse|unsupported start tag|can't find end/i.test(
+            description
+          )
+        ) {
+          downgradedParseMode = true;
+          parseModeForChunk = "";
+          continue;
+        }
+
         if (!response.ok || parsed?.ok === false) {
-          const description =
-            (typeof parsed?.description === "string" && parsed.description) ||
-            raw.slice(0, 200) ||
-            `HTTP ${response.status}`;
           throw new Error(
             `Telegram API: ${sanitizeErrorText(description, safeToken)}`
           );

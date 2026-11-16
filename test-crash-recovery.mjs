@@ -50,6 +50,11 @@ assert(
   "PowerShell-обёртка вызывает record-history --start и --finish"
 );
 assert(
+  WRAPPER_SCRIPT.includes("Move-Item") &&
+    !WRAPPER_SCRIPT.includes("Remove-Item -LiteralPath $LockFile -Force"),
+  "PowerShell-обёртка вытесняет stale lock через Move-Item, а не Remove-Item"
+);
+assert(
   WRAPPER_SCRIPT.includes("[workspace]") && WRAPPER_SCRIPT.includes("$WorkspaceName"),
   "PowerShell-обёртка логирует workspace и принимает WorkspaceName"
 );
@@ -68,6 +73,11 @@ const bashScript = buildBashWrapperScript({
 assert(
   bashScript.includes("--start") && bashScript.includes("--finish"),
   "bash-обёртка вызывает record-history --start и --finish"
+);
+assert(
+  bashScript.includes('mv "$LOCK_FILE.d"') &&
+    !bashScript.includes('rm -rf "$LOCK_FILE.d" 2>/dev/null || true'),
+  "bash-обёртка вытесняет stale lock через mv, а не rm -rf"
 );
 assert(
   bashScript.includes("WORKSPACE_NAME") && bashScript.includes("[workspace]"),

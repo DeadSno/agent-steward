@@ -718,6 +718,34 @@ const GetAnalyticsOutput = {
   required: ["success", "report"],
 } as const;
 
+const SelfAnalysisInput = {
+  type: "object" as const,
+  properties: {
+    /** Окно анализа в днях (по умолчанию 14, максимум 365). */
+    days: { type: "number" },
+    /** Сколько строк в топах (по умолчанию 10). */
+    topLimit: { type: "number" },
+    /** Включить обнаружение аномалий (по умолчанию true). */
+    includeAnomalies: { type: "boolean" },
+    /** Включить анализ трендов (по умолчанию true). */
+    includeTrends: { type: "boolean" },
+    /** Включить рекомендации (по умолчанию true). */
+    includeRecommendations: { type: "boolean" },
+  },
+  additionalProperties: false,
+} as const;
+
+const SelfAnalysisOutput = {
+  type: "object" as const,
+  properties: {
+    success: { type: "boolean" },
+    // null при ошибке: report формируется только при success=true.
+    report: { type: ["object", "null"] as const },
+    error: { type: "string" },
+  },
+  required: ["success", "report"],
+} as const;
+
 const TestNotificationInput = {
   type: "object" as const,
   properties: {},
@@ -1519,6 +1547,7 @@ export const SchedulerRpc = Rpc.define({
     },
     cleanup_history: { input: CleanupHistoryInput, output: CleanupHistoryOutput },
     get_analytics: { input: GetAnalyticsInput, output: GetAnalyticsOutput },
+    self_analysis: { input: SelfAnalysisInput, output: SelfAnalysisOutput },
     expand_matrix_preview: {
       input: ExpandMatrixPreviewInput,
       output: ExpandMatrixPreviewOutput,
