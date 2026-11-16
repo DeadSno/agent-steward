@@ -307,7 +307,19 @@ try {
   );
 } finally {
   closeDb();
-  fs.rmSync(home, { recursive: true, force: true });
+  // Windows: после closeDb() ОС может ещё держать handle на файл БД, и
+  // rmSync падает с EPERM (force это не подавляет). Teardown не проверка —
+  // повторяем и не роняем тест.
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      fs.rmSync(home, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+      break;
+    } catch {
+      if (attempt === 4) {
+        console.log(`  (teardown) не удалось удалить ${home} — пропускаем`);
+      }
+    }
+  }
 }
 
 console.log(`\nTriage async: ${passed}/${passed + failed} проверок пройдено.`);
