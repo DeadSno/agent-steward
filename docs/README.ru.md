@@ -49,7 +49,7 @@ English version: [README.md](../README.md).
 
 ## Установка
 
-Нужны OpenCode v2 и Node.js 22.13+.
+Нужны OpenCode v2 и Node.js 22.22+.
 
 ```bash
 opencode plugin add opencode-windows-scheduler

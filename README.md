@@ -32,7 +32,7 @@ Want to see it without installing OpenCode? `node scripts/demo-dashboard.mjs` st
 
 | Area | What you get |
 |---|---|
-| Scheduling | cron expressions, one-shot runs via `runAt` / `delaySeconds`, native OS scheduler (Windows / macOS / Linux), timezone-free local time, pause/resume, session continuity (`new` / `reuse` / `last` with `sessionMaxRuns` cleanup) |
+| Scheduling | cron expressions, one-shot runs via `runAt` / `delaySeconds`, native OS scheduler (Windows / macOS / Linux), IANA timezones (native where possible, minute-poll + gate otherwise), pause/resume, session continuity (`new` / `reuse` / `last` with `sessionMaxRuns` cleanup) |
 | Reliability | lock-file no-overlap protection, timeouts with hard kill, retries with delay, crash recovery |
 | Quality | Quality Gate command, before/after hooks, per-task allowed/denied tool lists |
 | Orchestration | `dependsOn` DAG, `nextTaskOnSuccess` / `nextTaskOnError` chains, matrix fan-out (parallel/sequential, `continue`/`stop`, concurrency, per-workspace overrides, aggregator task) |
@@ -40,7 +40,7 @@ Want to see it without installing OpenCode? `node scripts/demo-dashboard.mjs` st
 | Multi-repo | workspaces with path validation, per-workspace runs, matrix over one parent task |
 | Observability | SQLite history (success / error / timeout / partial / running), metrics (duration, tokens, cost), JSONL run logs with `/api/logs`, Prometheus `/metrics`, OTLP export, per-task logs, local web dashboard with 14-day analytics, history retention and CSV/JSON export |
 | Operations | dry-run preview, export/import JSON, templates, multi-channel notifications (webhook, Telegram, native OS toasts), quiet hours, digest, encrypted secrets (`${secret:NAME}`), audit log, settings |
-| Interfaces | OpenCode GUI panel, web dashboard, 24 agent tools, built-in agent skill |
+| Interfaces | OpenCode GUI panel, web dashboard, 25 agent tools, built-in agent skill |
 
 ### Language
 
@@ -55,7 +55,7 @@ otherwise CI fails.
 
 ## Install
 
-Requires OpenCode v2 and Node.js 22.13+ (node:sqlite requires Node.js 22.13+, or 22.5+ with `--experimental-sqlite`).
+Requires OpenCode v2 and Node.js 22.22+ (node:sqlite and chokidar 6 require Node.js 22.22+).
 
 ```bash
 opencode plugin add opencode-windows-scheduler
@@ -118,13 +118,15 @@ The agent gets the full feature set — 25 tools covering scheduling, pipelines,
 | `send_notification` | `action` (`test`/`digest`), `channel?` (`all`/`webhook`/`telegram`/`native`) | Test the notification channels or send the digest |
 | `get_dashboard_info` | — | Dashboard port/URL, platform, title, active profile |
 | `cleanup_history` | `retentionDays?`, `maxRecords?` | Delete old history by age and/or record cap |
+| `manage_secrets` | `action`, `name?`, `value?` | Create, list or delete AES-256-GCM encrypted secrets used in task `env` |
+| `get_audit_log` | `action?`, `target?`, `actor?`, `since?`, `until?`, `limit?` | Mutation audit journal: who changed what, when and via which interface |
 | `emit_event` | `eventName`, `payload?` | Start tasks subscribed to an MCP event |
 
 `schedule_task` also accepts the full matrix configuration (`workspaceIds`, `strategy`, `failureMode`, `aggregation`, `concurrency`, `overrides`, `createAggregator`).
 
 ## Agent skill
 
-The plugin registers a built-in skill, `scheduled-job-best-practices`, so the agent loads guidance only when it is relevant: cron design, self-contained prompts, Quality Gates, matrix concurrency, DAG rules and post-incident diagnosis. No manual `.opencode/skills` setup is needed. The skill ships with `references/recipes.md` — seven copy-ready configurations.
+The plugin registers a built-in skill, `scheduled-job-best-practices`, so the agent loads guidance only when it is relevant: cron design, self-contained prompts, Quality Gates, matrix concurrency, DAG rules and post-incident diagnosis. No manual `.opencode/skills` setup is needed. The skill ships with `references/recipes.md` — eight copy-ready configurations.
 
 ## Matrix builds
 
@@ -189,7 +191,7 @@ Tasks are **interactive only** by default: Task Scheduler starts them only while
 npm install
 npm run build        # tsc
 npm run build:gui    # vite
-npm test             # 43 test suites, 600+ checks
+npm test             # 47 test suites, 600+ checks
 npm run test:en      # same suites with the English locale
 ```
 
@@ -203,6 +205,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — process model, modules, backends, data model.
 - [docs/FEATURES.md](docs/FEATURES.md) — full feature catalog with examples.
 - [docs/MIGRATION.md](docs/MIGRATION.md) — moving from cron, systemd, launchd or Task Scheduler.
+- [docs/SAVINGS.md](docs/SAVINGS.md) — how the «сэкономлено $» estimate is calculated.
 - [CROSS_PLATFORM.md](CROSS_PLATFORM.md) — Windows / macOS / Linux differences and backends.
 
 ## FAQ
