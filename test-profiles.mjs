@@ -165,12 +165,20 @@ check("изоляция: work БД отдельная", workProbe.dbFile === pat
 check("изоляция: work settings.json отдельный", workProbe.settingsFile === path.join(workDir, "settings.json"));
 
 // --- 6. Удаление профилей ------------------------------------------------
-check("deleteProfile: default удалить нельзя", throws(() => deleteProfile("default")));
-check("deleteProfile: work удалён", deleteProfile("work") === true);
+{
+  let defaultThrew = false;
+  try {
+    await deleteProfile("default");
+  } catch {
+    defaultThrew = true;
+  }
+  check("deleteProfile: default удалить нельзя", defaultThrew);
+}
+check("deleteProfile: work удалён", (await deleteProfile("work")) === true);
 check("deleteProfile: директория work исчезла", !fs.existsSync(workDir));
 check("deleteProfile: маркер вернулся на default", getProfileName() === DEFAULT_PROFILE);
-check("deleteProfile: повторное удаление → false", deleteProfile("work") === false);
-check("deleteProfile: second удалён", deleteProfile("second") === true);
+check("deleteProfile: повторное удаление → false", (await deleteProfile("work")) === false);
+check("deleteProfile: second удалён", (await deleteProfile("second")) === true);
 check("listProfiles: остался только default", listProfiles().length === 1 && listProfiles()[0].name === "default");
 
 // --- Итог ----------------------------------------------------------------

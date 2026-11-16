@@ -21,8 +21,8 @@ export abstract class PosixSchedulerBase implements SchedulerBackend {
 
   protected readonly registry: TaskRegistry;
 
-  constructor(backendId: string) {
-    this.registry = new TaskRegistry(backendId);
+  constructor(backendId: string, profile?: string) {
+    this.registry = new TaskRegistry(backendId, profile);
   }
 
   /** Регистрирует запись в планировщике ОС (crontab-строка или plist). */

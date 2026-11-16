@@ -164,10 +164,26 @@ export function buildLaunchdCalendar(runAt: string): {
 }
 
 /** Команда самоочистки launchd-агента после единственного запуска. */
-export function buildLaunchdOneShotCleanup(sanitizedName: string): string {
+export function buildLaunchdOneShotCleanup(
+  sanitizedName: string,
+  profile: string = "default"
+): string {
+  const label = launchdLabel(sanitizedName, profile);
   return (
     `launchctl bootout "gui/$(id -u)" ` +
-    `"$HOME/Library/LaunchAgents/com.opencode.scheduler.${sanitizedName}.plist" ` +
+    `"$HOME/Library/LaunchAgents/${label}.plist" ` +
     `>/dev/null 2>&1 || true`
   );
+}
+
+/**
+ * label launchd-агента задачи. Для default сохраняется историческое имя
+ * `com.opencode.scheduler.<name>`; у не-default профиля свой префикс, чтобы
+ * одноимённые задачи разных профилей не затирали plist друг друга.
+ */
+export function launchdLabel(sanitizedName: string, profile: string = "default"): string {
+  const base = `com.opencode.scheduler.${sanitizedName}`;
+  if (profile === "default") return base;
+  const scope = profile.replace(/[^A-Za-z0-9_.-]/g, "-");
+  return `com.opencode.scheduler.profile-${scope}.${sanitizedName}`;
 }

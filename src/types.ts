@@ -13,10 +13,11 @@ export const TASK_FOLDER = "OpenCode";
  * Для default сохраняем историческое имя (совместимость с уже созданными
  * задачами и обновлением плагина).
  */
-export const TASK_FOLDER_NAME = (() => {
-  const profile = getProfileName();
+export function taskFolderNameForProfile(profile: string = getProfileName()): string {
   return profile === "default" ? "windows-scheduler" : `windows-scheduler-${profile}`;
-})();
+}
+
+export const TASK_FOLDER_NAME = taskFolderNameForProfile();
 
 /**
  * Директория для хранения файлов плагина (обёртки, логи, блокировки, история).

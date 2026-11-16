@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { PLUGIN_DIR } from "../../types.js";
+import { getProfileDir, getProfileName } from "../../profiles.js";
 import type { TriggerType } from "./types.js";
 
 /**
@@ -29,12 +29,14 @@ export interface RegistryEntry {
   priority?: number;
 }
 
-/** Реестр задач конкретного бэкенда: PLUGIN_DIR/scheduler-<backend>.json. */
+/** Реестр задач конкретного бэкенда: <pluginDir>/scheduler-<backend>.json. */
 export class TaskRegistry {
   private readonly file: string;
+  private readonly dir: string;
 
-  constructor(backendId: string) {
-    this.file = path.join(PLUGIN_DIR, `scheduler-${backendId}.json`);
+  constructor(backendId: string, profile: string = getProfileName()) {
+    this.dir = getProfileDir(profile);
+    this.file = path.join(this.dir, `scheduler-${backendId}.json`);
   }
 
   /** Путь к файлу реестра (для диагностики). */
@@ -57,7 +59,7 @@ export class TaskRegistry {
   }
 
   async save(entries: RegistryEntry[]): Promise<void> {
-    await fs.mkdir(PLUGIN_DIR, { recursive: true });
+    await fs.mkdir(this.dir, { recursive: true });
     const tmp = `${this.file}.tmp`;
     await fs.writeFile(tmp, JSON.stringify(entries, null, 2), "utf8");
     await fs.rename(tmp, this.file);

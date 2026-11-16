@@ -1,10 +1,12 @@
 import { execFile } from "node:child_process";
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { sanitizeName } from "../../types.js";
-import { buildLaunchdCalendar } from "../one-shot.js";
+import { getProfileDir, getProfileName } from "../../profiles.js";
+import { buildLaunchdCalendar, launchdLabel } from "../one-shot.js";
 import { PosixSchedulerBase } from "./posix.js";
 import type { RegistryEntry } from "./registry.js";
 
@@ -12,9 +14,6 @@ const execFileAsync = promisify(execFile);
 
 /** Папка пользовательских LaunchAgents. */
 const LAUNCH_AGENTS_DIR = path.join(os.homedir(), "Library", "LaunchAgents");
-
-/** Префикс label/файлов плагина. */
-const LABEL_PREFIX = "com.opencode.scheduler";
 
 /** Экранирует текст для XML. */
 function xmlEscape(value: string): string {
@@ -207,12 +206,30 @@ export class MacScheduler extends PosixSchedulerBase {
   readonly platform: NodeJS.Platform = "darwin";
   readonly title = "OpenCode Scheduler";
 
-  constructor() {
-    super("mac");
+  constructor(profile: string = getProfileName()) {
+    super("mac", profile);
+    this.profile = profile;
   }
 
+  private readonly profile: string;
+
   private label(name: string): string {
-    return `${LABEL_PREFIX}.${sanitizeName(name)}`;
+    const sanitized = sanitizeName(name);
+    // Совместимость: до 1.5.6 plist не-default профилей назывался без scope.
+    // Используем старое имя, только если plist реально принадлежит этому
+    // профилю (в его команде есть директория профиля), иначе можно удалить
+    // одноимённый plist активного профиля.
+    if (this.profile !== "default") {
+      const legacy = launchdLabel(sanitized, "default");
+      const legacyPath = path.join(LAUNCH_AGENTS_DIR, `${legacy}.plist`);
+      try {
+        const text = fsSync.readFileSync(legacyPath, "utf8");
+        if (text.includes(getProfileDir(this.profile))) return legacy;
+      } catch {
+        // Старого plist нет — используем профильное имя.
+      }
+    }
+    return launchdLabel(sanitized, this.profile);
   }
 
   private plistPath(name: string): string {

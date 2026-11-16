@@ -13,6 +13,14 @@ import {
   decodeConsoleOutputSync,
 } from "./dist/core/scheduler/windows.js";
 
+// T-05 (CI): тест проверяет OEM-кодовую страницу и cp866-декодирование консоли
+// Windows. На Linux/macOS реестра нет, а фолбэк cp866 делает проверку
+// бессмысленной — пропускаем, чтобы не создавать ложную уверенность.
+if (process.platform !== "win32") {
+  console.log("windows-oem: пропуск на не-Windows.");
+  process.exit(0);
+}
+
 // 1. OEMCP из реестра — положительное число.
 const cp = await getOemCodePage();
 console.log(`OEMCP=${cp}`);

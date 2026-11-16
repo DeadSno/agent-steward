@@ -3,16 +3,13 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { buildAtTimestamp } from "../one-shot.js";
 import { needsPollMode } from "../schedule-v2.js";
-import { TASK_FOLDER_NAME } from "../../types.js";
 import { LockManager, withLockWait } from "../lock.js";
-import { getBasePluginDir } from "../../profiles.js";
+import { getBasePluginDir, getProfileName } from "../../profiles.js";
+import { taskFolderNameForProfile } from "../../types.js";
 import { PosixSchedulerBase, shellQuote } from "./posix.js";
 import type { RegistryEntry } from "./registry.js";
 
 const execFileAsync = promisify(execFile);
-
-const BLOCK_BEGIN = `# >>> opencode-scheduler:${TASK_FOLDER_NAME} >>>`;
-const BLOCK_END = `# <<< opencode-scheduler:${TASK_FOLDER_NAME} <<<`;
 
 /**
  * Бэкенд планировщика Linux на основе пользовательского crontab.
@@ -29,8 +26,16 @@ export class LinuxScheduler extends PosixSchedulerBase {
   readonly platform: NodeJS.Platform = "linux";
   readonly title = "OpenCode Scheduler";
 
-  constructor() {
-    super("linux");
+  private readonly blockBegin: string;
+  private readonly blockEnd: string;
+  private readonly ownsLegacyBlock: boolean;
+
+  constructor(profile: string = getProfileName()) {
+    super("linux", profile);
+    const folderName = taskFolderNameForProfile(profile);
+    this.blockBegin = `# >>> opencode-scheduler:${folderName} >>>`;
+    this.blockEnd = `# <<< opencode-scheduler:${folderName} <<<`;
+    this.ownsLegacyBlock = folderName === "windows-scheduler";
   }
 
   private cronLine(entry: RegistryEntry): string {
@@ -48,14 +53,14 @@ export class LinuxScheduler extends PosixSchedulerBase {
   }
 
   private renderBlock(entries: RegistryEntry[]): string {
-    const lines: string[] = [BLOCK_BEGIN];
+    const lines: string[] = [this.blockBegin];
     for (const entry of entries) {
       const line = this.cronLine(entry);
       if (!line) continue;
       lines.push(`# task: ${entry.name}`);
       lines.push(entry.paused ? `# PAUSED: ${line}` : line);
     }
-    lines.push(BLOCK_END);
+    lines.push(this.blockEnd);
     return lines.join("\n");
   }
 
@@ -84,11 +89,11 @@ export class LinuxScheduler extends PosixSchedulerBase {
     // Он принадлежит профилю default; другие профили его не трогают.
     const legacyBegin = "# >>> opencode-scheduler >>>";
     const legacyEnd = "# <<< opencode-scheduler <<<";
-    const ownsLegacy = TASK_FOLDER_NAME === "windows-scheduler";
+    const ownsLegacy = this.ownsLegacyBlock;
     const isBegin = (line: string) =>
-      line === BLOCK_BEGIN || (ownsLegacy && line === legacyBegin);
+      line === this.blockBegin || (ownsLegacy && line === legacyBegin);
     const isEnd = (line: string) =>
-      line === BLOCK_END || (ownsLegacy && line === legacyEnd);
+      line === this.blockEnd || (ownsLegacy && line === legacyEnd);
     const lines = content.split(/\r?\n/);
     const result: string[] = [];
     let inside = false;

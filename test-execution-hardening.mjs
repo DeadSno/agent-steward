@@ -14,6 +14,13 @@ import os from "node:os";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 
+// T-05 (CI): тест построен на cmd.exe/батниках и schtasks — на Linux/macOS
+// секции 1–5 не имеют смысла и падают. Пропускаем целиком.
+if (process.platform !== "win32") {
+  console.log("execution-hardening: пропуск на не-Windows (нужны cmd.exe и schtasks).");
+  process.exit(0);
+}
+
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "sched-exec-hardening-"));
 process.env.APPDATA = tempRoot;
 process.env.OPENCODE_SCHEDULER_HOME = path.join(tempRoot, "opencode", "windows-scheduler");

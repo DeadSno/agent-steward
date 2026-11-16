@@ -23,11 +23,49 @@ export type { RegistryEntry } from "./registry.js";
  *  - linux (и прочие POSIX) → LinuxScheduler (crontab).
  */
 export function createSchedulerBackend(
+  platform: NodeJS.Platform = process.platform,
+  profile?: string
+): SchedulerBackend {
+  if (platform === "win32") return new WindowsScheduler(profile);
+  if (platform === "darwin") return new MacScheduler(profile);
+  return new LinuxScheduler(profile);
+}
+
+/**
+ * Бэкенд планировщика в пространстве имён конкретного профиля — в том числе
+ * неактивного. Нужен, чтобы удаление профиля снимало ЕГО задачи, а не задачи
+ * активного профиля (T-05).
+ */
+export function createSchedulerBackendForProfile(
+  profile: string,
   platform: NodeJS.Platform = process.platform
 ): SchedulerBackend {
-  if (platform === "win32") return new WindowsScheduler();
-  if (platform === "darwin") return new MacScheduler();
-  return new LinuxScheduler();
+  return createSchedulerBackend(platform, profile);
+}
+
+/**
+ * Снимает все задачи профиля из планировщика ОС перед удалением его файлов.
+ * Ошибки по отдельным задачам игнорируются; бросает только если сам список
+ * задач получить не удалось.
+ */
+export async function removeScheduledTasksForProfile(
+  profile: string,
+  platform: NodeJS.Platform = process.platform
+): Promise<number> {
+  const scheduler = createSchedulerBackendForProfile(profile, platform);
+  const tasks = await scheduler.listTasks();
+  let removed = 0;
+  for (const task of tasks) {
+    const name = task.taskName ?? "";
+    if (!name) continue;
+    try {
+      await scheduler.deleteTask(name);
+      removed++;
+    } catch {
+      // Задача уже удалена или недоступна — продолжаем чистить остальные.
+    }
+  }
+  return removed;
 }
 
 let cached: SchedulerBackend | null = null;

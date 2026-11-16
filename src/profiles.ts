@@ -199,7 +199,7 @@ export function createProfile(name: string, port?: number): ProfileMeta {
 }
 
 /** Удаляет профиль (кроме default). Возвращает true, если директория удалена. */
-export function deleteProfile(name: string): boolean {
+export async function deleteProfile(name: string): Promise<boolean> {
   if (name === DEFAULT_PROFILE) {
     throw new Error("Профиль default удалить нельзя.");
   }
@@ -210,27 +210,19 @@ export function deleteProfile(name: string): boolean {
   const dir = getProfileDir(normalized);
   if (!fs.existsSync(dir)) return false;
 
-  // T-05: перед удалением директории профиля снимаем его задачи ОС,
+  // T-05: перед удалением директории профиля снимаем ЕГО задачи ОС,
   // иначе после удаления профиля остаются «сироты» в schtasks/crontab/launchd.
+  // Бэкенд создаётся в пространстве имён удаляемого профиля (не активного!),
+  // и удаление задач дожидается завершения до fs.rmSync.
   // Динамический import — чтобы не создавать циклическую зависимость
   // profiles.ts → scheduler/index.ts → types.ts (TASK_FOLDER_NAME IIFE).
   // Ошибки снятия не фатальны — директорию всё равно чистим.
-  void (async () => {
-    try {
-      const { getSchedulerBackend } = await import("./core/scheduler/index.js");
-      const scheduler = getSchedulerBackend();
-      const tasks = await scheduler.listTasks();
-      for (const task of tasks) {
-        try {
-          await scheduler.deleteTask(task.taskName ?? "");
-        } catch {
-          // Если задача уже удалена — нормально.
-        }
-      }
-    } catch {
-      // Планировщик недоступен (нет schtasks/launchd/crontab) — не прерываем удаление.
-    }
-  })();
+  try {
+    const { removeScheduledTasksForProfile } = await import("./core/scheduler/index.js");
+    await removeScheduledTasksForProfile(normalized);
+  } catch {
+    // Планировщик недоступен (нет schtasks/launchd/crontab) — не прерываем удаление.
+  }
 
   fs.rmSync(dir, { recursive: true, force: true });
 

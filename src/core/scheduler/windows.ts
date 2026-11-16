@@ -2,7 +2,8 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import iconv from "iconv-lite";
 import type { ScheduledTaskInfo } from "../../types.js";
-import { TASK_FOLDER, TASK_FOLDER_NAME } from "../../types.js";
+import { TASK_FOLDER, TASK_FOLDER_NAME, taskFolderNameForProfile } from "../../types.js";
+import { getProfileName } from "../../profiles.js";
 import { buildScheduleFlags, convertCronToSchTasks } from "../cron-to-schtasks.js";
 import { buildWindowsOneShotFlags } from "../one-shot.js";
 import { needsPollMode } from "../schedule-v2.js";
@@ -19,6 +20,17 @@ const MAX_OUTPUT_BUFFER = 10 * 1024 * 1024;
 
 /** Префикс папки задач плагина в Планировщике заданий Windows. */
 export const WINDOWS_TASK_PREFIX = `\\${TASK_FOLDER}\\${TASK_FOLDER_NAME}\\`;
+
+/** Префикс папки задач конкретного профиля (для удаления неактивного профиля). */
+export function windowsTaskPrefixForProfile(profile: string): string {
+  return `\\${TASK_FOLDER}\\${taskFolderNameForProfile(profile)}\\`;
+}
+
+/** Полное имя задачи в папке конкретного профиля. */
+export function taskFullNameForProfile(name: string, profile: string): string {
+  const prefix = windowsTaskPrefixForProfile(profile);
+  return name.startsWith(prefix) ? name : prefix + name;
+}
 
 /**
  * Кэш OEM-кодовой страницы системы. Заполняется один раз через реестр
@@ -215,6 +227,27 @@ export class WindowsScheduler implements SchedulerBackend {
   readonly platform: NodeJS.Platform = "win32";
   readonly title = "Планировщик Windows";
 
+  /** Имя папки задач и её префикс — в пространстве имён своего профиля. */
+  private readonly taskFolderName: string;
+  private readonly taskPrefix: string;
+
+  constructor(profile: string = getProfileName()) {
+    this.taskFolderName = taskFolderNameForProfile(profile);
+    this.taskPrefix = windowsTaskPrefixForProfile(profile);
+  }
+
+  /** Полное имя задачи (\OpenCode\<профиль>\<name>) для этого бэкенда. */
+  private fullName(name: string): string {
+    return name.startsWith(this.taskPrefix) ? name : this.taskPrefix + name;
+  }
+
+  /** Убирает папку профиля из полного имени задачи. */
+  private shortName(fullName: string): string {
+    return fullName.startsWith(this.taskPrefix)
+      ? fullName.slice(this.taskPrefix.length)
+      : fullName;
+  }
+
   async createTask(options: CreateTaskOptions): Promise<void> {
     const { name, command, schedule, triggerType } = options;
 
@@ -247,7 +280,7 @@ export class WindowsScheduler implements SchedulerBackend {
       }
     }
 
-    const fullName = taskFullName(name);
+    const fullName = this.fullName(name);
     // Спринт 27.5.4: по умолчанию задача интерактивная — schtasks запускает её
     // только при активном входе пользователя (Interactive only). Для работы без
     // входа нужен SYSTEM: он не требует пароля, но работает в session 0 без
@@ -333,14 +366,14 @@ export class WindowsScheduler implements SchedulerBackend {
       Boolean(task.taskName)
     );
     const filtered = allTasks.filter((task) =>
-      (task.taskName || "").startsWith(WINDOWS_TASK_PREFIX)
+      (task.taskName || "").startsWith(this.taskPrefix)
     );
 
     // Fallback: если структурный парсер не распознал ключи (нестандартная
     // локаль/кодировка), вытаскиваем имена задач по префиксу папки.
-    if (filtered.length === 0 && result.stdout.includes(TASK_FOLDER_NAME)) {
+    if (filtered.length === 0 && result.stdout.includes(this.taskFolderName)) {
       const names = new Set<string>();
-      const folderPattern = `${TASK_FOLDER}[\\\\/]${TASK_FOLDER_NAME}[\\\\/]`;
+      const folderPattern = `${TASK_FOLDER}[\\\\/]${this.taskFolderName}[\\\\/]`;
       const re = new RegExp(`${folderPattern}([^\\r\\n"']+)`, "gi");
       let m: RegExpExecArray | null;
       while ((m = re.exec(result.stdout)) !== null) {
@@ -356,7 +389,7 @@ export class WindowsScheduler implements SchedulerBackend {
 
     return filtered.map((task) => ({
       ...task,
-      taskName: shortTaskName(task.taskName || ""),
+      taskName: this.shortName(task.taskName || ""),
       paused: /disabled|отключ|запрещ/i.test(task.status ?? ""),
     }));
   }
@@ -448,7 +481,7 @@ export class WindowsScheduler implements SchedulerBackend {
   }
 
   async runTask(name: string): Promise<RunTaskResult> {
-    const fullName = taskFullName(name);
+    const fullName = this.fullName(name);
     const args = ["/run", "/tn", fullName];
 
     // schtasks /run не требует смены кодировки — вызываем напрямую.

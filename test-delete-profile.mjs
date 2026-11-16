@@ -4,7 +4,6 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { strict as assert } from "node:assert";
 
 process.on("uncaughtException", (err) => {
   console.log("UNCAUGHT:", err.message);
@@ -15,8 +14,17 @@ process.on("uncaughtException", (err) => {
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "sched-delete-profile-"));
 process.env.APPDATA = tempRoot;
 process.env.OPENCODE_SCHEDULER_HOME = path.join(tempRoot, "opencode", "windows-scheduler");
+delete process.env.OPENCODE_SCHEDULER_PROFILE;
 
-const { deleteProfile, DEFAULT_PROFILE, getProfileDir } = await import("./dist/profiles.js");
+const { deleteProfile, DEFAULT_PROFILE, getBasePluginDir, getProfileDir } = await import(
+  "./dist/profiles.js"
+);
+const { taskFolderNameForProfile } = await import("./dist/types.js");
+const { TaskRegistry } = await import("./dist/core/scheduler/registry.js");
+const { taskFullNameForProfile, windowsTaskPrefixForProfile } = await import(
+  "./dist/core/scheduler/windows.js"
+);
+const { launchdLabel } = await import("./dist/core/one-shot.js");
 
 const results = [];
 const check = (name, ok, extra) => {
@@ -28,8 +36,8 @@ const check = (name, ok, extra) => {
 {
   let threw = false;
   try {
-    deleteProfile(DEFAULT_PROFILE);
-  } catch (err) {
+    await deleteProfile(DEFAULT_PROFILE);
+  } catch {
     threw = true;
   }
   check("default профиль нельзя удалить (бросает ошибку)", threw);
@@ -41,7 +49,78 @@ const check = (name, ok, extra) => {
   check("несуществующий профиль: удалён=false", removed === false);
 }
 
-// --- 3. Удаление существующего не-default профиля ---
+// --- 3. Задачи адресуются в пространстве имён СВОЕГО профиля ---
+{
+  check(
+    "taskFolderNameForProfile: default = windows-scheduler",
+    taskFolderNameForProfile(DEFAULT_PROFILE) === "windows-scheduler"
+  );
+  check(
+    "taskFolderNameForProfile: work = windows-scheduler-work",
+    taskFolderNameForProfile("work") === "windows-scheduler-work"
+  );
+  const workTask = taskFullNameForProfile("probe", "work");
+  check(
+    "taskFullNameForProfile: задача work в папке work",
+    workTask === "\\OpenCode\\windows-scheduler-work\\probe",
+    workTask
+  );
+  check(
+    "windowsTaskPrefixForProfile: префикс work не совпадает с default",
+    windowsTaskPrefixForProfile("work") !== windowsTaskPrefixForProfile(DEFAULT_PROFILE)
+  );
+  check(
+    "launchdLabel: label work не совпадает с default",
+    launchdLabel("Probe", "work") !== launchdLabel("Probe", DEFAULT_PROFILE)
+  );
+}
+
+// --- 4. Удаление задач неактивного профиля не трогает реестр активного ---
+{
+  const activeDir = getProfileDir(DEFAULT_PROFILE);
+  const inactiveName = "inactive-profile-probe";
+  const inactiveDir = getProfileDir(inactiveName);
+  fs.mkdirSync(inactiveDir, { recursive: true });
+
+  const entry = (name) => ({
+    name,
+    schedule: "0 * * * *",
+    command: "/bin/true",
+    triggerType: "cron",
+    paused: false,
+    createdAt: new Date().toISOString(),
+  });
+  const activeRegistry = new TaskRegistry("linux", DEFAULT_PROFILE);
+  const inactiveRegistry = new TaskRegistry("linux", inactiveName);
+  await activeRegistry.upsert(entry("same-task"));
+  await inactiveRegistry.upsert(entry("same-task"));
+
+  check(
+    "реестр active и inactive — разные файлы",
+    activeRegistry.path !== inactiveRegistry.path &&
+      activeRegistry.path.startsWith(activeDir) &&
+      inactiveRegistry.path.startsWith(inactiveDir)
+  );
+
+  // Эмулируем снятие задач неактивного профиля: удаляем запись только из его реестра.
+  await inactiveRegistry.remove("same-task");
+  const activeEntries = await activeRegistry.load();
+  check(
+    "задачи активного профиля не тронуты",
+    activeEntries.some((e) => e.name === "same-task"),
+    JSON.stringify(activeEntries)
+  );
+  check(
+    "задача неактивного профиля удалена из его реестра",
+    (await inactiveRegistry.load()).length === 0
+  );
+
+  fs.rmSync(inactiveDir, { recursive: true, force: true });
+  fs.rmSync(activeRegistry.path, { force: true });
+  check("база плагина существует для проверки пути", fs.existsSync(getBasePluginDir()));
+}
+
+// --- 5. Удаление существующего не-default профиля ---
 {
   const profileName = "test-profile-to-delete";
   const dir = getProfileDir(profileName);
@@ -51,6 +130,7 @@ const check = (name, ok, extra) => {
   const removed = await deleteProfile(profileName);
   check("существующий профиль: удалён=true", removed === true);
   check("директория профиля удалена", !fs.existsSync(dir));
+  check("deleteProfile асинхронный (задачи снимаются до rmSync)", deleteProfile.constructor.name === "AsyncFunction");
 }
 
 const failed = results.filter((r) => !r.ok);

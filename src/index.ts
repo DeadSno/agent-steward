@@ -5514,7 +5514,7 @@ async function schedulerCreateTask(
         sessionMode: effectiveSession,
         sessionId: effectiveSessionId,
         ...(effectiveTriggerType === "once" && scheduler.platform === "darwin"
-          ? { oneShotCleanupCommand: buildLaunchdOneShotCleanup(sanitized) }
+          ? { oneShotCleanupCommand: buildLaunchdOneShotCleanup(sanitized, getProfileName()) }
           : {}),
       });
     }
