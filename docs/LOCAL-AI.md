@@ -128,6 +128,25 @@ green cannot hide a new endpoint. A red status never blocks notifications:
 `fallback: "skip"` is accepted as a legacy alias for `notify` and is normalized
 on load, so old settings keep working without edits.
 
+## Message summaries
+
+`notifications.summary` turns a notification into at most three short lines for
+Telegram and OS toasts. The same Ollama/OpenAI-compatible provider is used, but
+the request is independent of triage and has its own timeout.
+
+| Setting | Values | Default | Meaning |
+| --- | --- | --- | --- |
+| `summary.enabled` | boolean | `false` | Use the model summary instead of the template message. |
+| `summary.maxLines` | 1..3 | `3` | Maximum number of lines. |
+| `summary.maxCharsPerLine` | 20..500 | `120` | Hard cut per line. |
+| `summary.timeoutMs` | 1000..120000 | `8000` | Summary request timeout. |
+
+The model must answer with strict JSON `{"lines": ["...", "..."]}`. Any
+failure — no provider, HTTP error, timeout, invalid JSON or schema — falls back
+to a deterministic truncation: status and task name, the error text, then
+runtime, tokens and cost. A summary never blocks or drops the notification:
+delivery waits at most `timeoutMs`.
+
 ## Managing triage from the agent
 
 The `manage_local_ai` tool has three actions.

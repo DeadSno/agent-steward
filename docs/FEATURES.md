@@ -401,6 +401,12 @@ pruned automatically (age and size limits, see Settings) and can be exported as
 CSV/JSON (`GET /api/history/export`), or as OTLP/JSON for OpenTelemetry
 (`GET /api/history/export?format=otlp`).
 
+The same slice carries a **«Сэкономлено»** counter: runs that spent tokens without
+a recorded cost (local models, prepaid plans) are priced against a reference cloud
+rate of $0.01 / 1k tokens. The KPI is labelled as an estimate and links to
+[docs/SAVINGS.md](SAVINGS.md) with the full methodology; `report.savings` exposes
+`savedUsd`, `runs`, `tokens` and a per-task breakdown.
+
 ### Prometheus
 
 `GET /metrics` exposes the Prometheus text format (0.0.4): `opencode_scheduler_info`,
@@ -603,6 +609,15 @@ It never changes run status, retries, Quality Gates, DAG dependencies or history
 - In `llm`/`auto`, triage is asynchronous: the notification is delivered
   immediately and a detached worker writes the verdict to the audit. Only
   `rules` mode triages before delivery, because only rules can suppress.
+- `notifications.embedding` adds semantic dedup on top of the exact dedup:
+  messages are converted to normalized bag-of-words vectors stored in SQLite,
+  compared by cosine similarity against the window, and suppressed above
+  `threshold` (0.85 default). Important statuses are never suppressed. No new
+  dependencies and no external embedding model are required.
+- `notifications.summary` renders at most three short lines for Telegram and
+  toasts. The model returns strict JSON `{"lines": [...]}`; any failure falls
+  back to deterministic truncation (status, error, runtime/tokens/cost), and
+  delivery waits at most `summary.timeoutMs` (8 s default).
 - Shadow mode logs decisions to the persistent audit journal
   (`get_audit_log`, action `triage.decision`) without suppressing notifications,
   so triage can be evaluated safely before it is enforced and the report

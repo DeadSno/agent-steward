@@ -4,6 +4,11 @@
  * Чистые функции без БД и HTTP: дашборд и RPC отдают JSON, экспорт — CSV.
  * Так агрегаты легко тестировать без запуска сервера.
  */
+import {
+  computeSavings,
+  type SavingsRecord,
+  type SavingsReport,
+} from "./savings.js";
 
 /** Оценка стоимости, если запись истории не содержит costUsd. */
 export const ESTIMATED_COST_PER_1K_TOKENS_USD = 0.003;
@@ -102,6 +107,8 @@ export interface AnalyticsReport {
   byModel: ModelAnalyticsRow[];
   /** Топ ошибок по частоте (Спринт 20). */
   errors: ErrorAnalyticsRow[];
+  /** Оценка экономии по контрфактике (Спринт 31.6). */
+  savings: SavingsReport;
   sources: {
     historyRecords: number;
     /** Сколько записей попало в окно. */
@@ -198,6 +205,7 @@ export function buildAnalytics(
   let durationsSum = 0;
   let durationsCount = 0;
   let recordsInWindow = 0;
+  const windowRecords: SavingsRecord[] = [];
 
   for (const record of records) {
     const date = recordDate(record);
@@ -212,6 +220,7 @@ export function buildAnalytics(
     const status = String(record.status ?? "");
     // Незавершённые запуски не участвуют в аналитике: их ещё нельзя оценить.
     if (status === "running") continue;
+    windowRecords.push(record);
     const duration = toNumber(record.durationMs);
 
     bucket.total += 1;
@@ -358,6 +367,7 @@ export function buildAnalytics(
     errors: [...byError.values()]
       .sort((a, b) => b.count - a.count || a.message.localeCompare(b.message))
       .slice(0, topLimit),
+    savings: computeSavings(windowRecords, { topLimit }),
     sources: {
       historyRecords: records.length,
       recordsInWindow,

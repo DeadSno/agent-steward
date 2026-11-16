@@ -233,6 +233,23 @@ export interface NotificationSettings {
   dedup?: NotificationDedupSettings;
   /** Семантический дедуп через эмбеддинги (Спринт 31.1). */
   embedding?: NotificationEmbeddingSettings;
+  /** Краткое саммари уведомления (Спринт 31.3). */
+  summary?: NotificationSummarySettings;
+}
+
+/**
+ * Саммари уведомления (Спринт 31.3): три строки для Telegram и тостов.
+ * Модель возвращает строгий JSON; при отказе — детерминированное усечение.
+ */
+export interface NotificationSummarySettings {
+  /** Включено ли саммари. По умолчанию false. */
+  enabled: boolean;
+  /** Максимум строк (1..3). По умолчанию 3. */
+  maxLines: number;
+  /** Максимум символов в строке. По умолчанию 120. */
+  maxCharsPerLine: number;
+  /** Таймаут запроса к модели в мс. По умолчанию 8000. */
+  timeoutMs: number;
 }
 
 /**
@@ -536,6 +553,12 @@ export function defaultNotifications(): NotificationSettings {
       windowMinutes: 60,
       threshold: 0.85,
       maxVectors: 10_000,
+    },
+    summary: {
+      enabled: false,
+      maxLines: 3,
+      maxCharsPerLine: 120,
+      timeoutMs: 8_000,
     },
   };
 }
@@ -844,6 +867,28 @@ function normalizeEmbeddingSettings(
   };
 }
 
+/** Нормализует настройки саммари уведомлений (Спринт 31.3). */
+function normalizeSummarySettings(
+  value: unknown,
+  fallback: NotificationSummarySettings
+): NotificationSummarySettings {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { ...fallback };
+  }
+  const raw = value as Partial<NotificationSummarySettings>;
+  return {
+    enabled: typeof raw.enabled === "boolean" ? raw.enabled : fallback.enabled,
+    maxLines: normalizeIntInRange(raw.maxLines, fallback.maxLines, 1, 3),
+    maxCharsPerLine: normalizeIntInRange(
+      raw.maxCharsPerLine,
+      fallback.maxCharsPerLine,
+      20,
+      500
+    ),
+    timeoutMs: normalizeIntInRange(raw.timeoutMs, fallback.timeoutMs, 1000, 120_000),
+  };
+}
+
 /** Текущий shadow-период ещё активен? (ничего не меняет, только читает). */
 export function isShadowActive(shadow: TriageShadowSettings | undefined): boolean {
   if (!shadow || !shadow.enabled || !shadow.startedAt) return false;
@@ -1112,6 +1157,10 @@ function normalizeNotifications(
     embedding: normalizeEmbeddingSettings(
       raw.embedding,
       fallback.embedding ?? defaultNotifications().embedding!
+    ),
+    summary: normalizeSummarySettings(
+      raw.summary,
+      fallback.summary ?? defaultNotifications().summary!
     ),
   };
 }
