@@ -90,6 +90,37 @@ CREATE TABLE IF NOT EXISTS git_state (
   branch TEXT,
   updated_at TEXT NOT NULL
 );
+
+-- Спринт 31.2: дедуп уведомлений (отслеживание повторов между процессами).
+CREATE TABLE IF NOT EXISTS notification_dedup (
+  key TEXT PRIMARY KEY,
+  task_name TEXT NOT NULL,
+  status TEXT NOT NULL,
+  count INTEGER NOT NULL DEFAULT 1,
+  first_at TEXT NOT NULL,
+  last_at TEXT NOT NULL,
+  window_minutes INTEGER NOT NULL DEFAULT 60
+);
+
+CREATE INDEX IF NOT EXISTS idx_notification_dedup_key ON notification_dedup(key);
+CREATE INDEX IF NOT EXISTS idx_notification_dedup_last_at ON notification_dedup(last_at);
+
+-- Векторы сообщений для семантического дедупа (Спринт 31.1).
+-- Хранятся нормализованные эмбеддинги (JSON-массив чисел) и текст сообщения.
+-- Сравнение по косинусу брутфорсом по всем векторам в окне.
+CREATE TABLE IF NOT EXISTS notification_embeddings (
+  key TEXT PRIMARY KEY,
+  task_name TEXT NOT NULL,
+  status TEXT NOT NULL,
+  message_text TEXT NOT NULL,
+  embedding_json TEXT NOT NULL,
+  dimension INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  window_minutes INTEGER NOT NULL DEFAULT 60
+);
+
+CREATE INDEX IF NOT EXISTS idx_notification_embeddings_task ON notification_embeddings(task_name, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_notification_embeddings_created ON notification_embeddings(created_at DESC);
 `;
 
 interface SchemaDb {

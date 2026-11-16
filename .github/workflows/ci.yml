@@ -19,7 +19,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-latest, ubuntu-latest, macos-latest]
-        node: [24]
+        node: [22, 24]
 
     steps:
       - name: Checkout

@@ -7,6 +7,9 @@ import {
   type NotificationSettings,
   type NotificationTemplates,
   isShadowActive,
+  type TriageSettings,
+  type NotificationDedupSettings,
+  type NotificationEmbeddingSettings,
 } from "./settings.js";
 import {
   buildAnalytics,
@@ -14,9 +17,13 @@ import {
   type ErrorAnalyticsRow,
 } from "./core/analytics.js";
 import { getHistory } from "./db/history-repo.js";
+import { getDb } from "./db/index.js";
 import { sendTelegramMessage } from "./core/telegram.js";
 import { sendNativeNotification } from "./core/native-notify.js";
-import { decideTriage, recordShadow } from "./core/triage-chain.js";
+import { decideTriage } from "./core/triage-chain.js";
+import { recordTriageOutcome } from "./core/triage-shadow.js";
+import { scheduleTriageJob } from "./core/triage-worker.js";
+import type { TriageInput } from "./core/triage.js";
 import { t } from "./i18n.js";
 
 /** Статус завершения задачи, который приходит из record-history. */
@@ -32,6 +39,18 @@ export interface NotificationPayload {
   tokens?: number | null;
   /** Стоимость запуска в USD, если известна. */
   costUsd?: number | null;
+}
+
+/** Настройки асинхронного триажа (Спринт 31.7). */
+export interface NotifyTaskOptions {
+  /**
+   * Для `llm`/`auto`: доставить уведомление сразу, а вердикт посчитать
+   * в отдельном процессе. Тесты и прямые вызовы без опции сохраняют
+   * синхронное поведение.
+   */
+  asyncTriage?: boolean;
+  /** Для тестов: подменить запуск фонового процесса. */
+  scheduleTriage?: (input: TriageInput, triage: TriageSettings) => unknown;
 }
 
 /** Таймаут HTTP-запроса по умолчанию: уведомление не должно подвешивать задачу. */
@@ -464,13 +483,277 @@ async function deliver(config: NotificationSettings, message: string): Promise<b
  *  - фильтры include/exclude отсекают задачи по имени;
  *  - ошибки отправки только логируются, наружу не выбрасываются.
  */
+
+/**
+ * Дедуп уведомлений (Спринт 31.2): группирует повторяющиеся уведомления о
+ * задаче в окне времени, считает повторы и не подавляет важные статусы.
+ *
+ * Ключ группировки: taskName + status. Запись хранится в SQLite, поэтому
+ * счётчик сохраняется между короткоживущими процессами record-history.
+ */
+export interface DedupRecord {
+  key: string;
+  taskName: string;
+  status: string;
+  count: number;
+  firstAt: string;
+  lastAt: string;
+  windowMinutes: number;
+}
+
+/** Ключ дедупа: комбинация задачи и статуса. */
+function dedupKey(taskName: string, status: string): string {
+  return (taskName + '|' + status).toLowerCase();
+}
+
+/** Читает или создаёт запись дедупа. Возвращает { record, isDuplicate }.
+ * Если записи нет или окно истекло — создаёт новую с count=1.
+ * Если есть и окно ещё активно — увеличивает count и возвращает isDuplicate=true.
+ */
+function dedupReadOrCreate(
+  db: ReturnType<typeof getDb>,
+  key: string,
+  taskName: string,
+  status: string,
+  dedup: NotificationDedupSettings
+): { record: DedupRecord; isDuplicate: boolean } {
+  const now = new Date().toISOString();
+  const row = db
+    .prepare("SELECT * FROM notification_dedup WHERE key = ?")
+    .get(key);
+
+  if (!row) {
+    db.prepare(
+      "INSERT INTO notification_dedup (key, task_name, status, count, first_at, last_at, window_minutes) VALUES (?, ?, ?, 1, ?, ?, ?)"
+    ).run(key, taskName, status, now, now, dedup.windowMinutes);
+    return {
+      record: {
+        key,
+        taskName,
+        status,
+        count: 1,
+        firstAt: now,
+        lastAt: now,
+        windowMinutes: dedup.windowMinutes,
+      },
+      isDuplicate: false,
+    };
+  }
+
+  const last = new Date(row.last_at).getTime();
+  const nowMs = new Date(now).getTime();
+  const windowMs = (row.window_minutes ?? dedup.windowMinutes) * 60 * 1000;
+
+  if (nowMs - last > windowMs) {
+    // Окно истекло — начинаем заново.
+    db.prepare(
+      "UPDATE notification_dedup SET count = 1, first_at = ?, last_at = ?, window_minutes = ? WHERE key = ?"
+    ).run(now, now, dedup.windowMinutes, key);
+    return {
+      record: {
+        key,
+        taskName,
+        status,
+        count: 1,
+        firstAt: now,
+        lastAt: now,
+        windowMinutes: dedup.windowMinutes,
+      },
+      isDuplicate: false,
+    };
+  }
+
+  const count = Math.min(Number(row.count) + 1, dedup.maxCount);
+  db.prepare(
+    "UPDATE notification_dedup SET count = ?, last_at = ? WHERE key = ?"
+  ).run(count, now, key);
+  return {
+    record: {
+      key,
+      taskName,
+      status,
+      count,
+      firstAt: row.first_at,
+      lastAt: now,
+      windowMinutes: row.window_minutes ?? dedup.windowMinutes,
+    },
+    isDuplicate: true,
+  };
+}
+
+/** Подавлять ли уведомление по дедупу: только если не важный статус. */
+function isDedupSuppressed(
+  status: string,
+  dedup: NotificationDedupSettings
+): boolean {
+  const important = dedup.importantStatuses.some(
+    (s: string) => s.toLowerCase() === status.toLowerCase()
+  );
+  return !important;
+}
+
+/** Добавляет счётчик повторов к сообщению, если это не первое уведомление. */
+function messageWithDedupCount(message: string, count: number): string {
+  if (count <= 1) return message;
+  return message + ' ' + t("notify.dedup.count", { count });
+}
+
+/**
+ * Эмбеддинг-дедуп (Спринт 31.1): семантическое подавление похожих уведомлений.
+ *
+ * Вектор сообщения считается простым баг-векторизатором (bag-of-words с
+ * TF-IDF-like взвешиванием) — без новых зависимостей, как требует дорожная
+ * карта. Косинусное сходство считается брутфорсом по всем векторам в окне.
+ * В будущем можно заменить на nomic-embed-text-v2-moe или другую модель.
+ */
+
+interface EmbeddingRecord {
+  key: string;
+  task_name: string;
+  status: string;
+  message_text: string;
+  embedding: number[];
+  dimension: number;
+  created_at: string;
+  window_minutes: number;
+}
+
+function embeddingKey(taskName: string, status: string): string {
+  return `emb:${(taskName + '|' + status).toLowerCase()}`;
+}
+
+/** Простой токенизатор: слова, цифры, нижний регистр. */
+function tokenize(text: string): string[] {
+  return text
+    .toLowerCase()
+    .replace(/[^a-zа-яё0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter((t) => t.length > 0);
+}
+
+/** Вектор сообщения: нормализованный bag-of-words. Длина 1. */
+function textToVector(text: string): number[] {
+  const tokens = tokenize(text);
+  const counts: Record<string, number> = {};
+  for (const tok of tokens) counts[tok] = (counts[tok] ?? 0) + 1;
+  const dim = Object.keys(counts).length;
+  const vec: number[] = new Array(dim).fill(0);
+  let norm = 0;
+  let i = 0;
+  for (const tok of Object.keys(counts)) {
+    const v = Math.sqrt(counts[tok]) / Math.sqrt(tokens.length);
+    vec[i] = v;
+    norm += v * v;
+    i++;
+  }
+  norm = Math.sqrt(norm) || 1;
+  for (let j = 0; j < dim; j++) vec[j] /= norm;
+  return vec;
+}
+
+function cosineSimilarity(a: number[], b: number[]): number {
+  const n = Math.min(a.length, b.length);
+  if (n === 0) return 0;
+  let dot = 0;
+  let na = 0;
+  let nb = 0;
+  for (let i = 0; i < n; i++) {
+    dot += a[i] * b[i];
+    na += a[i] * a[i];
+    nb += b[i] * b[i];
+  }
+  const denom = Math.sqrt(na) * Math.sqrt(nb) || 1;
+  return dot / denom;
+}
+
+/** Проверяет, есть ли в БД вектор, достаточно похожий на text. */
+function embeddingExists(
+  db: ReturnType<typeof getDb>,
+  taskName: string,
+  status: string,
+  message: string,
+  threshold: number,
+  windowMinutes: number
+): { found: boolean; key: string } | null {
+  const since = new Date(
+    Date.now() - windowMinutes * 60_000
+  ).toISOString();
+  const rows = db
+    .prepare(
+      "SELECT key, embedding_json, dimension, created_at FROM notification_embeddings WHERE created_at >= ?"
+    )
+    .all(since) as Array<{
+    key: string;
+    embedding_json: string;
+    dimension: number;
+    created_at: string;
+  }>;
+  const vec = textToVector(message);
+  let bestKey = "";
+  let bestSim = 0;
+  for (const row of rows) {
+    try {
+      const emb: number[] = JSON.parse(row.embedding_json);
+      if (emb.length !== vec.length) continue;
+      const sim = cosineSimilarity(vec, emb);
+      if (sim > bestSim) {
+        bestSim = sim;
+        bestKey = row.key;
+      }
+    } catch {
+      // пропускаем битую запись
+    }
+  }
+  if (bestSim >= threshold) return { found: true, key: bestKey };
+  return null;
+}
+
+/** Сохраняет вектор сообщения в БД. */
+function storeEmbedding(
+  db: ReturnType<typeof getDb>,
+  taskName: string,
+  status: string,
+  message: string,
+  vector: number[],
+  windowMinutes: number
+): void {
+  const now = new Date().toISOString();
+  const key = embeddingKey(taskName, status);
+  db.prepare(
+    "INSERT OR REPLACE INTO notification_embeddings (key, task_name, status, message_text, embedding_json, dimension, created_at, window_minutes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+  ).run(
+    key,
+    taskName,
+    status,
+    message,
+    JSON.stringify(vector),
+    vector.length,
+    now,
+    windowMinutes
+  );
+}
+
+/** Очищает старые векторы вне окна. */
+function cleanupEmbeddings(
+  db: ReturnType<typeof getDb>,
+  windowMinutes: number
+): void {
+  const since = new Date(
+    Date.now() - windowMinutes * 60_000
+  ).toISOString();
+  db.prepare(
+    "DELETE FROM notification_embeddings WHERE created_at < ?"
+  ).run(since);
+}
+
 export async function notifyTaskCompletion(
   taskName: string,
   status: NotificationStatus,
   durationMs: number,
   error?: string | null,
   tokens?: number | null,
-  costUsd?: number | null
+  costUsd?: number | null,
+  options: NotifyTaskOptions = {}
 ): Promise<void> {
   try {
     const settings = await loadSettings();
@@ -487,23 +770,114 @@ export async function notifyTaskCompletion(
       return;
     }
 
-    // Триаж может подавить уведомление (LLM → правила → fail-open).
+    // Триаж (31.7): в llm/auto уведомление не ждёт локальную модель.
+    // Вердикт считается фоновым процессом и пишется в persistent-аудит.
+    // В rules правила остаются синхронными, потому что только они подавляют.
     // В shadow-режиме решение фиксируется, но уведомление не подавляется.
-    const shadow = config.triage?.shadow;
-    const triage = await decideTriage(
-      { taskName, status, error, durationMs, tokens, costUsd },
-      config.triage
-    );
-    recordShadow(
-      { taskName, status, error, durationMs, tokens, costUsd },
-      triage,
-      shadow
-    );
-    if (!isShadowActive(shadow) && triage.action === "skip") return;
+    const triageInput = { taskName, status, error, durationMs, tokens, costUsd };
+    const triageSettings = config.triage;
+    const mode = triageSettings?.mode ?? "off";
+    const shadowActive = isShadowActive(triageSettings?.shadow);
 
-    const message = formatNotificationMessage(
-      { taskName, status, durationMs, error, tokens, costUsd },
-      config.templates
+    if (triageSettings && (mode === "llm" || mode === "auto") && options.asyncTriage) {
+      try {
+        const job = (options.scheduleTriage ?? scheduleTriageJob)(
+          triageInput,
+          triageSettings
+        );
+        // Injected scheduler может быть асинхронным — не оставляем rejection.
+        if (job && typeof (job as PromiseLike<unknown>).then === "function") {
+          void Promise.resolve(job).catch((err: any) => {
+            console.error(
+              `[windows-scheduler] Ошибка фонового триажа: ${
+                err instanceof Error ? err.message : String(err)
+              }`
+            );
+          });
+        }
+      } catch (err: any) {
+        console.error(
+          `[windows-scheduler] Не удалось запустить фоновый триаж: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        );
+      }
+    } else if (mode !== "off") {
+      const triage = await decideTriage(triageInput, triageSettings);
+      const suppressed = !shadowActive && triage.action === "skip";
+      recordTriageOutcome(triageInput, triage, { shadowActive, suppressed });
+      if (suppressed) return;
+    }
+
+    // Дедуп (31.2): группирует похожие уведомления в окне времени,
+    // считает повторы, но не подавляет важные статусы.
+    let dedupCount = 1;
+    if (config.dedup?.enabled && config.dedup.suppressDuplicates) {
+      const db = getDb();
+      const key = dedupKey(taskName, status);
+      const { record, isDuplicate } = dedupReadOrCreate(
+        db,
+        key,
+        taskName,
+        status,
+        config.dedup
+      );
+      dedupCount = record.count;
+      if (isDuplicate && isDedupSuppressed(status, config.dedup)) {
+        return;
+      }
+    }
+
+    // Эмбеддинг-дедуп (31.1): семантическое подавление похожих сообщений.
+    // Проверяется после rule-based дедупа: если вектор совпадает с существующим
+    // на пороге threshold, уведомление подавляется (если не важный статус).
+    if (config.embedding?.enabled && config.embedding.suppressDuplicates) {
+      const db = getDb();
+      const message = messageWithDedupCount(
+        formatNotificationMessage(
+          { taskName, status, durationMs, error, tokens, costUsd },
+          config.templates
+        ),
+        dedupCount
+      );
+      const hit = embeddingExists(
+        db,
+        taskName,
+        status,
+        message,
+        config.embedding.threshold,
+        config.embedding.windowMinutes ?? 60
+      );
+      if (
+        hit &&
+        !isDedupSuppressed(status, config.dedup ?? {
+          enabled: false,
+          windowMinutes: 60,
+          suppressDuplicates: false,
+          importantStatuses: ["error", "timeout"],
+          maxCount: 999,
+        })
+      ) {
+        return;
+      }
+      const vec = textToVector(message);
+      storeEmbedding(
+        db,
+        taskName,
+        status,
+        message,
+        vec,
+        config.embedding.windowMinutes ?? 60
+      );
+      cleanupEmbeddings(db, config.embedding.windowMinutes ?? 60);
+    }
+
+    const message = messageWithDedupCount(
+      formatNotificationMessage(
+        { taskName, status, durationMs, error, tokens, costUsd },
+        config.templates
+      ),
+      dedupCount
     );
     await deliver(config, message);
   } catch (err: any) {

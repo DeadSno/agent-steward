@@ -407,7 +407,9 @@ async function handleCompletion(
 ): Promise<void> {
   // Уведомление о завершении (webhook). Ошибки отправки логируются внутри
   // и не влияют на историю, цепочки и повторы.
-  await notifyTaskCompletion(taskName, st, durationMs, error, tokens, costUsd);
+  await notifyTaskCompletion(taskName, st, durationMs, error, tokens, costUsd, {
+    asyncTriage: true,
+  });
 
   // Matrix (Спринт 15): клон завершился — двигаем sequential-цепочку или
   // очередь concurrency-лимита (Спринт 17), а когда все клоны готовы —

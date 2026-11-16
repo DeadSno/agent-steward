@@ -68,6 +68,17 @@ New behavior needs a test. Matrix sync and DAG logic are the most sensitive area
 
 CI runs build, GUI build and tests on Windows, Ubuntu and macOS for every pull request.
 
+## Release process
+
+**Do NOT run `npm publish` locally.** Releases are published exclusively by pushing a version tag (`git tag v1.5.5 && git push origin v1.5.5`), which triggers `.github/workflows/release.yml`. The release workflow:
+
+1. Verifies `package.json` version matches the tag.
+2. Runs `npm run build`, `npm run build:gui` and `npm test`.
+3. Publishes to npm via OIDC trusted publishing with `--provenance` (no `NPM_TOKEN` secret required).
+4. Creates a GitHub release.
+
+Use `npm version patch|minor|major` to bump the version before tagging.
+
 ## License
 
 By contributing you agree that your contributions are licensed under the [MIT License](LICENSE).

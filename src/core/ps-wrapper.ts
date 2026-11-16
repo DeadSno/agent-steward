@@ -48,7 +48,9 @@ export const WRAPPER_SCRIPT = `param(
     [string]$AfterScript,
     [string]$EnvFile,
     [string]$SessionMode,
-    [string]$SessionId
+    [string]$SessionId,
+    [int]$RetryCount = 0,
+    [int]$RetryDelaySeconds = 0
 )
 
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -86,8 +88,55 @@ $script:errorMessage = ""
 $script:preFlightStatus = "skipped"
 $script:postFlightStatus = "skipped"
 $script:skipMainTask = $false
+$script:lockAcquired = $false
+$script:timedOut = $false
+$script:attemptExitCode = 0
 $startedAtIso = $startTime.ToUniversalTime().ToString("o")
 $script:runId = ""
+
+# Hotfix 1.5.3.1: блокировка ДО записи в историю. Раньше lock существовал только
+# в in-process пути (LockManager/withLock), а schtasks-запуск обёртки его не
+# проверял: два одновременных запуска дублировали задачу и дрались за лог.
+# Атомарное создание файла (CreateNew) даёт ту же гарантию, что и Node-лок.
+if ($LockFile) {
+    try {
+        $lockDir = Split-Path -Parent $LockFile
+        if ($lockDir -and -not (Test-Path -LiteralPath $lockDir)) {
+            New-Item -ItemType Directory -Force -Path $lockDir | Out-Null
+        }
+        $lockStream = [System.IO.File]::Open($LockFile, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+        try {
+            $lockBytes = [System.Text.Encoding]::UTF8.GetBytes($startedAtIso)
+            $lockStream.Write($lockBytes, 0, $lockBytes.Length)
+        } finally {
+            $lockStream.Dispose()
+        }
+        $script:lockAcquired = $true
+    } catch [System.IO.IOException] {
+        # Зависший lock (старше 24 ч — как STALE_LOCK_MAX_AGE_MS) снимаем один раз,
+        # иначе после аварийного завершения задача залипла бы навсегда.
+        $stale = $false
+        try {
+            $ageMs = ((Get-Date) - (Get-Item -LiteralPath $LockFile).LastWriteTime).TotalMilliseconds
+            if ($ageMs -gt 86400000) { $stale = $true }
+        } catch {}
+        if ($stale) {
+            try { Remove-Item -LiteralPath $LockFile -Force } catch {}
+            try {
+                $lockStream = [System.IO.File]::Open($LockFile, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+                $lockStream.Dispose()
+                $script:lockAcquired = $true
+            } catch {}
+        }
+        if (-not $script:lockAcquired) {
+            Write-Log "[windows-scheduler] Запуск задачи '$TaskName' пропущен: удерживается активная блокировка."
+            exit 0
+        }
+    } catch {
+        Write-Log "[windows-scheduler] Не удалось захватить блокировку задачи '$TaskName': $_"
+        exit 0
+    }
+}
 
 # Crash recovery: фиксируем начало ДО pre-flight и основной задачи.
 # Если процесс убьют (таймаут/KILL/перезагрузка), останется finished_at = NULL,
@@ -111,6 +160,94 @@ function Invoke-HookScript {
         Write-Log "[hook] $line"
     }
     return $code
+}
+
+# Hotfix 1.5.3.1: запуск opencode с реальным таймаутом.
+# Раньше TimeoutSeconds принимался, но нигде не использовался — задача работала
+# до конца, а статус 'timeout' не выставлялся никогда. Теперь параллельно
+# стартует сторожевой job: по истечении лимита он помечает маркер и убивает
+# дерево процессов задачи (taskkill /T), а обёртка переводит статус в 'timeout'.
+function Invoke-OpenCodeOnce {
+    param([string]$CommandPath, [string[]]$Arguments)
+
+    $watch = $null
+    $timeoutMarker = ""
+    if ($TimeoutSeconds -gt 0) {
+        $timeoutMarker = Join-Path ([System.IO.Path]::GetTempPath()) ("sched-timeout-" + [guid]::NewGuid().ToString("N") + ".flag")
+        $watch = Start-Job -ScriptBlock {
+            param([int]$RootId, [int]$Seconds, [string]$Marker)
+            Start-Sleep -Seconds $Seconds
+            $selfId = $PID
+            $all = @()
+            try { $all = @(Get-CimInstance Win32_Process -Property ProcessId, ParentProcessId) } catch { $all = @() }
+            $targets = New-Object System.Collections.Generic.List[int]
+            $queue = New-Object System.Collections.Generic.Queue[int]
+            $queue.Enqueue($RootId)
+            $guard = 0
+            while ($queue.Count -gt 0 -and $guard -lt 2000) {
+                $guard++
+                $current = $queue.Dequeue()
+                foreach ($p in $all) {
+                    $childId = [int]$p.ProcessId
+                    if ([int]$p.ParentProcessId -eq $current -and $childId -ne $selfId -and -not $targets.Contains($childId)) {
+                        $targets.Add($childId)
+                        $queue.Enqueue($childId)
+                    }
+                }
+            }
+            if ($targets.Count -gt 0) {
+                try { Set-Content -Path $Marker -Value "timeout" -Encoding UTF8 } catch {}
+                foreach ($targetId in @($targets)) {
+                    try { & taskkill.exe /F /T /PID $targetId 2>$null | Out-Null } catch {}
+                }
+            }
+        } -ArgumentList $PID, $TimeoutSeconds, $timeoutMarker
+    }
+
+    $script:timedOut = $false
+    $script:attemptExitCode = 0
+    try {
+        if ($LogFile) {
+            if ($CommandPath -like "*.ps1") {
+                & powershell.exe -ExecutionPolicy Bypass -NoProfile -File $CommandPath @Arguments *>&1 |
+                    ForEach-Object { Format-LogLine $_ } |
+                    Out-File -FilePath $LogFile -Append -Encoding utf8
+            } else {
+                & $CommandPath @Arguments *>&1 |
+                    ForEach-Object { Format-LogLine $_ } |
+                    Out-File -FilePath $LogFile -Append -Encoding utf8
+            }
+        } else {
+            if ($CommandPath -like "*.ps1") {
+                & powershell.exe -ExecutionPolicy Bypass -NoProfile -File $CommandPath @Arguments *>&1 |
+                    ForEach-Object { Format-LogLine $_ } |
+                    Out-Host
+            } else {
+                & $CommandPath @Arguments *>&1 |
+                    ForEach-Object { Format-LogLine $_ } |
+                    Out-Host
+            }
+        }
+        $script:attemptExitCode = $LASTEXITCODE
+    } finally {
+        if ($timeoutMarker -and (Test-Path -LiteralPath $timeoutMarker)) {
+            $script:timedOut = $true
+        }
+        if ($watch) {
+            Stop-Job -Job $watch -ErrorAction SilentlyContinue
+            Remove-Job -Job $watch -Force -ErrorAction SilentlyContinue
+        }
+        if ($timeoutMarker) {
+            Remove-Item -LiteralPath $timeoutMarker -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    if ($script:timedOut) {
+        Write-Log "[windows-scheduler] Таймаут: задача '$TaskName' превысила лимит $TimeoutSeconds с — процесс остановлен."
+        $script:errorMessage = "Таймаут: превышено $TimeoutSeconds с"
+        return 124
+    }
+    return $script:attemptExitCode
 }
 
 # Фильтр технического шума и служебных блоков OpenCode.
@@ -365,28 +502,26 @@ try {
     # Запускаем opencode и НАПРЯМУЮ направляем весь вывод (stdout + stderr) в лог.
     # Out-File -Append -Encoding utf8 пишет по мере поступления строк, поэтому
     # ответ ИИ появляется в GUI ещё до завершения задачи.
-    if ($LogFile) {
-        if ($opencodeCmd -like "*.ps1") {
-            & powershell.exe -ExecutionPolicy Bypass -NoProfile -File $opencodeCmd @opencodeArgs *>&1 |
-                ForEach-Object { Format-LogLine $_ } |
-                Out-File -FilePath $LogFile -Append -Encoding utf8
-        } else {
-            & $opencodeCmd @opencodeArgs *>&1 |
-                ForEach-Object { Format-LogLine $_ } |
-                Out-File -FilePath $LogFile -Append -Encoding utf8
+    # Hotfix 1.5.3.1: retryCount из схемы раньше нигде не применялся — теперь
+    # неудачная попытка повторяется до RetryCount раз с паузой RetryDelaySeconds.
+    $maxAttempts = 1 + [Math]::Max(0, $RetryCount)
+    $attempt = 0
+    while ($attempt -lt $maxAttempts) {
+        $attempt++
+        if ($attempt -gt 1) {
+            $waitSeconds = [Math]::Max(0, $RetryDelaySeconds)
+            Write-Log "[windows-scheduler] Повтор $($attempt - 1) из $($maxAttempts - 1) через $waitSeconds с..."
+            if ($waitSeconds -gt 0) { Start-Sleep -Seconds $waitSeconds }
+            $script:errorMessage = ""
         }
-    } else {
-        if ($opencodeCmd -like "*.ps1") {
-            & powershell.exe -ExecutionPolicy Bypass -NoProfile -File $opencodeCmd @opencodeArgs *>&1 |
-                ForEach-Object { Format-LogLine $_ } |
-                Out-Host
-        } else {
-            & $opencodeCmd @opencodeArgs *>&1 |
-                ForEach-Object { Format-LogLine $_ } |
-                Out-Host
+        $script:exitCode = Invoke-OpenCodeOnce -CommandPath $opencodeCmd -Arguments $opencodeArgs
+        if ($script:exitCode -eq 0) { break }
+        # Таймаут повторять бессмысленно: каждая попытка снова съест весь лимит.
+        if ($script:timedOut) { break }
+        if ($attempt -lt $maxAttempts) {
+            Write-Log "[windows-scheduler] Попытка $attempt завершилась с кодом $($script:exitCode)."
         }
     }
-    $script:exitCode = $LASTEXITCODE
 
     # Quality Gate: проверочная команда выполняется ТОЛЬКО после успешного
     # завершения opencode run. Если ИИ упал — шлюз не запускаем.
@@ -443,7 +578,14 @@ try {
     # Фиксируем факт выполнения в историю и метрики (независимо от того, кто запустил: GUI или Windows)
     $endTime = Get-Date
     $durationMs = [int](($endTime - $startTime).TotalMilliseconds)
-    $status = if ($script:exitCode -eq 0) { "success" } else { "error" }
+    # Hotfix 1.5.3.1: статус timeout теперь реально выставляется (см. Invoke-OpenCodeOnce).
+    if ($script:timedOut) {
+        $status = "timeout"
+    } elseif ($script:exitCode -eq 0) {
+        $status = "success"
+    } else {
+        $status = "error"
+    }
     $usage = Get-UsageFromLog -File $LogFile
     $tokensArg = "-"
     if ($usage.Tokens) { $tokensArg = $usage.Tokens }
@@ -451,19 +593,26 @@ try {
     if ($usage.Cost) { $costArg = $usage.Cost }
     $modelArg = "-"
     if ($Model) { $modelArg = $Model }
+    # Hotfix 1.5.3.1: пустая строка ошибки раньше «съедалась» PowerShell и
+    # сдвигала все следующие аргументы recorder (model получал preFlight,
+    # postFlight терялся). Теперь всегда передаём непустое значение.
+    $errorArg = "-"
+    if ($script:errorMessage) { $errorArg = $script:errorMessage }
     if ($RecorderFile) {
         try {
             if ($script:runId) {
-                & node "$RecorderFile" --finish "$script:runId" "$TaskName" "$status" $durationMs $script:errorMessage $tokensArg $costArg "$modelArg" "$script:preFlightStatus" "$script:postFlightStatus"
+                & node "$RecorderFile" --finish "$script:runId" "$TaskName" "$status" $durationMs "$errorArg" $tokensArg $costArg "$modelArg" "$script:preFlightStatus" "$script:postFlightStatus"
             } else {
                 # Fallback: --start не удался (например, старая установка) —
                 # пишем завершённую запись старым способом, без потери истории.
-                & node "$RecorderFile" "$TaskName" "$status" "$startedAtIso" $durationMs $script:errorMessage $tokensArg $costArg "$modelArg" "$script:preFlightStatus" "$script:postFlightStatus"
+                & node "$RecorderFile" "$TaskName" "$status" "$startedAtIso" $durationMs "$errorArg" $tokensArg $costArg "$modelArg" "$script:preFlightStatus" "$script:postFlightStatus"
             }
         } catch {}
     }
 
-    if ($LockFile -and (Test-Path $LockFile)) {
+    # Снимаем блокировку только если мы её захватили: иначе пропущенный
+    # параллельный запуск удалял бы lock активной задачи.
+    if ($script:lockAcquired -and $LockFile -and (Test-Path $LockFile)) {
         try {
             Remove-Item $LockFile -Force
         } catch {}
@@ -535,6 +684,26 @@ export function lockFilePath(taskName: string): string {
  *                       без флагов), "reuse" (--session $SessionId), "last" (--continue)
  * @param sessionId      идентификатор сессии для режима "reuse" (спринт 24, опционально)
  */
+/**
+ * Hotfix 1.5.3.1: хуки и Quality Gate пишутся в отдельные .cmd-файлы.
+ *
+ * Раньше команда передавалась аргументом в однострочный вызов powershell.exe,
+ * а кавычки внутри неё заменялись на апострофы: `echo x > "C:\Program Files\out.txt"`
+ * превращался в нерабочий `echo x > 'C:\Program Files\out.txt'`. Файл снимает
+ * проблему целиком — внутри .cmd можно использовать любые кавычки и пайпы.
+ */
+async function writeHookFile(
+  sanitizedName: string,
+  kind: "before" | "after" | "gate",
+  command: string
+): Promise<string> {
+  const dir = path.join(WRAPPER_DIR, "hooks");
+  await fs.mkdir(dir, { recursive: true });
+  const file = path.join(dir, `run-${sanitizedName}-${kind}.cmd`);
+  await fs.writeFile(file, `@echo off\r\nchcp 65001 >nul\r\n${command}\r\n`, "utf8");
+  return file;
+}
+
 export async function writeWrapperCmd(
   sanitizedName: string,
   taskName: string,
@@ -559,7 +728,9 @@ export async function writeWrapperCmd(
   },
   envFile?: string,
   sessionMode?: "new" | "reuse" | "last",
-  sessionId?: string
+  sessionId?: string,
+  retryCount?: number,
+  retryDelaySeconds?: number
 ): Promise<string> {
   await fs.mkdir(WRAPPER_DIR, { recursive: true });
   const cmdPath = path.join(WRAPPER_DIR, `run-${sanitizedName}.cmd`);
@@ -577,6 +748,14 @@ export async function writeWrapperCmd(
     `-LockFile "${lockFile}"`,
   ];
 
+  // Hotfix 1.5.3.1: ретраи. Параметр не передаём при 0 — обёртка по умолчанию
+  // делает ровно одну попытку, как раньше.
+  const safeRetryCount = Math.max(0, Math.floor(retryCount ?? 0));
+  if (safeRetryCount > 0) {
+    psArgs.push(`-RetryCount ${safeRetryCount}`);
+    psArgs.push(`-RetryDelaySeconds ${Math.max(0, Math.floor(retryDelaySeconds ?? 0))}`);
+  }
+
   if (logFile) {
     psArgs.push(`-LogFile "${logFile}"`);
   }
@@ -585,12 +764,11 @@ export async function writeWrapperCmd(
     psArgs.push(`-RecorderFile "${recorderFile}"`);
   }
 
-  if (qualityGate) {
-    // Кавычки в .cmd-строке ломают передачу аргумента, переводы строк — тоже.
-    const safeGate = qualityGate.replace(/[\r\n]+/g, " ").replace(/"/g, "'").trim();
-    if (safeGate) {
-      psArgs.push(`-QualityGate "${safeGate}"`);
-    }
+  if (qualityGate?.trim()) {
+    // Hotfix 1.5.3.1: команда пишется в отдельный .cmd — кавычки и пайпы
+    // внутри неё больше не ломают однострочный вызов powershell.exe.
+    const gateFile = await writeHookFile(sanitizedName, "gate", qualityGate);
+    psArgs.push(`-QualityGate "${gateFile}"`);
   }
 
   if (model?.trim()) {
@@ -622,14 +800,16 @@ export async function writeWrapperCmd(
     }
   }
 
-  // Хуки передаются одной строкой: кавычки заменяем на апострофы, как у Quality Gate.
-  for (const [flag, script] of [
-    ["-BeforeScript", beforeScript],
-    ["-AfterScript", afterScript],
+  // Hotfix 1.5.3.1: хуки — в отдельные .cmd-файлы (см. writeHookFile).
+  // Раньше кавычки заменялись на апострофы, из-за чего хуки с путями в кавычках
+  // (например, "C:\Program Files\...") падали.
+  for (const [flag, script, kind] of [
+    ["-BeforeScript", beforeScript, "before"],
+    ["-AfterScript", afterScript, "after"],
   ] as const) {
-    const safe = script?.replace(/[\r\n]+/g, " ").replace(/"/g, "'").trim();
-    if (safe) {
-      psArgs.push(`${flag} "${safe}"`);
+    if (script?.trim()) {
+      const hookFile = await writeHookFile(sanitizedName, kind, script);
+      psArgs.push(`${flag} "${hookFile}"`);
     }
   }
 

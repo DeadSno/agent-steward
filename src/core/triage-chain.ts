@@ -6,8 +6,8 @@ import {
   type TriageVerdict,
 } from "./triage.js";
 import { evaluateTriageRules } from "./triage-rules.js";
-import { recordShadowDecision } from "./triage-shadow.js";
-import type { TriageSettings } from "../settings.js";
+import { recordTriageOutcome } from "./triage-shadow.js";
+import { isShadowActive, type TriageSettings } from "../settings.js";
 
 /** Что делать с уведомлением после триажа. */
 export type TriageAction = "notify" | "skip";
@@ -53,7 +53,8 @@ function ruleDecision(
  * - `rules` — решают только правила; нет совпадения = отправить.
  * - `llm`/`auto` — LLM классифицирует, но сам ничего не подавляет; при
  *   ошибке, таймауте или низкой уверенности управление переходит к правилам
- *   (если `fallback: "rules"`) либо уведомление отправляется без правил.
+ *   (если `fallback: "rules"`) либо уведомление отправляется без правил
+ *   (`fallback: "notify"`; устаревшее имя — `"skip"`).
  *
  * Функция никогда не бросает исключение и по умолчанию возвращает `notify`:
  * недоступный классификатор не должен терять уведомление.
@@ -86,7 +87,7 @@ export async function decideTriage(
     ? "low-confidence"
     : llm.failure ?? "invalid-response";
 
-  if (settings.fallback === "skip") {
+  if (settings.fallback === "notify" || settings.fallback === "skip") {
     return {
       action: NOTIFY,
       source: "fallback",
@@ -105,12 +106,20 @@ export async function decideTriage(
   };
 }
 
-/** Записывает решение в shadow-журнал, если shadow-режим активен. */
+/**
+ * Записывает решение в shadow-журнал, если shadow-режим активен.
+ *
+ * Оставлено для обратной совместимости; `notifyTaskCompletion` пишет все
+ * решения через `recordTriageOutcome` (31.8).
+ */
 export function recordShadow(
   input: TriageInput,
   decision: TriageDecision,
   shadow: TriageSettings["shadow"] | undefined
 ): void {
   if (!shadow || !shadow.enabled) return;
-  recordShadowDecision(input, decision);
+  recordTriageOutcome(input, decision, {
+    shadowActive: isShadowActive(shadow),
+    suppressed: false,
+  });
 }

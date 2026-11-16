@@ -5,10 +5,36 @@ import os from "node:os";
 import path from "node:path";
 import { execFile } from "node:child_process";
 import { DatabaseSync } from "node:sqlite";
+import { closeDb } from "./dist/db/index.js";
 
 // record-history.js безопасен для импорта: CLI-режим запускается только при
 // прямом вызове файла (guard через import.meta.url).
 const { selectDependentsToTrigger } = await import("./dist/core/record-history.js");
+
+// Упорядоченная очистка временной директории теста: на Windows force:true не
+// помогает при открытых SQLite-хендлах / WAL / антивирусе, поэтому закрываем
+// все хендлы и повторяем удаление с короткой паузой. Ошибка очистки не должна
+// падать сам тест — он и так уже прошёл все проверки.
+async function rmTemp(tempRoot, retries = 10, delayMs = 200) {
+  try {
+    db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+  } catch {
+    // игнорируем — базовый fs.rm ниже справится или предупредит.
+  }
+  db.close();
+  closeDb();
+  let lastErr = null;
+  for (let i = 0; i < retries; i += 1) {
+    try {
+      await fs.rm(tempRoot, { recursive: true, force: true });
+      return;
+    } catch (err) {
+      lastErr = err;
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+  console.warn(`⚠️  Временная директория теста не удалена (игнорируется): ${String(lastErr)}`);
+}
 
 const record = (taskName, status, startedAt, finishedAt) => ({
   taskName,
@@ -173,7 +199,6 @@ ok("История: при отсутствии данных поля tokens/cos
   assert.equal(noTokens.cost_usd, null);
 });
 
-db.close();
-await fs.rm(tempRoot, { recursive: true, force: true });
+await rmTemp(tempRoot);
 
 console.log(`\n${passed}/${passed} тестов DAG и учёта токенов прошли.`);

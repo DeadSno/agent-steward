@@ -55,7 +55,7 @@ otherwise CI fails.
 
 ## Install
 
-Requires OpenCode v2 and Node.js 20+.
+Requires OpenCode v2 and Node.js 22.13+ (node:sqlite requires Node.js 22.13+, or 22.5+ with `--experimental-sqlite`).
 
 ```bash
 opencode plugin add opencode-windows-scheduler
@@ -92,7 +92,7 @@ npm run build && npm run build:gui
 
 ## Agent tools
 
-The agent gets the full feature set — 24 tools covering scheduling, pipelines, operations, observability and administration:
+The agent gets the full feature set — 25 tools covering scheduling, pipelines, operations, observability and administration:
 
 | Tool | Arguments | What it does |
 |---|---|---|
@@ -111,6 +111,7 @@ The agent gets the full feature set — 24 tools covering scheduling, pipelines,
 | `get_metrics` | — | Aggregate runs, successes and failures |
 | `get_analytics` | `days?`, `topLimit?` | Period report: counts, success rate, duration, tokens, cost, top tasks |
 | `manage_settings` | `action`, `maxConcurrent?`, `winterMode?`, `notifications?`, `history?` | Read/update global settings (concurrency, notifications, retention) |
+| `manage_local_ai` | `action` (`get`/`update`/`test`), `mode?`, `baseUrl?`, `model?`, `timeoutMs?`, `fallback?`, `confidenceThreshold?`, `shadow?` | Read, update or test the local triage assistant; `test` sends one synthetic notification and reports latency and verdict |
 | `manage_templates` | `action`, template fields | List, save or delete reusable task templates |
 | `manage_profiles` | `action`, `name?`, `port?` | List, create, switch or delete isolated profiles |
 | `transfer_tasks` | `action`, `data?` | Export all tasks to JSON or import them back |
@@ -188,7 +189,7 @@ Tasks are **interactive only** by default: Task Scheduler starts them only while
 npm install
 npm run build        # tsc
 npm run build:gui    # vite
-npm test             # 38 test suites, 600+ checks
+npm test             # 43 test suites, 600+ checks
 npm run test:en      # same suites with the English locale
 ```
 

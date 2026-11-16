@@ -501,6 +501,13 @@ and native OS notifications — configurable in settings and testable with
 - **Quiet hours:** `quietHours.enabled` with `from`/`to` in `HH:MM` (an overnight
   range such as 22:00 → 08:00 is supported). During the window `success` and
   `partial` are suppressed while `error` and `timeout` are still delivered.
+- **Dedup (31.2):** `notifications.dedup.enabled` groups identical task + status
+  notifications inside `windowMinutes` (default 60). With `suppressDuplicates`,
+  non-important repeats are suppressed; statuses listed in `importantStatuses`
+  (default `error`, `timeout`) are always delivered and get a localized repeat
+  suffix, e.g. `(repeat 3)`. Counters live in the SQLite `notification_dedup`
+  table, so they survive the short-lived `record-history` processes, and
+  `maxCount` caps the counter.
 - **Matrix notifications:** on family completion — success, `partial` (`onPartial`)
   and all clones failed (`onAllFailed`). A stuck detector reports clones running
   longer than `matrix.stuckAfterMinutes` (default 60, `0` disables) once per run.
@@ -557,10 +564,10 @@ the `cleanup_history` RPC and the GUI's «Очистить сейчас» button
 
 ## Agent interface
 
-Twenty-four tools: `schedule_task`, `list_tasks`, `update_task`, `delete_task`,
+Twenty-five tools: `schedule_task`, `list_tasks`, `update_task`, `delete_task`,
 `run_task_now`, `pause_task`, `resume_task`, `get_history`, `get_task_logs`, `dry_run`,
 `manage_workspaces`, `matrix_control` (results/cancel/cleanup/preview), `get_metrics`,
-`get_analytics`, `manage_settings`, `manage_templates`, `manage_profiles`,
+`get_analytics`, `manage_settings`, `manage_local_ai`, `manage_templates`, `manage_profiles`,
 `transfer_tasks`, `send_notification`, `get_dashboard_info`, `cleanup_history`,
 `manage_secrets`, `get_audit_log`,
 `emit_event`.
@@ -569,6 +576,41 @@ A bundled skill, `scheduled-job-best-practices`, teaches the agent safe defaults
 least privilege, Quality Gates, timeout, matrix concurrency, DAG rules and a
 create → dry-run → run-now → inspect loop. It is registered automatically by the
 plugin, no installation step required.
+
+The `manage_local_ai` tool reads, updates and tests the local triage settings
+(`action: "get" | "update" | "test"`); see [LOCAL-AI.md](LOCAL-AI.md).
+
+## Local assistant (triage)
+
+An optional offline model classifies failed and partial runs (category, severity,
+confidence, reason). The model never suppresses a notification by itself: only a
+matching rules-engine rule with `action: "skip"` can do that. It is opt-in and
+fail-open: without a model the rules engine or direct delivery takes over, and
+notifications are never blocked by an unavailable model.
+It never changes run status, retries, Quality Gates, DAG dependencies or history.
+
+- `mode`: `off` (default), `rules`, `llm` or `auto` (model, then rules).
+- `fallback`: `rules` (default) or `notify` when the model fails or is unsure.
+  The legacy value `skip` is accepted as an alias for `notify`.
+- `confidenceThreshold`: minimum model confidence (0..1).
+- `rules` omitted means the built-in rules; `rules: []` disables them; a custom
+  array replaces the built-in set.
+- Built-in rules cover errors, status, cost and task name
+  (deploy/release/backup/migration); all are notify-only. Examples are in
+  [LOCAL-AI.md](LOCAL-AI.md).
+- The GUI shows a colored connection status (not checked / checking /
+  connected / no connection) and resets it when the mode, URL or model changes.
+- In `llm`/`auto`, triage is asynchronous: the notification is delivered
+  immediately and a detached worker writes the verdict to the audit. Only
+  `rules` mode triages before delivery, because only rules can suppress.
+- Shadow mode logs decisions to the persistent audit journal
+  (`get_audit_log`, action `triage.decision`) without suppressing notifications,
+  so triage can be evaluated safely before it is enforced and the report
+  survives restarts.
+
+Setup, model tiers by RAM, the `npm run bench:local` benchmark, shadow workflow
+and troubleshooting (including `OLLAMA_CONTEXT_LENGTH`) are documented in
+[LOCAL-AI.md](LOCAL-AI.md).
 
 ## Platform support
 

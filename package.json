@@ -1,6 +1,6 @@
 {
   "name": "opencode-windows-scheduler",
-  "version": "1.5.2",
+  "version": "1.5.4",
   "description": "OpenCode v2 plugin for scheduling and orchestrating AI agent jobs: cron, one-shot runs, DAG pipelines, matrix builds, quality gates, SQLite history, metrics and a local web dashboard. Windows, macOS and Linux. Free and open source (MIT).",
   "license": "MIT",
   "author": "opencode-windows-scheduler contributors",
@@ -59,7 +59,7 @@
     "ROADMAP-STRATEGY.md"
   ],
   "engines": {
-    "node": ">=20"
+    "node": ">=22.13.0"
   },
   "publishConfig": {
     "access": "public"
@@ -68,9 +68,11 @@
     "build": "tsc",
     "build:gui": "vite build",
     "demo": "node scripts/demo-dashboard.mjs",
+    "bench:local": "node scripts/bench-local.mjs",
     "prepare": "npm run build",
     "prepublishOnly": "npm run build && npm run build:gui",
-    "test": "node test-sqlite.mjs && node test-crash-recovery.mjs && node test-workspaces.mjs && node test-role-scoped.mjs && node test-dry-run.mjs && node test-matrix.mjs && node test-matrix-lifecycle.mjs && node test-matrix-sync.mjs && node test-retention.mjs && node test-metrics.mjs && node test-schedule-v2.mjs && node test-notifications-v2.mjs && node test-notifications-v3.mjs && node test-triage.mjs && node test-triage-rules.mjs && node test-triage-chain.mjs && node test-triage-shadow.mjs && node test-secrets.mjs && node test-audit.mjs && node test-profiles.mjs && node test-env.mjs && node test-agent-tools.mjs && node test-skill.mjs && node test-integrations.mjs && node test-one-shot.mjs && node test-session-continuity.mjs && node test-task-status.mjs && node test-jobs-view.mjs && node test-dag.mjs && node test-dashboard.mjs && node test-dashboard-dag.mjs && node test-dashboard-json.mjs && node test-docs.mjs && node test-glob.mjs && node test-git-trigger.mjs && node test-window-v3.mjs && node test-i18n.mjs && node test-gui-bundle.mjs",
+    "pretest": "npm run build",
+    "test": "node test-sqlite.mjs && node test-crash-recovery.mjs && node test-workspaces.mjs && node test-role-scoped.mjs && node test-dry-run.mjs && node test-matrix.mjs && node test-matrix-lifecycle.mjs && node test-matrix-sync.mjs && node test-retention.mjs && node test-metrics.mjs && node test-schedule-v2.mjs && node test-notifications-v2.mjs && node test-notifications-dedup.mjs && node test-notifications-embedding.mjs && node test-settings.mjs && node test-notifications-v3.mjs && node test-triage.mjs && node test-triage-rules.mjs && node test-triage-chain.mjs && node test-triage-shadow.mjs && node test-triage-audit.mjs && node test-triage-async.mjs && node test-local-ai.mjs && node test-secrets.mjs && node test-audit.mjs && node test-profiles.mjs && node test-env.mjs && node test-agent-tools.mjs && node test-skill.mjs && node test-integrations.mjs && node test-one-shot.mjs && node test-session-continuity.mjs && node test-task-status.mjs && node test-jobs-view.mjs && node test-dag.mjs && node test-dashboard.mjs && node test-dashboard-dag.mjs && node test-dashboard-json.mjs && node test-docs.mjs && node test-glob.mjs && node test-git-trigger.mjs && node test-window-v3.mjs && node test-i18n.mjs && node test-gui-bundle.mjs && node test-execution-hardening.mjs",
     "test:sqlite": "node test-sqlite.mjs",
     "test:crash": "node test-crash-recovery.mjs",
     "test:workspaces": "node test-workspaces.mjs",
@@ -84,10 +86,14 @@
     "test:schedule-v2": "node test-schedule-v2.mjs",
     "test:notifications-v2": "node test-notifications-v2.mjs",
     "test:notifications-v3": "node test-notifications-v3.mjs",
+    "test:settings": "node test-settings.mjs",
     "test:triage": "node test-triage.mjs",
     "test:triage-rules": "node test-triage-rules.mjs",
     "test:triage-chain": "node test-triage-chain.mjs",
     "test:triage-shadow": "node test-triage-shadow.mjs",
+    "test:triage-audit": "node test-triage-audit.mjs",
+    "test:triage-async": "node test-triage-async.mjs",
+    "test:local-ai": "node test-local-ai.mjs",
     "test:secrets": "node test-secrets.mjs",
     "test:audit": "node test-audit.mjs",
     "test:profiles": "node test-profiles.mjs",
@@ -121,7 +127,7 @@
   "devDependencies": {
     "@opentui/core": ">=0.8.1",
     "@opentui/solid": ">=0.8.1",
-    "@types/node": "^20.19.43",
+    "@types/node": "^22.0.0",
     "solid-js": "^1.9.0",
     "typescript": "^5.9.3",
     "vite": "^7.0.0",

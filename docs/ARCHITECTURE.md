@@ -33,15 +33,16 @@ model, the modules, the data model and the extension points.
    The wrapper reports the result back to the database, not to the plugin host.
 4. **One source of truth for definitions is SQLite.** OS entries are derived artifacts:
    they can always be recreated from the database with export/import.
-5. **Local first.** No network services, no telemetry, no accounts. The dashboard binds
-   to localhost only.
+5. **Local first.** No network services, no telemetry, no accounts by default. The dashboard binds
+   to localhost only. Local AI triage (Ollama) is optional and connects only when explicitly enabled
+   via `manage_local_ai`.
 
 ## Process model
 
 ```
 ┌─────────────────────────────┐
 │ OpenCode (plugin host)      │
-│  • agent tools (12)         │
+│  • agent tools (25)         │
 │  • sidebar GUI (gui.tsx)    │
 │  • RPC ↔ sidebar            │
 │  • dashboard HTTP server    │
@@ -121,7 +122,7 @@ from their clones instead of their own last run.
 
 | Path | Role |
 | --- | --- |
-| `src/index.ts` | Plugin lifecycle, 24 agent tools, RPC handlers, task CRUD, view assembly |
+| `src/index.ts` | Plugin lifecycle, 25 agent tools, RPC handlers, task CRUD, view assembly |
 | `src/rpc.ts` | JSON-schema contracts for every RPC method |
 | `src/gui.tsx` | OpenCode sidebar panel (SolidJS, built to `gui-experimental.cjs`) |
 | `src/server.ts` | Local web dashboard HTTP server and HTML rendering |
@@ -130,7 +131,7 @@ from their clones instead of their own last run.
 | `src/profiles.ts` | Profile directory resolution: per-profile plugin dir (base for `default`, `<base>/profiles/<name>` for named profiles); profile name, marker, port, create/delete/switch |
 | `src/workspaces.ts` | Workspace registry and path validation; env pairs and `.env` file resolution with secret masking |
 | `src/templates.ts` | Reusable task templates |
-| `src/settings.ts` | Plugin settings: notifications, history retention, audit, interface locale |
+| `src/settings.ts` | Plugin settings: notifications, history retention, audit, interface locale, local AI/triage |
 | `src/i18n.ts` | Interface locale (`ru` default, `en`), JSON catalogs in `locales/`, ICU subset (`{param}`, `plural`) via built-in `Intl`, fallback to `ru` |
 | `src/notifications.ts` | Multi-channel delivery (webhook, Telegram, native OS) with retries/backoff, templates, task filters, quiet hours, matrix and stuck-clone notifications, daily/weekly digest |
 | `src/core/telegram.ts` | Telegram Bot API `sendMessage`: parse-mode escaping, dashboard link, token validation and masking |
@@ -149,6 +150,7 @@ from their clones instead of their own last run.
 | `src/core/dry-run.ts` | Pipeline simulation (no execution) |
 | `src/core/lock.ts` | Single-instance lock manager |
 | `src/core/file-watcher.ts` | chokidar-based file triggers |
+| `src/core/local-ai.ts` | Local AI triage: LLM classifier with rules fallback, shadow mode, fail-open, manage_local_ai backing |
 | `src/core/cron-to-schtasks.ts` | Cron → Task Scheduler translation |
 | `src/core/schedule-v2.ts` | Extended cron parser/matcher, timezone math, launch windows, poll-mode decisions |
 | `src/core/schedule-gate.ts` | Wrapper-side gate: cron re-check (poll mode), window postpone, defer-file |
@@ -311,9 +313,9 @@ never requires a manual migration.
 
 | Interface | Audience | Entry point |
 | --- | --- | --- |
-| Agent tools | AI agent | 24 tools registered via `ctx.tool.transform` |
+| Agent tools | AI agent | 25 tools registered via `ctx.tool.transform` |
 | Agent skill | AI agent | `skills/scheduled-job-best-practices` |
-| RPC | Sidebar GUI | `src/rpc.ts` contracts, ~30 methods |
+| RPC | Sidebar GUI | `src/rpc.ts` contracts, 44 methods |
 | Sidebar GUI | Human | `gui-experimental.cjs` |
 | Web dashboard | Human | `startDashboardServer` (localhost, random/fixed port) |
 

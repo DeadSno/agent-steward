@@ -52,8 +52,13 @@ export type DigestFrequency = "daily" | "weekly";
 /** Режим локального триажа уведомлений. */
 export type TriageMode = "off" | "rules" | "llm" | "auto";
 
-/** Что делать, если LLM-триаж недоступен или не уверен. */
-export type TriageFallback = "rules" | "skip";
+/**
+ * Что делать, если LLM-триаж недоступен или не уверен.
+ *
+ * `rules` — применить правила; `notify` — не применять правила и отправить
+ * уведомление. `skip` — устаревшее имя `notify`, сохранено для совместимости.
+ */
+export type TriageFallback = "rules" | "notify" | "skip";
 
 /** Поле уведомления, по которому проверяется правило. */
 export type TriageRuleField = "status" | "task" | "error" | "cost";
@@ -224,6 +229,45 @@ export interface NotificationSettings {
   digest?: DigestSettings;
   /** Локальный триаж уведомлений. */
   triage?: TriageSettings;
+  /** Дедуп уведомлений (Спринт 31.2). */
+  dedup?: NotificationDedupSettings;
+  /** Семантический дедуп через эмбеддинги (Спринт 31.1). */
+  embedding?: NotificationEmbeddingSettings;
+}
+
+/**
+ * Дедуп уведомлений (Спринт 31.2): группирует похожие уведомления о задаче
+ * в окне времени, показывает счётчик повторов и не подавляет важные.
+ */
+export interface NotificationDedupSettings {
+  /** Включён ли дедуп. По умолчанию false. */
+  enabled: boolean;
+  /** Окно группировки в минутах. По умолчанию 60. */
+  windowMinutes: number;
+  /** Подавлять дубликаты (false — только считать и дописывать в сообщение). */
+  suppressDuplicates: boolean;
+  /** Статусы, которые никогда не подавляются (всегда доставляются). */
+  importantStatuses: string[];
+  /** Максимальный счётчик в сообщении. */
+  maxCount: number;
+}
+
+/**
+ * Семантический дедуп через эмбеддинги (Спринт 31.1): группирует уведомления
+ * по смыслу текста, а не только по задаче+статусу. Векторы хранятся в SQLite,
+ * сравнение — косинусным сходством брутфорсом по порогу.
+ */
+export interface NotificationEmbeddingSettings {
+  /** Включён ли семантический дедуп. По умолчанию false. */
+  enabled: boolean;
+  /** Подавлять семантически похожие уведомления. По умолчанию false. */
+  suppressDuplicates: boolean;
+  /** Окно группировки в минутах. По умолчанию 60. */
+  windowMinutes: number;
+  /** Порог косинусного сходства (0..1): выше — строже требуется совпадение. */
+  threshold: number;
+  /** Максимальное число векторов в таблице (старые удаляются). */
+  maxVectors: number;
 }
 
 /**
@@ -470,7 +514,7 @@ export function defaultNotifications(): NotificationSettings {
       mode: "off",
       baseUrl: "http://127.0.0.1:11434",
       model: "qwen3:4b",
-      timeoutMs: 45_000,
+      timeoutMs: 60_000,
       fallback: "rules",
       confidenceThreshold: 0.6,
       shadow: {
@@ -478,6 +522,20 @@ export function defaultNotifications(): NotificationSettings {
         days: DEFAULT_SHADOW_DAYS,
         startedAt: null,
       },
+    },
+    dedup: {
+      enabled: false,
+      windowMinutes: 60,
+      suppressDuplicates: false,
+      importantStatuses: ["error", "timeout"],
+      maxCount: 999,
+    },
+    embedding: {
+      enabled: false,
+      suppressDuplicates: false,
+      windowMinutes: 60,
+      threshold: 0.85,
+      maxVectors: 10_000,
     },
   };
 }
@@ -508,6 +566,18 @@ function normalizeIntInRange(
   const n = Number(value);
   if (!Number.isFinite(n)) return fallback;
   return Math.min(max, Math.max(min, Math.floor(n)));
+}
+
+/** Приводит число с плавающей точкой к безопасному диапазону. */
+function normalizeFloatInRange(
+  value: unknown,
+  fallback: number,
+  min: number,
+  max: number
+): number {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, n));
 }
 
 /** Приводит время HH:MM к безопасному виду. */
@@ -581,9 +651,16 @@ function normalizeTriageMode(value: unknown, fallback: TriageMode): TriageMode {
     : fallback;
 }
 
-/** Приводит fallback триажа к допустимому значению. */
+/**
+ * Приводит fallback триажа к допустимому значению.
+ *
+ * Старое имя `skip` означает «пропустить правила и отправить уведомление»,
+ * поэтому нормализуется в однозначное `notify`.
+ */
 function normalizeTriageFallback(value: unknown, fallback: TriageFallback): TriageFallback {
-  return value === "rules" || value === "skip" ? value : fallback;
+  if (value === "rules" || value === "notify") return value;
+  if (value === "skip") return "notify";
+  return fallback === "skip" ? "notify" : fallback;
 }
 
 /** Приводит порог уверенности к диапазону 0..1. */
@@ -702,6 +779,71 @@ function normalizeTriageShadow(
   };
 }
 
+function normalizeDedupSettings(
+  value: unknown,
+  fallback: NotificationDedupSettings
+): NotificationDedupSettings {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { ...fallback };
+  }
+  const raw = value as Partial<NotificationDedupSettings>;
+  return {
+    enabled: typeof raw.enabled === "boolean" ? raw.enabled : fallback.enabled,
+    windowMinutes: normalizeIntInRange(
+      raw.windowMinutes,
+      fallback.windowMinutes,
+      1,
+      10_080
+    ),
+    suppressDuplicates:
+      typeof raw.suppressDuplicates === "boolean"
+        ? raw.suppressDuplicates
+        : fallback.suppressDuplicates,
+    importantStatuses:
+      Array.isArray(raw.importantStatuses) &&
+      raw.importantStatuses.every((s) => typeof s === "string")
+        ? raw.importantStatuses.map((s) => String(s)).slice(0, 32)
+        : fallback.importantStatuses,
+    maxCount: normalizeIntInRange(raw.maxCount, fallback.maxCount, 1, 10_000),
+  };
+}
+
+/** Нормализация настроек семантического дедупа (Спринт 31.1). */
+function normalizeEmbeddingSettings(
+  value: unknown,
+  fallback: NotificationEmbeddingSettings
+): NotificationEmbeddingSettings {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { ...fallback };
+  }
+  const raw = value as Partial<NotificationEmbeddingSettings>;
+  return {
+    enabled: typeof raw.enabled === "boolean" ? raw.enabled : fallback.enabled,
+    suppressDuplicates:
+      typeof raw.suppressDuplicates === "boolean"
+        ? raw.suppressDuplicates
+        : fallback.suppressDuplicates,
+    windowMinutes: normalizeIntInRange(
+      raw.windowMinutes,
+      fallback.windowMinutes,
+      1,
+      10_080
+    ),
+    threshold: normalizeFloatInRange(
+      raw.threshold,
+      fallback.threshold,
+      0,
+      1
+    ),
+    maxVectors: normalizeIntInRange(
+      raw.maxVectors,
+      fallback.maxVectors,
+      100,
+      100_000
+    ),
+  };
+}
+
 /** Текущий shadow-период ещё активен? (ничего не меняет, только читает). */
 export function isShadowActive(shadow: TriageShadowSettings | undefined): boolean {
   if (!shadow || !shadow.enabled || !shadow.startedAt) return false;
@@ -795,6 +937,14 @@ function normalizeNotifications(
     typeof rawDigest?.lastSentAt === "string" && rawDigest.lastSentAt.trim()
       ? rawDigest.lastSentAt.trim()
       : null;
+
+  // `rules` отсутствует, если используется встроенный набор. Ключ с явным
+  // `undefined` нельзя отдавать по RPC: JSON-схема превращает неописанные
+  // поля в Schema.Json, которая отвергает undefined ("Expected JSON value").
+  const triageRules = normalizeTriageRules(
+    rawTriage?.rules,
+    fallbackTriage.rules
+  );
 
   return {
     enabled: typeof raw.enabled === "boolean" ? raw.enabled : fallback.enabled,
@@ -949,12 +1099,20 @@ function normalizeNotifications(
         rawTriage?.confidenceThreshold,
         fallbackTriage.confidenceThreshold
       ),
-      rules: normalizeTriageRules(rawTriage?.rules, fallbackTriage.rules),
+      ...(triageRules !== undefined ? { rules: triageRules } : {}),
       shadow: normalizeTriageShadow(
         rawTriage?.shadow,
         fallbackShadow
       ),
     },
+    dedup: normalizeDedupSettings(
+      raw.dedup,
+      fallback.dedup ?? defaultNotifications().dedup!
+    ),
+    embedding: normalizeEmbeddingSettings(
+      raw.embedding,
+      fallback.embedding ?? defaultNotifications().embedding!
+    ),
   };
 }
 

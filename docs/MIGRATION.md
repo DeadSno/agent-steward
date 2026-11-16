@@ -240,6 +240,20 @@ For every migrated job:
    right workspace path.
 6. Wait for at least one natural scheduled run before deleting the old definition.
 
+## Local AI / triage migration
+
+If you are migrating from a setup that used cloud AI for lightweight task triage or
+classification, you can move that load to a local model to save tokens:
+
+1. Install Ollama: `ollama serve` and `ollama pull qwen3:4b` (or a smaller model for
+   RAM-constrained machines — see `docs/LOCAL-AI.md` for tier recommendations).
+2. Configure triage via `manage_local_ai({action: "update", mode: "auto", ...})` or
+   through the GUI notifications panel.
+3. Start in `shadow` mode so decisions are logged but not applied, then switch to `auto`
+   once confidence is acceptable.
+4. Ollama is optional — if it is unavailable, the plugin falls back to rules-only mode
+   (fail-open) and never blocks notifications.
+
 ## Common pitfalls
 
 | Symptom | Cause | Fix |
@@ -252,6 +266,9 @@ For every migrated job:
 | Two runs at once after migration | old scheduler is still enabled | disable the old job |
 | Cron rejected | expression not expressible by `schtasks` | use a supported pattern (`*/N`, fixed minute/hour, weekdays) |
 | Prompts behave differently at night | interactive shell environment vs scheduler environment | use absolute paths, avoid alias-dependent commands |
+| Local AI (Ollama) unreachable | `manage_local_ai` test fails or triage falls back to rules | run `ollama serve`, `ollama pull <model>`, check `OLLAMA_CONTEXT_LENGTH` |
+| Local AI confidence too low | rules fire instead of LLM, more tokens used than expected | raise `confidenceThreshold` in `manage_local_ai`, review rule reasons in audit |
+
 
 ## Rollback
 

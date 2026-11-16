@@ -20,8 +20,9 @@ Therefore:
 
 1. **Job definitions are code.** Anyone who can create or edit a job can execute arbitrary commands under your user account. Protect the config directory and review imported job files (`.json`) before importing.
 2. **The web dashboard is local.** Do not expose its port to untrusted networks; it has no authentication layer.
-3. **Secrets in prompts and scripts are stored in plain text** in the local SQLite database and logs. Prefer environment variables managed outside the plugin; secret masking and encryption are on the roadmap.
-4. **Tool allow/deny lists are metadata passed to the runtime**, not a sandbox. They do not replace OS-level isolation.
+3. **Secrets** (`${secret:NAME}`) are scoped to the fields where they are actually used and masked in logs/outputs. Secret masking is enforced; prefer environment variables managed outside the plugin for additional isolation.
+4. **Tool allow/deny lists are enforced** by the runtime wrappers, not just metadata. They do not replace OS-level isolation.
+5. **Dashboard mutations** (run, delete, cancel-matrix, matrix-cleanup) require a trusted source: either the custom `X-Scheduler-Client` header (which forces a CORS preflight browsers won't answer) or an `Origin`/`Host` header of `127.0.0.1`/`localhost`. The port is bound to loopback only; do not expose it to untrusted networks.
 
 ## Reporting a vulnerability
 

@@ -121,3 +121,43 @@ Why: explicit protected list, dry-run first, auditable report. Ask the user to r
 4. Fix the cause (`update_task` on the parent for a definition bug, or the repository itself).
 5. Re-run only the failed clone with `run_task_now`, then confirm the aggregate becomes
    `success`.
+
+## 8. Safe rollout of local triage
+
+Start in shadow mode so the model logs decisions without suppressing notifications,
+then verify with the benchmark and the shadow report before enforcing.
+
+```json
+{
+  "action": "update",
+  "mode": "auto",
+  "baseUrl": "http://127.0.0.1:11434",
+  "model": "qwen3:4b",
+  "timeoutMs": 60000,
+  "fallback": "rules",
+  "confidenceThreshold": 0.6,
+  "shadow": { "enabled": true, "days": 14 }
+}
+```
+
+Check readiness and run one classification request:
+
+```json
+{ "action": "get" }
+```
+
+```json
+{ "action": "test", "model": "qwen3:4b" }
+```
+
+Measure the machine before trusting the model:
+
+```bash
+npm run bench:local -- --model qwen3:4b --runs 3 --out bench.json
+```
+
+Why: `auto` keeps the rules engine as a fallback, `fallback: "rules"` is
+fail-open, and shadow mode makes false skips visible. Only disable shadow mode
+after the shadow report shows no false positives. See `docs/LOCAL-AI.md` for
+model tiers by RAM, `OLLAMA_CONTEXT_LENGTH` troubleshooting and the full JSON
+report format.

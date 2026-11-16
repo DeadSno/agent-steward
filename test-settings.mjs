@@ -1,0 +1,216 @@
+/**
+ * Настройки: триаж и семантика правил.
+ * Запуск: node test-settings.mjs (после npm run build).
+ *
+ * Проверки вынесены из test-notifications-v2.mjs, чтобы сюита уведомлений
+ * не разрасталась и настройки можно было менять независимо.
+ */
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ws-scheduler-settings-"));
+process.env.APPDATA = tempRoot;
+process.env.OPENCODE_SCHEDULER_HOME = path.join(
+  tempRoot,
+  "opencode",
+  "windows-scheduler"
+);
+
+const settingsModule = await import("./dist/settings.js");
+const { evaluateTriageRules } = await import("./dist/core/triage-rules.js");
+
+let passed = 0;
+let failed = 0;
+
+function check(name, condition, details = "") {
+  if (condition) {
+    passed++;
+    console.log(`OK   ${name}`);
+  } else {
+    failed++;
+    console.log(`FAIL ${name}${details ? ` - ${details}` : ""}`);
+  }
+}
+
+const settingsFile = path.join(process.env.OPENCODE_SCHEDULER_HOME, "settings.json");
+fs.mkdirSync(path.dirname(settingsFile), { recursive: true });
+
+// 1. Дефолты триажа
+const defaults = settingsModule.defaultNotifications();
+check(
+  "defaultNotifications: триаж выключен и указывает на Ollama",
+  defaults.triage?.mode === "off" &&
+    defaults.triage?.baseUrl === "http://127.0.0.1:11434" &&
+    defaults.triage?.model === "qwen3:4b" &&
+    defaults.triage?.timeoutMs === 60000 &&
+    defaults.triage?.fallback === "rules" &&
+    defaults.triage?.confidenceThreshold === 0.6
+);
+check(
+  "defaultNotifications: rules undefined означает встроенные правила",
+  defaults.triage?.rules === undefined
+);
+
+// 2. Старый settings.json без triage получает безопасный дефолт
+fs.writeFileSync(
+  settingsFile,
+  JSON.stringify({
+    notifications: {
+      enabled: true,
+      onlyOnError: false,
+      webhook: { enabled: true, url: "http://127.0.0.1:9/hook" },
+    },
+  }),
+  "utf8"
+);
+const loaded = await settingsModule.loadSettings();
+check(
+  "loadSettings: старый settings.json получает triage off",
+  loaded.notifications.triage?.mode === "off" &&
+    loaded.notifications.triage?.baseUrl === "http://127.0.0.1:11434"
+);
+
+// 3. Некорректные enum-ы откатываются, числа зажимаются
+fs.writeFileSync(
+  settingsFile,
+  JSON.stringify({
+    notifications: {
+      enabled: true,
+      onlyOnError: true,
+      triage: {
+        mode: "auto",
+        baseUrl: "ftp://bad",
+        model: "  qwen3:4b  ",
+        timeoutMs: 500,
+        fallback: "nonsense",
+        confidenceThreshold: 2.5,
+      },
+    },
+  }),
+  "utf8"
+);
+const clamped = await settingsModule.loadSettings();
+check(
+  "loadSettings: triage валидирует enum-ы и зажимает числа",
+  clamped.notifications.triage?.mode === "auto" &&
+    clamped.notifications.triage?.baseUrl === "http://127.0.0.1:11434" &&
+    clamped.notifications.triage?.model === "qwen3:4b" &&
+    clamped.notifications.triage?.timeoutMs === 1000 &&
+    clamped.notifications.triage?.fallback === "rules" &&
+    clamped.notifications.triage?.confidenceThreshold === 1
+);
+
+// 4. Старое имя "skip" означало «не применять правила», а не «не отправлять».
+fs.writeFileSync(
+  settingsFile,
+  JSON.stringify({
+    notifications: {
+      enabled: true,
+      onlyOnError: true,
+      triage: { mode: "llm", fallback: "skip" },
+    },
+  }),
+  "utf8"
+);
+const legacyFallback = await settingsModule.loadSettings();
+check(
+  "loadSettings: fallback skip нормализуется в notify",
+  legacyFallback.notifications.triage?.fallback === "notify"
+);
+
+// 5. Новое имя notify сохраняется как есть
+fs.writeFileSync(
+  settingsFile,
+  JSON.stringify({
+    notifications: {
+      enabled: true,
+      onlyOnError: true,
+      triage: { mode: "llm", fallback: "notify" },
+    },
+  }),
+  "utf8"
+);
+const notifyFallback = await settingsModule.loadSettings();
+check(
+  "loadSettings: fallback notify сохраняется",
+  notifyFallback.notifications.triage?.fallback === "notify"
+);
+
+// 6. Частичное сохранение триажа не сбрасывает остальные уведомления
+await settingsModule.saveSettings({
+  notifications: { enabled: true, onlyOnError: true, triage: { mode: "rules" } },
+});
+const partial = await settingsModule.loadSettings();
+check(
+  "saveSettings: частичный triage сохраняет остальные настройки",
+  partial.notifications.triage?.mode === "rules" &&
+    partial.notifications.enabled === true &&
+    partial.notifications.onlyOnError === true &&
+    partial.notifications.webhook?.timeoutMs === 10000 &&
+    partial.notifications.digest?.frequency === "daily"
+);
+
+// 7. Пользовательские правила нормализуются, невалидные отбрасываются
+fs.writeFileSync(
+  settingsFile,
+  JSON.stringify({
+    notifications: {
+      enabled: true,
+      triage: {
+        mode: "rules",
+        rules: [
+          { id: "keep", field: "task", operator: "equals", value: "deploy", priority: "50" },
+          { id: "bad-op", field: "cost", operator: "contains", value: 1 },
+          { id: "bad-regex", field: "error", operator: "regex", value: "[bad" },
+          { id: "bad-field", field: "unknown", operator: "equals", value: "x" },
+        ],
+      },
+    },
+  }),
+  "utf8"
+);
+const withRules = await settingsModule.loadSettings();
+check(
+  "loadSettings: правила триажа нормализуются и отбрасывают невалидные",
+  withRules.notifications.triage?.rules?.length === 1 &&
+    withRules.notifications.triage?.rules?.[0].id === "keep" &&
+    withRules.notifications.triage?.rules?.[0].priority === 50
+);
+
+// 8. Семантика rules: undefined = встроенные, [] = ни одного
+const timeoutInput = {
+  taskName: "deploy",
+  status: "error",
+  error: "Process timed out after 30s",
+};
+const builtIn = evaluateTriageRules(timeoutInput);
+check(
+  "evaluateTriageRules: undefined применяет встроенные правила",
+  builtIn.matched === true && builtIn.ruleId === "error-timeout"
+);
+const noRulesEvaluation = evaluateTriageRules(timeoutInput, []);
+check(
+  "evaluateTriageRules: пустой массив отключает встроенные правила",
+  noRulesEvaluation.matched === false
+);
+
+await settingsModule.saveSettings({
+  notifications: { enabled: true, onlyOnError: true, triage: { rules: [] } },
+});
+const noRules = await settingsModule.loadSettings();
+check(
+  "saveSettings: пустой массив правил сохраняется и отключает встроенные",
+  Array.isArray(noRules.notifications.triage?.rules) && noRules.notifications.triage?.rules?.length === 0
+);
+check(
+  "loadSettings: rules undefined не превращается в пустой массив",
+  settingsModule.defaultNotifications().triage?.rules === undefined &&
+    Array.isArray(noRules.notifications.triage?.rules)
+);
+
+// Итог
+console.log(`\nSettings: ${passed}/${passed + failed} проверок прошли.`);
+if (failed > 0) {
+  process.exit(1);
+}

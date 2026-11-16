@@ -253,7 +253,7 @@ export async function classifyNotification(
   const timeoutMs =
     Number.isFinite(settings.timeoutMs) && settings.timeoutMs > 0
       ? Math.floor(settings.timeoutMs)
-      : 45_000;
+      : 60_000;
   const maxAttempts = Math.max(1, 1 + Math.max(0, options.retries ?? 1));
   const retryDelayMs = Math.max(0, options.retryDelayMs ?? 300);
 

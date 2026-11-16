@@ -46,8 +46,17 @@ const IS_WINDOWS = process.platform === "win32";
 /**
  * Имена процессов, которые считаем «зомби» от прошлых запусков плагина.
  * На Windows процессы называются node.exe / bun.exe, на POSIX — node / bun.
+ * Ayrıca принимаем versioned-бинарники (node22, bun1.2 и т.п.) —
+ * они нормализуются в normalizeProcessName перед проверкой.
  */
 const ZOMBIE_IMAGE_NAMES = new Set(["node", "nodejs", "node.exe", "bun", "bun.exe"]);
+
+/** Нормализует имя процесса: node22 → node, bun1.2 → bun, остальные без изменений. */
+function normalizeProcessName(name: string): string {
+  if (/^node\d+(\.\d+)*$/i.test(name)) return "node";
+  if (/^bun\d+(\.\d+)*$/i.test(name)) return "bun";
+  return name;
+}
 
 /** Маркер-заголовок: по нему узнаём «свой» дашборд, уже слушающий порт. */
 const DASHBOARD_HEADER = "x-plugin-dashboard";
@@ -263,6 +272,32 @@ export function getDashboardPort(): number | null {
 }
 
 /**
+ * Проверяет, что запрос к дашборду исходит из доверенного источника,
+ * чтобы защититься от CSRF и DNS-ребиндинга.
+ * Доверен запрос:
+ *  - с кастомным заголовком X-Scheduler-Client (без него обычный
+ *    браузерный fetch/form не сможет сделать preflight и отправить тело),
+ *  - или с Origin/Host, входящим в {127.0.0.1, localhost} (любой порт).
+ * /api/hooks исключается — оно защищено HMAC отдельно.
+ */
+export function isDashboardRequestTrusted(req: http.IncomingMessage): boolean {
+  const headers = req.headers ?? {};
+  if (headers["x-scheduler-client"]) return true;
+
+  const allowed = new Set(["127.0.0.1", "localhost"]);
+
+  const originHost = (typeof headers.origin === "string"
+    ? headers.origin.replace(/^https?:\/\//, "").split(":")[0]
+    : undefined) ?? undefined;
+  const hostHost = typeof headers.host === "string" ? headers.host.split(":")[0] : undefined;
+
+  return (
+    Boolean(originHost && allowed.has(originHost.toLowerCase())) ||
+    Boolean(hostHost && allowed.has(hostHost.toLowerCase()))
+  );
+}
+
+/**
  * Запускает сервер на первом свободном порту.
  * Если порт занят не нашим дашбордом, сначала пытается снять зомби-процесс
  * (node/bun, оставшийся от прошлого запуска), затем пробует следующий порт.
@@ -362,7 +397,8 @@ async function tryFreeZombiePort(port: number): Promise<boolean> {
     const info = await getProcessInfo(pid);
     if (!info) continue;
 
-    if (!ZOMBIE_IMAGE_NAMES.has(info.name.toLowerCase())) {
+    const normName = normalizeProcessName(info.name.toLowerCase());
+    if (!ZOMBIE_IMAGE_NAMES.has(normName)) {
       console.warn(
         `[windows-scheduler] Порт ${port} занят процессом ${info.name} (PID ${pid}) — не трогаем, пробуем другой порт.`
       );
@@ -648,6 +684,22 @@ async function handleRequest(
       return;
     }
 
+    // --- CSRF / DNS-rebinding защита для мутирующих POST --- //
+    // Требуем либо кастомный заголовок X-Scheduler-Client (браузер не отправит
+    // его межсайтово без ответа на preflight, которого сервер не даёт),
+    // либо Origin/Host из локального списка (127.0.0.1 или localhost, любой порт).
+    // POST /api/hooks остаётся без этой проверки: он защищён HMAC отдельно.
+    const mutationPost =
+      req.method === "POST" &&
+      (pathname.startsWith("/api/run/") ||
+        pathname.startsWith("/api/delete/") ||
+        pathname.startsWith("/api/cancel-matrix/") ||
+        pathname === "/api/matrix-cleanup");
+    if (mutationPost && !isDashboardRequestTrusted(req)) {
+      sendJson(res, 403, { error: "Запрос не прошёл проверку источника (CSRF/DNS-rebinding)." });
+      return;
+    }
+
     // Статический HTML-файл — страница дашборда.
     if (req.method === "GET" && (pathname === "/" || pathname === "/index.html")) {
       send(res, 200, "text/html; charset=utf-8", renderPage());
@@ -793,7 +845,7 @@ async function handleRequest(
           tasks: [],
           totals: { estimatedDurationSec: null, estimatedCostUsd: null, estimatedTokens: null },
           warnings: [],
-          error: err instanceof Error ? err.message : String(err),
+          error: sanitizeError(err),
         });
       }
       return;
@@ -930,9 +982,7 @@ async function handleRequest(
         );
       } catch (err: any) {
         sendJson(res, 500, {
-          error: `Не удалось экспортировать БД: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
+          error: `Не удалось экспортировать БД: ${sanitizeError(err)}`,
         });
       }
       return;
@@ -953,7 +1003,7 @@ async function handleRequest(
         sendJson(res, 200, { success: true, ...result });
       } catch (err: any) {
         sendJson(res, 500, {
-          error: err instanceof Error ? err.message : String(err),
+          error: sanitizeError(err),
         });
       }
       return;
@@ -1029,7 +1079,7 @@ async function handleRequest(
       } catch (err: any) {
         const message = err instanceof Error ? err.message : String(err);
         logHook(500, "rejected", `Не удалось получить список задач: ${message}`, bodyResult.body.length);
-        sendJson(res, 500, { success: false, error: message });
+        sendJson(res, 500, { success: false, error: sanitizeError(err) });
         return;
       }
       const key = taskName.toLowerCase();
@@ -1067,7 +1117,7 @@ async function handleRequest(
       } catch (err: any) {
         const message = err instanceof Error ? err.message : String(err);
         logHook(500, "rejected", message, bodyResult.body.length);
-        sendJson(res, 500, { success: false, error: message });
+        sendJson(res, 500, { success: false, error: sanitizeError(err) });
       }
       return;
     }
@@ -1100,7 +1150,7 @@ async function handleRequest(
       } catch (err: any) {
         sendJson(res, 500, {
           success: false,
-          error: err instanceof Error ? err.message : String(err),
+          error: sanitizeError(err),
         });
       }
       return;
@@ -1138,7 +1188,7 @@ async function handleRequest(
       } catch (err: any) {
         sendJson(res, 500, {
           success: false,
-          error: err instanceof Error ? err.message : String(err),
+          error: sanitizeError(err),
         });
       }
       return;
@@ -1172,7 +1222,7 @@ async function handleRequest(
       } catch (err: any) {
         sendJson(res, 500, {
           success: false,
-          error: err instanceof Error ? err.message : String(err),
+          error: sanitizeError(err),
         });
       }
       return;
@@ -1200,7 +1250,7 @@ async function handleRequest(
       } catch (err: any) {
         sendJson(res, 500, {
           success: false,
-          error: err instanceof Error ? err.message : String(err),
+          error: sanitizeError(err),
         });
       }
       return;
@@ -1216,7 +1266,7 @@ async function handleRequest(
       res.destroy();
       return;
     }
-    sendJson(res, 500, { error: message });
+    sendJson(res, 500, { error: sanitizeError(err) });
   }
 }
 
@@ -1229,6 +1279,17 @@ function sendJson(res: http.ServerResponse, status: number, payload: unknown): v
     return;
   }
   send(res, status, JSON_TYPE, JSON.stringify(payload));
+}
+
+/** Санитизирует сообщение об ошибке для клиентского ответа.
+ * Подробности стека/пути/токенов не утекают наружу — пишем только в лог. */
+function sanitizeError(err: any): string {
+  if (err instanceof Error) {
+    const msg = err.message;
+    // Убираем внутренние пути и стеки
+    return msg.replace(/[A-Z]:\\/g, "").replace(/\\/g, "/").replace(/\s+at\s+/g, " ").slice(0, 300);
+  }
+  return String(err).slice(0, 300);
 }
 
 /** Отправляет ответ с телом и закрывает соединение. */
@@ -2229,7 +2290,7 @@ function renderPage(): string {
   function taskRow(t, isClone, cloneCount, expanded) {
     var sessionBadge = t.session === 'reuse' || t.session === 'last'
       ? '<span title="' + (t.session === 'reuse'
-          ? 'Переиспользуемая сессия OpenCode' + (t.sessionId ? ': ' + t.sessionId : '')
+          ? 'Переиспользуемая сессия OpenCode' + (t.sessionId ? ': ' + esc(t.sessionId) : '')
           : 'Продолжение последней сессии OpenCode (--continue)') +
         '" style="margin-left:6px;padding:1px 6px;border-radius:999px;border:1px solid #30d158;color:#30d158;font-size:11px">' +
         (t.session === 'reuse' ? '⟳ сессия' : '↪ продолжение') + '</span>'

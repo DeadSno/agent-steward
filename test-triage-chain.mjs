@@ -10,6 +10,7 @@ process.env.APPDATA = home;
 const { decideTriage } = await import("./dist/core/triage-chain.js");
 const { saveSettings } = await import("./dist/settings.js");
 const { notifyTaskCompletion } = await import("./dist/notifications.js");
+const { closeDb } = await import("./dist/db/index.js");
 
 let passed = 0;
 let failed = 0;
@@ -144,7 +145,7 @@ await withServer(
   }
 );
 
-// 6. Таймаут + fallback skip = fail-open
+// 6. Таймаут + fallback notify = fail-open
 await withServer(
   (req, res) => {
     req.resume();
@@ -156,21 +157,21 @@ await withServer(
   async (base) => {
     const decision = await decideTriage(
       input,
-      triageSettings(base, { timeoutMs: 40, fallback: "skip" }),
+      triageSettings(base, { timeoutMs: 40, fallback: "notify" }),
       { retryDelayMs: 0 }
     );
     check("таймаут: failure timeout", decision.failure === "timeout");
-    check("таймаут + fallback skip: notify", decision.action === "notify" && decision.source === "fallback");
+    check("таймаут + fallback notify: notify", decision.action === "notify" && decision.source === "fallback");
   }
 );
 
-// 7. Сеть недоступна = fail-open
+// 7. Сеть недоступна = fail-open (устаревшее имя fallback "skip")
 const dead = await decideTriage(
   input,
   triageSettings("http://127.0.0.1:9", { fallback: "skip" }),
   { retryDelayMs: 0 }
 );
-check("сеть недоступна: notify", dead.action === "notify" && dead.source === "fallback");
+check("сеть недоступна (legacy skip): notify", dead.action === "notify" && dead.source === "fallback");
 check("сеть недоступна: failure network", dead.failure === "network");
 
 // 8. Реальная доставка при недоступном классификаторе
@@ -203,7 +204,7 @@ await withServer(
           baseUrl: "http://127.0.0.1:9",
           model: "qwen3:4b",
           timeoutMs: 500,
-          fallback: "skip",
+          fallback: "notify",
           confidenceThreshold: 0.6,
         },
       },
@@ -271,5 +272,6 @@ await withServer(
 );
 
 console.log(`\nTriage chain: ${passed}/${passed + failed} проверок пройдено.`);
+closeDb();
 fs.rmSync(home, { recursive: true, force: true });
 if (failed > 0) process.exit(1);

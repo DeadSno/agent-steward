@@ -17,15 +17,16 @@
 | **Open source-first** | Публичный roadmap, CI на 3 ОС, английская документация |
 | **Оркестрация, а не таймер** | Ров — DAG, матрицы, Quality Gates, наблюдаемость. Cron скопируют за неделю |
 
-**Текущая точка (1.5.1):**
+**Текущая точка (1.5.3):**
 
 - опубликован в npm, CI зелёный на Windows / macOS / Linux;
-- 24 инструмента агента — паритет с RPC-поверхностью;
-- one-shot запуски, непрерывность сессий, профили, webhooks, Telegram и нативные toast, тихие часы, Prometheus и OTLP — есть;
+- 25 инструментов агента — паритет с RPC-поверхностью;
+- локальный триаж + shadow mode, `manage_local_ai` инструмент + блок настроек в GUI — есть;
+- один-shot запуски, непрерывность сессий, профили, webhooks, Telegram и нативные toast, тихие часы, Prometheus и OTLP — есть;
 - зашифрованные секреты (${secret:NAME}) и журнал аудита — есть;
 - английский README и `docs/` — основные, русский синхронизирован в `docs/README.ru.md`.
 
-**Чего ещё нет:** enforced permissions (`allowedTools` пока advisory), локальный ИИ, pipeline-as-code, Docker-runner, approvals и remote runners.
+**Чего ещё нет:** pipeline-as-code, Docker-runner, approvals и remote runners.
 
 ---
 

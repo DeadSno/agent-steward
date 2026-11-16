@@ -1,7 +1,7 @@
 # План тестирования плагина `opencode-windows-scheduler`
 
-**Версия плагина:** 1.5.0 · **Платформа прогона:** Windows 11 · **Дата:** 15.11.2026
-**Объект:** весь плагин — ядро, MCP-инструменты, GUI OpenCode, веб-дашборд, TUI, БД, интеграции.
+**Версия плагина:** 1.5.4 · **Платформа прогона:** Windows 11 · **Дата:** 16.11.2026
+**Объект:** весь плагин — ядро, MCP-инструменты, GUI OpenCode, веб-дашборд, TUI, БД, интеграции, локальный ассистент триажа, бенчмарк.
 **Цель:** доказать три свойства для каждой детали:
 
 1. подсистема работает (функционально и на ошибках);
@@ -40,12 +40,12 @@
 cd opencode-windows-scheduler
 npm run build          # tsc: dist/ (сервер, RPC, ядро)
 npm run build:gui      # vite: gui-experimental.cjs (панель OpenCode)
-npm test               # 33 набора, полный регресс
+npm test               # 39 наборов, полный регресс
 node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с сид-данными
 ```
 
 - GUI: OpenCode → боковая панель «Планировщик Windows». После пересборки панель перезагрузить.
-- MCP: 24 инструмента доступны агенту в этой же сессии.
+- MCP: 25 инструмента доступны агенту в этой же сессии.
 - Дашборд: `http://127.0.0.1:3782/` (порт может отличаться, смотреть `get_dashboard_info`).
 - Логи прогона: `test-run.log`; артефакты GUI — `gui-experimental.cjs`.
 
@@ -74,12 +74,12 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 | D01 | Ядро расписаний и ОС-бэкенды | `src/core/schedule-v2.ts`, `cron-to-schtasks.ts`, `one-shot.ts`, `core/scheduler/*` | `schedule_task`, `update_task`, `dry_run` | GUI-форма, дашборд | `test-schedule-v2`, `test-one-shot`, `test-window-v3` |
 | D02 | Жизненный цикл задач | `src/db/tasks-repo.ts`, `src/index.ts` | `schedule_task`, `list_tasks`, `update_task`, `delete_task`, `pause_task`, `resume_task` | GUI-таблица + форма | `test-agent-tools`, `test-task-status` |
 | D03 | Исполнение, блокировки, сессии | `src/core/ps-wrapper.ts`, `lock.ts`, `session.ts`, `record-history.ts` | `run_task_now`, `get_task_logs`, `get_history` | GUI «Запустить/Логи/История», дашборд | `test-crash-recovery`, `test-session-continuity` |
-| D04 | MCP-слой и скилл для агента | `src/index.ts`, `src/skill.ts`, `skills/` | все 24 инструмента | — (служебная деталь) | `test-agent-tools`, `test-skill` |
+| D04 | MCP-слой и скилл для агента | `src/index.ts`, `src/skill.ts`, `skills/` | все 25 инструмента | — (служебная деталь) | `test-agent-tools`, `test-skill` |
 | D05 | DAG и цепочки задач | `src/core/dry-run.ts`, `src/index.ts` | `dry_run`, `schedule_task.dependsOn`, `nextTaskOn*` | GUI-форма, дашборд-граф | `test-dag`, `test-dashboard-dag` |
 | D06 | Matrix (fan-out по workspace) | `src/core/matrix.ts` | `matrix_control`, `schedule_task.matrix` | GUI-форма, дашборд | `test-matrix`, `test-matrix-lifecycle`, `test-matrix-sync` |
 | D07 | Триггеры: cron/file/git/MCP/webhook | `src/core/file-watcher.ts`, `git-trigger.ts`, `glob.ts`, `src/server.ts` | `schedule_task`, `update_task`, `emit_event` | GUI-форма, `POST /api/hooks/:name` | `test-git-trigger`, `test-glob`, `test-integrations` |
 | D08 | История, метрики, аналитика | `src/db/history-repo.ts`, `metrics-repo.ts`, `analytics.ts` | `get_history`, `get_metrics`, `get_analytics`, `cleanup_history` | GUI-история, дашборд | `test-metrics`, `test-retention`, `test-dashboard-json` |
-| D09 | Уведомления | `src/notifications.ts`, `core/telegram.ts`, `native-notify.ts` | `send_notification`, `manage_settings` | GUI-секция «Уведомления» | `test-notifications-v2`, `v3` |
+| D09 | Уведомления и локальный ассистент триажа | `src/notifications.ts`, `core/telegram.ts`, `native-notify.ts`, `src/core/local-ai.ts` | `send_notification`, `manage_settings`, `manage_local_ai` | GUI-секция «Уведомления», блок триажа | `test-notifications-v2`, `v3`, `test-local-ai` |
 | D10 | Безопасность и аудит | `src/core/secrets.ts`, `audit.ts`, `src/settings.ts` | `manage_secrets`, `get_audit_log`, `manage_settings` | GUI-секреты и аудит | `test-secrets`, `test-audit`, `test-role-scoped` |
 | D11 | Профили и workspace | `src/profiles.ts`, `src/workspaces.ts` | `manage_profiles`, `manage_workspaces` | GUI-профили и workspace | `test-profiles`, `test-workspaces` |
 | D12 | Шаблоны и перенос задач | `src/templates.ts`, `src/task-transfer.ts` | `manage_templates`, `transfer_tasks` | GUI-кнопки «Шаблон/Экспорт/Импорт» | `test-integrations` (частично) |
@@ -190,13 +190,13 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 
 ### D04. MCP-слой и скилл для агента
 
-**Критерии приёмки:** все 24 инструмента зарегистрированы и вызываются; схемы валидируют аргументы; ошибки структурированы; агентский скилл доступен; инструменты работают в Code Mode.
+**Критерии приёмки:** все 25 инструмента зарегистрированы и вызываются; схемы валидируют аргументы; ошибки структурированы; агентский скилл доступен; инструменты работают в Code Mode.
 **Доступ агента:** весь набор MCP.
 **Доступ пользователя:** косвенно — через журнал аудита (actor `mcp`).
 
 | ID | Подзадача | Шаги | Ожидаемый результат |
 |---|---|---|---|
-| S04.1.1 | 🤖 Регистрация | список инструментов сессии | Ровно 24 инструмента из §1 |
+| S04.1.1 | 🤖 Регистрация | список инструментов сессии | Ровно 25 инструментов из §1 |
 | S04.1.2 | 🤖 Описания | проверить description каждого | Непустые, объясняют побочные эффекты |
 | S04.1.3 | 🧪 Невалидные аргументы | `schedule_task` без `name` | Ошибка схемы, задача не создана |
 | S04.1.4 | 🧪 Code Mode | вызовы через `execute`/`tools.*` | Работают так же, как прямые |
@@ -324,6 +324,19 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 | S09.1.8 | 🧪 Матричные алерты | partial/все упали/stuck | Сообщение содержит матрицу, клона и минуты |
 | S09.1.9 | 🧪 Дайджест | `send_notification` digest | Отправлен по расписанию/вручную, `lastSentAt` обновлён |
 | S09.1.10 | 🧪 Секреты | webhook URL с токеном | В аудите и логах значение замаскировано |
+
+#### T09.2. Локальный ассистент триажа (manage_local_ai)
+
+| ID | Подзадача | Шаги | Ожидаемый результат |
+|---|---|---|---|
+| S09.2.1 | 🤖 get | `manage_local_ai({action: "get"})` | Возвращает mode, baseUrl, model, timeoutMs, fallback, confidenceThreshold, shadow, llmReady, protocol |
+| S09.2.2 | 🤖 update | `manage_local_ai({action: "update", mode: "rules"})` | Настройки применены, get возвращает новые значения |
+| S09.2.3 | 🤖 test | `manage_local_ai({action: "test", model: "qwen3:4b"})` | Успешный тест или понятная ошибка если Ollama недоступна |
+| S09.2.4 | 🧪 Fail-open | Ollama выключена, mode auto | Работают правила, уведомления не блокируются, ошибка не crítica |
+| S09.2.5 | 🧪 Shadow | mode auto, shadow.enabled=true | Решения логируются, но не подавляются; shadow-отчёт показывает false-skip |
+| S09.2.6 | 🧪 Валидация модели | невалидный JSON ответа | Fallback на правила, не валится |
+| S09.2.7 | 👤 GUI | блок триажа в панели уведомлений | Режим, модель, порог уверенности, shadow — отображаются и редактируются |
+| S09.2.8 | 🤖 Агент | полный цикл get→update→test | Состояние совпадает в GUI и через MCP |
 
 ---
 
@@ -476,7 +489,7 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 ### D16. Поставка: сборка, пакет, документация
 
 **Критерии приёмки:** проект собирается без ошибок; GUI-бандл содержит каталоги локалей; публичные экспорты на месте; документация соответствует поведению; полный тест-сьют зелёный.
-**Доступ агента:** проверяется косвенно — после сборки доступны все 24 инструмента.
+**Доступ агента:** проверяется косвенно — после сборки доступны все 25 инструментов.
 **Доступ пользователя:** установка/обновление плагина, панель.
 
 | ID | Подзадача | Шаги | Ожидаемый результат |
@@ -484,10 +497,11 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 | S16.1.1 | 🧪 tsc | `npm run build` | 0 ошибок |
 | S16.1.2 | 🧪 vite | `npm run build:gui` | `gui-experimental.cjs` создан, каталоги внутри |
 | S16.1.3 | 🧪 Экспорты | `package.json.exports` | `./gui-experimental` и основные точки входа валидны |
-| S16.1.4 | 🧪 Тесты | `npm test` | 33 набора, 0 падений |
+| S16.1.4 | 🧪 Тесты | `npm test` | 39 наборов, 0 падений |
 | S16.1.5 | 🧪 Docs | `node test-docs.mjs` | Команды и ключи в README/CHANGELOG актуальны |
 | S16.1.6 | 🧪 Чистая установка | `npm pack` → установка в пустой проект | Плагин стартует, панель открывается |
 | S16.1.7 | 🧪 Версия | `version.ts` / CHANGELOG | Совпадают, дата и раздел Fixed на месте |
+| S16.1.8 | 🧪 Бенчмарк | `npm run bench:local -- --help` и прогон без Ollama | Выходит валидный JSON, exit 2 при отсутствии Ollama, ajuda на русском |
 
 ---
 
@@ -547,12 +561,12 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 | D01 Расписания | `schedule_task`, `update_task`, `dry_run` | ✅ форма | ✅ nextRun | — | `create_task`, `update_task`, `dry_run` |
 | D02 CRUD | `schedule_task/list/update/delete`, `pause/resume` | ✅ | ✅ run/delete | ⌨️ run/pause/resume | `get_tasks`, `create_task`, `delete_task`, `pause_task`, `resume_task` |
 | D03 Исполнение | `run_task_now`, `get_task_logs`, `get_history` | ✅ | ✅ run | ⌨️ log | `run_task`, `get_task_logs`, `get_history` |
-| D04 MCP-слой | все 24 | — | — | — | — |
+| D04 MCP-слой | все 25 | — | — | — | — |
 | D05 DAG | `dry_run` + поля | ✅ | ✅ граф | — | `dry_run`, `dry_run_all` |
 | D06 Matrix | `matrix_control` | ✅ | ✅ бейдж/отмена | — | `get_matrix_results`, `cancel_matrix`, `cleanup_matrix_orphans`, `expand_matrix_preview` |
 | D07 Триггеры | `schedule_task`, `emit_event` | ✅ | ✅ hook | — | `emit_event`, `POST /api/hooks/:name` |
 | D08 История | `get_history/metrics/analytics/cleanup` | ✅ | ✅ | — | `get_history`, `get_metrics`, `get_analytics`, `cleanup_history` |
-| D09 Уведомления | `send_notification`, `manage_settings` | ✅ | — | — | `test_notification`, `send_digest`, `save_settings` |
+| D09 Уведомления + триаж | `send_notification`, `manage_settings`, `manage_local_ai` | ✅ блок триажа | — | — | `test_notification`, `send_digest`, `save_settings` |
 | D10 Безопасность | `manage_secrets`, `get_audit_log` | ✅ | ⚠️ только `/api/audit` | — | `list_secrets`, `save_secret`, `delete_secret`, `get_audit` |
 | D11 Профили/workspace | `manage_profiles`, `manage_workspaces` | ✅ | ✅ табы | — | `get_profiles`, `set_profile`, `create_profile`, `delete_profile`, `get_workspaces`, `add/update/delete_workspace` |
 | D12 Шаблоны/перенос | `manage_templates`, `transfer_tasks` | ✅ | — | — | `get_templates`, `save_template`, `delete_template`, `export_tasks`, `import_tasks` |
@@ -589,6 +603,7 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 | `test-git-trigger.mjs` | D07.2 |
 | `test-glob.mjs` | D07.1 |
 | `test-notifications-v2/v3.mjs` | D09 |
+| `test-local-ai.mjs` | D09.2 (триаж, fail-open, shadow) |
 | `test-secrets.mjs` | D10.1–10.4 |
 | `test-audit.mjs` | D10.7, D13 |
 | `test-role-scoped.mjs` | D10.6 |
@@ -609,7 +624,7 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 ## 6. Чек-лист приёмки (финальный)
 
 - [ ] Все 16 деталей закрыты, у каждой выполнены 3 критерия (работает / доступ агента / доступ пользователя).
-- [ ] Все 24 MCP-инструмента вызываются и валидируют аргументы (D04).
+- [ ] Все 25 MCP-инструмента вызываются и валидируют аргументы (D04).
 - [ ] Все 44 RPC-метода доступны GUI (D14.1, приложение A).
 - [ ] Задача, созданная в GUI, видна агенту и на дашборде; и наоборот (E2E-4).
 - [ ] Каждая мутация имеет запись в аудите с правильным actor: `mcp`, `gui`, `http` (D10, D13).
@@ -639,13 +654,59 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 
 ---
 
+## 8. Модель выполнения: агент параллельно с человеком
+
+Принцип: **каждая функция проверяется двумя дорожками** — агентом через MCP и пользователем через GUI/дашборд/TUI. Если пользователь не хочет или не может выполнить шаг вручную, агент выполняет его от его имени, и результат должен быть идентичным.
+
+| Дорожка | Кто выполняет | Инструмент | Что проверяется |
+|---|---|---|---|
+| Агент | MCP-агент | `schedule_task`, `list_tasks`, `run_task_now`, `get_history`, `manage_settings`, `manage_local_ai` и др. | Все 25 инструментов вызываются, схемы валидируют аргументы, ошибки структурированы |
+| Пользователь | Человек | GUI OpenCode, веб-дашборд, TUI | Кнопки, настройки, формы, дашборд — работают и дают тот же результат |
+| Паритет | Агент + человек параллельно | Любая операция (create → run → read → delete) | Состояние совпадает во всех интерфейсах, аудит содержит корректный actor |
+
+**Правило:** после завершения любой задачи (создание задачи, изменение настроек, запуск матрицы, тест триажа и т.д.) агент и человек сверяют результат: `list_tasks` (агент) = таблица GUI = дашборд. Если расходятся — дефект.
+
+---
+
+## 9. Отчёт об улучшениях продукта после завершения задачи
+
+После завершения каждой задачи (детали Dxx, подзадачи Sxx.y.z или сквозного сценария E2E-N) составляется краткий отчёт: что работает, что нет, и **как можно улучшить продукт**.
+
+### Шаблон отчёта
+
+| Поле | Заполнение |
+|---|---|
+| Задача | ID и название (например, `S09.2.3 — test manage_local_ai`) |
+| Статус | ✅ пройдено / ⚠️ пройдено с оговорками / ❌ не пройдено |
+| Что работает | Кратко, какие функции подтверждены |
+| Что не работает / ограничения | Дефекты, недоработки, известные пробелы |
+| Как улучшить продукт | Конкретные предложения: новый инструмент, исправление UI, документация, тест, оптимизация |
+| Приоритет | Высокий / Средний / Низкий |
+| Ответственный | Агент / Человек / Оба |
+
+### Пример заполнения
+
+| Поле | Значение |
+|---|---|
+| Задача | S09.2.4 — Fail-open при недоступности Ollama |
+| Статус | ✅ пройдено |
+| Что работает | Триаж переходит на правила, уведомления не блокируются |
+| Что не работает | Нет уведомления в GUI о том, что Ollama недоступна |
+| Как улучшить продукт | Добавить индикатор статуса Ollama в блок триажа (зелёный/красный), тост при переключении на fail-open |
+| Приоритет | Средний |
+| Ответственный | Агент |
+
+Все отчёты собираются в файл `test-run.log` и прилагаются к итоговому акту приёмки спринта.
+
+---
+
 ## Приложение A. 44 RPC-метода (пользовательский контур GUI)
 
 `get_tasks`, `create_task`, `delete_task`, `run_task`, `pause_task`, `resume_task`, `update_task`, `get_task_logs`, `get_history`, `get_metrics`, `get_dashboard_port`, `get_platform`, `dry_run`, `dry_run_all`, `get_matrix_results`, `cancel_matrix`, `cleanup_matrix_orphans`, `cleanup_history`, `get_analytics`, `expand_matrix_preview`, `get_workspaces`, `add_workspace`, `update_workspace`, `delete_workspace`, `get_profiles`, `set_profile`, `create_profile`, `delete_profile`, `export_tasks`, `import_tasks`, `get_settings`, `save_settings`, `get_templates`, `save_template`, `delete_template`, `emit_event`, `test_notification`, `send_digest`, `list_secrets`, `save_secret`, `delete_secret`, `get_audit`.
 
-## Приложение B. 24 MCP-инструмента (контур агента)
+## Приложение B. 25 MCP-инструмента (контур агента)
 
-`schedule_task`, `list_tasks`, `update_task`, `delete_task`, `run_task_now`, `pause_task`, `resume_task`, `get_history`, `get_task_logs`, `dry_run`, `manage_workspaces`, `matrix_control`, `get_metrics`, `get_analytics`, `manage_settings`, `manage_templates`, `manage_profiles`, `transfer_tasks`, `send_notification`, `get_dashboard_info`, `cleanup_history`, `manage_secrets`, `get_audit_log`, `emit_event`.
+`schedule_task`, `list_tasks`, `update_task`, `delete_task`, `run_task_now`, `pause_task`, `resume_task`, `get_history`, `get_task_logs`, `dry_run`, `manage_workspaces`, `matrix_control`, `get_metrics`, `get_analytics`, `manage_settings`, `manage_local_ai`, `manage_templates`, `manage_profiles`, `transfer_tasks`, `send_notification`, `get_dashboard_info`, `cleanup_history`, `manage_secrets`, `get_audit_log`, `emit_event`.
 
 ## Приложение C. HTTP API дашборда
 

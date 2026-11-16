@@ -57,6 +57,8 @@ const TaskItem = {
   properties: {
     name: { type: "string" },
     schedule: { type: "string" },
+    /** Hotfix 1.5.3.1: лимит времени задачи в секундах (null - по умолчанию). */
+    timeoutSeconds: { type: ["number", "null"] },
     status: { type: "string" },
     nextRun: { type: ["string", "null"] },
     /** LLM-модель задачи (null — модель OpenCode по умолчанию). */
@@ -542,6 +544,62 @@ const NotificationSettingsSchema = {
         lastSentAt: { type: ["string", "null"] },
       },
       required: ["enabled", "frequency", "time"],
+    },
+    triage: {
+      type: "object" as const,
+      properties: {
+        mode: { type: "string", enum: ["off", "rules", "llm", "auto"] },
+        baseUrl: { type: "string" },
+        model: { type: "string" },
+        timeoutMs: { type: "number" },
+        fallback: { type: "string", enum: ["rules", "notify", "skip"] },
+        confidenceThreshold: { type: "number" },
+        rules: {
+          type: "array",
+          items: {
+            type: "object" as const,
+            properties: {
+              id: { type: "string" },
+              field: {
+                type: "string",
+                enum: ["status", "task", "error", "cost"],
+              },
+              operator: {
+                type: "string",
+                enum: ["equals", "contains", "regex", "gt", "lt", "gte", "lte"],
+              },
+              value: { type: ["string", "number"] },
+              category: {
+                type: "string",
+                enum: ["quality", "timeout", "permission", "network", "unknown"],
+              },
+              severity: { type: "string", enum: ["low", "medium", "high"] },
+              confidence: { type: "number" },
+              action: { type: "string", enum: ["notify", "skip"] },
+              reason: { type: "string" },
+              priority: { type: "number" },
+            },
+            required: ["field", "operator", "value"],
+          },
+        },
+        shadow: {
+          type: "object" as const,
+          properties: {
+            enabled: { type: "boolean" },
+            days: { type: "number" },
+            startedAt: { type: ["string", "null"] },
+          },
+          required: ["enabled", "days", "startedAt"],
+        },
+      },
+      required: [
+        "mode",
+        "baseUrl",
+        "model",
+        "timeoutMs",
+        "fallback",
+        "confidenceThreshold",
+      ],
     },
   },
   required: ["enabled", "onlyOnError"],

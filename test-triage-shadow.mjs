@@ -11,6 +11,7 @@ const { shadowReport, resetShadowDecisions, shadowTotalCount, shadowSkipCount } 
   "./dist/core/triage-shadow.js"
 );
 const { decideTriage, recordShadow } = await import("./dist/core/triage-chain.js");
+const { closeDb } = await import("./dist/db/index.js");
 
 let passed = 0;
 let failed = 0;
@@ -166,6 +167,7 @@ check("settings: disabling shadow clears startedAt", stopped.startedAt === null)
 check("shadow: report active false when expired", shadowReport(expired).active === false);
 
 console.log(`\nTriage shadow: ${passed}/${passed + failed} проверок пройдено.`);
+closeDb();
 fs.rmSync(home, { recursive: true, force: true });
 if (failed > 0) process.exit(1);
 

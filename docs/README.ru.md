@@ -38,8 +38,8 @@ English version: [README.md](../README.md).
 | Триггеры | cron, одноразовый запуск (`triggerType: "once"`), git-коммиты (`triggerType: "git"`, фильтры ветки/путей/игнорирования), изменение файла (chokidar, glob-маски `watchGlobs`/`watchIgnore`), MCP-события, входящие webhooks (`POST /api/hooks/:task` с HMAC) |
 | Мультирепо | workspaces с валидацией путей, запуски по workspace, матрица поверх родительской задачи |
 | Наблюдаемость | история SQLite (success / error / timeout / partial / running), метрики (длительность, токены, стоимость), JSONL-логи с `/api/logs`, Prometheus `/metrics`, экспорт OTLP, логи по задачам, веб-дашборд с аналитикой за 14 дней, ретеншн истории и экспорт CSV/JSON |
-| Эксплуатация | dry-run, экспорт/импорт JSON, шаблоны, уведомления по нескольким каналам (webhook, Telegram, нативные toast), тихие часы, дайджест, зашифрованные секреты (`${secret:NAME}`), журнал аудита, настройки |
-| Интерфейсы | панель OpenCode GUI, веб-дашборд, 24 инструмента для агента, встроенный скилл |
+| Эксплуатация | dry-run, экспорт/импорт JSON, шаблоны, уведомления по нескольким каналам (webhook, Telegram, нативные toast), тихие часы, дайджест, локальный ассистент для триажа уведомлений (fail-open, shadow-режим), зашифрованные секреты (`${secret:NAME}`), журнал аудита, настройки |
+| Интерфейсы | панель OpenCode GUI, веб-дашборд, 25 инструментов для агента, встроенный скилл |
 
 ### Язык интерфейса
 
@@ -49,7 +49,7 @@ English version: [README.md](../README.md).
 
 ## Установка
 
-Нужны OpenCode v2 и Node.js 20+.
+Нужны OpenCode v2 и Node.js 22.13+.
 
 ```bash
 opencode plugin add opencode-windows-scheduler
@@ -86,7 +86,7 @@ npm run build && npm run build:gui
 
 ## Инструменты для агента
 
-Агенту доступен весь функционал — 24 инструмента: расписание, пайплайны, эксплуатация, аналитика и администрирование.
+Агенту доступен весь функционал — 25 инструментов: расписание, пайплайны, эксплуатация, аналитика и администрирование.
 
 | Инструмент | Аргументы | Что делает |
 |---|---|---|
@@ -105,6 +105,7 @@ npm run build && npm run build:gui
 | `get_metrics` | — | Всего запусков, успехов и падений |
 | `get_analytics` | `days?`, `topLimit?` | Отчёт за период: запуски, успешность, длительность, токены, стоимость, топ задач |
 | `manage_settings` | `action`, `maxConcurrent?`, `winterMode?`, `notifications?`, `history?` | Чтение и изменение глобальных настроек (параллелизм, уведомления, retention) |
+| `manage_local_ai` | `action` (`get`/`update`/`test`), `mode?`, `baseUrl?`, `model?`, `timeoutMs?`, `fallback?`, `confidenceThreshold?`, `shadow?` | Настройки локального ассистента для триажа уведомлений и проверка модели одним запросом (см. [LOCAL-AI.md](LOCAL-AI.md)) |
 | `manage_templates` | `action`, поля шаблона | Список, сохранение и удаление шаблонов задач |
 | `manage_profiles` | `action`, `name?`, `port?` | Список, создание, переключение и удаление изолированных профилей |
 | `transfer_tasks` | `action`, `data?` | Экспорт всех задач в JSON и импорт обратно |
@@ -184,7 +185,7 @@ src/
 npm install
 npm run build        # tsc
 npm run build:gui    # vite
-npm test             # 38 сюит, 600+ проверок
+npm test             # 43 сюиты, 600+ проверок
 npm run test:en      # те же сюиты с английской локалью
 ```
 

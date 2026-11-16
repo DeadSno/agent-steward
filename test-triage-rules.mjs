@@ -17,7 +17,7 @@ function check(name, condition, details = "") {
 }
 
 const errorInput = {
-  taskName: "deploy",
+  taskName: "nightly",
   status: "error",
   error: "Process exited with code 1",
   costUsd: 0.02,
@@ -91,6 +91,52 @@ const byCost = evaluateTriageRules(
 check("стоимость gt: совпало", byCost.matched && byCost.verdict.severity === "medium");
 
 // 8. Приоритет важнее порядка массива
+// 7a. Встроенное правило стоимости
+const byDefaultCost = evaluateTriageRules({
+  taskName: "nightly",
+  status: "success",
+  costUsd: 2.5,
+});
+check(
+  "встроенное правило cost: high",
+  byDefaultCost.ruleId === "cost-high" &&
+    byDefaultCost.verdict.severity === "high" &&
+    byDefaultCost.action === "notify"
+);
+
+const byCostThreshold = evaluateTriageRules({
+  taskName: "nightly",
+  status: "success",
+  costUsd: 1,
+});
+check("встроенное cost: порог $1 включён (gte)", byCostThreshold.ruleId === "cost-high");
+
+const byCheapRun = evaluateTriageRules({
+  taskName: "nightly",
+  status: "success",
+  costUsd: 0.01,
+});
+check(
+  "встроенное cost: дешёвый запуск остаётся low",
+  byCheapRun.ruleId === "status-success" && byCheapRun.verdict.severity === "low"
+);
+
+// 7b. Встроенное правило важного имени задачи
+const byDefaultTask = evaluateTriageRules({ taskName: "Deploy-Production", status: "success" });
+check(
+  "встроенное правило task: high",
+  byDefaultTask.ruleId === "task-important" &&
+    byDefaultTask.verdict.severity === "high" &&
+    byDefaultTask.action === "notify"
+);
+
+const byRoutineTask = evaluateTriageRules({ taskName: "nightly", status: "success" });
+check("встроенное task: обычная задача остаётся low", byRoutineTask.ruleId === "status-success");
+
+const allNotify = DEFAULT_TRIAGE_RULES.every((rule) => rule.action !== "skip");
+check("встроенные правила не подавляют уведомления", allNotify);
+
+// 8. Приоритет: большее значение важнее
 const byPriority = evaluateTriageRules(
   { taskName: "deploy", status: "error" },
   [
@@ -114,7 +160,7 @@ const badRegex = evaluateTriageRules(errorInput, [
 check("битый regex: безопасный пропуск", badRegex.matched === false);
 
 // 11. Встроенный набор не пуст
-check("встроенные правила заданы", DEFAULT_TRIAGE_RULES.length >= 7);
+check("встроенные правила заданы", DEFAULT_TRIAGE_RULES.length >= 9);
 
 console.log(`\nTriage rules: ${passed}/${passed + failed} проверок пройдено.`);
 if (failed > 0) process.exit(1);

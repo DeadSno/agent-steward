@@ -46,13 +46,14 @@ import {
 } from "./core/matrix.js";
 import { SchedulerRpc } from "./rpc.js";
 import { latestHistoryByTask, loadHistory, loadMetrics } from "./history.js";
-import { loadSettings, saveSettings } from "./settings.js";
+import { defaultNotifications, loadSettings, saveSettings } from "./settings.js";
 import { setLocale, t, type Locale } from "./i18n.js";
 import type {
   AuditSettings,
   HistorySettings,
   IntegrationSettings,
   NotificationSettings,
+  TriageSettings,
 } from "./settings.js";
 import { runHistoryRetention, maybeRunHistoryRetention } from "./core/retention.js";
 import { buildAnalytics } from "./core/analytics.js";
@@ -69,6 +70,8 @@ import {
   shadowReport,
   resetShadowDecisions,
 } from "./core/triage-shadow.js";
+import { applyLocalAiPatch, summarizeLocalAi, type LocalAiPatch } from "./core/local-ai.js";
+import { classifyNotification, type TriageInput } from "./core/triage.js";
 import {
   loadTaskDefinitions,
   saveTaskDefinition,
@@ -814,7 +817,7 @@ export const manageSettingsSchema = z.object({
   notifications: z
     .any()
     .optional()
-    .describe("Notification settings patch (enabled, onlyOnError, webhook, telegram, native, quietHours, templates, filters, matrix, digest)."),
+    .describe("Notification settings patch (enabled, onlyOnError, webhook, telegram, native, quietHours, templates, filters, matrix, digest, dedup)."),
   history: z
     .object({
       retentionDays: z.number().int().min(1).max(3650).optional(),
@@ -832,6 +835,64 @@ export const manageSettingsSchema = z.object({
     .any()
     .optional()
     .describe("Audit log settings patch (enabled, retentionDays, maxRecords)."),
+});
+
+/** manage_local_ai — настройки локального ассистента и триажа (Спринт 30.7). */
+export const manageLocalAiSchema = z.object({
+  action: z
+    .enum(["get", "update", "test"])
+    .describe(
+      "get — current triage settings and shadow state; update — merge fields and save; test — one classification request against the configured model."
+    ),
+  mode: z
+    .enum(["off", "rules", "llm", "auto"])
+    .optional()
+    .describe(
+      "off — no triage; rules — built-in rules only; llm — model only; auto — model, then rules (default)."
+    ),
+  baseUrl: z
+    .string()
+    .max(500)
+    .optional()
+    .describe(
+      "Ollama or OpenAI-compatible base URL, for example http://127.0.0.1:11434. A URL ending with /v1 switches to the OpenAI protocol."
+    ),
+  model: z
+    .string()
+    .max(200)
+    .optional()
+    .describe("Model id, for example qwen3:4b."),
+  timeoutMs: z
+    .number()
+    .int()
+    .min(1000)
+    .max(120000)
+    .optional()
+    .describe("Request timeout in milliseconds (1000..120000)."),
+  fallback: z
+    .enum(["rules", "notify", "skip"])
+    .optional()
+    .describe(
+      "When the model fails or is unsure: rules - apply rules (fail-open, default); notify - skip the rules step and deliver the notification; skip - legacy alias for notify."
+    ),
+  confidenceThreshold: z
+    .number()
+    .min(0)
+    .max(1)
+    .optional()
+    .describe("Minimum model confidence (0..1); below it the fallback applies."),
+  shadow: z
+    .object({
+      enabled: z.boolean().optional().describe("Log decisions without suppressing notifications."),
+      days: z.number().int().min(1).max(365).optional().describe("Shadow period length in days."),
+      startedAt: z
+        .string()
+        .nullable()
+        .optional()
+        .describe("ISO start of the shadow period; null restarts it on the next save."),
+    })
+    .optional()
+    .describe("Shadow mode patch."),
 });
 
 /** manage_templates — пользовательские шаблоны задач. */
@@ -949,6 +1010,7 @@ type MatrixControlArgs = z.infer<typeof matrixControlSchema>;
 type MetricsArgs = z.infer<typeof getMetricsSchema>;
 type AnalyticsArgs = z.infer<typeof getAnalyticsSchema>;
 type SettingsArgs = z.infer<typeof manageSettingsSchema>;
+type LocalAiArgs = z.infer<typeof manageLocalAiSchema>;
 type TemplatesArgs = z.infer<typeof manageTemplatesSchema>;
 type ProfilesArgs = z.infer<typeof manageProfilesSchema>;
 type TransferArgs = z.infer<typeof transferTasksSchema>;
@@ -2527,6 +2589,106 @@ const manageSettingsExecute = wrapExecute<SettingsArgs>(async (args) => {
   return { content: JSON.stringify({ success: true, settings }) };
 });
 
+/** Настройки триажа: сохранённые или дефолт для незаполненного конфига. */
+function triageOrDefault(settings: Awaited<ReturnType<typeof loadSettings>>): TriageSettings {
+  const saved = settings.notifications.triage;
+  if (saved) return saved;
+  const fallback = defaultNotifications().triage;
+  return (
+    fallback ?? {
+      mode: "off",
+      baseUrl: "http://127.0.0.1:11434",
+      model: "",
+      timeoutMs: 60_000,
+      fallback: "rules",
+      confidenceThreshold: 0.6,
+    }
+  );
+}
+
+/** Синтетическое уведомление для проверки связи с моделью. */
+const LOCAL_AI_SELF_TEST: TriageInput = {
+  taskName: "scheduler-self-test",
+  status: "error",
+  error: "Quality Gate failed: 2 tests broke the build",
+  durationMs: 12_000,
+};
+
+/** Один классификационный запрос — общий путь для инструмента и GUI. */
+export async function runLocalAiTest(patch: LocalAiPatch = {}) {
+  const settings = await loadSettings();
+  const { settings: candidate } = applyLocalAiPatch(triageOrDefault(settings), patch);
+  const result = await classifyNotification(LOCAL_AI_SELF_TEST, candidate, { retries: 0 });
+  return {
+    success: result.ok,
+    localAi: summarizeLocalAi(candidate),
+    result: {
+      ok: result.ok,
+      failure: result.failure ?? null,
+      error: result.error ?? null,
+      latencyMs: result.latencyMs,
+      attempts: result.attempts,
+      model: result.model,
+      protocol: result.protocol,
+      verdict: result.verdict ?? null,
+    },
+  };
+}
+
+/** manage_local_ai — настройки триажа и проверка связи с моделью. */
+const manageLocalAiExecute = wrapExecute<LocalAiArgs>(async (args) => {
+  const settings = await loadSettings();
+  const current = triageOrDefault(settings);
+
+  if (args.action === "get") {
+    return {
+      content: JSON.stringify({ success: true, localAi: summarizeLocalAi(current) }),
+    };
+  }
+
+  const patch: LocalAiPatch = {
+    mode: args.mode,
+    baseUrl: args.baseUrl,
+    model: args.model,
+    timeoutMs: args.timeoutMs,
+    fallback: args.fallback,
+    confidenceThreshold: args.confidenceThreshold,
+    shadow: args.shadow,
+  };
+
+  if (args.action === "test") {
+    // Проверка не меняет конфиг: патч применяется только в памяти.
+    return { content: JSON.stringify(await runLocalAiTest(patch)) };
+  }
+
+  if (!Object.values(patch).some((value) => value !== undefined)) {
+    return {
+      content: JSON.stringify({
+        success: false,
+        error: t("tool.localAi.updateFields"),
+        localAi: summarizeLocalAi(current),
+      }),
+    };
+  }
+
+  const { settings: merged, changed } = applyLocalAiPatch(current, patch);
+  const saved = await saveSettings({
+    notifications: { ...settings.notifications, triage: merged },
+  });
+  const localAi = summarizeLocalAi(triageOrDefault(saved));
+  return {
+    content: JSON.stringify({
+      success: true,
+      changed,
+      message:
+        changed.length > 0
+          ? t("tool.localAi.updated", { fields: changed.join(", ") })
+          : t("tool.localAi.unchanged"),
+      localAi,
+    }),
+  };
+});
+
 /** manage_templates — список, сохранение и удаление шаблонов задач. */
 const manageTemplatesExecute = wrapExecute<TemplatesArgs>(async (args) => {
   if (args.action === "list") {
@@ -3475,6 +3637,24 @@ export default Plugin.define({
       });
 
       editor.add({
+        name: "manage_local_ai",
+        input: manageLocalAiSchema,
+        description:
+          "Reads, updates or tests the local assistant for notification triage: mode (off, rules, llm, auto), Ollama/OpenAI baseUrl, model, timeout, fallback, confidence threshold and shadow mode. " +
+          "action=test sends one synthetic notification to the model and reports latency, protocol and verdict without saving anything. " +
+          "Without a model the scheduler keeps working through rules: notifications are never blocked by a missing model.",
+        options: { codemode: true },
+        execute: withAudit<LocalAiArgs>(
+          "manage_local_ai",
+          (args) =>
+            args.action === "update"
+              ? { action: "localAi.update", targetType: "settings", target: "triage" }
+              : null,
+          manageLocalAiExecute as any
+        ) as any,
+      });
+
+      editor.add({
         name: "manage_templates",
         input: manageTemplatesSchema,
         description:
@@ -4365,11 +4545,27 @@ export default Plugin.define({
           skips: shadow.skips,
           wouldSuppress: shadow.wouldSuppress,
           bySource: shadow.bySource,
+          // 31.8: persistent decisions from audit_log (action = triage.decision).
+          persisted: true,
+          truncated: shadow.truncated,
+          decisions: shadow.decisions.slice(0, 50),
         };
       },
       reset_shadow_report: async () => {
         resetShadowDecisions();
         return { success: true };
+      },
+      test_local_ai: async (input: unknown) => {
+        // Проверка связи: патч применяется только в памяти, конфиг не меняется.
+        const patch = (input ?? {}) as LocalAiPatch;
+        return await runLocalAiTest({
+          mode: patch.mode,
+          baseUrl: patch.baseUrl,
+          model: patch.model,
+          timeoutMs: patch.timeoutMs,
+          fallback: patch.fallback,
+          confidenceThreshold: patch.confidenceThreshold,
+        });
       },
 
       // --- Спринт 26: секреты и аудит -------------------------------------
@@ -5111,7 +5307,9 @@ async function schedulerCreateTask(
         wrapperGate,
         taskEnvFile,
         effectiveSession,
-        effectiveSessionId
+        effectiveSessionId,
+        retryCount,
+        retryDelay
       );
     } else {
       wrapperPath = await writeBashWrapper({
@@ -5746,6 +5944,8 @@ async function collectTasksView() {
     return {
       name,
       schedule: def?.schedule ?? "",
+      /** Hotfix 1.5.3.1: лимит времени задачи (раньше не был виден агенту). */
+      timeoutSeconds: def?.timeoutSeconds ?? null,
       status,
       orphaned,
       // Спринт 24 (фикс): явный признак паузы. Раньше GUI пытался вывести его

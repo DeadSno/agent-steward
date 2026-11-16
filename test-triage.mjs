@@ -182,6 +182,16 @@ await withServer(
       check("OpenAI: путь /v1/chat/completions", req.url === "/v1/chat/completions");
       const parsed = JSON.parse(body);
       check("OpenAI: response_format json_schema", parsed.response_format?.type === "json_schema");
+      check("OpenAI: strict schema включён", parsed.response_format?.json_schema?.strict === true);
+      check("OpenAI: имя схемы notification_triage", parsed.response_format?.json_schema?.name === "notification_triage");
+      check(
+        "OpenAI: схема требует verdict-поля",
+        Array.isArray(parsed.response_format?.json_schema?.schema?.required) &&
+          ["category", "severity", "confidence", "reason"].every((field) =>
+            parsed.response_format.json_schema.schema.required.includes(field)
+          )
+      );
+      check("OpenAI: additionalProperties=false", parsed.response_format?.json_schema?.schema?.additionalProperties === false);
       sendJson(res, 200, { choices: [{ message: { role: "assistant", content: JSON.stringify(verdict) } }] });
     });
   },

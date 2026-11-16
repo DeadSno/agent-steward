@@ -87,6 +87,16 @@ interface NotificationSettings {
     time: string
     lastSentAt?: string | null
   }
+  triage?: {
+    mode: "off" | "rules" | "llm" | "auto"
+    baseUrl: string
+    model: string
+    timeoutMs: number
+    fallback: "rules" | "notify"
+    confidenceThreshold: number
+    rules?: TriageRule[]
+    shadow?: { enabled: boolean; days: number; startedAt: string | null }
+  }
 }
 
 /** Настройки ретеншна истории (Спринт 18). 0 — соответствующее ограничение выключено. */
@@ -428,6 +438,41 @@ export default Plugin.define({
     const [digestFrequency, setDigestFrequency] = createSignal<"daily" | "weekly">("daily")
     const [digestTime, setDigestTime] = createSignal("09:00")
     const [digestLastSentAt, setDigestLastSentAt] = createSignal<string | null>(null)
+    // Спринт 30.7: настройки локального ассистента (триаж).
+    const [localAiMode, setLocalAiMode] = createSignal<"off" | "rules" | "llm" | "auto">("off")
+    const [localAiBaseUrl, setLocalAiBaseUrl] = createSignal("http://127.0.0.1:11434")
+    const [localAiModel, setLocalAiModel] = createSignal("")
+    const [localAiTimeoutMs, setLocalAiTimeoutMs] = createSignal(60000)
+    const [localAiThreshold, setLocalAiThreshold] = createSignal(0.6)
+    const [localAiFallback, setLocalAiFallback] = createSignal<"rules" | "notify">("rules")
+    const [localAiBusy, setLocalAiBusy] = createSignal(false)
+    const [localAiResult, setLocalAiResult] = createSignal<string | null>(null)
+    // Спринт 31.13: видимый статус подключения к провайдеру.
+    const [localAiState, setLocalAiState] = createSignal<"idle" | "checking" | "ok" | "error">("idle")
+    const localAiStatusColor = () => {
+      switch (localAiState()) {
+        case "ok":
+          return "#2ecc71"
+        case "error":
+          return "#e74c3c"
+        case "checking":
+          return "#d9a441"
+        default:
+          return "#8e8e93"
+      }
+    }
+    const localAiStatusText = () => {
+      switch (localAiState()) {
+        case "ok":
+          return gt("localAi.status.ok")
+        case "error":
+          return gt("localAi.status.error")
+        case "checking":
+          return gt("localAi.status.checking")
+        default:
+          return gt("localAi.status.idle")
+      }
+    }
     // Спринт 30.6: shadow-режим триажа.
     const [shadowEnabled, setShadowEnabled] = createSignal(false)
     const [shadowDays, setShadowDays] = createSignal(14)
@@ -534,13 +579,17 @@ export default Plugin.define({
       setQuietEnabled(Boolean(n?.quietHours?.enabled))
       setQuietFrom(n?.quietHours?.from ?? "22:00")
       setQuietTo(n?.quietHours?.to ?? "08:00")
+      setLocalAiMode((n?.triage?.mode ?? "off") as "off" | "rules" | "llm" | "auto")
+      setLocalAiBaseUrl(n?.triage?.baseUrl ?? "http://127.0.0.1:11434")
+      setLocalAiModel(n?.triage?.model ?? "")
+      setLocalAiTimeoutMs(Number(n?.triage?.timeoutMs ?? 60000))
+      setLocalAiThreshold(Number(n?.triage?.confidenceThreshold ?? 0.6))
+      setLocalAiFallback(n?.triage?.fallback === "rules" ? "rules" : "notify")
+      setLocalAiState("idle")
+      setLocalAiResult(null)
       setShadowEnabled(Boolean(n?.triage?.shadow?.enabled !== false))
       setShadowDays(Number(n?.triage?.shadow?.days ?? 14))
       setShadowStartedAt(n?.triage?.shadow?.startedAt ?? null)
-      const a = n?.audit
-      setAuditRetentionEnabled(Boolean(a?.enabled !== false))
-      setAuditRetentionDays(Number(a?.retentionDays ?? 90))
-      setAuditMaxRecords(Number(a?.maxRecords ?? 10000))
     }
 
     async function loadSettingsGui() {
@@ -639,16 +688,17 @@ export default Plugin.define({
           lastSentAt: digestLastSentAt(),
         },
         triage: {
+          mode: localAiMode(),
+          baseUrl: (localAiBaseUrl() || "").trim().replace(/\/+$/, ""),
+          model: (localAiModel() || "").trim(),
+          timeoutMs: Math.max(1000, Math.min(120000, Math.floor(Number(localAiTimeoutMs()) || 60000))),
+          fallback: localAiFallback(),
+          confidenceThreshold: Math.max(0, Math.min(1, Number(localAiThreshold()) || 0)),
           shadow: {
             enabled: shadowEnabled(),
             days: Math.max(1, Math.min(365, Math.floor(Number(shadowDays()) || 14))),
             startedAt: shadowStartedAt(),
           },
-        },
-        audit: {
-          enabled: auditRetentionEnabled(),
-          retentionDays: auditRetentionDays(),
-          maxRecords: auditMaxRecords(),
         },
       }
     }
@@ -3252,6 +3302,156 @@ export default Plugin.define({
                     <div style="font-size:11px;color:#8e8e93">
                       {gt("gui.digestHint")}
                     </div>
+                  </div>
+
+                  {/* Локальный ассистент: триаж уведомлений (Спринт 30.7) */}
+                  <div style="border-top:1px solid #333;padding-top:10px;display:flex;flex-direction:column;gap:8px">
+                    <div style="font-size:12px;font-weight:600;color:#e0e0e0">{gt("localAi.title")}</div>
+                    <div style={`display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;color:#b0b0b0;opacity:${notificationsEnabled() ? 1 : 0.5}`}>
+                      <label style="white-space:nowrap">{gt("localAi.mode")}</label>
+                      <select
+                        value={localAiMode()}
+                        disabled={!notificationsEnabled()}
+                        onChange={(e) => {
+                          setLocalAiMode(e.currentTarget.value as "off" | "rules" | "llm" | "auto")
+                          setLocalAiState("idle")
+                          setLocalAiResult(null)
+                          void saveNotificationSettings()
+                        }}
+                        style="padding:4px 6px;background:#1e1e1e;border:1px solid #333;border-radius:4px;color:#fff;font-size:12px;outline:none"
+                      >
+                        <option value="off">{gt("localAi.mode.off")}</option>
+                        <option value="rules">{gt("localAi.mode.rules")}</option>
+                        <option value="llm">{gt("localAi.mode.llm")}</option>
+                        <option value="auto">{gt("localAi.mode.auto")}</option>
+                      </select>
+                      <label style="white-space:nowrap">{gt("localAi.fallback")}</label>
+                      <select
+                        value={localAiFallback()}
+                        disabled={!notificationsEnabled()}
+                        onChange={(e) => {
+                          setLocalAiFallback(e.currentTarget.value === "notify" ? "notify" : "rules")
+                          void saveNotificationSettings()
+                        }}
+                        style="padding:4px 6px;background:#1e1e1e;border:1px solid #333;border-radius:4px;color:#fff;font-size:12px;outline:none"
+                      >
+                        <option value="rules">{gt("localAi.fallback.rules")}</option>
+                        <option value="notify">{gt("localAi.fallback.notify")}</option>
+                      </select>
+                    </div>
+                    <div style={`display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;color:#b0b0b0;opacity:${notificationsEnabled() ? 1 : 0.5}`}>
+                      <input
+                        type="text"
+                        value={localAiBaseUrl()}
+                        placeholder="http://127.0.0.1:11434"
+                        disabled={!notificationsEnabled()}
+                        onInput={(e) => {
+                          setLocalAiBaseUrl(e.currentTarget.value)
+                          setLocalAiState("idle")
+                          setLocalAiResult(null)
+                        }}
+                        onChange={() => void saveNotificationSettings()}
+                        style="width:220px;padding:4px 6px;background:#1e1e1e;border:1px solid #333;border-radius:4px;color:#fff;font-size:12px;outline:none"
+                      />
+                      <input
+                        type="text"
+                        value={localAiModel()}
+                        placeholder={gt("localAi.modelPlaceholder")}
+                        disabled={!notificationsEnabled()}
+                        onInput={(e) => {
+                          setLocalAiModel(e.currentTarget.value)
+                          setLocalAiState("idle")
+                          setLocalAiResult(null)
+                        }}
+                        onChange={() => void saveNotificationSettings()}
+                        style="width:160px;padding:4px 6px;background:#1e1e1e;border:1px solid #333;border-radius:4px;color:#fff;font-size:12px;outline:none"
+                      />
+                      <label style="white-space:nowrap">{gt("localAi.timeout")}</label>
+                      <input
+                        type="number"
+                        min="1000"
+                        max="120000"
+                        step="1000"
+                        value={localAiTimeoutMs()}
+                        disabled={!notificationsEnabled()}
+                        onChange={(e) => {
+                          setLocalAiTimeoutMs(Math.max(1000, Math.min(120000, Math.floor(Number(e.currentTarget.value) || 60000))))
+                          void saveNotificationSettings()
+                        }}
+                        style="width:90px;padding:4px 6px;background:#1e1e1e;border:1px solid #333;border-radius:4px;color:#fff;font-size:12px;outline:none"
+                      />
+                      <label style="white-space:nowrap">{gt("localAi.threshold")}</label>
+                      <input
+                        type="number"
+                        min="0"
+                        max="1"
+                        step="0.05"
+                        value={localAiThreshold()}
+                        disabled={!notificationsEnabled()}
+                        onChange={(e) => {
+                          const value = Number(e.currentTarget.value)
+                          setLocalAiThreshold(Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0.6)
+                          void saveNotificationSettings()
+                        }}
+                        style="width:70px;padding:4px 6px;background:#1e1e1e;border:1px solid #333;border-radius:4px;color:#fff;font-size:12px;outline:none"
+                      />
+                    </div>
+                    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px">
+                      <button
+                        onClick={async () => {
+                          setLocalAiBusy(true)
+                          setLocalAiState("checking")
+                          setLocalAiResult(null)
+                          try {
+                            const result = await rpc.test_local_ai({
+                              mode: localAiMode(),
+                              baseUrl: (localAiBaseUrl() || "").trim(),
+                              model: (localAiModel() || "").trim(),
+                              timeoutMs: Math.max(1000, Math.min(120000, Math.floor(Number(localAiTimeoutMs()) || 60000))),
+                              fallback: localAiFallback(),
+                              confidenceThreshold: localAiThreshold(),
+                            })
+                            const info = result?.result
+                            if (result?.success) {
+                              setLocalAiState("ok")
+                              setLocalAiResult(
+                                gt("localAi.testOk", {
+                                  model: String(info?.model ?? localAiModel()),
+                                  latency: String(info?.latencyMs ?? 0),
+                                })
+                              )
+                            } else {
+                              setLocalAiState("error")
+                              setLocalAiResult(
+                                gt("localAi.testFailed", {
+                                  reason: String(info?.error ?? info?.failure ?? "unknown"),
+                                })
+                              )
+                            }
+                          } catch (err: any) {
+                            console.error("RPC Error (test_local_ai):", err)
+                            setLocalAiState("error")
+                            setLocalAiResult(gt("localAi.testFailed", { reason: errorMessage(err) }))
+                          } finally {
+                            setLocalAiBusy(false)
+                          }
+                        }}
+                        disabled={localAiBusy() || !notificationsEnabled()}
+                        style={`padding:4px 8px;background:#3a6ea5;color:white;border:none;border-radius:4px;cursor:${localAiBusy() ? "not-allowed" : "pointer"};font-size:12px;opacity:${localAiBusy() ? 0.6 : 1}`}
+                      >
+                        {localAiBusy() ? gt("localAi.testing") : gt("localAi.test")}
+                      </button>
+                      <span style="display:inline-flex;align-items:center;gap:6px;font-size:11px">
+                        <span style={`width:7px;height:7px;border-radius:50%;background:${localAiStatusColor()}`}></span>
+                        <span style={`color:${localAiStatusColor()}`}>{localAiStatusText()}</span>
+                      </span>
+                      {localAiResult() && <span style="font-size:11px;color:#8e8e93">{localAiResult()}</span>}
+                    </div>
+                    <div style="font-size:11px;color:#8e8e93">{gt("localAi.hint")}</div>
+                    {(localAiMode() === "llm" || localAiMode() === "auto") && (
+                      <div style="font-size:11px;color:#d9a441;margin-top:4px">{gt("localAi.asyncHint")}</div>
+                    )}
+                    <div style="font-size:11px;color:#8e8e93;margin-top:4px">{gt("localAi.rulesHint")}</div>
                   </div>
 
                   {/* Shadow-режим триажа (Спринт 30.6) */}
