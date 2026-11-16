@@ -16,6 +16,10 @@ if (process.platform === "win32") {
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "sched-posix-e2e-"));
 process.env.APPDATA = tempRoot;
 process.env.OPENCODE_SCHEDULER_HOME = path.join(tempRoot, "opencode", "windows-scheduler");
+// Явно задаём путь к БД, чтобы не зависеть от закешированного PLUGIN_DIR
+// из types.js (мог быть вычислен предыдущим тестом в цепочке npm test с
+// другим профилем/окружением).
+process.env.OPENCODE_SCHEDULER_DB = path.join(tempRoot, "scheduler.db");
 
 const pluginDir = path.join(tempRoot, "opencode", "windows-scheduler");
 fs.mkdirSync(pluginDir, { recursive: true });
@@ -54,6 +58,14 @@ fs.chmodSync(fakeOpencode, 0o755);
 process.env.PATH = fakeBin + path.delimiter + process.env.PATH;
 process.env.FAKE_COUNTER = counterFile;
 process.env.FAKE_CHILD_PID = childPidFile;
+
+// Диагностика окружения (полезно на CI, где нет доступа к job логам).
+console.log(`[diag] platform=${process.platform} node=${process.versions.node}`);
+console.log(`[diag] APPDATA=${process.env.APPDATA}`);
+console.log(`[diag] OPENCODE_SCHEDULER_HOME=${process.env.OPENCODE_SCHEDULER_HOME}`);
+console.log(`[diag] OPENCODE_SCHEDULER_DB=${process.env.OPENCODE_SCHEDULER_DB}`);
+console.log(`[diag] tempRoot=${tempRoot}`);
+console.log(`[diag] pluginDir=${pluginDir}`);
 
 const results = [];
 const check = (name, ok, extra) => {
@@ -114,7 +126,7 @@ const runWrapper = (wrapperPath, env) =>
 const readLog = (file) => (fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "");
 
 // --- 1. Успешный запуск: лог, история, pre/post-хуки с пробелами в пути ---
-{
+try {
   const spacesDir = path.join(tempRoot, "hooks with spaces");
   fs.mkdirSync(spacesDir, { recursive: true });
   const beforeMarker = path.join(spacesDir, "before-marker.txt");
@@ -132,6 +144,14 @@ const readLog = (file) => (fs.existsSync(file) ? fs.readFileSync(file, "utf8") :
   const wrapperPath = await prepareTask(spec);
   const run = runWrapper(wrapperPath, {});
 
+  if (run.status !== 0) {
+    console.log("[diag] section 1 run.status:", run.status, "error:", run.error?.message, "signal:", run.signal);
+    console.log("[diag] section 1 stderr:", run.stderr);
+    console.log("[diag] section 1 stdout:", run.stdout);
+    console.log("[diag] section 1 LOG:", readLog(spec.logFile));
+    console.log("[diag] section 1 WRAPPER:", fs.readFileSync(wrapperPath, "utf8"));
+  }
+
   check("успешный запуск: код 0", run.status === 0, `status=${run.status}`);
   const [record] = getHistory(spec.name, 5);
   check("успешный запуск: запись истории есть", Boolean(record));
@@ -146,10 +166,18 @@ const readLog = (file) => (fs.existsSync(file) ? fs.readFileSync(file, "utf8") :
     record?.model !== "success" && record?.model !== "skipped",
     `model=${record?.model}`
   );
+} catch (err) {
+  console.log("[diag] section 1 THREW:", err instanceof Error ? err.stack : String(err));
+  check("успешный запуск: код 0", false, "section threw");
+  check("успешный запуск: запись истории есть", false, "section threw");
+  check("успешный запуск: статус success", false, "section threw");
+  check("кавычки в before/after-скриптах не ломают хуки", false, "section threw");
+  check("лог содержит вывод opencode", false, "section threw");
+  check("рекордер: модель не сдвинута в preFlight", false, "section threw");
 }
 
 // --- 2. Таймаут убивает всё дерево: внук (sleep) не переживает (T-10) ---
-{
+try {
   const spec = {
     name: "posix e2e timeout",
     sanitized: "posix-e2e-timeout",
@@ -162,6 +190,13 @@ const readLog = (file) => (fs.existsSync(file) ? fs.readFileSync(file, "utf8") :
   const started = Date.now();
   const run = runWrapper(wrapperPath, { FAKE_MODE: "sleep" });
   const elapsedMs = Date.now() - started;
+
+  if (run.status !== 0) {
+    console.log("[diag] section 2 run.status:", run.status, "error:", run.error?.message, "signal:", run.signal);
+    console.log("[diag] section 2 stderr:", run.stderr);
+    console.log("[diag] section 2 stdout:", run.stdout);
+    console.log("[diag] section 2 LOG:", readLog(spec.logFile));
+  }
 
   check(
     "таймаут: задача убита раньше 15 с",
@@ -201,10 +236,15 @@ const readLog = (file) => (fs.existsSync(file) ? fs.readFileSync(file, "utf8") :
     }
   }
   check("таймаут: внук (sleep) не переживает убийство дерева", grandchildAlive === false);
+} catch (err) {
+  console.log("[diag] section 2 THREW:", err instanceof Error ? err.stack : String(err));
+  check("таймаут: задача убита раньше 15 с", false, "section threw");
+  check("таймаут: запись истории есть со статусом ошибки", false, "section threw");
+  check("таймаут: внук (sleep) не переживает убийство дерева", false, "section threw");
 }
 
 // --- 3. Блокировка: второй запуск тихо пропускается ---
-{
+try {
   const spec = {
     name: "posix e2e lock",
     sanitized: "posix-e2e-lock",
@@ -220,15 +260,27 @@ const readLog = (file) => (fs.existsSync(file) ? fs.readFileSync(file, "utf8") :
   const run = runWrapper(wrapperPath, {});
   const log = readLog(spec.logFile);
 
+  if (run.status !== 0) {
+    console.log("[diag] section 3 run.status:", run.status, "error:", run.error?.message, "signal:", run.signal);
+    console.log("[diag] section 3 stderr:", run.stderr);
+    console.log("[diag] section 3 stdout:", run.stdout);
+    console.log("[diag] section 3 LOG:", readLog(spec.logFile));
+  }
+
   check("блокировка: код 0 (тихий пропуск)", run.status === 0, `status=${run.status}`);
   check("блокировка: в логе сообщение о пропуске", log.includes("уже выполняется"));
   check("блокировка: история не создавалась", getHistory(spec.name, 5).length === 0);
 
   fs.rmSync(`${spec.lockFile}.d`, { recursive: true, force: true });
+} catch (err) {
+  console.log("[diag] section 3 THREW:", err instanceof Error ? err.stack : String(err));
+  check("блокировка: код 0 (тихий пропуск)", false, "section threw");
+  check("блокировка: в логе сообщение о пропуске", false, "section threw");
+  check("блокировка: история не создавалась", false, "section threw");
 }
 
 // --- 4. T-09 backstop: проверка размера промпта присутствует в скрипте ---
-{
+try {
   const spec = {
     name: "posix e2e promptsize",
     sanitized: "posix-e2e-promptsize",
@@ -241,6 +293,10 @@ const readLog = (file) => (fs.existsSync(file) ? fs.readFileSync(file, "utf8") :
   const script = fs.readFileSync(wrapperPath, "utf8");
   check("backstop: в обёртке есть проверка PROMPT_BYTES", script.includes("PROMPT_BYTES"));
   check("backstop: лимит 131072 байта", script.includes("131072"));
+} catch (err) {
+  console.log("[diag] section 4 THREW:", err instanceof Error ? err.stack : String(err));
+  check("backstop: в обёртке есть проверка PROMPT_BYTES", false, "section threw");
+  check("backstop: лимит 131072 байта", false, "section threw");
 }
 
 const failed = results.filter((r) => !r.ok);
