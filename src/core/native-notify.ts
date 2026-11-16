@@ -101,6 +101,9 @@ export function buildNativeNotificationCommand(
       "normal",
       "-i",
       "dialog-information",
+      // `--` завершает разбор опций: текст уведомления может начинаться с "-"
+      // и без разделителя был бы принят за флаг notify-send.
+      "--",
       title,
       body,
     ],

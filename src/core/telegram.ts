@@ -135,9 +135,58 @@ function resolveApiBase(apiBase?: string): string {
   return value;
 }
 
+/** Лимит одного сообщения Telegram Bot API. */
+export const TELEGRAM_MAX_MESSAGE_LENGTH = 4096;
+
+/** Сколько раз повторяем отправку при HTTP 429. */
+const TELEGRAM_MAX_RETRIES = 3;
+
+/**
+ * Режет длинный текст на части по лимиту Bot API (4096 UTF-16 code units).
+ * Старается рвать по переводу строки, не разрывает surrogate pair и
+ * экранированный символ MarkdownV2 (`\x`).
+ */
+export function splitTelegramMessage(
+  text: string,
+  limit = TELEGRAM_MAX_MESSAGE_LENGTH
+): string[] {
+  const value = String(text ?? "");
+  const max = Math.max(1, Math.floor(limit));
+  if (!value) return [""];
+  const chunks: string[] = [];
+  let rest = value;
+  while (rest.length > max) {
+    let cut = max;
+    const newline = rest.lastIndexOf("\n", max);
+    if (newline > max * 0.5) cut = newline + 1;
+    // Не разрываем surrogate pair (эмодзи и т.п.).
+    if (cut > 0 && cut < rest.length) {
+      const code = rest.charCodeAt(cut - 1);
+      if (code >= 0xd800 && code <= 0xdbff) cut -= 1;
+    }
+    // MarkdownV2: обратный слэш должен остаться вместе с экранируемым символом.
+    if (cut > 0 && rest[cut - 1] === "\\") cut -= 1;
+    if (cut <= 0) cut = max;
+    chunks.push(rest.slice(0, cut));
+    rest = rest.slice(cut);
+  }
+  chunks.push(rest);
+  return chunks;
+}
+
+/** Пауза без утечки таймера. */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    timer.unref?.();
+  });
+}
+
 /**
  * Отправляет сообщение через Bot API `sendMessage`.
  *
+ * Длинный текст режется на части по 4096 символов. При HTTP 429 отправка
+ * повторяется с учётом `parameters.retry_after` (не более 3 повторов).
  * Бросает Error с безопасным текстом (токен замаскирован). Вызывающий код
  * обязан перехватить ошибку, чтобы уведомление не ломало задачу.
  */
@@ -155,71 +204,82 @@ export async function sendTelegramMessage(
 
   const apiBase = resolveApiBase(options.apiBase);
   const parseMode = options.parseMode ?? "";
-  const body: Record<string, unknown> = {
-    chat_id: target,
-    text: formatTelegramText(
-      text,
-      parseMode,
-      options.includeDashboardLink === false ? null : options.dashboardUrl
-    ),
-  };
-  if (parseMode) body.parse_mode = parseMode;
-  if (options.disableNotification) body.disable_notification = true;
-  if (
-    typeof options.messageThreadId === "number" &&
-    Number.isFinite(options.messageThreadId) &&
-    options.messageThreadId > 0
-  ) {
-    body.message_thread_id = Math.floor(options.messageThreadId);
-  }
+  const formatted = formatTelegramText(
+    text,
+    parseMode,
+    options.includeDashboardLink === false ? null : options.dashboardUrl
+  );
 
   const timeoutMs = Math.max(
     1_000,
     Math.floor(options.timeoutMs ?? DEFAULT_TIMEOUT_MS)
   );
   const fetchImpl = options.fetchImpl ?? fetch;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const url = `${apiBase}/bot${safeToken}/sendMessage`;
 
-  try {
-    const response = await fetchImpl(
-      `${apiBase}/bot${safeToken}/sendMessage`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-        signal: controller.signal,
+  for (const chunk of splitTelegramMessage(formatted)) {
+    const body: Record<string, unknown> = { chat_id: target, text: chunk };
+    if (parseMode) body.parse_mode = parseMode;
+    if (options.disableNotification) body.disable_notification = true;
+    if (
+      typeof options.messageThreadId === "number" &&
+      Number.isFinite(options.messageThreadId) &&
+      options.messageThreadId > 0
+    ) {
+      body.message_thread_id = Math.floor(options.messageThreadId);
+    }
+
+    for (let attempt = 0; ; attempt++) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const response = await fetchImpl(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        });
+
+        const raw = await response.text().catch(() => "");
+        let parsed: any = null;
+        try {
+          parsed = raw ? JSON.parse(raw) : null;
+        } catch {
+          parsed = null;
+        }
+
+        if (response.status === 429 && attempt < TELEGRAM_MAX_RETRIES) {
+          const retryAfter = Number(parsed?.parameters?.retry_after);
+          const delaySeconds = Number.isFinite(retryAfter) && retryAfter > 0
+            ? Math.min(60, Math.ceil(retryAfter))
+            : Math.min(30, 2 ** attempt);
+          await sleep(delaySeconds * 1000);
+          continue;
+        }
+
+        if (!response.ok || parsed?.ok === false) {
+          const description =
+            (typeof parsed?.description === "string" && parsed.description) ||
+            raw.slice(0, 200) ||
+            `HTTP ${response.status}`;
+          throw new Error(
+            `Telegram API: ${sanitizeErrorText(description, safeToken)}`
+          );
+        }
+        break;
+      } catch (err: any) {
+        if (err?.name === "AbortError") {
+          throw new Error(
+            t("notify.error.telegramTimeout", {
+              seconds: Math.floor(timeoutMs / 1000),
+            })
+          );
+        }
+        const message = err instanceof Error ? err.message : String(err);
+        throw new Error(sanitizeErrorText(message, safeToken));
+      } finally {
+        clearTimeout(timer);
       }
-    );
-
-    const raw = await response.text().catch(() => "");
-    let parsed: any = null;
-    try {
-      parsed = raw ? JSON.parse(raw) : null;
-    } catch {
-      parsed = null;
     }
-
-    if (!response.ok || parsed?.ok === false) {
-      const description =
-        (typeof parsed?.description === "string" && parsed.description) ||
-        raw.slice(0, 200) ||
-        `HTTP ${response.status}`;
-      throw new Error(
-        `Telegram API: ${sanitizeErrorText(description, safeToken)}`
-      );
-    }
-  } catch (err: any) {
-    if (err?.name === "AbortError") {
-      throw new Error(
-        t("notify.error.telegramTimeout", {
-          seconds: Math.floor(timeoutMs / 1000),
-        })
-      );
-    }
-    const message = err instanceof Error ? err.message : String(err);
-    throw new Error(sanitizeErrorText(message, safeToken));
-  } finally {
-    clearTimeout(timer);
   }
 }

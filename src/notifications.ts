@@ -17,12 +17,16 @@ import {
   type ErrorAnalyticsRow,
 } from "./core/analytics.js";
 import { getHistory } from "./db/history-repo.js";
-import { getDb } from "./db/index.js";
+import { getDb, withTransaction } from "./db/index.js";
 import { sendTelegramMessage } from "./core/telegram.js";
 import { sendNativeNotification } from "./core/native-notify.js";
 import { decideTriage } from "./core/triage-chain.js";
 import { recordTriageOutcome } from "./core/triage-shadow.js";
 import { scheduleTriageJob } from "./core/triage-worker.js";
+import {
+  summarizeNotification,
+  summaryProviderFromTriage,
+} from "./core/summary.js";
 import type { TriageInput } from "./core/triage.js";
 import { t } from "./i18n.js";
 
@@ -618,6 +622,19 @@ interface EmbeddingRecord {
   window_minutes: number;
 }
 
+/** Размерность вектора фиксирована: feature hashing, а не словарь сообщения. */
+const EMBEDDING_DIMENSION = 512;
+
+/** FNV-1a 32-bit — стабильный хеш токена между процессами и запусками. */
+function fnv1a32(value: string): number {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < value.length; i++) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return hash >>> 0;
+}
+
 function embeddingKey(taskName: string, status: string): string {
   return `emb:${(taskName + '|' + status).toLowerCase()}`;
 }
@@ -631,42 +648,62 @@ function tokenize(text: string): string[] {
     .filter((t) => t.length > 0);
 }
 
-/** Вектор сообщения: нормализованный bag-of-words. Длина 1. */
+/**
+ * Вектор сообщения: feature hashing в фиксированную размерность.
+ *
+ * Раньше длина вектора равнялась числу уникальных слов, а индекс — порядку
+ * первого появления. Такие векторы нельзя сравнивать позиционно: один и тот
+ * же текст с другим порядком слов давал сходство < 1, а векторы разной длины
+ * вообще пропускались. Теперь каждый токен детерминированно проецируется
+ * в [0, EMBEDDING_DIMENSION), поэтому косинус корректен для любых двух текстов.
+ * Вес — 1 + log(tf), L2-нормализация; знак из старшего бита хеша снижает
+ * влияние коллизий.
+ */
 function textToVector(text: string): number[] {
   const tokens = tokenize(text);
-  const counts: Record<string, number> = {};
-  for (const tok of tokens) counts[tok] = (counts[tok] ?? 0) + 1;
-  const dim = Object.keys(counts).length;
-  const vec: number[] = new Array(dim).fill(0);
-  let norm = 0;
-  let i = 0;
-  for (const tok of Object.keys(counts)) {
-    const v = Math.sqrt(counts[tok]) / Math.sqrt(tokens.length);
-    vec[i] = v;
-    norm += v * v;
-    i++;
+  const vec: number[] = new Array(EMBEDDING_DIMENSION).fill(0);
+  if (tokens.length === 0) return vec;
+
+  const counts = new Map<string, number>();
+  for (const tok of tokens) counts.set(tok, (counts.get(tok) ?? 0) + 1);
+
+  for (const [tok, count] of counts) {
+    const hash = fnv1a32(tok);
+    const idx = hash % EMBEDDING_DIMENSION;
+    const sign = (hash & 0x80000000) !== 0 ? -1 : 1;
+    vec[idx] += sign * (1 + Math.log(count));
   }
-  norm = Math.sqrt(norm) || 1;
-  for (let j = 0; j < dim; j++) vec[j] /= norm;
+
+  let norm = 0;
+  for (const v of vec) norm += v * v;
+  norm = Math.sqrt(norm);
+  if (norm > 0) {
+    for (let i = 0; i < vec.length; i++) vec[i] /= norm;
+  }
   return vec;
 }
 
 function cosineSimilarity(a: number[], b: number[]): number {
-  const n = Math.min(a.length, b.length);
-  if (n === 0) return 0;
+  // Векторы разных размерностей несравнимы: это разные пространства признаков.
+  if (a.length !== b.length || a.length === 0) return 0;
   let dot = 0;
   let na = 0;
   let nb = 0;
-  for (let i = 0; i < n; i++) {
+  for (let i = 0; i < a.length; i++) {
     dot += a[i] * b[i];
     na += a[i] * a[i];
     nb += b[i] * b[i];
   }
-  const denom = Math.sqrt(na) * Math.sqrt(nb) || 1;
+  const denom = Math.sqrt(na) * Math.sqrt(nb);
+  if (denom === 0) return 0;
   return dot / denom;
 }
 
-/** Проверяет, есть ли в БД вектор, достаточно похожий на text. */
+/**
+ * Проверяет, есть ли в БД вектор, достаточно похожий на text.
+ * Сравниваются только векторы той же задачи и того же статуса: иначе успех
+ * одной задачи «заражал» бы ошибки другой. Берём последние LIMIT векторов окна.
+ */
 function embeddingExists(
   db: ReturnType<typeof getDb>,
   taskName: string,
@@ -680,13 +717,13 @@ function embeddingExists(
   ).toISOString();
   const rows = db
     .prepare(
-      "SELECT key, embedding_json, dimension, created_at FROM notification_embeddings WHERE created_at >= ?"
+      "SELECT key, embedding_json FROM notification_embeddings " +
+        "WHERE task_name = ? AND status = ? AND created_at >= ? " +
+        "ORDER BY created_at DESC LIMIT 500"
     )
-    .all(since) as Array<{
+    .all(taskName, status, since) as Array<{
     key: string;
     embedding_json: string;
-    dimension: number;
-    created_at: string;
   }>;
   const vec = textToVector(message);
   let bestKey = "";
@@ -694,7 +731,7 @@ function embeddingExists(
   for (const row of rows) {
     try {
       const emb: number[] = JSON.parse(row.embedding_json);
-      if (emb.length !== vec.length) continue;
+      if (!Array.isArray(emb) || emb.length !== vec.length) continue;
       const sim = cosineSimilarity(vec, emb);
       if (sim > bestSim) {
         bestSim = sim;
@@ -708,7 +745,12 @@ function embeddingExists(
   return null;
 }
 
-/** Сохраняет вектор сообщения в БД. */
+/**
+ * Сохраняет вектор сообщения в БД.
+ * Ключ уникален для каждого сообщения (а не task|status): храним историю,
+ * иначе INSERT OR REPLACE оставлял бы только последний вектор и дедуп
+ * сравнивал бы новое сообщение само с собой.
+ */
 function storeEmbedding(
   db: ReturnType<typeof getDb>,
   taskName: string,
@@ -718,9 +760,11 @@ function storeEmbedding(
   windowMinutes: number
 ): void {
   const now = new Date().toISOString();
-  const key = embeddingKey(taskName, status);
+  const key =
+    embeddingKey(taskName, status) +
+    `:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 8)}`;
   db.prepare(
-    "INSERT OR REPLACE INTO notification_embeddings (key, task_name, status, message_text, embedding_json, dimension, created_at, window_minutes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    "INSERT INTO notification_embeddings (key, task_name, status, message_text, embedding_json, dimension, created_at, window_minutes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
   ).run(
     key,
     taskName,
@@ -733,10 +777,11 @@ function storeEmbedding(
   );
 }
 
-/** Очищает старые векторы вне окна. */
+/** Очищает старые векторы вне окна и лишние сверх maxVectors. */
 function cleanupEmbeddings(
   db: ReturnType<typeof getDb>,
-  windowMinutes: number
+  windowMinutes: number,
+  maxVectors?: number
 ): void {
   const since = new Date(
     Date.now() - windowMinutes * 60_000
@@ -744,6 +789,12 @@ function cleanupEmbeddings(
   db.prepare(
     "DELETE FROM notification_embeddings WHERE created_at < ?"
   ).run(since);
+  if (maxVectors && maxVectors > 0) {
+    db.prepare(
+      "DELETE FROM notification_embeddings WHERE key NOT IN (" +
+        "SELECT key FROM notification_embeddings ORDER BY created_at DESC LIMIT ?)"
+    ).run(maxVectors);
+  }
 }
 
 export async function notifyTaskCompletion(
@@ -813,33 +864,34 @@ export async function notifyTaskCompletion(
     // считает повторы, но не подавляет важные статусы.
     let dedupCount = 1;
     if (config.dedup?.enabled && config.dedup.suppressDuplicates) {
+      const dedup = config.dedup;
       const db = getDb();
       const key = dedupKey(taskName, status);
-      const { record, isDuplicate } = dedupReadOrCreate(
-        db,
-        key,
-        taskName,
-        status,
-        config.dedup
+      // Читать-изменять-записать нужно атомарно: иначе два процесса
+      // (задача + дашборд) теряют инкременты счётчика повторов.
+      const { record, isDuplicate } = withTransaction(() =>
+        dedupReadOrCreate(db, key, taskName, status, dedup)
       );
       dedupCount = record.count;
-      if (isDuplicate && isDedupSuppressed(status, config.dedup)) {
+      if (isDuplicate && isDedupSuppressed(status, dedup)) {
         return;
       }
     }
+
+    const baseMessage = messageWithDedupCount(
+      formatNotificationMessage(
+        { taskName, status, durationMs, error, tokens, costUsd },
+        config.templates
+      ),
+      dedupCount
+    );
 
     // Эмбеддинг-дедуп (31.1): семантическое подавление похожих сообщений.
     // Проверяется после rule-based дедупа: если вектор совпадает с существующим
     // на пороге threshold, уведомление подавляется (если не важный статус).
     if (config.embedding?.enabled && config.embedding.suppressDuplicates) {
       const db = getDb();
-      const message = messageWithDedupCount(
-        formatNotificationMessage(
-          { taskName, status, durationMs, error, tokens, costUsd },
-          config.templates
-        ),
-        dedupCount
-      );
+      const message = baseMessage;
       const hit = embeddingExists(
         db,
         taskName,
@@ -850,7 +902,7 @@ export async function notifyTaskCompletion(
       );
       if (
         hit &&
-        !isDedupSuppressed(status, config.dedup ?? {
+        isDedupSuppressed(status, config.dedup ?? {
           enabled: false,
           windowMinutes: 60,
           suppressDuplicates: false,
@@ -869,17 +921,38 @@ export async function notifyTaskCompletion(
         vec,
         config.embedding.windowMinutes ?? 60
       );
-      cleanupEmbeddings(db, config.embedding.windowMinutes ?? 60);
+      cleanupEmbeddings(
+        db,
+        config.embedding.windowMinutes ?? 60,
+        config.embedding.maxVectors
+      );
     }
 
-    const message = messageWithDedupCount(
-      formatNotificationMessage(
-        { taskName, status, durationMs, error, tokens, costUsd },
-        config.templates
-      ),
-      dedupCount
-    );
-    await deliver(config, message);
+    // Саммари (31.3): в режиме summary используем три строки от модели,
+    // при любом отказе остаётся детерминированное усечение или базовое сообщение.
+    let finalMessage = baseMessage;
+    if (config.summary?.enabled) {
+      const summary = await summarizeNotification(
+        {
+          taskName,
+          status,
+          error: error ?? undefined,
+          durationMs,
+          tokens: tokens ?? undefined,
+          costUsd: costUsd ?? undefined,
+        },
+        config.summary,
+        summaryProviderFromTriage(config.triage),
+        {}
+      );
+      if (summary.lines.length) {
+        finalMessage = messageWithDedupCount(
+          `${taskName} — ${status}\n${summary.lines.join("\n")}`,
+          dedupCount
+        );
+      }
+    }
+    await deliver(config, finalMessage);
   } catch (err: any) {
     // Уведомление не должно ломать запись истории и саму задачу.
     console.error(

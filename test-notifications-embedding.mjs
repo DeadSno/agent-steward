@@ -105,11 +105,17 @@ async function closeDbAndCleanup() {
   } catch (_) {}
 }
 
+/** Изолирует тесты: векторы одного блока не должны влиять на другой. */
+function clearEmbeddings() {
+  dbModule.getDb().prepare("DELETE FROM notification_embeddings").run();
+}
+
 // --- Тесты ------------------------------------------------------------------
 
 // 1. Первое уведомление доставляется, вектор сохраняется
 await withWebhook(async (hookUrl) => {
   await writeSettings(hookUrl);
+  clearEmbeddings();
   await notifyTaskCompletion("Deploy-Production", "success", 1000, null, 0, 0, {
     asyncTriage: false,
   });
@@ -119,6 +125,7 @@ await withWebhook(async (hookUrl) => {
 // 2. Похожее сообщение подавляется (семантически близкое)
 await withWebhook(async (hookUrl) => {
   await writeSettings(hookUrl);
+  clearEmbeddings();
   await notifyTaskCompletion("Deploy-Production", "success", 1000, null, 0, 0, {
     asyncTriage: false,
   });
@@ -128,6 +135,7 @@ await withWebhook(async (hookUrl) => {
 // 3. Разное сообщение доставляется (не дубликат по смыслу)
 await withWebhook(async (hookUrl) => {
   await writeSettings(hookUrl);
+  clearEmbeddings();
   await notifyTaskCompletion("Тесты", "success", 1000, null, 0, 0, {
     asyncTriage: false,
   });
@@ -137,6 +145,7 @@ await withWebhook(async (hookUrl) => {
 // 4. Важный статус (error) не подавляется даже если семантически близкий
 await withWebhook(async (hookUrl) => {
   await writeSettings(hookUrl);
+  clearEmbeddings();
   await notifyTaskCompletion("Deploy-Production", "success", 1000, null, 0, 0, {
     asyncTriage: false,
   });
@@ -154,6 +163,7 @@ await withWebhook(async (hookUrl) => {
   await writeSettings(hookUrl, {
     embedding: { enabled: false, suppressDuplicates: true },
   });
+  clearEmbeddings();
   await notifyTaskCompletion("Deploy-Production", "success", 1000, null, 0, 0, {
     asyncTriage: false,
   });
@@ -171,6 +181,7 @@ await withWebhook(async (hookUrl) => {
   await writeSettings(hookUrl, {
     embedding: { enabled: true, suppressDuplicates: false },
   });
+  clearEmbeddings();
   await notifyTaskCompletion("Deploy-Production", "success", 1000, null, 0, 0, {
     asyncTriage: false,
   });
