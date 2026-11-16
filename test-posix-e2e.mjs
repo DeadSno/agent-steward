@@ -293,6 +293,16 @@ try {
   const script = fs.readFileSync(wrapperPath, "utf8");
   check("backstop: в обёртке есть проверка PROMPT_BYTES", script.includes("PROMPT_BYTES"));
   check("backstop: лимит 131072 байта", script.includes("131072"));
+  // Регресс: без создания каталога lock `mkdir` падал с ENOENT и обёртка
+  // молча уходила в ветку «уже выполняется».
+  check(
+    "lock: обёртка создаёт каталог для lock-файла",
+    script.includes('mkdir -p "$(dirname "$LOCK_FILE")"')
+  );
+  check(
+    "lock: ошибка создания lock не выдаётся за «уже выполняется»",
+    script.includes('[ ! -d "$LOCK_FILE.d" ]')
+  );
 } catch (err) {
   console.log("[diag] section 4 THREW:", err instanceof Error ? err.stack : String(err));
   check("backstop: в обёртке есть проверка PROMPT_BYTES", false, "section threw");

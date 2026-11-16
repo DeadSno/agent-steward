@@ -148,6 +148,10 @@ export function buildBashWrapperScript(options: BashWrapperOptions): string {
     'export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$HOME/.bun/bin:$PATH"',
     "",
     'mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true',
+    // Каталог locks/ на свежей установке может отсутствовать: без него
+    // `mkdir "$LOCK_FILE.d"` падает с ENOENT, и обёртка уходила в ветку
+    // «уже выполняется» (exit 0), молча не запустив задачу.
+    'mkdir -p "$(dirname "$LOCK_FILE")" 2>/dev/null || true',
     "",
     "log() {",
     '  printf \'[%s] %s\\n\' "$(date \'+%Y-%m-%d %H:%M:%S\')" "$*" >> "$LOG_FILE" 2>/dev/null || true',
@@ -206,6 +210,10 @@ export function buildBashWrapperScript(options: BashWrapperOptions): string {
     "# В каталог пишем PID: после kill -9 осиротевший lock снимается, а не",
     "# блокирует задачу до истечения STALE_LOCK_MAX_AGE_MS.",
     'if ! mkdir "$LOCK_FILE.d" 2>/dev/null; then',
+    '  if [ ! -d "$LOCK_FILE.d" ]; then',
+    '    log "[scheduler] Не удалось создать lock \'$LOCK_FILE.d\' — запуск отменён."',
+    "    exit 1",
+    "  fi",
     '  LOCK_PID=""',
     '  if [ -f "$LOCK_FILE.d/pid" ]; then',
     '    LOCK_PID="$(cat "$LOCK_FILE.d/pid" 2>/dev/null || true)"',
@@ -443,6 +451,8 @@ export async function writeBashWrapper(
   options: BashWrapperOptions
 ): Promise<string> {
   await fs.mkdir(WRAPPER_DIR, { recursive: true });
+  // locks/ нужен до первого запуска: обёртка берёт lock через mkdir.
+  await fs.mkdir(path.dirname(options.lockFile), { recursive: true });
   const scriptPath = path.join(
     WRAPPER_DIR,
     `run-${options.sanitizedName}.sh`
