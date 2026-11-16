@@ -38,16 +38,20 @@ export class LockManager {
     const now = Date.now();
 
     for (const file of files) {
-      if (!file.endsWith(".lock")) continue;
       const fullPath = path.join(this.lockDir, file);
+      // Каталог <task>.lock.d держит POSIX-обёртка (mkdir-блокировка).
+      // После kill -9 он остаётся навсегда, поэтому чистим его так же, как .lock.
+      const isLockFile = file.endsWith(".lock");
+      const isLockDir = file.endsWith(".lock.d");
+      if (!isLockFile && !isLockDir) continue;
       try {
         const stat = await fs.stat(fullPath);
         const age = now - stat.mtimeMs;
         if (age > STALE_LOCK_MAX_AGE_MS) {
-          await fs.unlink(fullPath).catch(() => {});
+          await fs.rm(fullPath, { recursive: true, force: true }).catch(() => {});
           // eslint-disable-next-line no-console
           console.log(
-            `[windows-scheduler] Удалён зависший lock-файл: ${file} (возраст ${Math.round(
+            `[windows-scheduler] Удалён зависший lock: ${file} (возраст ${Math.round(
               age / 1000
             )} с)`
           );

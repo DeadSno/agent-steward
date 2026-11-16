@@ -59,6 +59,11 @@ export interface BashWrapperOptions {
    * подгружаются перед запуском opencode и никогда не пишутся в лог.
    */
   envFile?: string;
+  /**
+   * Таймаут pre-flight/Quality Gate/post-flight в секундах (по умолчанию 300).
+   * 0 — без таймаута. Зависший хук не должен держать lock.
+   */
+  gateTimeoutSeconds?: number;
 }
 
 /**
@@ -98,6 +103,7 @@ export function buildBashWrapperScript(options: BashWrapperOptions): string {
     deniedTools,
     scheduleGate,
     envFile,
+    gateTimeoutSeconds,
   } = options;
 
   const lines: string[] = [
@@ -137,7 +143,6 @@ export function buildBashWrapperScript(options: BashWrapperOptions): string {
     // opencode run CLI не поддерживает --allow-tool/--deny-tool, а файл
     // opencode.jsonc в Workdir мог бы перезаписать проектный конфиг.
     `export OPENCODE_CONFIG_CONTENT=${shellQuote(buildOpencodeConfig(allowedTools, deniedTools))}`,
-    'log "[role-scoped] opencode config passed via OPENCODE_CONFIG_CONTENT"',
     '',
     "# cron запускает задачи с минимальным PATH — добавляем типовые каталоги.",
     'export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$HOME/.bun/bin:$PATH"',
@@ -146,6 +151,28 @@ export function buildBashWrapperScript(options: BashWrapperOptions): string {
     "",
     "log() {",
     '  printf \'[%s] %s\\n\' "$(date \'+%Y-%m-%d %H:%M:%S\')" "$*" >> "$LOG_FILE" 2>/dev/null || true',
+    "}",
+    "",
+    'log "[role-scoped] opencode config passed via OPENCODE_CONFIG_CONTENT"',
+    "",
+    "# Таймаут для gate/хуков: зависший скрипт не должен держать lock до истечения",
+    "# STALE_LOCK_MAX_AGE_MS. 0 — без таймаута (не рекомендуется).",
+    `GATE_TIMEOUT_SECONDS=${Math.max(0, Math.floor(gateTimeoutSeconds ?? 300))}`,
+    'run_with_timeout() {',
+    '  GATE_LIMIT="$1"; shift',
+    '  if [ "$GATE_LIMIT" -le 0 ] 2>/dev/null; then',
+    '    "$@"',
+    '    return $?',
+    '  fi',
+    '  "$@" &',
+    '  GATE_CHILD=$!',
+    '  ( sleep "$GATE_LIMIT"; kill -TERM "$GATE_CHILD" 2>/dev/null ) >/dev/null 2>&1 &',
+    '  GATE_WATCHDOG=$!',
+    '  wait "$GATE_CHILD"',
+    '  GATE_CODE=$?',
+    '  kill "$GATE_WATCHDOG" 2>/dev/null || true',
+    '  wait "$GATE_WATCHDOG" 2>/dev/null || true',
+    '  return "$GATE_CODE"',
     "}",
     "",
     "# Спринт 19: гейт расписания — до lock, чтобы ожидание окна не держало блокировку.",
@@ -162,7 +189,7 @@ export function buildBashWrapperScript(options: BashWrapperOptions): string {
     '  if ! command -v node >/dev/null 2>&1; then',
     '    log "[scheduler] Гейт расписания пропущен: node не найден в PATH."',
     "  else",
-    '    node "$SCHEDULE_GATE_FILE" "${SCHED_GATE_ARGS[@]}" >> "$LOG_FILE" 2>&1',
+    '    run_with_timeout "$GATE_TIMEOUT_SECONDS" node "$SCHEDULE_GATE_FILE" ${SCHED_GATE_ARGS[@]+"${SCHED_GATE_ARGS[@]}"} >> "$LOG_FILE" 2>&1',
     "    SCHED_GATE_CODE=$?",
     '    if [ "$SCHED_GATE_CODE" -eq 3 ]; then',
     '      log "[scheduler] Гейт расписания: запуск не требуется (cron/окно). Перенос или пропуск тика."',
@@ -172,10 +199,29 @@ export function buildBashWrapperScript(options: BashWrapperOptions): string {
     "fi",
     "",
     "# Атомарная блокировка: mkdir завершается ошибкой, если каталог уже есть.",
+    "# В каталог пишем PID: после kill -9 осиротевший lock снимается, а не",
+    "# блокирует задачу до истечения STALE_LOCK_MAX_AGE_MS.",
     'if ! mkdir "$LOCK_FILE.d" 2>/dev/null; then',
-    '  log "[scheduler] Задача \'$TASK_NAME\' уже выполняется — пропуск запуска."',
-    "  exit 0",
+    '  LOCK_PID=""',
+    '  if [ -f "$LOCK_FILE.d/pid" ]; then',
+    '    LOCK_PID="$(cat "$LOCK_FILE.d/pid" 2>/dev/null || true)"',
+    "  fi",
+    '  LOCK_ALIVE=1',
+    '  if [ -n "$LOCK_PID" ]; then',
+    '    if kill -0 "$LOCK_PID" 2>/dev/null; then LOCK_ALIVE=1; else LOCK_ALIVE=0; fi',
+    '  fi',
+    '  if [ "$LOCK_ALIVE" -eq 1 ]; then',
+    '    log "[scheduler] Задача \'$TASK_NAME\' уже выполняется (pid ${LOCK_PID:-неизвестен}) — пропуск запуска."',
+    "    exit 0",
+    "  fi",
+    '  log "[scheduler] Снимаю осиротевший lock \'$LOCK_FILE.d\' (pid ${LOCK_PID:-неизвестен}) и пробую снова."',
+    '  rm -rf "$LOCK_FILE.d" 2>/dev/null || true',
+    '  if ! mkdir "$LOCK_FILE.d" 2>/dev/null; then',
+    '    log "[scheduler] Не удалось взять lock \'$LOCK_FILE.d\' — пропуск запуска."',
+    "    exit 0",
+    "  fi",
     "fi",
+    'printf \'%s\\n\' "$$" > "$LOCK_FILE.d/pid" 2>/dev/null || true',
     'cleanup() { rmdir "$LOCK_FILE.d" 2>/dev/null || rm -rf "$LOCK_FILE.d" 2>/dev/null; }',
     "trap cleanup EXIT INT TERM",
     "",
@@ -205,16 +251,10 @@ export function buildBashWrapperScript(options: BashWrapperOptions): string {
     '  log "[workspace] name=$WORKSPACE_NAME, cwd=$WORKDIR, branch=$GIT_BRANCH, remote=$GIT_REMOTE"',
     "fi",
     "",
-    "# Role-scoped tools: ограничения фиксируются в логе. Позиция metadata-only:",
-    "# opencode 2.2.3 не поддерживает allow/deny флаги, поэтому запрет мы лишь",
-    "# логируем и предупреждаем, но не блокируем.",
+    "# Role-scoped tools: права переданы в opencode через OPENCODE_CONFIG_CONTENT",
+    "# (реальные allow/deny permissions, не metadata-only). Здесь только лог.",
     'if [ -n "$ALLOWED_TOOLS" ] || [ -n "$DENIED_TOOLS" ]; then',
     '  log "[role-scoped] allowed=[$ALLOWED_TOOLS], denied=[$DENIED_TOOLS]"',
-    '  case ",$DENIED_TOOLS," in',
-    '  *",write,"*|*",edit,"*|*",bash,"*|*",apply_patch,"*|*",remove,"*)',
-    '    log "[role-scoped] ВНИМАНИЕ: deniedTools содержит опасные инструменты ($DENIED_TOOLS). Запрет не может быть применён автоматически (metadata-only), проверьте промпт задачи."',
-    "    ;;",
-    "  esac",
     "fi",
     "",
     'if ! command -v opencode >/dev/null 2>&1; then',
@@ -243,7 +283,7 @@ export function buildBashWrapperScript(options: BashWrapperOptions): string {
     "# Pre-flight: выполняется до основной задачи. Ненулевой код отменяет запуск.",
     'if [ -n "$BEFORE_SCRIPT" ]; then',
     '  log "[scheduler] Pre-flight: $BEFORE_SCRIPT"',
-    '  bash -lc "$BEFORE_SCRIPT" >> "$LOG_FILE" 2>&1',
+    '  run_with_timeout "$GATE_TIMEOUT_SECONDS" bash -c "$BEFORE_SCRIPT" >> "$LOG_FILE" 2>&1',
     "  PRE_CODE=$?",
     '  if [ "$PRE_CODE" -ne 0 ]; then',
     '    log "[scheduler] ОШИБКА: Pre-flight script failed (код $PRE_CODE)."',
@@ -260,39 +300,45 @@ export function buildBashWrapperScript(options: BashWrapperOptions): string {
     'if [ "$SKIP_MAIN" -eq 0 ]; then',
     "",
     "# Модель указывается только если задана — иначе OpenCode берёт свою по умолчанию.",
+    "# exec важен: в фоновом режиме он заменяет подоболочку процессом opencode,",
+    "# поэтому $! — это PID самого opencode, и watchdog убивает именно его.",
+    "# Ветвление вместо массива: bash 3.2 (macOS) с set -u падает на пустом",
+    '# "${ARR[@]}".',
     "run_opencode() {",
-    '  SESSION_ARGS=()',
-    '  case "$SESSION_MODE" in',
-    '    reuse)',
-    '      if [ -n "$SESSION_ID" ]; then',
-    '        SESSION_ARGS+=(--session "$SESSION_ID")',
-    '      fi',
-    '      ;;',
-    '    last)',
-    '      SESSION_ARGS+=(--continue)',
-    '      ;;',
-    '    *)',
-    '      ;;',
-    '  esac',
-    '  if [ -n "$MODEL" ]; then',
-    '    opencode run --auto "${SESSION_ARGS[@]}" --model "$MODEL" "$PROMPT"',
+    '  if [ "$SESSION_MODE" = "reuse" ] && [ -n "$SESSION_ID" ]; then',
+    '    if [ -n "$MODEL" ]; then',
+    '      exec opencode run --auto --session "$SESSION_ID" --model "$MODEL" "$PROMPT"',
+    "    else",
+    '      exec opencode run --auto --session "$SESSION_ID" "$PROMPT"',
+    "    fi",
+    '  elif [ "$SESSION_MODE" = "last" ]; then',
+    '    if [ -n "$MODEL" ]; then',
+    '      exec opencode run --auto --continue --model "$MODEL" "$PROMPT"',
+    "    else",
+    '      exec opencode run --auto --continue "$PROMPT"',
+    "    fi",
     "  else",
-    '    opencode run --auto "${SESSION_ARGS[@]}" "$PROMPT"',
+    '    if [ -n "$MODEL" ]; then',
+    '      exec opencode run --auto --model "$MODEL" "$PROMPT"',
+    "    else",
+    '      exec opencode run --auto "$PROMPT"',
+    "    fi",
     "  fi",
     "}",
     "",
+    "# Всегда запускаем в фоне, чтобы watchdog мог завершить процесс по таймауту.",
+    "# TIMEOUT_SECONDS=0 — ждём без watchdog.",
+    'run_opencode >> "$LOG_FILE" 2>&1 &',
+    "CHILD=$!",
     'if [ "$TIMEOUT_SECONDS" -gt 0 ] 2>/dev/null; then',
-    '  run_opencode >> "$LOG_FILE" 2>&1 &',
-    "  CHILD=$!",
     '  ( sleep "$TIMEOUT_SECONDS"; kill -TERM "$CHILD" 2>/dev/null; sleep 5; kill -KILL "$CHILD" 2>/dev/null ) &',
     "  WATCHDOG=$!",
-    '  wait "$CHILD"',
-    "  EXIT_CODE=$?",
+    "fi",
+    'wait "$CHILD"',
+    "EXIT_CODE=$?",
+    'if [ -n "${WATCHDOG:-}" ]; then',
     '  kill "$WATCHDOG" 2>/dev/null || true',
     '  wait "$WATCHDOG" 2>/dev/null || true',
-    "else",
-    '  opencode run --auto "${SESSION_ARGS[@]}" "$PROMPT"',
-    "  EXIT_CODE=$?",
     "fi",
     '',
     '# Конфиг прав живёт только в переменной окружения — файл не создаётся.',
@@ -306,7 +352,7 @@ export function buildBashWrapperScript(options: BashWrapperOptions): string {
     "",
     'if [ -n "$QUALITY_GATE" ] && [ "$EXIT_CODE" -eq 0 ]; then',
     '  log "[scheduler] Запуск Quality Gate: $QUALITY_GATE"',
-    '  bash -lc "$QUALITY_GATE" >> "$LOG_FILE" 2>&1',
+    '  run_with_timeout "$GATE_TIMEOUT_SECONDS" bash -c "$QUALITY_GATE" >> "$LOG_FILE" 2>&1',
     "  GATE_CODE=$?",
     '  if [ "$GATE_CODE" -ne 0 ]; then',
     '    log "[scheduler] ОШИБКА: Quality Gate провален. Код возврата: $GATE_CODE"',
@@ -322,7 +368,7 @@ export function buildBashWrapperScript(options: BashWrapperOptions): string {
     "# Post-flight: выполняется ВСЕГДА, даже если основная задача упала.",
     'if [ -n "$AFTER_SCRIPT" ]; then',
     '  log "[scheduler] Post-flight: $AFTER_SCRIPT"',
-    '  bash -lc "$AFTER_SCRIPT" >> "$LOG_FILE" 2>&1',
+    '  run_with_timeout "$GATE_TIMEOUT_SECONDS" bash -c "$AFTER_SCRIPT" >> "$LOG_FILE" 2>&1',
     "  POST_CODE=$?",
     '  if [ "$POST_CODE" -ne 0 ]; then',
     '    log "[scheduler] ОШИБКА: Post-flight script failed (код $POST_CODE)."',
@@ -442,8 +488,15 @@ export function buildOpencodeConfig(
     ["question", "question"],
     ["subagent", "subagent"],
     ["skill", "skill"],
-    ["WebFetch", "webfetch"],
   ]);
+
+  // Для каждого action — все его алиасы: allowedTools может содержать любой.
+  const aliasesByAction = new Map<string, string[]>();
+  for (const [tool, action] of toolToAction) {
+    const list = aliasesByAction.get(action) ?? [];
+    list.push(tool);
+    aliasesByAction.set(action, list);
+  }
 
   // Применяем deniedTools.
   for (const [tool, action] of toolToAction) {
@@ -460,12 +513,11 @@ export function buildOpencodeConfig(
     for (const entry of actions) {
       // Если действие уже запрещено deniedTools, оставляем deny.
       if (entry.effect === "deny") continue;
-      const tool = [...toolToAction.entries()].find(
-        ([, a]) => a === entry.action
-      )?.[0];
-      if (tool && !allowedSet.has(tool)) {
-        entry.effect = "deny";
-      }
+      const aliases = aliasesByAction.get(entry.action) ?? [];
+      // Действие разрешено, если в allowedTools есть ХОТЯ БЫ ОДИН его алиас.
+      // Раньше проверялся только первый алиас, поэтому "shell" не разрешал bash.
+      const allowed = aliases.some((alias) => allowedSet.has(alias));
+      if (aliases.length > 0 && !allowed) entry.effect = "deny";
     }
   }
 

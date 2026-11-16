@@ -186,7 +186,6 @@ export class WindowsScheduler implements SchedulerBackend {
       "/f",
     ];
 
-    console.log("[windows-scheduler] createTask args:", args);
     let result: SchtasksResult;
     try {
       result = await runSchtasks(args);
@@ -261,9 +260,10 @@ export class WindowsScheduler implements SchedulerBackend {
 
     // Fallback: если структурный парсер не распознал ключи (нестандартная
     // локаль/кодировка), вытаскиваем имена задач по префиксу папки.
-    if (filtered.length === 0 && /windows-scheduler/i.test(result.stdout)) {
+    if (filtered.length === 0 && result.stdout.includes(TASK_FOLDER_NAME)) {
       const names = new Set<string>();
-      const re = /[\\/]?OpenCode[\\/]windows-scheduler[\\/]([^\r\n"']+)/gi;
+      const folderPattern = `${TASK_FOLDER}[\\\\/]${TASK_FOLDER_NAME}[\\\\/]`;
+      const re = new RegExp(`${folderPattern}([^\\r\\n"']+)`, "gi");
       let m: RegExpExecArray | null;
       while ((m = re.exec(result.stdout)) !== null) {
         const nm = m[1].trim().replace(/[\s:]+$/, "");
@@ -321,10 +321,7 @@ export class WindowsScheduler implements SchedulerBackend {
       if (err instanceof SchtasksError) {
         const text = `${err.message} ${err.stderr}`.toLowerCase();
         const alreadyDisabled =
-          text.includes("disabled") ||
-          text.includes("запрещена") ||
-          text.includes("не удалось найти") ||
-          text.includes("cannot find");
+          text.includes("disabled") || text.includes("запрещена");
         if (alreadyDisabled) return;
       }
       throw new SchtasksError(
@@ -345,10 +342,7 @@ export class WindowsScheduler implements SchedulerBackend {
       if (err instanceof SchtasksError) {
         const text = `${err.message} ${err.stderr}`.toLowerCase();
         const alreadyEnabled =
-          text.includes("enabled") ||
-          text.includes("включена") ||
-          text.includes("не удалось найти") ||
-          text.includes("cannot find");
+          text.includes("enabled") || text.includes("включена");
         if (alreadyEnabled) return;
       }
       throw new SchtasksError(
@@ -378,7 +372,6 @@ export class WindowsScheduler implements SchedulerBackend {
   async runTask(name: string): Promise<RunTaskResult> {
     const fullName = taskFullName(name);
     const args = ["/run", "/tn", fullName];
-    console.log("[windows-scheduler] runTask args:", args);
 
     // schtasks /run не требует смены кодировки — вызываем напрямую.
     try {
@@ -417,11 +410,11 @@ export class WindowsScheduler implements SchedulerBackend {
 function isEmptyQueryResult(err: SchtasksError): boolean {
   const text = `${err.message} ${err.stderr}`.toLowerCase();
   return (
-    err.code === 1 ||
     text.includes("cannot find") ||
     text.includes("не удалось найти") ||
     text.includes("не найдено") ||
-    text.includes("no tasks")
+    text.includes("no tasks") ||
+    text.includes("не содержит задач")
   );
 }
 
@@ -497,6 +490,46 @@ function setTaskField(task: any, key: string, value: string): void {
     автор: "author",
     команда: "taskToRun",
     комментарий: "comment",
+    // German (DE)
+    ordner: "folder",
+    aufgabenname: "taskName",
+    "nächste ausführungszeit": "nextRunTime",
+    "nächste laufzeit": "nextRunTime",
+    "anmeldemodus": "logonMode",
+    "letzte laufzeit": "lastRunTime",
+    "letztes ergebnis": "lastResult",
+    // French (FR)
+    dossier: "folder",
+    "nom de la tâche": "taskName",
+    "prochaine exécution": "nextRunTime",
+    état: "status",
+    statut: "status",
+    "mode d'ouverture de session": "logonMode",
+    "dernière exécution": "lastRunTime",
+    "dernier résultat": "lastResult",
+    // Spanish (ES)
+    carpeta: "folder",
+    "nombre de tarea": "taskName",
+    "próxima ejecución": "nextRunTime",
+    estado: "status",
+    "modo de inicio de sesión": "logonMode",
+    "última ejecución": "lastRunTime",
+    "último resultado": "lastResult",
+    // Italian (IT)
+    cartella: "folder",
+    "nome attività": "taskName",
+    "prossima esecuzione": "nextRunTime",
+    stato: "status",
+    "modalità di accesso": "logonMode",
+    "ultima esecuzione": "lastRunTime",
+    "ultimo risultato": "lastResult",
+    // Polish (PL)
+    "nazwa zadania": "taskName",
+    "następne uruchomienie": "nextRunTime",
+    stan: "status",
+    "tryb logowania": "logonMode",
+    "ostatnie uruchomienie": "lastRunTime",
+    "ostatni wynik": "lastResult",
   };
 
   const field = map[keyLower];

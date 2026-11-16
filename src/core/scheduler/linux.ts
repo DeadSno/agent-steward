@@ -1,13 +1,15 @@
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { buildAtTimestamp } from "../one-shot.js";
+import { needsPollMode } from "../schedule-v2.js";
+import { TASK_FOLDER_NAME } from "../../types.js";
 import { PosixSchedulerBase, shellQuote } from "./posix.js";
 import type { RegistryEntry } from "./registry.js";
 
 const execFileAsync = promisify(execFile);
 
-const BLOCK_BEGIN = "# >>> opencode-scheduler >>>";
-const BLOCK_END = "# <<< opencode-scheduler <<<";
+const BLOCK_BEGIN = `# >>> opencode-scheduler:${TASK_FOLDER_NAME} >>>`;
+const BLOCK_END = `# <<< opencode-scheduler:${TASK_FOLDER_NAME} <<<`;
 
 /**
  * Бэкенд планировщика Linux на основе пользовательского crontab.
@@ -35,7 +37,11 @@ export class LinuxScheduler extends PosixSchedulerBase {
     }
     const log = entry.logFile ? ` >> ${shellQuote(entry.logFile)} 2>&1` : "";
     const cmd = `/bin/bash ${shellQuote(entry.command)}${log}`;
-    return `${entry.schedule} ${cmd}`;
+    // crontab понимает только 5-полевой cron. Расширенные выражения (L, #,
+    // списки, @daily и т.п.) нельзя писать в crontab как есть — опрашиваем
+    // каждую минуту, а решение о запуске принимает gate во враппере.
+    const schedule = needsPollMode(entry.schedule) ? "* * * * *" : entry.schedule;
+    return `${schedule} ${cmd}`;
   }
 
   private renderBlock(entries: RegistryEntry[]): string {
@@ -57,23 +63,38 @@ export class LinuxScheduler extends PosixSchedulerBase {
         maxBuffer: 10 * 1024 * 1024,
       });
       return stdout;
-    } catch {
-      // "no crontab for user" — это нормальное состояние.
-      return "";
+    } catch (err: any) {
+      const stderr = String(err?.stderr ?? "");
+      // "no crontab for user" — это нормальное состояние. Любую другую ошибку
+      // (нет доступа, сбой crontab) нельзя превращать в пустой crontab: иначе
+      // последующая запись затрёт пользовательские задания.
+      if (/no crontab/i.test(stderr) || /no crontab/i.test(String(err?.message ?? ""))) {
+        return "";
+      }
+      throw new Error(`Не удалось прочитать crontab: ${stderr.trim() || err?.message || err}`);
     }
   }
 
   /** Убирает управляемый блок плагина из текста crontab. */
   private stripBlock(content: string): string {
+    // Совместимость: до появления профилей блок назывался без суффикса.
+    // Он принадлежит профилю default; другие профили его не трогают.
+    const legacyBegin = "# >>> opencode-scheduler >>>";
+    const legacyEnd = "# <<< opencode-scheduler <<<";
+    const ownsLegacy = TASK_FOLDER_NAME === "windows-scheduler";
+    const isBegin = (line: string) =>
+      line === BLOCK_BEGIN || (ownsLegacy && line === legacyBegin);
+    const isEnd = (line: string) =>
+      line === BLOCK_END || (ownsLegacy && line === legacyEnd);
     const lines = content.split(/\r?\n/);
     const result: string[] = [];
     let inside = false;
     for (const line of lines) {
-      if (line.trim() === BLOCK_BEGIN) {
+      if (isBegin(line.trim())) {
         inside = true;
         continue;
       }
-      if (line.trim() === BLOCK_END) {
+      if (isEnd(line.trim())) {
         inside = false;
         continue;
       }

@@ -7,7 +7,16 @@ export const TASK_PREFIX = "OpenCode\\windows-scheduler";
 
 /** Папка задач плагина в планировщике ОС (Windows). */
 export const TASK_FOLDER = "OpenCode";
-export const TASK_FOLDER_NAME = "windows-scheduler";
+/**
+ * Имя папки/блока задач. У нестандартного профиля своё пространство имён,
+ * иначе профили делят одну папку Планировщика Windows и один блок crontab.
+ * Для default сохраняем историческое имя (совместимость с уже созданными
+ * задачами и обновлением плагина).
+ */
+export const TASK_FOLDER_NAME = (() => {
+  const profile = getProfileName();
+  return profile === "default" ? "windows-scheduler" : `windows-scheduler-${profile}`;
+})();
 
 /**
  * Директория для хранения файлов плагина (обёртки, логи, блокировки, история).

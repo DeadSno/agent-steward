@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { PLUGIN_DIR, LOG_DIR, LOCK_DIR, WRAPPER_DIR, sanitizeName } from "../types.js";
+import { PLUGIN_DIR, LOG_DIR, LOCK_DIR, WRAPPER_DIR, STALE_LOCK_MAX_AGE_MS, sanitizeName } from "../types.js";
 import type { ScheduleGateSpec } from "./schedule-v2.js";
 
 /**
@@ -50,7 +50,9 @@ export const WRAPPER_SCRIPT = `param(
     [string]$SessionMode,
     [string]$SessionId,
     [int]$RetryCount = 0,
-    [int]$RetryDelaySeconds = 0
+    [int]$RetryDelaySeconds = 0,
+    [int]$GateTimeoutSeconds = 300,
+    [int]$StaleLockMaxAgeMs = 86400000
 )
 
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -68,6 +70,20 @@ function Write-Log {
         } catch {}
     }
     Write-Host $line
+}
+
+
+# Проверяет, что процесс с указанным PID ещё существует. Нужно для stale-lock:
+# возраст файла сам по себе не говорит, что владелец мёртв (задача может идти долго).
+function Test-ProcessAlive {
+    param([int]$ProcessId)
+    if ($ProcessId -le 0) { return $false }
+    try {
+        $null = Get-Process -Id $ProcessId -ErrorAction Stop
+        return $true
+    } catch {
+        return $false
+    }
 }
 
 # Гарантируем существование папки для лога (на случай прямого вызова обёртки).
@@ -106,25 +122,44 @@ if ($LockFile) {
         }
         $lockStream = [System.IO.File]::Open($LockFile, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
         try {
-            $lockBytes = [System.Text.Encoding]::UTF8.GetBytes($startedAtIso)
+            # Внутри lock храним время старта и PID владельца: по PID можно
+            # отличить живой долгий запуск от осиротевшего после kill -9.
+            $lockBytes = [System.Text.Encoding]::UTF8.GetBytes("$startedAtIso|$PID")
             $lockStream.Write($lockBytes, 0, $lockBytes.Length)
         } finally {
             $lockStream.Dispose()
         }
         $script:lockAcquired = $true
     } catch [System.IO.IOException] {
-        # Зависший lock (старше 24 ч — как STALE_LOCK_MAX_AGE_MS) снимаем один раз,
-        # иначе после аварийного завершения задача залипла бы навсегда.
+        # Зависший lock снимаем только если владелец мёртв (или файл старше
+        # StaleLockMaxAgeMs и PID в нём отсутствует — lock от старой версии).
         $stale = $false
+        $holderPid = 0
         try {
-            $ageMs = ((Get-Date) - (Get-Item -LiteralPath $LockFile).LastWriteTime).TotalMilliseconds
-            if ($ageMs -gt 86400000) { $stale = $true }
+            $holderRaw = "$(Get-Content -LiteralPath $LockFile -Raw -ErrorAction Stop)".Trim()
+            $holderParts = $holderRaw.Split([char]124)
+            if ($holderParts.Count -ge 2) {
+                [void][int]::TryParse($holderParts[1], [ref]$holderPid)
+            }
         } catch {}
+        if ($holderPid -gt 0) {
+            $stale = -not (Test-ProcessAlive -ProcessId $holderPid)
+        } else {
+            try {
+                $ageMs = ((Get-Date) - (Get-Item -LiteralPath $LockFile).LastWriteTime).TotalMilliseconds
+                if ($ageMs -gt $StaleLockMaxAgeMs) { $stale = $true }
+            } catch {}
+        }
         if ($stale) {
             try { Remove-Item -LiteralPath $LockFile -Force } catch {}
             try {
                 $lockStream = [System.IO.File]::Open($LockFile, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
-                $lockStream.Dispose()
+                try {
+                    $lockBytes = [System.Text.Encoding]::UTF8.GetBytes("$startedAtIso|$PID")
+                    $lockStream.Write($lockBytes, 0, $lockBytes.Length)
+                } finally {
+                    $lockStream.Dispose()
+                }
                 $script:lockAcquired = $true
             } catch {}
         }
@@ -152,14 +187,74 @@ if ($RecorderFile) {
 }
 
 # Выполняет команду оболочки и построчно пишет её вывод в лог.
+# GateTimeoutSeconds ограничивает время хука: зависший pre-flight/Quality Gate
+# раньше держал lock до истечения общего таймаута задачи (до 24 ч).
 function Invoke-HookScript {
     param([string]$Command)
-    $output = & cmd.exe /c $Command 2>&1
-    $code = $LASTEXITCODE
-    foreach ($line in @($output)) {
-        Write-Log "[hook] $line"
+    $timeout = $GateTimeoutSeconds
+
+    if (-not $timeout -or $timeout -le 0) {
+        $output = & cmd.exe /c $Command 2>&1
+        $code = $LASTEXITCODE
+        foreach ($line in @($output)) {
+            Write-Log "[hook] $line"
+        }
+        return $code
     }
-    return $code
+
+    # ВАЖНО: расширение должно быть .cmd. GetTempFileName() даёт .tmp, а
+    # запуск файла .tmp через cmd.exe /c может зависнуть вместо быстрого выполнения.
+    $hookFile = Join-Path ([System.IO.Path]::GetTempPath()) ("sched-hook-" + [guid]::NewGuid().ToString("N") + ".cmd")
+    try {
+        # Команду кладём в .cmd, чтобы кавычки/пайпы не ломали аргументы.
+        $lines = @('@echo off', 'chcp 65001 >nul', $Command)
+        Set-Content -LiteralPath $hookFile -Value $lines -Encoding Default
+        # Не используем Start-Process с -RedirectStandardOutput/-RedirectStandardError:
+        # в Windows PowerShell 5.1 такой вызов может зависнуть на закрытии потоков,
+        # даже если сам хук уже завершился. Запускаем процесс напрямую и читаем
+        # stdout/stderr асинхронно — это не блокирует WaitForExit(timeout).
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = "cmd.exe"
+        $psi.Arguments = '/c "' + $hookFile + '"'
+        $psi.UseShellExecute = $false
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+        $psi.CreateNoWindow = $true
+        $psi.StandardOutputEncoding = [System.Text.Encoding]::UTF8
+        $psi.StandardErrorEncoding = [System.Text.Encoding]::UTF8
+        $proc = New-Object System.Diagnostics.Process
+        $proc.StartInfo = $psi
+        $null = $proc.Start()
+        $outTask = $proc.StandardOutput.ReadToEndAsync()
+        $errTask = $proc.StandardError.ReadToEndAsync()
+        $finished = $proc.WaitForExit([int]($timeout * 1000))
+        if (-not $finished) {
+            try { & taskkill.exe /F /T /PID $proc.Id 2>$null | Out-Null } catch {}
+            try { $proc.WaitForExit(5000) | Out-Null } catch {}
+            $code = 124
+            Write-Log "[windows-scheduler] Таймаут хука ($timeout с): $Command"
+        } else {
+            try { $proc.WaitForExit() } catch {}
+            $code = $proc.ExitCode
+        }
+        $outText = ""
+        $errText = ""
+        if ($outTask.Wait(5000)) { try { $outText = $outTask.Result } catch {} }
+        if ($errTask.Wait(5000)) { try { $errText = $errTask.Result } catch {} }
+        foreach ($text in @($outText, $errText)) {
+            foreach ($line in @($text -split "\r?\n")) {
+                if ($line -ne "") {
+                    Write-Log "[hook] $line"
+                }
+            }
+        }
+        return $code
+    } catch {
+        Write-Log "[windows-scheduler] Не удалось выполнить хук: $_"
+        return 1
+    } finally {
+        Remove-Item -LiteralPath $hookFile -Force -ErrorAction SilentlyContinue
+    }
 }
 
 # Hotfix 1.5.3.1: запуск opencode с реальным таймаутом.
@@ -206,29 +301,32 @@ function Invoke-OpenCodeOnce {
 
     $script:timedOut = $false
     $script:attemptExitCode = 0
+    # Состояние фильтра лога сбрасываем на каждой попытке: иначе незакрытый
+    # служебный блок из упавшего запуска «съедал» бы весь лог следующей попытки.
+    $script:inServiceBlock = $false
+    $script:inComment = $false
     try {
         if ($LogFile) {
             if ($CommandPath -like "*.ps1") {
-                & powershell.exe -ExecutionPolicy Bypass -NoProfile -File $CommandPath @Arguments *>&1 |
-                    ForEach-Object { Format-LogLine $_ } |
-                    Out-File -FilePath $LogFile -Append -Encoding utf8
+                $output = & powershell.exe -ExecutionPolicy Bypass -NoProfile -File $CommandPath @Arguments *>&1
+                $script:attemptExitCode = $LASTEXITCODE
+                $output | ForEach-Object { Format-LogLine $_ } | Out-File -FilePath $LogFile -Append -Encoding utf8
             } else {
-                & $CommandPath @Arguments *>&1 |
-                    ForEach-Object { Format-LogLine $_ } |
-                    Out-File -FilePath $LogFile -Append -Encoding utf8
+                $output = & $CommandPath @Arguments *>&1
+                $script:attemptExitCode = $LASTEXITCODE
+                $output | ForEach-Object { Format-LogLine $_ } | Out-File -FilePath $LogFile -Append -Encoding utf8
             }
         } else {
             if ($CommandPath -like "*.ps1") {
-                & powershell.exe -ExecutionPolicy Bypass -NoProfile -File $CommandPath @Arguments *>&1 |
-                    ForEach-Object { Format-LogLine $_ } |
-                    Out-Host
+                $output = & powershell.exe -ExecutionPolicy Bypass -NoProfile -File $CommandPath @Arguments *>&1
+                $script:attemptExitCode = $LASTEXITCODE
+                $output | ForEach-Object { Format-LogLine $_ } | Out-Host
             } else {
-                & $CommandPath @Arguments *>&1 |
-                    ForEach-Object { Format-LogLine $_ } |
-                    Out-Host
+                $output = & $CommandPath @Arguments *>&1
+                $script:attemptExitCode = $LASTEXITCODE
+                $output | ForEach-Object { Format-LogLine $_ } | Out-Host
             }
         }
-        $script:attemptExitCode = $LASTEXITCODE
     } finally {
         if ($timeoutMarker -and (Test-Path -LiteralPath $timeoutMarker)) {
             $script:timedOut = $true
@@ -313,12 +411,10 @@ function Format-LogLine {
     return $text
 }
 
-/**
- * Пытается вытащить из лога задачи информацию о расходе токенов и стоимости.
- * OpenCode может печатать строки вида "Tokens: 1234", "Usage: 1234 tokens",
- * "cost: $0.012" и т.п. Если данные не найдены — возвращает пустые строки,
- * чтобы recorder записал поля как отсутствующие.
- */
+# Пытается вытащить из лога задачи информацию о расходе токенов и стоимости.
+# OpenCode может печатать строки вида "Tokens: 1234", "Usage: 1234 tokens",
+# "cost: $0.012" и т.п. Если данные не найдены — возвращает пустые строки,
+# чтобы recorder записал поля как отсутствующие.
 function Get-UsageFromLog {
     param([string]$File)
 
@@ -333,18 +429,24 @@ function Get-UsageFromLog {
     } catch { return $result }
     if (-not $tail) { return $result }
 
+    # Шаблоны намеренно «якорные»: метка должна стоять в начале строки
+    # (допускается префикс времени лога). Раньше подходило любое "token=" или
+    # "cost:" внутри текста — конфиг-дампы и проза ИИ давали ложный расход.
+    $prefix = '^\\s*(?:\\[[^\\]]{4,40}\\]\\s*)?'
     $tokenPatterns = @(
-        '(?i)tokens?\\s*[:=]\\s*([0-9]+(?:[.,][0-9]+)?)\\s*([kKmM])?',
-        '(?i)(?:input|output|total)\\s+tokens?\\s*[:=]?\\s*([0-9]+(?:[.,][0-9]+)?)\\s*([kKmM])?',
-        '(?i)usage[^\\r\\n]*?([0-9]+)\\s+tokens?'
+        ($prefix + '(?i)(?:tokens?|token\\s+usage|usage)\\s*[:=]\\s*([0-9][0-9.,]*)\\s*([kKmM])?\\b'),
+        ($prefix + '(?i)(?:input|output|total)\\s+tokens?\\s*[:=]?\\s*([0-9][0-9.,]*)\\s*([kKmM])?\\b')
     )
     $costPatterns = @(
-        '(?i)(?:cost|price|стоимость)\\s*[:=]?\\s*\\$\\s*([0-9]+(?:[.,][0-9]+)?)',
-        '(?i)(?:cost|price|стоимость)\\s*[:=]\\s*([0-9]+(?:[.,][0-9]+)?)\\s*(?:usd|\\$)'
+        ($prefix + '(?i)(?:cost|total\\s+cost)\\s*[:=]?\\s*\\$\\s*([0-9]+(?:[.,][0-9]+)?)'),
+        ($prefix + '(?i)(?:cost|total\\s+cost)\\s*[:=]\\s*([0-9]+(?:[.,][0-9]+)?)\\s*(?:usd|\\$)')
     )
 
-    foreach ($line in $tail) {
-        $text = "$line"
+    # Идём с конца: OpenCode печатает итог последним, а более ранние строки
+    # могут быть эхом промпта или промежуточной статистикой.
+    for ($i = $tail.Count - 1; $i -ge 0; $i--) {
+        $text = "$($tail[$i])"
+        if ($text -match '(?i)opencode\\.json|OPENCODE_CONFIG') { continue }
 
         if (-not $result.Tokens) {
             foreach ($pattern in $tokenPatterns) {
@@ -373,6 +475,8 @@ function Get-UsageFromLog {
                 }
             }
         }
+
+        if ($result.Tokens -and $result.Cost) { break }
     }
 
     return $result
@@ -465,6 +569,13 @@ try {
     if (-not $script:skipMainTask) {
     $prompt = Get-Content -Path $PromptFile -Raw -Encoding UTF8
 
+    # CreateProcess ограничивает командную строку 32767 символами, а промпт
+    # передаётся opencode аргументом ($opencodeArgs += $prompt). Явная ошибка
+    # понятнее, чем обрезанный/отвергнутый запуск. Основная валидация — в schedule_task.
+    if ($prompt -and $prompt.Length -gt 30000) {
+        throw "Промпт слишком длинный для командной строки Windows: $($prompt.Length) символов (максимум 30000). Сократите промпт."
+    }
+
     # Спринт 21: env-переменные workspace. Файл пишет плагин, значения не логируются.
     if ($EnvFile -and (Test-Path -LiteralPath $EnvFile)) {
         try {
@@ -527,18 +638,14 @@ try {
     # завершения opencode run. Если ИИ упал — шлюз не запускаем.
     if ($QualityGate -and $script:exitCode -eq 0) {
         Write-Log "[windows-scheduler] Запуск Quality Gate: $QualityGate"
-        $gateOutput = & cmd.exe /c $QualityGate 2>&1
-        $gateCode = $LASTEXITCODE
+        # Тот же таймаут, что у хуков: зависший gate не должен держать lock.
+        $gateCode = Invoke-HookScript -Command $QualityGate
 
-        if ($LogFile) {
-            try {
-                $gateOutput | ForEach-Object { Add-Content -Path $LogFile -Value "$_" -Encoding utf8 }
-            } catch {}
-        } else {
-            $gateOutput | Out-Host
-        }
-
-        if ($gateCode -ne 0) {
+        if ($gateCode -eq 124) {
+            Write-Log "[windows-scheduler] ОШИБКА: Quality Gate превысил таймаут $GateTimeoutSeconds с и был остановлен."
+            $script:errorMessage = "Quality Gate: превышен таймаут $GateTimeoutSeconds с"
+            $script:exitCode = 1
+        } elseif ($gateCode -ne 0) {
             Write-Log "[windows-scheduler] ОШИБКА: Quality Gate провален. Код возврата: $gateCode"
             $script:errorMessage = "Quality Gate провален. Код возврата: $gateCode"
             $script:exitCode = 1
@@ -730,7 +837,8 @@ export async function writeWrapperCmd(
   sessionMode?: "new" | "reuse" | "last",
   sessionId?: string,
   retryCount?: number,
-  retryDelaySeconds?: number
+  retryDelaySeconds?: number,
+  gateTimeoutSeconds?: number
 ): Promise<string> {
   await fs.mkdir(WRAPPER_DIR, { recursive: true });
   const cmdPath = path.join(WRAPPER_DIR, `run-${sanitizedName}.cmd`);
@@ -746,7 +854,15 @@ export async function writeWrapperCmd(
     `-PromptFile "${promptFile}"`,
     `-TimeoutSeconds ${timeoutSeconds}`,
     `-LockFile "${lockFile}"`,
+    `-StaleLockMaxAgeMs ${STALE_LOCK_MAX_AGE_MS}`,
   ];
+
+  // Таймаут хуков/Quality Gate: 300 с по умолчанию, 0 — без ограничения.
+  const safeGateTimeout =
+    typeof gateTimeoutSeconds === "number" && Number.isFinite(gateTimeoutSeconds)
+      ? Math.max(0, Math.floor(gateTimeoutSeconds))
+      : 300;
+  psArgs.push(`-GateTimeoutSeconds ${safeGateTimeout}`);
 
   // Hotfix 1.5.3.1: ретраи. Параметр не передаём при 0 — обёртка по умолчанию
   // делает ровно одну попытку, как раньше.

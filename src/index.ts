@@ -4975,6 +4975,14 @@ async function schedulerCreateTask(
     throw new Error(nameError);
   }
   name = normalizedName;
+  // Windows передаёт промпт через argv (CreateProcess), где лимит командной
+  // строки ~32767 символов. Проверяем до записи файлов, чтобы не оставить
+  // полусозданную задачу и дать понятную ошибку вместо сбоя schtasks.
+  if (process.platform === "win32" && prompt.length > 30000) {
+    throw new Error(
+      `Промпт задачи "${normalizedName}" слишком длинный для командной строки Windows: ${prompt.length} символов (максимум 30000). Сократите промпт или вынесите инструкции в файл.`
+    );
+  }
   // Для отката файлов: при обновлении существующей задачи файлы переиспользуются,
   // удалять их при сбое нельзя — в БД остаётся прежнее определение.
   const definitionExisted = Boolean(getTask(normalizedName));

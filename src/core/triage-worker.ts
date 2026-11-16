@@ -27,6 +27,116 @@ export const TRIAGE_WORKER_FLAG = "--triage";
 
 const JOB_PREFIX = "opencode-scheduler-triage-";
 const ERROR_TEXT_LIMIT = 4000;
+/** Сколько триаж-процессов может работать одновременно (защита Ollama). */
+const MAX_CONCURRENT_WORKERS = 2;
+/** Задание/слот старше этого возраста считается мусором. */
+const STALE_TRIAGE_MS = 60 * 60 * 1000;
+/** Сколько чужих заданий один воркер разбирает за запуск (дренаж очереди). */
+const MAX_JOBS_PER_WORKER = 20;
+
+/** Удаляет старые файлы заданий и зависшие слоты из временного каталога. */
+export function pruneTriageArtifacts(dir: string, now = Date.now()): number {
+  let removed = 0;
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(dir);
+  } catch {
+    return 0;
+  }
+  for (const entry of entries) {
+    if (!entry.startsWith(JOB_PREFIX)) continue;
+    if (!/\.(json|lock)$/.test(entry)) continue;
+    const full = path.join(dir, entry);
+    try {
+      const stat = fs.statSync(full);
+      if (now - stat.mtimeMs > STALE_TRIAGE_MS) {
+        fs.rmSync(full, { force: true });
+        removed += 1;
+      }
+    } catch {
+      // Файл уже удалён другим процессом.
+    }
+  }
+  return removed;
+}
+
+function processAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err: any) {
+    return err?.code === "EPERM";
+  }
+}
+
+/**
+ * Пытается занять один из слотов воркера. Слот — файл с PID; слот мёртвого
+ * процесса переиспользуется. Возвращает путь к слоту или null.
+ */
+function acquireWorkerSlot(dir: string): string | null {
+  for (let i = 0; i < MAX_CONCURRENT_WORKERS; i += 1) {
+    const slot = path.join(dir, `${JOB_PREFIX}slot-${i}.lock`);
+    try {
+      const fd = fs.openSync(slot, "wx", 0o600);
+      fs.writeFileSync(fd, String(process.pid));
+      fs.closeSync(fd);
+      return slot;
+    } catch (err: any) {
+      if (err?.code !== "EEXIST") continue;
+      let holder = 0;
+      try {
+        holder = parseInt(fs.readFileSync(slot, "utf8").trim(), 10);
+      } catch {
+        holder = 0;
+      }
+      if (!processAlive(holder)) {
+        try {
+          fs.rmSync(slot, { force: true });
+          const fd = fs.openSync(slot, "wx", 0o600);
+          fs.writeFileSync(fd, String(process.pid));
+          fs.closeSync(fd);
+          return slot;
+        } catch {
+          // Слот перехвачен другим процессом — пробуем следующий.
+        }
+      }
+    }
+  }
+  return null;
+}
+
+function releaseWorkerSlot(slot: string | null): void {
+  if (!slot) return;
+  try {
+    fs.rmSync(slot, { force: true });
+  } catch {
+    // Слот уже удалён.
+  }
+}
+
+/** Следующий файл задания в каталоге (для дренажа очереди). */
+function nextPendingJob(dir: string, exclude: string): string | undefined {
+  try {
+    const candidates = fs
+      .readdirSync(dir)
+      .filter((entry) => entry.startsWith(JOB_PREFIX) && entry.endsWith(".json"))
+      .map((entry) => path.join(dir, entry))
+      .filter((file) => file !== exclude)
+      .map((file) => {
+        try {
+          return { file, mtime: fs.statSync(file).mtimeMs };
+        } catch {
+          return null;
+        }
+      })
+      .filter((item): item is { file: string; mtime: number } => item !== null)
+      .sort((a, b) => a.mtime - b.mtime);
+    return candidates[0]?.file;
+  } catch {
+    return undefined;
+  }
+}
 
 /** Снимок данных, который передаётся фоновому процессу. */
 export interface TriageJobPayload {
@@ -132,7 +242,9 @@ export function scheduleTriageJob(
 ): { scheduled: boolean; file?: string; error?: string } {
   let file: string | undefined;
   try {
-    file = writeTriageJob(input, triage, { tmpDir: options.tmpDir });
+    const dir = options.tmpDir ?? os.tmpdir();
+    pruneTriageArtifacts(dir);
+    file = writeTriageJob(input, triage, { tmpDir: dir });
   } catch (err: any) {
     return {
       scheduled: false,
@@ -174,22 +286,46 @@ async function main(): Promise<void> {
     return;
   }
 
+  const dir = path.dirname(file);
+  // Ограничиваем параллелизм: залп матрицы не должен поднимать N процессов
+  // и N запросов к Ollama. Не занявший слот воркер оставляет задание в
+  // очереди — его подберёт воркер, который освободится (см. drainQueue).
+  const slot = acquireWorkerSlot(dir);
+  if (!slot) {
+    return;
+  }
+
   try {
-    await runTriageJob(file);
-  } catch (err: any) {
-    console.error(
-      `[windows-scheduler] triage worker: ${
-        err instanceof Error ? err.message : String(err)
-      }`
-    );
-    process.exitCode = 1;
+    await drainQueue(file);
   } finally {
-    safeUnlink(file);
+    releaseWorkerSlot(slot);
     try {
       closeDb();
     } catch {
       // Процесс завершается — закрывать нечего.
     }
+  }
+}
+
+/** Обрабатывает своё задание и до MAX_JOBS_PER_WORKER чужих из очереди. */
+async function drainQueue(first: string): Promise<void> {
+  let current: string | undefined = first;
+  const dir = path.dirname(first);
+  for (let processed = 0; current && processed < MAX_JOBS_PER_WORKER; processed += 1) {
+    const file: string = current;
+    try {
+      await runTriageJob(file);
+    } catch (err: any) {
+      console.error(
+        `[windows-scheduler] triage worker: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
+      process.exitCode = 1;
+    } finally {
+      safeUnlink(file);
+    }
+    current = nextPendingJob(dir, file);
   }
 }
 

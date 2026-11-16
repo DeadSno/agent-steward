@@ -40,6 +40,7 @@
   "gitTrigger.ignored": "Изменено файлов: {count}, но ни один не подходит под фильтры.",
   "gitTrigger.noChanges": "Новых коммитов нет.",
   "gitTrigger.noRepo": "«{cwd}» не git-репозиторий — git-триггер не сработает.",
+  "gitTrigger.diffFailed": "Не удалось получить изменения git: {error}. Состояние не продвинуто — повтор при следующем опросе.",
   "gui.add": "＋ Добавить",
   "gui.addWorkspaceFirst": "Сначала добавьте хотя бы один workspace.",
   "gui.aggregation": "Агрегация",

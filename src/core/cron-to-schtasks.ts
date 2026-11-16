@@ -107,6 +107,18 @@ export function convertCronToSchTasks(cron: string): CronConversion {
           UNSUPPORTED_ERROR
       );
     }
+    // schtasks /mo N запускает задачу каждые N минут начиная с момента создания
+    // задачи, а cron */N — в минуты 0, N, 2N внутри каждого часа. Семантики
+    // совпадают только когда N делит 60 без остатка; иначе отдаём задачу в
+    // минутный опрос с gate во враппере (needsPollMode).
+    if (60 % stepN !== 0) {
+      throw new Error(
+        "Интервал */" +
+          stepN +
+          " не делит час нацело: cron и schtasks понимают его по-разному.\n\n" +
+          UNSUPPORTED_ERROR
+      );
+    }
     return {
       sc: "MINUTE",
       extraFlags: ["/mo", String(stepN)],
@@ -195,13 +207,16 @@ export function previousRunTime(cron: string, now: Date = new Date()): Date | nu
     return new Date(Math.floor(nowMs / 60000) * 60000);
   }
 
-  // */N * * * * — каждые N минут (выравнивание по эпохе, как /mo N в schtasks).
+  // */N * * * * — каждые N минут внутри часа (минуты 0, N, 2N...).
   const step = /^\*\/(\d+)$/.exec(minute);
   if (step && star(hour) && star(dayOfMonth) && star(month) && star(dayOfWeek)) {
     const n = parseInt(step[1], 10);
     if (n > 0) {
-      const minutes = Math.floor(nowMs / 60000);
-      return new Date((minutes - (minutes % n)) * 60000);
+      const result = new Date(now);
+      result.setSeconds(0, 0);
+      const minuteOfHour = result.getMinutes();
+      result.setMinutes(n >= 60 ? 0 : minuteOfHour - (minuteOfHour % n));
+      return result;
     }
     return null;
   }

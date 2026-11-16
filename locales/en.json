@@ -40,6 +40,7 @@
   "gitTrigger.ignored": "Files changed: {count}, but none match the filters.",
   "gitTrigger.noChanges": "No new commits.",
   "gitTrigger.noRepo": "\"{cwd}\" is not a git repository — the git trigger will not fire.",
+  "gitTrigger.diffFailed": "Failed to read git changes: {error}. State was not advanced — will retry on the next poll.",
   "gui.add": "＋ Add",
   "gui.addWorkspaceFirst": "Add at least one workspace first.",
   "gui.aggregation": "Aggregation",

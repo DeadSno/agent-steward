@@ -45,7 +45,8 @@ export type GitCheckStatus =
   | "no-changes"
   | "branch-mismatch"
   | "ignored"
-  | "changed";
+  | "changed"
+  | "error";
 
 export interface GitCheckResult {
   status: GitCheckStatus;
@@ -105,7 +106,9 @@ export async function probeGit(cwd: string, run: GitRunner = defaultRunner): Pro
   }
 }
 
-/** Файлы, изменённые между коммитами (или в самом коммите, если from пуст). */
+/** Файлы, изменённые между коммитами (или в самом коммите, если from пуст).
+ * Ошибка git НЕ превращается в пустой список: иначе state продвигается и
+ * коммиты молча теряются. Вызывающий код обязан обработать исключение. */
 export async function gitChangedFiles(
   cwd: string,
   from: string | null,
@@ -115,15 +118,11 @@ export async function gitChangedFiles(
   const args = from
     ? ["diff", "--name-only", `${from}..${to}`]
     : ["diff-tree", "--no-commit-id", "--name-only", "-r", to];
-  try {
-    const out = await run(cwd, args);
-    return out
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean);
-  } catch {
-    return [];
-  }
+  const out = await run(cwd, args);
+  return out
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
 }
 
 function branchMatches(branch: string | null, pattern?: string): boolean {
@@ -138,10 +137,10 @@ function branchMatches(branch: string | null, pattern?: string): boolean {
     .filter(Boolean);
   if (patterns.length === 0) return true;
   return patterns.some((item) => {
-    const source = normalize(item)
-      .replace(/[.+^${}()|\\]/g, "\\$&")
-      .replace(/\*/g, ".*")
-      .replace(/\?/g, ".");
+    // Экранируем все regex-метасимволы, включая [ и ] (раньше они ломали
+    // шаблон ветки), затем превращаем glob-символы * и ? в regex.
+    const escaped = normalize(item).replace(/[.+^${}()|[\]\\]/g, "\\$&");
+    const source = escaped.replace(/\*/g, ".*").replace(/\?/g, ".");
     return new RegExp(`^${source}$`).test(target);
   });
 }
@@ -206,7 +205,24 @@ export async function checkGitTrigger(
     };
   }
 
-  const files = await gitChangedFiles(task.cwd, state.commitSha, probe.head, run);
+  let files: string[];
+  try {
+    files = await gitChangedFiles(task.cwd, state.commitSha, probe.head, run);
+  } catch (err: any) {
+    // Не двигаем state: следующий опрос повторит сравнение с тем же коммитом,
+    // и пропущенные изменения не потеряются.
+    return {
+      status: "error",
+      head: probe.head,
+      branch: probe.branch,
+      from: state.commitSha,
+      files: [],
+      matched: [],
+      message: t("gitTrigger.diffFailed", {
+        error: err?.message ? String(err.message) : String(err),
+      }),
+    };
+  }
   const matched = filterPaths(files, task.paths, task.ignore);
 
   if (matched.length === 0) {
@@ -337,6 +353,8 @@ export class GitTriggerManager {
       const result = await checkGitTrigger(this.taskSpec(managed.def), { run: this.run });
       if (result.status === "changed") {
         await this.handler(managed.def.name, { ...result, cwd: cwdOf(managed.def) });
+      } else if (result.status === "error") {
+        console.error(`[windows-scheduler] git-триггер «${managed.def.name}»: ${result.message}`);
       }
     } catch (err: any) {
       console.error(
