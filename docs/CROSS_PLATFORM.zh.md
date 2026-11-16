@@ -1,0 +1,114 @@
+# 跨平台：Windows → macOS → Linux
+
+插件已不再绑定 `schtasks`。调度器被抽象成一层接口，有三种实现，运行包装脚本按目标操作系统生成。
+
+Translations: [English](../CROSS_PLATFORM.md) · [Русский](CROSS_PLATFORM.ru.md)
+
+## 架构
+
+```
+src/
+  index.ts                     # 工具、RPC、插件生命周期
+  gui.tsx                      # GUI 面板（标题来自 RPC）
+  server.ts                    # Web 仪表盘（动态标题）
+  core/
+    scheduler/
+      types.ts                 # SchedulerBackend、CreateTaskOptions、RunTaskResult
+      index.ts                 # 工厂 createSchedulerBackend() + getSchedulerTitle()
+      windows.ts               # WindowsScheduler  (schtasks)
+      linux.ts                 # LinuxScheduler    (crontab)
+      mac.ts                   # MacScheduler      (launchd / LaunchAgents)
+      posix.ts                 # Linux/macOS 共享基类（任务注册表）
+      registry.ts              # POSIX 后端的持久化任务注册表
+      logs.ts                  # 跨平台任务日志读取
+    wrappers/
+      bash.ts                  # Linux/macOS 的 .sh 包装脚本生成器
+    ps-wrapper.ts              # Windows 的 .ps1/.cmd 包装脚本（未变）
+    record-history.ts          # 指标/历史 + 重试/链式任务（通过后端）
+    cron-to-schtasks.ts        # cron → schtasks（仅 Windows）
+```
+
+### 接口
+
+```ts
+interface SchedulerBackend {
+  readonly platform: NodeJS.Platform;
+  readonly title: string;              // "Windows 任务计划程序" / "OpenCode Scheduler"
+  createTask(options: CreateTaskOptions): Promise<void>;
+  deleteTask(name: string): Promise<void>;
+  runTask(name: string): Promise<RunTaskResult>;
+  listTasks(): Promise<ScheduledTaskInfo[]>;
+  pauseTask(name: string): Promise<void>;
+  resumeTask(name: string): Promise<void>;
+}
+```
+
+工厂按 `process.platform` 选择实现：
+`win32 → WindowsScheduler`，`darwin → MacScheduler`，其余 → `LinuxScheduler`。
+
+## 各操作系统的运行方式
+
+### Windows（行为未变）
+- 任务通过 `schtasks` 注册到 Windows 任务计划程序的 `\OpenCode\windows-scheduler\` 文件夹。
+- 包装脚本：`run-task.ps1` 加每个任务专属的 `run-<name>.cmd`，位于 `%APPDATA%\opencode\windows-scheduler\wrapper`。
+- 日志：`%APPDATA%\opencode\windows-scheduler\logs\<name>.log`。
+- cron 会转换成 schtasks（`convertCronToSchTasks`）——支持与之前相同的模板集合。
+
+### Linux
+- 任务保存在受管 `crontab` 块中：
+  ```
+  # >>> opencode-scheduler >>>
+  # task: my-task
+  */5 * * * * /bin/bash '/…/wrapper/run-my-task.sh' >> '/…/logs/my-task.log' 2>&1
+  # <<< opencode-scheduler <<<
+  ```
+- 暂停 = 带 `# PAUSED: ` 前缀的行（块会从注册表重建）。
+- `file` 触发器的任务不会进入 crontab——由插件的 FileWatchManager 启动。
+- 包装脚本：`~/.config/opencode/windows-scheduler/wrapper/run-<name>.sh`（chmod 0755）。
+- 支持完整 cron 语法（与 Windows 不同），因为 crontab 原生支持。
+- 删除/重建只触及自己的块，`crontab` 的其他行不受影响。
+
+### macOS
+- 任务是 LaunchAgent plist：`~/Library/LaunchAgents/com.opencode.scheduler.<name>.plist`。
+- 调度：`* * * * *` 和 `*/N` 使用 `StartInterval`，`M * * * *`、`M H * * *`、`M H * * D`
+  使用 `StartCalendarInterval`。
+- 暂停 = `launchctl unload -w`，恢复 = `launchctl load -w`。
+- 包装脚本与 Linux 相同的 `.sh`；配置路径：
+  `~/.config/opencode/windows-scheduler/`（或 `$XDG_CONFIG_HOME`）。
+
+### 共享 POSIX 包装脚本（`.sh`）
+- `cd` 到工作目录，用文件中的提示词执行 `opencode run`。
+- 日志通过 `>>` 追加，并带时间戳。
+- 通过原子 `mkdir` 加锁——防止并行运行。
+- 超时：子进程 + 看门狗（先 `TERM`，再 `KILL`）。
+- Quality Gate：`bash -lc "<命令>"`（相当于 Windows 上的 `cmd.exe /c`）。
+- 指标：`node "<record-history.js>" <task> <status> <started> <duration> <error> "-" "-"`——
+  与 PowerShell 包装脚本相同的契约，因此历史/指标/重试/链式任务在各平台通用。
+- `PATH` 追加 `/opt/homebrew/bin`、`/usr/local/bin`、`~/.local/bin`、`~/.bun/bin`。
+
+## GUI 与仪表盘
+- 标题是动态的：Windows 上为「Windows 任务计划程序」，macOS/Linux 上为「OpenCode Scheduler」。
+- 标题来自 RPC 方法 `get_platform` → `{ platform, title }`。
+- 标题同时用于 GUI 面板、错误回退面板和仪表盘的 `<title>/<h1>`。
+- 按钮、状态、表格、DAG 和指标与操作系统无关。
+- 工具描述（`schedule_task` 等）会替换为实际调度器名称。
+
+## 构建与检查
+- `npm run build` — 通过，无错误。
+- `npm run build:gui` — 通过（`gui-experimental.cjs`，约 47.7 kB）。
+- 运行时已验证：
+  - win32/darwin/linux 的标题；
+  - 多个表达式上的 `cronToLaunchdSchedule`；
+  - Windows 上真实的 `listTasks()`——返回短任务名（无前缀）；
+  - `shellQuote` 转义（引号、空格、西里尔字母）；
+  - `dist/index.js` 可导入，`dist` 不直接引用 `schtasks.js`。
+
+## 限制与需要在真实机器上验证的内容
+1. `.sh` 包装脚本和 crontab/launchd **从未实际执行**——当前 Windows 机器没有 `bash`/WSL。
+   语法和转义是手工检查的；仍需在 Linux 和 macOS 上跑一遍。
+2. cron → launchd 支持与 Windows 相同的有限模板集合
+   （`* * * * *`、`*/N * * * *`、`M * * * *`、`M H * * *`、`M H * * D`）。
+   Linux 上支持完整 cron。
+3. Windows 任务前缀（`\OpenCode\windows-scheduler\`）和插件 id 为向后兼容而保留。
+4. `src/schtasks.ts` 保留为旧脚本（`test-create.cjs`、`test-run.cjs`）的薄垫片；
+   所有逻辑现在都在 `core/scheduler/windows.ts`。

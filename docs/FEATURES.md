@@ -3,12 +3,14 @@
 A complete catalog of what the scheduler can do, with examples and the caveats that
 matter in practice.
 
+Translations: [中文](FEATURES.zh.md).
+
 - [Scheduling](#scheduling)
 - [Execution policy](#execution-policy)
 - [Orchestration](#orchestration)
 - [Multi-repository workspaces](#multi-repository-workspaces)
-- [Profiles (multi-project)](#profiles-multi-project)
-- [Workspace environment variables](#workspace-environment-variables)
+- [Profiles (multi-project)](#profiles-multi-project-sprint-21)
+- [Workspace environment variables](#workspace-environment-variables-sprint-21)
 - [Observability](#observability)
 - [Management](#management)
 - [Agent interface](#agent-interface)
@@ -102,9 +104,9 @@ it is never accepted from user input or exported as plain text.
 - `notBefore` / `notAfter` — daily launch window in `HH:MM` (may cross midnight,
   e.g. `22:00`–`06:00`). A run that fires outside the window is **postponed**
   until the window opens (once, via a defer-file), not skipped.
-- `activeDays` — allowed weekdays `0`=Sunday … `6`=Saturday (Спринт 27). Empty or
+- `activeDays` — allowed weekdays `0`=Sunday … `6`=Saturday (Sprint 27). Empty or
   all seven means every day. Applies to cron and event triggers.
-- `windowPolicy` — behaviour outside the window or on a disallowed day (Спринт 27):
+- `windowPolicy` — behaviour outside the window or on a disallowed day (Sprint 27):
   `postpone` (default) waits for the next opening (max 12 hours), `skip` drops the
   run, `run` executes anyway.
 - `pausedUntil` — pause a task until an ISO moment. `pause_task` accepts
@@ -125,27 +127,16 @@ it is never accepted from user input or exported as plain text.
 The file is watched with chokidar in the plugin host, changes are debounced. File
 triggers ignore `schedule`.
 
-#### Glob-маски для файловых триггеров (Спринт 27)
+#### Glob masks for file triggers (Sprint 27)
 
-`watchGlobs` и `watchIgnore` ограничивают, какие изменения считаются триггером:
+`watchGlobs` and `watchIgnore` restrict which changes count as a trigger:
 
-```json
-{
-  "name": "regen-docs",
-  "triggerType": "file",
-  "watchPath": "C:\\projects\\site",
-  "watchGlobs": ["**/*.md", "**/*.html"],
-  "watchIgnore": ["node_modules/**", "**/*.log"],
-  "prompt": "Rebuild the static site when docs change."
-}
-```
+Masks support `*` (does not cross `/`), `**` (any segments, including zero),
+`?` (one character), `[abc]` / `[a-z]` (classes), `{a,b}` (alternatives) and `!`
+(negation). Empty `watchGlobs` means "any change". Paths are normalized to POSIX
+form (`\` → `/`), comparison is case-insensitive on Windows.
 
-Маски поддерживают `*` (не пересекает `/`), `**` (любые сегменты, включая ноль),
-`?` (один символ), `[abc]` / `[a-z]` (классы), `{a,b}` (альтернативы) и `!`
-(отрицание). Пустой `watchGlobs` означает «любое изменение». Пути нормализуются
-к POSIX-виду (`\` → `/`), сравнение регистронезависимое на Windows.
-
-### Git triggers (Спринт 27)
+### Git triggers (Sprint 27)
 
 ```json
 {
@@ -160,16 +151,15 @@ triggers ignore `schedule`.
 }
 ```
 
-Задача с `triggerType: "git"` запускается, когда в её рабочей директории появляется
-новый коммит. Первый опрос только запоминает текущий `HEAD` (baseline) и ничего не
-запускает. Последующие опросы сравнивают `git diff --name-only <last>..HEAD` и
-запускают задачу, если совпадают маски `gitPaths` (пусто — любой файл) и не
-попадают под `gitIgnore`. Фильтр `gitBranch` ограничивает ветки (через запятую,
-поддерживает `*` и `?`).
+A task with `triggerType: "git"` starts when a new commit appears in its working
+directory. The first poll only remembers the current `HEAD` (baseline) and does not
+start anything. Later polls compare `git diff --name-only <last>..HEAD` and start
+the task when masks `gitPaths` (empty — any file) match and are not excluded by
+`gitIgnore`. Filter `gitBranch` limits branches (comma-separated, supports `*` and `?`).
 
-Период опроса `gitPollSeconds` — минимум 5 секунд, по умолчанию 60. Состояние
-(последний обработанный коммит) хранится в таблице SQLite `git_state`, поэтому
-перезапуск плагина не приводит к повторным запускам.
+Poll period `gitPollSeconds` — minimum 5 seconds, default 60. State (the last
+processed commit) is stored in SQLite table `git_state`, so a plugin restart does
+not cause repeated runs.
 
 ### MCP event triggers
 
@@ -250,6 +240,12 @@ omitting it uses the OpenCode default. `priority` is `0..10` and is passed throu
 the scheduler entry.
 
 ### Tool restrictions
+
+The baseline comes from `permissions.defaultPolicy`: `hybrid` (default) allows
+read/edit/glob/grep/subagent/skill/webfetch/websearch and denies `shell` and `question`,
+`secure` allows only read/glob/grep/skill, and `legacy` restores the 1.5.x behaviour that
+allowed everything. Task-level `legacyShell: true` re-enables `shell` under `hybrid` for
+jobs migrated from older versions; `legacy` is the blunt alternative.
 
 `allowedTools` and `deniedTools` are enforced for the `opencode run` process that the
 task wrapper starts. The wrapper passes the generated `permissions` rules to the
@@ -339,7 +335,7 @@ Use `workspaceId` instead of `workingDirectory` to run a task in a workspace. Pa
 validated on add/update/import, and the dashboard groups tasks and runs by workspace.
 Workspaces are the unit that matrix builds fan out to.
 
-## Profiles (multi-project, Спринт 21)
+## Profiles (multi-project, Sprint 21)
 
 Profiles let you run several independent scheduler installations inside one plugin,
 each with its own SQLite database, settings, logs, wrappers and dashboard port.
@@ -357,7 +353,7 @@ This is useful for separating projects, clients or environments (e.g. `default` 
   `set_profile` switches the active profile (restart hint); `create_profile` /
   `delete_profile` manage named profiles (`default` cannot be deleted).
 
-### Workspace environment variables (Спринт 21)
+### Workspace environment variables (Sprint 21)
 
 Each workspace can carry env variables that are injected into every task run in that
 workspace:
@@ -394,14 +390,14 @@ pre/post-flight results, next chained task, workspace and tool restrictions. Sta
 
 Per-task counters and totals: runs, successes, errors, tokens, cost. Available through
 `get_history`, the RPC layer and the dashboard header. A 14-day analytics slice —
-per-day buckets (UTC), success rate, token-based cost estimate, top tasks by cost,
+Per-day buckets (UTC), success rate, token-based cost estimate, top tasks by cost,
 matrix and model breakdowns — is available through `get_analytics` /
-`GET /api/analytics` and the dashboard's «📊 Аналитика за период» block. History is
+`GET /api/analytics` and the dashboard's **Analytics for the period** block.
 pruned automatically (age and size limits, see Settings) and can be exported as
 CSV/JSON (`GET /api/history/export`), or as OTLP/JSON for OpenTelemetry
 (`GET /api/history/export?format=otlp`).
 
-The same slice carries a **«Сэкономлено»** counter: runs that spent tokens without
+The same slice carries a **"Saved"** counter: runs that spent tokens without
 a recorded cost (local models, prepaid plans) are priced against a reference cloud
 rate of $0.01 / 1k tokens. The KPI is labelled as an estimate and links to
 [docs/SAVINGS.md](SAVINGS.md) with the full methodology; `report.savings` exposes
@@ -542,17 +538,18 @@ and native OS notifications — configurable in settings and testable with
 - **Digest:** `digest.enabled` sends a daily (`frequency: "daily"`, at `digest.time`)
   or weekly (Mondays, catch-up afterwards) summary: runs, success rate, cost, tokens
   and top errors through every enabled channel. Also available as the
-  `send_digest` RPC and the GUI's «📊 Отправить дайджест сейчас» button (manual sends
+  `send_digest` RPC and the GUI's **Send digest now** button (manual sends
   do not move the schedule).
 - **Test button:** sends a test message to `all`, `webhook`, `telegram` or `native`
   and reports per-channel success/failure. Failures in one channel never block the
   others and never throw into the task run.
 
-### Secrets (Спринт 26)
+### Secrets (Sprint 26)
 
 Encrypted secret storage in `<PLUGIN_DIR>/secrets.json` with AES-256-GCM and a
-32-byte key file `secrets.key` (rights 0600). The `manage_secrets` tool (and the
-«🔐 Секреты» GUI panel) supports `list`, `set` and `delete`. Secret names match
+32-byte key file `secrets.key` (mode 0600 on POSIX; on Windows an ACL granting only
+the current user, applied via `icacls`). The `manage_secrets` tool (and the **Secrets**
+GUI panel) supports `list`, `set` and `delete`. Secret names match
 `[A-Za-z0-9_.-]` and are up to 64 characters; list shows only name, masked preview
 (`••••` + last 4 chars) and update time — never the value.
 
@@ -583,7 +580,7 @@ automatic rewrite can destroy data:
    (`corruptedStore` is set) until the `.corrupt-*` path is cleared manually —
    move the broken file away yourself, then re-set the secrets.
 
-### Audit log (Спринт 26)
+### Audit log (Sprint 26)
 
 Every mutation — task create/update/delete/run, settings, templates, profiles,
 workspaces, secrets, import, history cleanup — is recorded in an `audit_log`
@@ -591,7 +588,7 @@ table in SQLite with action, target type/target, actor (`mcp`/`gui`/`http`),
 source, redacted details and remote address. Indexes on `ts` and `action`;
 retention defaults to 90 days / 10 000 records with automatic cleanup.
 
-The `get_audit_log` tool (and the «📜 Журнал аудита» GUI panel) reads the journal
+The `get_audit_log` tool (and the **Audit log** GUI panel) reads the journal
 with filters by `action`, `target`, `actor`, `since`/`until` and `limit`. Also
 available as RPC `get_audit` and HTTP `GET /api/audit`. Secret values in details
 are redacted; `${secret:NAME}` references are preserved verbatim.
@@ -608,7 +605,7 @@ Global defaults (timeout, concurrency, notifications, history retention) live in
 raw run log bounded: `history.retentionDays` (default 30) and `history.maxRecords`
 (default 5000); `0` disables the respective limit. Cleanup runs at most once a day on
 plugin start, records `lastCleanupAt` / `lastCleanupDeleted`, and is also available as
-the `cleanup_history` RPC and the GUI's «Очистить сейчас» button. Aggregates in
+the `cleanup_history` RPC and the GUI's **Clear now** button. Aggregates in
 `metrics.json` are not affected by retention.
 
 ## Agent interface

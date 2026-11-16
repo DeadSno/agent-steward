@@ -1,51 +1,52 @@
 # FAQ
 
-Частые вопросы и восстановительные сценарии. Английская версия этого раздела —
-в [FEATURES.md](FEATURES.md#recovering-a-quarantined-secrets-store).
+Frequently asked questions and recovery scenarios. The English version of the
+secrets section is also in [FEATURES.md](FEATURES.md#recovering-a-quarantined-secrets-store).
 
-## Содержание
+Translations: [Русский](FAQ.ru.md) · [中文](FAQ.zh.md)
 
-- [Восстановление секретов после карантина `.corrupt-*`](#восстановление-секретов-после-карантина-corrupt-)
-- [Webhook-триггеры: можно ли переиграть запрос (replay)?](#webhook-триггеры-можно-ли-переиграть-запрос-replay)
+## Contents
 
-## Восстановление секретов после карантина `.corrupt-*`
+- [Recovering secrets after a `.corrupt-*` quarantine](#recovering-secrets-after-a-corrupt--quarantine)
+- [Webhook triggers: can a request be replayed?](#webhook-triggers-can-a-request-be-replayed)
 
-Карантин срабатывает, когда `secrets.json` не парсится (обрыв записи,
-ручное редактирование). Файл **не удаляется**, а переименовывается в
-`secrets.json.corrupt-<метка времени>` рядом с оригиналом. Это побочный эффект
-операции чтения — автоматического восстановления нет, чтобы ничто не могло
-затереть данные.
+## Recovering secrets after a `.corrupt-*` quarantine
 
-Порядок восстановления:
+Quarantine triggers when `secrets.json` cannot be parsed (an interrupted write or
+manual editing). The file is **not deleted** — it is renamed to
+`secrets.json.corrupt-<timestamp>` next to the original. This is a side effect of a
+read operation; recovery is **manual by design** so that no automatic rewrite can
+destroy data.
 
-1. Найдите файл в каталоге плагина: `%APPDATA%\opencode\windows-scheduler\`
-   (Windows) или `~/.config/opencode/windows-scheduler/` (macOS/Linux,
-   либо `$XDG_CONFIG_HOME`).
-2. Откройте его в редакторе: обычно это обрезанный JSON. Исправьте синтаксис.
-3. Верните исправленный файл под именем `secrets.json` (копию `.corrupt-*`
-   оставьте как бэкап) и проверьте `manage_secrets` (`action: "list"`).
-4. Если файл не восстанавливается — задайте секреты заново
-   (`manage_secrets`, `action: "set"`). Значения, зашифрованные утерянным
-   `secrets.key`, восстановить нельзя — только повторный ввод.
-5. Редкий случай: rename не удался и запись заблокирована
-   («Запись новых секретов заблокирована»). Уберите битый файл вручную
-   (переместите в сторону), затем задайте секреты заново.
+Recovery steps:
 
-## Webhook-триггеры: можно ли переиграть запрос (replay)?
+1. Find the file in the plugin directory: `%APPDATA%\opencode\windows-scheduler\`
+   (Windows) or `~/.config/opencode/windows-scheduler/` (macOS/Linux, or
+   `$XDG_CONFIG_HOME`).
+2. Open it in an editor: it is usually truncated JSON. Fix the syntax.
+3. Copy the fixed file back as `secrets.json` (keep the `.corrupt-*` copy as a
+   backup) and verify with `manage_secrets` (`action: "list"`).
+4. If the file cannot be repaired, re-set the secrets (`manage_secrets`,
+   `action: "set"`). Values encrypted with a lost `secrets.key` cannot be recovered
+   — re-enter them.
+5. Rare case: the rename failed and writes stay blocked ("Writing new secrets is
+   blocked"). Move the broken file away manually, then re-set the secrets.
 
-Да, в обоих оставшихся режимах аутентификации запросы replayable — защита от
-повтора лежит на отправителе:
+## Webhook triggers: can a request be replayed?
 
-- **Подпись без `timestampToleranceSeconds` (= 0, legacy).** HMAC покрывает
-  только тело — перехваченный запрос можно переиграть бесконечно. Задайте
-  ненулевой tolerance и шлите `X-Scheduler-Timestamp`: подпись будет покрывать
-  `<timestamp>.<body>`, и запрос вне окна перестанет приниматься.
-- **Token-only режим.** Токен тоже replayable — планировщик не отличит повтор
-  от атаки. Если перейти на подпись нельзя: храните токен в секретах CI,
-  регулярно ротируйте, выдавайте по одному на задачу и делайте задачу
-  идемпотентной.
-- **GitHub Actions** сам `X-Scheduler-Timestamp` не присылает, поэтому
-  `X-Hub-Signature-256` работает в legacy-режиме. Подписывайте
-  `<timestamp>.<body>` отдельным шагом workflow общим секретом.
-- Планировщик не ведёт кэш повторов — дедупликация уникальных запросов на
-  стороне отправителя.
+Yes — in both remaining authentication modes requests are replayable, so replay
+protection is the sender's responsibility:
+
+- **Signature without `timestampToleranceSeconds` (= 0, legacy).** The HMAC covers
+  only the body, so an intercepted request can be replayed forever. Set a non-zero
+  tolerance and send `X-Scheduler-Timestamp`: the signature then covers
+  `<timestamp>.<body>` and a request outside the window is rejected.
+- **Token-only mode.** A token is also replayable — the scheduler cannot tell a
+  repeat from an attack. If you cannot switch to signatures: keep the token in CI
+  secrets, rotate it regularly, issue one token per task, and make the task
+  idempotent.
+- **GitHub Actions** does not send `X-Scheduler-Timestamp` itself, so
+  `X-Hub-Signature-256` runs in legacy mode. Sign `<timestamp>.<body>` in a separate
+  workflow step with the shared secret.
+- The scheduler keeps no replay cache — deduplicating unique requests is the
+  sender's responsibility.

@@ -357,7 +357,7 @@ Rules:
 - The dashboard has **no authentication** and binds to localhost. Do not expose it.
 - A job definition is **code**: prompts, hooks, Quality Gates and wrappers all execute
   with your user privileges. Treat task creation like granting shell access.
-- `allowedTools` / `deniedTools` are **enforced at the run-wrapper level** (спринт 29.2).
+- `allowedTools` / `deniedTools` are **enforced at the run-wrapper level** (Sprint 29.2).
   Before each `opencode run`, the wrapper passes `permissions` rules through
   `OPENCODE_CONFIG_CONTENT`: `deniedTools` are mapped to `effect: "deny"` for the
   corresponding OpenCode action (`shell`, `edit`, `glob`, `grep`, `webfetch`,
@@ -366,7 +366,14 @@ Rules:
   project-level `opencode.jsonc` is preserved and parallel tasks in one workdir do not
   race. The wrapper passes `--auto` so non-denied permissions are auto-approved.
   `allowedTools`/`deniedTools` metadata is still recorded in history for audit.
-- **Audit of blocked tools (спринт 29.4):** when a task definition is saved,
+- **Default policy (`src/core/permissions.ts`):** the baseline is
+  `permissions.defaultPolicy` — `hybrid` (default) denies `shell` and `question` while
+  allowing read/edit/glob/grep/subagent/skill/webfetch/websearch, `secure` allows only
+  read/glob/grep/skill, `legacy` allows everything (1.5.x behaviour). Task `legacyShell`
+  re-enables `shell` under `hybrid`; `deniedTools` still wins. Policy denials are
+  audited as `tool.blocked` with `reason: "default-policy"`, and each wrapper logs
+  `policy=<name>, denied=<actions>` before the run.
+- **Audit of blocked tools (Sprint 29.4):** when a task definition is saved,
   `recordTaskToolBlocks()` writes one `tool.blocked` audit event per entry in
   `deniedTools` (`target` = task name, `details.tool` = tool, plus `allowedTools`,
   `deniedTools` and `reason`). In allow-list mode one event with `tool: "*"` records
@@ -379,7 +386,9 @@ Rules:
   Workspace `env` can reference secrets as `${secret:NAME}`; values are masked in
   logs, history and audit. Treat task creation like granting shell access.
 - Secrets are stored encrypted in `<PLUGIN_DIR>/secrets.json` (AES-256-GCM) with a
-  32-byte key file `secrets.key` (rights 0600). Workspace `env` can reference them
+  32-byte key file `secrets.key` (mode 0600 on POSIX; on Windows an ACL that removes
+  inheritance and grants the current user only, applied by `icacls` on create and
+  re-applied on read for keys created before 1.5.5). Workspace `env` can reference them
   as `${secret:NAME}`; values are substituted at run time and masked in logs,
   history and audit.
 - Workspace paths are validated, but hooks are not sandboxed: only schedule jobs from
@@ -389,12 +398,17 @@ Rules:
 
 The effective policy is resolved in this order (later wins):
 
-1. Task `allowedTools` — if present, every action not listed is denied.
-2. Task `deniedTools` — always denied and takes priority over `allowedTools`.
-3. The generated `opencode.jsonc` — written into the task workdir for the run.
-4. Project `opencode.json(c)` and system config — merged by OpenCode; a closer or
+1. `permissions.defaultPolicy` — the baseline: `hybrid` (default, no `shell`/`question`),
+   `secure` (read-only) or `legacy` (everything allowed, 1.5.x behaviour).
+2. Task `legacyShell` — re-enables `shell` under `hybrid` only.
+3. Task `allowedTools` — if present, every action not listed is denied; an explicitly
+   listed action can override a policy denial.
+4. Task `deniedTools` — always denied and takes priority over `allowedTools`.
+5. The generated `OPENCODE_CONFIG_CONTENT` — passed in the wrapper environment; no file
+   is written and the project config stays untouched.
+6. Project `opencode.json(c)` and system config — merged by OpenCode; a closer or
    system-level config can weaken task-scoped denies (see limitations below).
-5. `--auto` — auto-approves everything that remains, so no interactive prompts block
+7. `--auto` — auto-approves everything that remains, so no interactive prompts block
    an unattended run.
 
 Tool mapping used by both wrappers:

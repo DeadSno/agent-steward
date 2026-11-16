@@ -8,7 +8,7 @@
 [![license](https://img.shields.io/npm/l/opencode-windows-scheduler.svg)](LICENSE)
 [![node](https://img.shields.io/node/v/opencode-windows-scheduler.svg)](package.json)
 
-Русская версия: [docs/README.ru.md](docs/README.ru.md).
+Translations: [Russian](docs/README.ru.md) · [中文](docs/README.zh.md).
 
 ---
 
@@ -62,6 +62,12 @@ stay English by design, and diagnostics printed to the console stay Russian.
 
 Catalogs live in `locales/ru.json` and `locales/en.json`; every key must exist in both,
 otherwise CI fails.
+
+Documentation is separate from the interface locale: the English docs are the primary
+source, with Russian (`docs/README.ru.md`) and Simplified Chinese (`docs/README.zh.md`,
+`docs/FEATURES.zh.md`, `docs/FAQ.zh.md`, `docs/SAVINGS.zh.md`,
+`docs/CROSS_PLATFORM.zh.md`) translations. Translations may lag behind the English
+originals.
 
 ## Install
 
@@ -211,7 +217,7 @@ Tasks are **interactive only** by default: Task Scheduler starts them only while
 npm install
 npm run build        # tsc
 npm run build:gui    # vite
-npm test             # 47 test suites, 600+ checks
+npm test             # 58 test suites, 600+ checks
 npm run test:en      # same suites with the English locale
 ```
 
@@ -223,10 +229,14 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 ## Documentation
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — process model, modules, backends, data model.
+- [docs/CONCEPT.md](docs/CONCEPT.md) — north-star concept: verifiable local-first orchestration (in Russian).
 - [docs/FEATURES.md](docs/FEATURES.md) — full feature catalog with examples.
+- [docs/FAQ.md](docs/FAQ.md) — recovery scenarios, webhook replay, operational answers.
 - [docs/MIGRATION.md](docs/MIGRATION.md) — moving from cron, systemd, launchd or Task Scheduler.
-- [docs/SAVINGS.md](docs/SAVINGS.md) — how the «сэкономлено $» estimate is calculated.
+- [docs/SAVINGS.md](docs/SAVINGS.md) — how the "Saved $" estimate is calculated.
 - [CROSS_PLATFORM.md](CROSS_PLATFORM.md) — Windows / macOS / Linux differences and backends.
+
+Translations: [Русский](docs/README.ru.md) · [中文](docs/README.zh.md).
 
 ## FAQ
 
@@ -263,10 +273,10 @@ No. Windows Toast (PowerShell/WinRT), macOS Notification Center (`osascript`) an
 Yes. Set `notifications.quietHours` (`enabled`, `from`, `to` in `HH:MM`). During the window successful and `partial` runs are suppressed, while failures and timeouts are always delivered.
 
 **How do I store secrets?**
-Use `manage_secrets` (or the «🔐 Секреты» panel in the sidebar) to create an encrypted secret. Secrets are stored in `<PLUGIN_DIR>/secrets.json` with AES-256-GCM and a key file (`secrets.key`; mode 0600 on POSIX, an ACL granting only the current Windows user on Windows). In task `env`, reference a secret as `${secret:NAME}` — the value is substituted at run time and masked in logs, history and audit. The secret name can also be set via `manage_settings` → `notifications.telegram.botToken` left empty and `OPENCODE_SCHEDULER_TELEGRAM_BOT_TOKEN` env var instead.
+Use `manage_secrets` (or the **🔐 Secrets** panel in the sidebar) to create an encrypted secret. Secrets are stored in `<PLUGIN_DIR>/secrets.json` with AES-256-GCM and a key file (`secrets.key`; mode 0600 on POSIX, an ACL granting only the current Windows user on Windows). In task `env`, reference a secret as `${secret:NAME}` — the value is substituted at run time and masked in logs, history and audit. The secret name can also be set via `manage_settings` → `notifications.telegram.botToken` left empty and `OPENCODE_SCHEDULER_TELEGRAM_BOT_TOKEN` env var instead.
 
 **Can I see who changed what?**
-Yes. The audit log (`get_audit_log` tool, «📜 Журнал аудита» panel, `GET /api/audit`) records every mutation — task create/update/delete/run, settings, templates, profiles, workspaces, secrets, import, history cleanup — with actor (mcp/gui/http), source, timestamp and redacted details. Retention defaults to 90 days / 10 000 records.
+Yes. The audit log (`get_audit_log` tool, **Audit log** panel, `GET /api/audit`) records every mutation — task create/update/delete/run, settings, templates, profiles, workspaces, secrets, import, history cleanup — with actor (mcp/gui/http), source, timestamp and redacted details. Retention defaults to 90 days / 10 000 records.
 
 **How is this different from `experimental.schedules`?**
 The built-in scheduler runs jobs while OpenCode is open. This plugin uses the native OS scheduler and adds DAG pipelines, matrix builds, quality gates, webhooks and observability.

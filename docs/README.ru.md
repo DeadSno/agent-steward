@@ -7,7 +7,7 @@
 [![license](https://img.shields.io/npm/l/opencode-windows-scheduler.svg)](../LICENSE)
 [![node](https://img.shields.io/node/v/opencode-windows-scheduler.svg)](../package.json)
 
-English version: [README.md](../README.md).
+Translations: [English](../README.md) · [中文](README.zh.md).
 
 ---
 
@@ -186,7 +186,7 @@ src/
 npm install
 npm run build        # tsc
 npm run build:gui    # vite
-npm test             # 43 сюиты, 600+ проверок
+npm test             # 58 сюит, 600+ проверок
 npm run test:en      # те же сюиты с английской локалью
 ```
 
@@ -197,8 +197,12 @@ npm run test:en      # те же сюиты с английской локаль
 ## Документация
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) — модель процессов, модули, бэкенды, модель данных.
+- [CONCEPT.md](CONCEPT.md) — north star: верифицируемая локально-первая оркестрация.
 - [FEATURES.md](FEATURES.md) — полный каталог возможностей с примерами.
+- [FAQ.md](FAQ.md) — сценарии восстановления и ответы по эксплуатации (English).
 - [MIGRATION.md](MIGRATION.md) — переезд с cron, systemd, launchd или Планировщика Windows.
+- [SAVINGS.md](SAVINGS.md) — как считается оценка «Сэкономлено $» (English).
+- [../CROSS_PLATFORM.md](../CROSS_PLATFORM.md) — различия и бэкенды Windows / macOS / Linux.
 
 ## FAQ
 
