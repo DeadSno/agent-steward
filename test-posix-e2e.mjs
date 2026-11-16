@@ -233,6 +233,7 @@ const readLog = (file) => (fs.existsSync(file) ? fs.readFileSync(file, "utf8") :
     name: "posix e2e promptsize",
     sanitized: "posix-e2e-promptsize",
     prompt: "x",
+    promptFile: path.join(tempRoot, "prompt-posix-e2e-promptsize.txt"),
     logFile: path.join(pluginDir, "logs", "posix-e2e-promptsize.log"),
     lockFile: path.join(pluginDir, "locks", "posix-e2e-promptsize.lock"),
   };

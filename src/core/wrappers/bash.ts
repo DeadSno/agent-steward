@@ -113,7 +113,7 @@ export function buildBashWrapperScript(options: BashWrapperOptions): string {
     "set -u",
     "",
     `TASK_NAME=${shellQuote(taskName)}`,
-    `PROMPT_FILE=${shellQuote(promptFile)}`,
+    `PROMPT_FILE=${shellQuote(promptFile ?? "")}`,
     `LOG_FILE=${shellQuote(logFile ?? path.join(WRAPPER_DIR, "task.log"))}`,
     `LOCK_FILE=${shellQuote(lockFile)}`,
     `WORKDIR=${shellQuote(workdir || process.cwd())}`,
