@@ -453,7 +453,9 @@ export default Plugin.define({
     const [wizardOpen, setWizardOpen] = createSignal(false)
     const [wizardStep, setWizardStep] = createSignal<1 | 2 | 3>(1)
     const [wizardProvider, setWizardProvider] = createSignal<"ollama" | "openai">("ollama")
+    const [wizardBaseUrl, setWizardBaseUrl] = createSignal("http://127.0.0.1:11434")
     const [wizardModel, setWizardModel] = createSignal("")
+    const [wizardError, setWizardError] = createSignal("")
     const [wizardPreset, setWizardPreset] = createSignal<"minimal" | "recommended" | null>(null)
     const localAiStatusColor = () => {
       switch (localAiState()) {
@@ -724,7 +726,7 @@ export default Plugin.define({
       winterMode?: boolean
       notifications?: NotificationSettings
       history?: HistorySettings
-    }) {
+    }): Promise<boolean> {
       try {
         const s = await rpc.save_settings(patch)
         if (patch.maxConcurrent !== undefined) setMaxConcurrent(s.maxConcurrent)
@@ -746,9 +748,11 @@ export default Plugin.define({
           setAuditMaxRecords(Number(au?.maxRecords ?? 10000))
         }
         applyLocale((s as { locale?: string }).locale)
+        return true
       } catch (err: any) {
         console.error("RPC Error (save_settings):", err)
         ctx.toast.show({ title: gt("gui.toast.settingsSaveFailed"), variant: "error", description: errorMessage(err) })
+        return false
       }
     }
 
@@ -4969,18 +4973,35 @@ export default Plugin.define({
                         <div style="font-size:12px;font-weight:500;color:#e0e0e0;margin-top:4px">{gt("localAi.wizard.screen1.provider")}</div>
                         <div style="display:flex;gap:10px">
                           <button
-                            onClick={() => setWizardProvider("ollama")}
+                            onClick={() => {
+                              setWizardProvider("ollama")
+                              setWizardBaseUrl("http://127.0.0.1:11434")
+                              setWizardError("")
+                            }}
                             style={`flex:1;padding:8px 12px;background:${wizardProvider() === "ollama" ? "#007acc" : "#2a2a2a"};border:1px solid ${wizardProvider() === "ollama" ? "#007acc" : "#333"};border-radius:6px;color:#fff;cursor:pointer;font-size:12px`}
                           >
                             {gt("localAi.wizard.screen1.provider.ollama")}
                           </button>
                           <button
-                            onClick={() => setWizardProvider("openai")}
+                            onClick={() => {
+                              setWizardProvider("openai")
+                              setWizardBaseUrl("")
+                              setWizardError("")
+                            }}
                             style={`flex:1;padding:8px 12px;background:${wizardProvider() === "openai" ? "#007acc" : "#2a2a2a"};border:1px solid ${wizardProvider() === "openai" ? "#007acc" : "#333"};border-radius:6px;color:#fff;cursor:pointer;font-size:12px`}
                           >
                             {gt("localAi.wizard.screen1.provider.openai")}
                           </button>
                         </div>
+                        <div style="font-size:12px;font-weight:500;color:#e0e0e0;margin-top:8px">{gt("localAi.wizard.screen1.baseUrl")}</div>
+                        <input
+                          type="text"
+                          value={wizardBaseUrl()}
+                          placeholder={gt("localAi.wizard.screen1.baseUrlDesc")}
+                          onInput={(e) => { setWizardBaseUrl(e.currentTarget.value); setWizardError("") }}
+                          style="width:100%;padding:6px 8px;background:#0f0f0f;border:1px solid #333;border-radius:4px;color:#fff;font-size:12px"
+                        />
+                        <div style="font-size:11px;color:#8e8e93;margin-top:2px">{gt("localAi.wizard.screen1.baseUrlHint")}</div>
                         <div style="font-size:12px;font-weight:500;color:#e0e0e0;margin-top:8px">{gt("localAi.wizard.screen1.model")}</div>
                         <input
                           type="text"
@@ -5016,18 +5037,21 @@ export default Plugin.define({
                         <div style="font-size:13px;color:#b0b0b0">{gt("localAi.wizard.screen3.desc")}</div>
                         <div style="font-size:12px;font-weight:500;color:#e0e0e0">{gt("localAi.wizard.screen3.ruleOrder")}</div>
                         <div style="background:#0f0f0f;border:1px solid #333;border-radius:6px;padding:10px;font-size:11px;color:#b0b0b0;line-height:1.6">
-                          <div>1. error-timeout — таймаут / сетевая ошибка</div>
-                          <div>2. error-permission — отказ в доступе</div>
-                          <div>3. error-network — сеть / DNS</div>
-                          <div>4. error-quality — качество / сборка</div>
-                          <div>5. cost-high — стоимость ≥ $1</div>
-                          <div>6. task-important — deploy/release/backup/миграция</div>
-                          <div>7. status-error — ошибка задачи</div>
-                          <div>8. status-success — успех задачи</div>
+                          <div>{gt("localAi.wizard.rule.errorTimeout")}</div>
+                          <div>{gt("localAi.wizard.rule.errorPermission")}</div>
+                          <div>{gt("localAi.wizard.rule.errorNetwork")}</div>
+                          <div>{gt("localAi.wizard.rule.errorQuality")}</div>
+                          <div>{gt("localAi.wizard.rule.costHigh")}</div>
+                          <div>{gt("localAi.wizard.rule.taskImportant")}</div>
+                          <div>{gt("localAi.wizard.rule.statusError")}</div>
+                          <div>{gt("localAi.wizard.rule.statusSuccess")}</div>
                         </div>
                         <div style="font-size:12px;font-weight:500;color:#e0e0e0;margin-top:8px">{gt("localAi.wizard.screen3.confidenceThreshold")}</div>
                         <div style="font-size:11px;color:#8e8e93">{gt("localAi.wizard.screen3.confidenceHint")}</div>
                       </div>
+                    )}
+                    {wizardError() && (
+                      <div style="margin-top:10px;font-size:11px;color:#ff6b6b">{wizardError()}</div>
                     )}
                   </div>
                   <div style="padding:12px 20px;border-top:1px solid #333;display:flex;justify-content:space-between;gap:8px">
@@ -5041,8 +5065,16 @@ export default Plugin.define({
                     )}
                     <button
                       onClick={async () => {
+                        setWizardError("")
                         if (wizardStep() === 1) {
-                          if (!wizardModel().trim()) return
+                          if (!wizardModel().trim()) {
+                            setWizardError(gt("localAi.wizard.screen1.modelRequired"))
+                            return
+                          }
+                          if (wizardProvider() === "openai" && !wizardBaseUrl().trim()) {
+                            setWizardError(gt("localAi.wizard.screen1.baseUrlRequired"))
+                            return
+                          }
                           setWizardStep(2)
                         } else if (wizardStep() === 2) {
                           if (!wizardPreset()) return
@@ -5050,8 +5082,27 @@ export default Plugin.define({
                         } else {
                           // Apply settings
                           const mode = wizardPreset() === "minimal" ? "rules" : "auto"
-                          const baseUrl = wizardProvider() === "ollama" ? "http://127.0.0.1:11434" : ""
-                          const model = wizardModel().trim() || (wizardProvider() === "ollama" ? "qwen3:4b" : "")
+                          const baseUrl = wizardProvider() === "ollama"
+                            ? wizardBaseUrl().trim() || "http://127.0.0.1:11434"
+                            : wizardBaseUrl().trim().replace(/\/+$/, "")
+                          const model = wizardModel().trim()
+                          const saved = await persistSettings({
+                            notifications: {
+                              triage: {
+                                mode,
+                                baseUrl,
+                                model,
+                                timeoutMs: 60000,
+                                fallback: "rules",
+                                confidenceThreshold: 0.7,
+                                shadow: { enabled: false, days: 14, startedAt: null },
+                              },
+                            },
+                          })
+                          if (!saved) {
+                            setWizardError(gt("localAi.wizard.saveFailed"))
+                            return
+                          }
                           setLocalAiMode(mode)
                           setLocalAiBaseUrl(baseUrl)
                           setLocalAiModel(model)
@@ -5061,23 +5112,6 @@ export default Plugin.define({
                           setLocalAiState("idle")
                           setLocalAiResult(null)
                           setShadowEnabled(false)
-                          try {
-                            await persistSettings({
-                              notifications: {
-                                triage: {
-                                  mode,
-                                  baseUrl,
-                                  model,
-                                  timeoutMs: 60000,
-                                  fallback: "rules",
-                                  confidenceThreshold: 0.7,
-                                  shadow: { enabled: false, days: 14, startedAt: null },
-                                },
-                              },
-                            })
-                          } catch (err: any) {
-                            console.error("wizard save failed:", err)
-                          }
                           setWizardOpen(false)
                         }
                       }}

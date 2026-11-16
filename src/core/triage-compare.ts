@@ -11,8 +11,23 @@
  */
 import { decideTriage, type TriageDecision } from "./triage-chain.js";
 import type { TriageInput } from "./triage.js";
-import type { TriageSettings } from "../settings.js";
+import {
+  defaultNotifications,
+  normalizeTriageSettings,
+  type TriageSettings,
+} from "../settings.js";
 import { formatNotificationMessage } from "../notifications.js";
+import { t } from "../i18n.js";
+
+/**
+ * Верхняя граница одного прогона сравнения.
+ *
+ * Сам классификатор уже ограничен `timeoutMs` и повторами, но два прогона
+ * (before/after) могут суммарно занять до нескольких минут. Для интерактивной
+ * кнопки «Сравнить» это слишком долго, поэтому решение ограничивается общим
+ * дедлайном; по его истечении возвращается безопасный fallback `notify`.
+ */
+const DEFAULT_COMPARE_TIMEOUT_MS = 75_000;
 
 /** Одно решение триажа с итоговым сообщением, которое было бы доставлено. */
 export interface ComparedDecision {
@@ -102,7 +117,48 @@ function toCompared(
 }
 
 function dedupCountSuffix(count: number): string {
-  return `(повтор ${count})`;
+  return t("notify.dedup.count", { count });
+}
+
+/**
+ * Решение по таймауту сравнения: уведомление не теряется, но и не ждём
+ * зависший классификатор бесконечно.
+ */
+function timeoutDecision(): TriageDecision {
+  return {
+    action: "notify",
+    source: "fallback",
+    failure: "timeout",
+    attempts: 0,
+    latencyMs: 0,
+  };
+}
+
+/**
+ * Запускает `decideTriage` с внешним дедлайном.
+ *
+ * Внутренний AbortController классификатора остаётся основным механизмом;
+ * этот таймер страхует GUI от суммы двух прогонов и повторов.
+ */
+async function decideWithTimeout(
+  input: TriageInput,
+  settings: TriageSettings,
+  timeoutMs: number
+): Promise<TriageDecision> {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    return decideTriage(input, settings);
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      decideTriage(input, settings),
+      new Promise<TriageDecision>((resolve) => {
+        timer = setTimeout(() => resolve(timeoutDecision()), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 /**
@@ -115,7 +171,8 @@ export async function compareTriage(
   input: TriageInput,
   beforeSettings: TriageSettings | undefined,
   afterSettings: TriageSettings | undefined,
-  dedupCount = 1
+  dedupCount = 1,
+  timeoutMs = DEFAULT_COMPARE_TIMEOUT_MS
 ): Promise<CompareTriageResult> {
   const durationMs =
     typeof input.durationMs === "number" && Number.isFinite(input.durationMs)
@@ -133,9 +190,16 @@ export async function compareTriage(
     undefined
   );
 
+  // before/after приходят из RPC как пользовательский ввод: нормализуем их
+  // той же схемой, что и сохранённые настройки, чтобы битые поля не роняли
+  // классификатор и не искажали сравнение.
+  const fallbackTriage = defaultNotifications().triage!;
+  const normalizedBefore = normalizeTriageSettings(beforeSettings, fallbackTriage);
+  const normalizedAfter = normalizeTriageSettings(afterSettings, fallbackTriage);
+
   const [beforeDecision, afterDecision] = await Promise.all([
-    decideTriage(input, beforeSettings),
-    decideTriage(input, afterSettings),
+    decideWithTimeout(input, normalizedBefore, timeoutMs),
+    decideWithTimeout(input, normalizedAfter, timeoutMs),
   ]);
 
   const before = toCompared(input, beforeDecision, baseMessage, dedupCount);

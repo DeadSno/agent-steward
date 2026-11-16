@@ -3,6 +3,11 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { PLUGIN_DIR } from "./types.js";
 import { DEFAULT_LOCALE, normalizeLocale, SUPPORTED_LOCALES, messageIn, t, type Locale } from "./i18n.js";
+import {
+  DEFAULT_PERMISSION_POLICY,
+  normalizePolicy,
+  type PermissionPolicy,
+} from "./core/permissions.js";
 
 /** Настройки webhook-уведомлений (Discord/Slack/generic). */
 export interface WebhookNotificationSettings {
@@ -343,6 +348,12 @@ export interface AuditSettings {
   maxRecords: number;
 }
 
+/** Политика прав фоновых задач (Спринт 32, релиз 1.6). */
+export interface PermissionSettings {
+  /** hybrid — без shell/question; secure — только чтение; legacy — как в 1.5.x. */
+  defaultPolicy: PermissionPolicy;
+}
+
 /**
  * Глобальные настройки плагина, которые меняются из GUI.
  * Хранятся в settings.json рядом с tasks.json / history.json.
@@ -362,6 +373,8 @@ export interface SchedulerSettings {
   integrations: IntegrationSettings;
   /** Журнал аудита мутаций (Спринт 26). */
   audit: AuditSettings;
+  /** Политика прав фоновых задач (Спринт 32). */
+  permissions: PermissionSettings;
 }
 
 export const SETTINGS_FILE = path.join(PLUGIN_DIR, "settings.json");
@@ -392,6 +405,25 @@ export function defaultAuditSettings(): AuditSettings {
     enabled: true,
     retentionDays: DEFAULT_AUDIT_RETENTION_DAYS,
     maxRecords: DEFAULT_AUDIT_MAX_RECORDS,
+  };
+}
+
+/** Политика прав по умолчанию: гибрид (без shell/question). */
+export function defaultPermissionsSettings(): PermissionSettings {
+  return { defaultPolicy: DEFAULT_PERMISSION_POLICY };
+}
+
+/** Приводит настройки прав к безопасному виду. */
+function normalizePermissionsSettings(
+  value: unknown,
+  fallback: PermissionSettings
+): PermissionSettings {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { ...fallback };
+  }
+  const raw = value as Partial<PermissionSettings>;
+  return {
+    defaultPolicy: normalizePolicy(raw.defaultPolicy, fallback.defaultPolicy),
   };
 }
 
@@ -923,6 +955,43 @@ export function settleShadowOnSave(
   return startShadow(shadow);
 }
 
+/**
+ * Приводит настройки триажа к безопасному виду.
+ *
+ * Экспортируется, чтобы RPC-сравнение «до/после» валидировало пользовательский
+ * ввод той же схемой, что и сохранённые настройки.
+ */
+export function normalizeTriageSettings(
+  value: unknown,
+  fallback: TriageSettings
+): TriageSettings {
+  const fallbackShadow =
+    fallback.shadow ?? defaultNotifications().triage!.shadow!;
+  const raw = asRecord(value);
+  const rules = normalizeTriageRules(raw?.rules, fallback.rules);
+  return {
+    mode: normalizeTriageMode(raw?.mode, fallback.mode),
+    baseUrl: normalizeHttpBase(raw?.baseUrl, fallback.baseUrl),
+    model:
+      typeof raw?.model === "string" && raw.model.trim()
+        ? raw.model.trim().slice(0, 200)
+        : fallback.model,
+    timeoutMs: normalizeIntInRange(
+      raw?.timeoutMs,
+      fallback.timeoutMs,
+      1_000,
+      120_000
+    ),
+    fallback: normalizeTriageFallback(raw?.fallback, fallback.fallback),
+    confidenceThreshold: normalizeConfidence(
+      raw?.confidenceThreshold,
+      fallback.confidenceThreshold
+    ),
+    ...(rules !== undefined ? { rules } : {}),
+    shadow: normalizeTriageShadow(raw?.shadow, fallbackShadow),
+  };
+}
+
 /** Приводит настройки уведомлений к безопасному виду. */
 function normalizeNotifications(
   value: unknown,
@@ -982,14 +1051,6 @@ function normalizeNotifications(
     typeof rawDigest?.lastSentAt === "string" && rawDigest.lastSentAt.trim()
       ? rawDigest.lastSentAt.trim()
       : null;
-
-  // `rules` отсутствует, если используется встроенный набор. Ключ с явным
-  // `undefined` нельзя отдавать по RPC: JSON-схема превращает неописанные
-  // поля в Schema.Json, которая отвергает undefined ("Expected JSON value").
-  const triageRules = normalizeTriageRules(
-    rawTriage?.rules,
-    fallbackTriage.rules
-  );
 
   return {
     enabled: typeof raw.enabled === "boolean" ? raw.enabled : fallback.enabled,
@@ -1123,33 +1184,7 @@ function normalizeNotifications(
       time: normalizeDailyTime(rawDigest?.time, fallbackDigest.time),
       lastSentAt,
     },
-    triage: {
-      mode: normalizeTriageMode(rawTriage?.mode, fallbackTriage.mode),
-      baseUrl: normalizeHttpBase(rawTriage?.baseUrl, fallbackTriage.baseUrl),
-      model:
-        typeof rawTriage?.model === "string" && rawTriage.model.trim()
-          ? rawTriage.model.trim().slice(0, 200)
-          : fallbackTriage.model,
-      timeoutMs: normalizeIntInRange(
-        rawTriage?.timeoutMs,
-        fallbackTriage.timeoutMs,
-        1_000,
-        120_000
-      ),
-      fallback: normalizeTriageFallback(
-        rawTriage?.fallback,
-        fallbackTriage.fallback
-      ),
-      confidenceThreshold: normalizeConfidence(
-        rawTriage?.confidenceThreshold,
-        fallbackTriage.confidenceThreshold
-      ),
-      ...(triageRules !== undefined ? { rules: triageRules } : {}),
-      shadow: normalizeTriageShadow(
-        rawTriage?.shadow,
-        fallbackShadow
-      ),
-    },
+    triage: normalizeTriageSettings(rawTriage, fallbackTriage),
     dedup: normalizeDedupSettings(
       raw.dedup,
       fallback.dedup ?? defaultNotifications().dedup!
@@ -1213,6 +1248,7 @@ export async function loadSettings(): Promise<SchedulerSettings> {
   const fallbackHistory = defaultHistorySettings();
   const fallbackIntegrations = defaultIntegrations();
   const fallbackAudit = defaultAuditSettings();
+  const fallbackPermissions = defaultPermissionsSettings();
   try {
     const raw = await fs.readFile(SETTINGS_FILE, "utf8");
     const parsed = JSON.parse(raw) as Partial<SchedulerSettings> | null;
@@ -1236,6 +1272,10 @@ export async function loadSettings(): Promise<SchedulerSettings> {
         fallbackIntegrations
       ),
       audit: normalizeAuditSettings(parsed?.audit, fallbackAudit),
+      permissions: normalizePermissionsSettings(
+        parsed?.permissions,
+        fallbackPermissions
+      ),
     };
   } catch {
     return {
@@ -1246,6 +1286,7 @@ export async function loadSettings(): Promise<SchedulerSettings> {
       history: fallbackHistory,
       integrations: fallbackIntegrations,
       audit: fallbackAudit,
+      permissions: fallbackPermissions,
     };
   }
 }
@@ -1284,6 +1325,10 @@ export async function saveSettings(
       patch.audit !== undefined
         ? normalizeAuditSettings(patch.audit, current.audit)
         : current.audit,
+    permissions:
+      patch.permissions !== undefined
+        ? normalizePermissionsSettings(patch.permissions, current.permissions)
+        : current.permissions,
   };
 
   // Удобство: при включении хуков без явных учётных данных генерируем их,

@@ -302,29 +302,36 @@ function parseLocalHostname(value: string | undefined): string | undefined {
  * чтобы защититься от CSRF и DNS-ребиндинга.
  *
  * Правила:
- *  - кастомный заголовок X-Scheduler-Client считается доверенным (браузер
- *    не отправит его межсайтово без preflight, которого сервер не даёт);
  *  - при наличии Origin он ОБЯЗАН быть локальным — проверка Host при этом
  *    не спасает, потому что Host всегда равен адресату запроса;
- *  - без Origin (не-браузерный клиент, curl, свои fetch) требует локальный Host —
+ *  - без Origin (не-браузерный клиент, curl, свои fetch) требуется локальный Host —
  *    это защита от DNS-rebinding;
- *  - Origin: null, чужие схемы и чужие хосты отклоняются.
+ *  - Origin: null, чужие схемы и чужие хосты отклоняются;
+ *  - X-Scheduler-Client — только дополнительное подтверждение: он не обходит
+ *    проверку Origin и не превращает внешний запрос в доверенный.
  */
 export function isDashboardRequestTrusted(req: http.IncomingMessage): boolean {
   const headers = req.headers ?? {};
-  if (headers["x-scheduler-client"]) return true;
 
   const origin = typeof headers.origin === "string" ? headers.origin : undefined;
   if (origin !== undefined) {
     // "null" (sandbox/file://) и любые не-localhost Origin — не доверяем.
+    // X-Scheduler-Client НЕ обходит эту проверку: заголовок можно подделать
+    // через CORS с ошибкой в конфиге или XSS на странице дашборда.
     const originHost = parseLocalHostname(origin);
-    return Boolean(originHost && LOCAL_HOSTNAMES.has(originHost));
+    const localOrigin = Boolean(originHost && LOCAL_HOSTNAMES.has(originHost));
+    if (!localOrigin) return false;
+    // Локальный Origin — доверяем; X-Scheduler-Client — дополнительное подтверждение.
+    return true;
   }
 
-  // Origin отсутствует — это не браузерный cross-origin запрос. Проверяем Host,
+  // Origin отсутствует — не браузерный cross-origin запрос. Проверяем Host,
   // чтобы запрос не пришёл через DNS-rebinding на чужое имя.
   const hostHost = parseLocalHostname(typeof headers.host === "string" ? headers.host : undefined);
-  return Boolean(hostHost && LOCAL_HOSTNAMES.has(hostHost));
+  const localHost = Boolean(hostHost && LOCAL_HOSTNAMES.has(hostHost));
+  if (!localHost) return false;
+  // Без Origin, но локальный Host — доверяем; X-Scheduler-Client — бонус.
+  return true;
 }
 
 /**

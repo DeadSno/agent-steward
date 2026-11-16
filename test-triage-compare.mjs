@@ -7,6 +7,8 @@ import {
   compareTriage,
 } from "./dist/core/triage-compare.js";
 import { defaultNotifications } from "./dist/settings.js";
+import { t } from "./dist/i18n.js";
+import http from "node:http";
 
 const results = [];
 let passed = 0;
@@ -146,6 +148,66 @@ const result7 = await compareTriage(
 check(
   "compare #7: confidence threshold is a setting (not in diff)",
   typeof result7.diff.confidence === "object"
+);
+
+// --- 8. внешний дедлайн сравнения ----------------------------------------
+// Локальный сервер принимает соединение и никогда не отвечает: проверяем,
+// что сравнение не ждёт зависший классификатор до внутреннего timeoutMs.
+const hanging = http.createServer(() => {});
+const sockets = new Set();
+hanging.on("connection", (socket) => {
+  sockets.add(socket);
+  socket.on("close", () => sockets.delete(socket));
+});
+await new Promise((resolve) => hanging.listen(0, "127.0.0.1", resolve));
+const hangingPort = hanging.address().port;
+const startedAt = Date.now();
+const result8 = await compareTriage(
+  makeInput(),
+  { ...llmSettings, baseUrl: `http://127.0.0.1:${hangingPort}`, timeoutMs: 30_000 },
+  { ...llmSettings, baseUrl: `http://127.0.0.1:${hangingPort}`, timeoutMs: 30_000 },
+  1,
+  120
+);
+const elapsedMs = Date.now() - startedAt;
+check(
+  "compare #8: таймаут не бросает и возвращает notify",
+  result8.before.action === "notify" && result8.after.action === "notify"
+);
+check(
+  "compare #8: причина timeout",
+  result8.before.failure === "timeout" && result8.after.failure === "timeout"
+);
+check("compare #8: внешний дедлайн сработал", elapsedMs < 2_000);
+for (const socket of sockets) socket.destroy();
+hanging.close();
+
+// --- 9. битые before/after нормализуются, а не роняют сравнение -----------
+const result9 = await compareTriage(makeInput(), null, {
+  mode: "garbage",
+  baseUrl: 42,
+  model: null,
+  timeoutMs: "soon",
+  fallback: "???",
+  confidenceThreshold: "high",
+  shadow: "bad",
+});
+check("compare #9: битые настройки не бросают", Boolean(result9.after));
+check(
+  "compare #9: неизвестный mode нормализован в off",
+  result9.after.source === "off"
+);
+
+// --- 10. суффикс повтора локализован --------------------------------------
+const result10 = await compareTriage(
+  makeInput({ costUsd: 0 }),
+  offSettings,
+  offSettings,
+  2
+);
+check(
+  "compare #10: суффикс повтора берётся из локали",
+  result10.after.message.includes(t("notify.dedup.count", { count: 2 }))
 );
 
 console.log(`\n${passed}/${results.length} проверок сравнения триажа пройдены.`);

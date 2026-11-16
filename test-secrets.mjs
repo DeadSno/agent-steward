@@ -7,6 +7,7 @@ import fs from "node:fs";
 import crypto from "node:crypto";
 import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ws-scheduler-secrets-"));
 process.env.APPDATA = tempRoot;
@@ -195,6 +196,23 @@ check("secrets.json существует и валидный JSON", !!parsedSecr
 // Ключ-файл существует, 32 байта.
 const keyData = fs.readFileSync(keyFile);
 check("secrets.key 32 байта", keyData.length === 32);
+
+// 6. Права на ключ: POSIX 0600, Windows — ACL без наследования и только текущий пользователь.
+if (process.platform === "win32") {
+  const acl = spawnSync("icacls", [keyFile], { encoding: "utf8", windowsHide: true });
+  const aclText = `${acl.stdout ?? ""}\n${acl.stderr ?? ""}`;
+  const user = process.env.USERNAME ?? os.userInfo().username;
+  check("secrets.key: ACL применён (icacls доступен)", acl.status === 0);
+  check("secrets.key: наследование отключено", !aclText.includes("(I)"));
+  check("secrets.key: доступ только текущему пользователю", aclText.includes(user));
+  check(
+    "secrets.key: BUILTIN\\Users не имеет доступа",
+    !/BUILTIN\\Users/i.test(aclText)
+  );
+} else {
+  const mode = fs.statSync(keyFile).mode & 0o777;
+  check("secrets.key: режим 0600", mode === 0o600);
+}
 
 // --- 7. Несуществующий/повреждённый ключ -------------------------------------
 resetSecretsCache();

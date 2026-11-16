@@ -243,9 +243,9 @@ const CreateTaskInput = {
     workspaceId: { type: "string" },
     /** Рабочая директория задачи (по умолчанию — папка проекта). */
     workingDirectory: { type: "string" },
-    /** Белый список инструментов задачи (role-scoped, metadata-only). Пустой массив запрещён. */
+    /** Белый список инструментов задачи (role-scoped, enforced through OPENCODE_CONFIG_CONTENT). Пустой массив запрещён. */
     allowedTools: { type: "array", items: { type: "string" } },
-    /** Чёрный список инструментов задачи (приоритет над allowedTools). Metadata-only. */
+    /** Чёрный список инструментов задачи (приоритет над allowedTools и политикой). Enforced. */
     deniedTools: { type: "array", items: { type: "string" } },
     /** Matrix (fan-out): раскладывает задачу-шаблон на клоны по workspace. */
     matrix: MatrixSchema,
@@ -628,6 +628,18 @@ const AuditSettingsSchema = {
   required: ["enabled", "retentionDays", "maxRecords"],
 } as const;
 
+/** Политика прав фоновых задач (Спринт 32). */
+const PermissionSettingsSchema = {
+  type: "object" as const,
+  properties: {
+    defaultPolicy: {
+      type: "string",
+      enum: ["hybrid", "secure", "legacy"],
+    },
+  },
+  required: ["defaultPolicy"],
+} as const;
+
 const GetSettingsOutput = {
   type: "object" as const,
   properties: {
@@ -637,6 +649,7 @@ const GetSettingsOutput = {
     notifications: NotificationSettingsSchema,
     history: HistorySettingsSchema,
     audit: AuditSettingsSchema,
+    permissions: PermissionSettingsSchema,
   },
   required: ["maxConcurrent", "locale", "winterMode", "notifications"],
 } as const;
@@ -651,6 +664,7 @@ const SaveSettingsInput = {
     notifications: NotificationSettingsSchema,
     history: HistorySettingsSchema,
     audit: AuditSettingsSchema,
+    permissions: PermissionSettingsSchema,
   },
   additionalProperties: false,
 } as const;
@@ -665,6 +679,7 @@ const SaveSettingsOutput = {
     notifications: NotificationSettingsSchema,
     history: HistorySettingsSchema,
     audit: AuditSettingsSchema,
+    permissions: PermissionSettingsSchema,
   },
   required: ["success", "maxConcurrent", "locale", "winterMode", "notifications"],
 } as const;

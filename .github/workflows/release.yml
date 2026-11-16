@@ -14,7 +14,9 @@ jobs:
   publish:
     name: Publish to npm
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # npm test runs ~56 suites sequentially; the English-locale pass adds a
+    # second full run. 20 minutes was too tight and could cancel a valid release.
+    timeout-minutes: 40
     env:
       NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -54,6 +56,11 @@ jobs:
 
       - name: Test
         run: npm test
+
+      # Locale tests are separate from `npm test`: catch a broken English UI
+      # before publishing, not after the release.
+      - name: Test in English locale
+        run: npm run test:en
 
       # Publish to npm. Two supported paths, no silent skip either way:
       #   1. NPM_TOKEN secret in the repo -> token auth.

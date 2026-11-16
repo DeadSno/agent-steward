@@ -52,7 +52,9 @@ export const WRAPPER_SCRIPT = `param(
     [int]$RetryCount = 0,
     [int]$RetryDelaySeconds = 0,
     [int]$GateTimeoutSeconds = 300,
-    [int]$StaleLockMaxAgeMs = 86400000
+    [int]$StaleLockMaxAgeMs = 86400000,
+    [string]$PermissionsB64 = "",
+    [string]$PolicyB64 = ""
 )
 
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -516,53 +518,84 @@ try {
         Write-Log "[workspace] name=$WorkspaceName, cwd=$Workdir, branch=$gitBranch, remote=$gitRemote"
     }
 
-    # Спринт 29.2: права задачи передаются через OPENCODE_CONFIG_CONTENT.
-    # opencode run CLI (v2.2.3) не поддерживает --allow-tool/--deny-tool, а файл
-    # opencode.jsonc в Workdir мог бы перезаписать проектный конфиг.
+    # Спринт 32 / релиз 1.6: политика прав вычисляется в TypeScript
+    # (src/core/permissions.ts) и передаётся готовым JSON в base64.
+    # Старые .cmd, созданные до 1.6, параметр не передают — для них остаётся
+    # прежнее поведение «разрешено всё» (fallback ниже).
     $toolToAction = @{
         "read" = "read"; "write" = "edit"; "edit" = "edit"; "apply_patch" = "edit"; "remove" = "edit"
         "bash" = "shell"; "shell" = "shell"; "glob" = "glob"; "grep" = "grep"
         "webfetch" = "webfetch"; "websearch" = "websearch"; "question" = "question"
         "subagent" = "subagent"; "skill" = "skill"
     }
-    $defaultPermissions = @(
-        @{ action = "read"; resource = "*"; effect = "allow" },
-        @{ action = "edit"; resource = "*"; effect = "allow" },
-        @{ action = "glob"; resource = "*"; effect = "allow" },
-        @{ action = "grep"; resource = "*"; effect = "allow" },
-        @{ action = "shell"; resource = "*"; effect = "allow" },
-        @{ action = "subagent"; resource = "*"; effect = "allow" },
-        @{ action = "skill"; resource = "*"; effect = "allow" },
-        @{ action = "question"; resource = "*"; effect = "allow" },
-        @{ action = "webfetch"; resource = "*"; effect = "allow" },
-        @{ action = "websearch"; resource = "*"; effect = "allow" }
-    )
-    $permissions = @()
-    foreach ($p in $defaultPermissions) { $permissions += $p }
-    if ($DeniedTools) {
-        $deniedList = @($DeniedTools -split ',' | ForEach-Object { $_.Trim().ToLower() } | Where-Object { $_ })
-        foreach ($tool in $deniedList) {
-            $action = $toolToAction[$tool]
-            if ($action) {
-                $idx = $permissions | Where-Object { $_.action -eq $action }
-                if ($idx) { $idx.effect = "deny" }
+    if ($PermissionsB64) {
+        try {
+            $decoded = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($PermissionsB64))
+            $config = $decoded | ConvertFrom-Json
+            $env:OPENCODE_CONFIG_CONTENT = ($config | ConvertTo-Json -Depth 5 -Compress)
+            Write-Log "[role-scoped] opencode config passed via OPENCODE_CONFIG_CONTENT"
+        } catch {
+            Write-Log "[policy] ERROR: cannot decode PermissionsB64 ($($_.Exception.Message)); falling back to legacy permissions"
+            $PermissionsB64 = ""
+        }
+    }
+    if ($PolicyB64) {
+        try {
+            $policyJson = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($PolicyB64)) | ConvertFrom-Json
+            $legacyFlag = ""
+            if ($policyJson.legacyShell) { $legacyFlag = ", legacyShell=true" }
+            Write-Log "[policy] policy=$($policyJson.policy)$legacyFlag"
+            foreach ($denied in @($policyJson.denied)) {
+                if ($denied.action) {
+                    Write-Log "[policy] deny $($denied.action): $($denied.hint)"
+                }
+            }
+        } catch {
+            Write-Log "[policy] WARN: cannot decode PolicyB64 ($($_.Exception.Message))"
+        }
+    }
+    if (-not $PermissionsB64) {
+        # Legacy fallback для обёрток, созданных до 1.6: все action разрешены,
+        # DeniedTools/AllowedTools применяются как раньше.
+        $defaultPermissions = @(
+            @{ action = "read"; resource = "*"; effect = "allow" },
+            @{ action = "edit"; resource = "*"; effect = "allow" },
+            @{ action = "glob"; resource = "*"; effect = "allow" },
+            @{ action = "grep"; resource = "*"; effect = "allow" },
+            @{ action = "shell"; resource = "*"; effect = "allow" },
+            @{ action = "subagent"; resource = "*"; effect = "allow" },
+            @{ action = "skill"; resource = "*"; effect = "allow" },
+            @{ action = "question"; resource = "*"; effect = "allow" },
+            @{ action = "webfetch"; resource = "*"; effect = "allow" },
+            @{ action = "websearch"; resource = "*"; effect = "allow" }
+        )
+        $permissions = @()
+        foreach ($p in $defaultPermissions) { $permissions += $p }
+        if ($DeniedTools) {
+            $deniedList = @($DeniedTools -split ',' | ForEach-Object { $_.Trim().ToLower() } | Where-Object { $_ })
+            foreach ($tool in $deniedList) {
+                $action = $toolToAction[$tool]
+                if ($action) {
+                    $idx = $permissions | Where-Object { $_.action -eq $action }
+                    if ($idx) { $idx.effect = "deny" }
+                }
             }
         }
-    }
-    if ($AllowedTools) {
-        $allowedList = @($AllowedTools -split ',' | ForEach-Object { $_.Trim().ToLower() } | Where-Object { $_ })
-        $allowedActions = @{}
-        foreach ($tool in $allowedList) {
-            $action = $toolToAction[$tool]
-            if ($action) { $allowedActions[$action] = $true }
+        if ($AllowedTools) {
+            $allowedList = @($AllowedTools -split ',' | ForEach-Object { $_.Trim().ToLower() } | Where-Object { $_ })
+            $allowedActions = @{}
+            foreach ($tool in $allowedList) {
+                $action = $toolToAction[$tool]
+                if ($action) { $allowedActions[$action] = $true }
+            }
+            foreach ($p in $permissions) {
+                if (-not $allowedActions.ContainsKey($p.action)) { $p.effect = "deny" }
+            }
         }
-        foreach ($p in $permissions) {
-            if (-not $allowedActions.ContainsKey($p.action)) { $p.effect = "deny" }
-        }
+        $config = @{ "$schema" = "https://opencode.ai/config.json"; "permissions" = $permissions }
+        $env:OPENCODE_CONFIG_CONTENT = ($config | ConvertTo-Json -Depth 3 -Compress)
+        Write-Log "[role-scoped] opencode config passed via OPENCODE_CONFIG_CONTENT (legacy fallback)"
     }
-    $config = @{ "$schema" = "https://opencode.ai/config.json"; "permissions" = $permissions }
-    $env:OPENCODE_CONFIG_CONTENT = ($config | ConvertTo-Json -Depth 3 -Compress)
-    Write-Log "[role-scoped] opencode config passed via OPENCODE_CONFIG_CONTENT"
 
     # Pre-flight: выполняется ДО основной задачи. Ненулевой код отменяет запуск.
     if ($BeforeScript) {
@@ -758,11 +791,15 @@ export async function ensureWrapper(): Promise<string> {
 
 /**
  * Записывает промпт задачи во временный файл и возвращает его путь.
+ *
+ * Имя санитизируется внутри функции, а не только у вызывающей стороны:
+ * defence-in-depth против path traversal, если taskName когда-либо придёт
+ * из недоверенного источника (импорт, шаблон, RPC).
  */
 export async function writePromptFile(taskName: string, prompt: string): Promise<string> {
   const promptDir = path.join(PLUGIN_DIR, "prompts");
   await fs.mkdir(promptDir, { recursive: true });
-  const promptPath = path.join(promptDir, `${taskName}.txt`);
+  const promptPath = path.join(promptDir, `${sanitizeName(taskName)}.txt`);
   // BOM помогает Windows PowerShell 5.1 правильно прочитать кириллицу.
   // На POSIX BOM попал бы в промпт как мусорный символ — не пишем его.
   const content = process.platform === "win32" ? "\uFEFF" + prompt : prompt;
@@ -772,9 +809,12 @@ export async function writePromptFile(taskName: string, prompt: string): Promise
 
 /**
  * Возвращает путь к lock-файлу задачи.
+ *
+ * Как и writePromptFile, санитизирует имя внутри: без этого значение с `../`
+ * могло бы создать lock вне каталога locks.
  */
 export function lockFilePath(taskName: string): string {
-  return path.join(PLUGIN_DIR, "locks", `${taskName}.lock`);
+  return path.join(PLUGIN_DIR, "locks", `${sanitizeName(taskName)}.lock`);
 }
 
 /**
@@ -852,7 +892,9 @@ export async function writeWrapperCmd(
   sessionId?: string,
   retryCount?: number,
   retryDelaySeconds?: number,
-  gateTimeoutSeconds?: number
+  gateTimeoutSeconds?: number,
+  permissionsConfig?: string,
+  policyMeta?: unknown
 ): Promise<string> {
   await fs.mkdir(WRAPPER_DIR, { recursive: true });
   const cmdPath = path.join(WRAPPER_DIR, `run-${sanitizedName}.cmd`);
@@ -928,6 +970,17 @@ export async function writeWrapperCmd(
       const safe = joined.replace(/[\r\n"]+/g, "'");
       psArgs.push(`${flag} "${safe}"`);
     }
+  }
+
+  // Спринт 32: готовый JSON политики и метаданные для лога — в base64.
+  // Base64 не содержит кавычек и переводов строк, поэтому безопасен для .cmd.
+  if (permissionsConfig) {
+    const b64 = Buffer.from(permissionsConfig, "utf8").toString("base64");
+    psArgs.push(`-PermissionsB64 "${b64}"`);
+  }
+  if (policyMeta) {
+    const b64 = Buffer.from(JSON.stringify(policyMeta), "utf8").toString("base64");
+    psArgs.push(`-PolicyB64 "${b64}"`);
   }
 
   // Hotfix 1.5.3.1: хуки — в отдельные .cmd-файлы (см. writeHookFile).
@@ -1033,7 +1086,7 @@ export const FORCE_FILE_TTL_MS = 2 * 60 * 1000;
  * поэтому обёртка (--force-file) и агент указывают на один и тот же файл.
  */
 export function forceFilePath(taskName: string): string {
-  return `${lockFilePath(sanitizeName(taskName))}.force`;
+  return `${lockFilePath(taskName)}.force`;
 }
 
 /**

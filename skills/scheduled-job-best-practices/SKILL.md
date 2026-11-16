@@ -55,8 +55,11 @@ is genuinely ambiguous, tell it to stop and write the question into the report.
 
 ## 4. Safety defaults
 
-- **Least privilege**: set `allowedTools` / `deniedTools`. Read-only monitoring jobs should
-  not be allowed to `write` or run destructive shell commands.
+- **Least privilege**: the default `hybrid` policy already denies `shell` and `question`; keep it
+  that way. Read-only monitoring jobs should not be allowed to `write` or run shell. Do not ask
+  for `shell` just to run `git commit`, a build or tests — put those in `qualityGate`/`afterScript`,
+  which the wrapper runs outside the agent. If a job truly needs shell, list `shell` in
+  `allowedTools` (or set `legacyShell: true` for a migrated task) and explain why.
 - **Timeout**: always set `timeoutSeconds` for jobs that call networks or models. Default
   timeouts are a safety net, not a plan.
 - **Quality Gate**: pass `qualityGate` whenever a machine-checkable success criterion exists
@@ -146,7 +149,7 @@ Before saying the job is done, confirm:
 - [ ] Trigger type matches the need (cron / file / MCP event).
 - [ ] Prompt states goal, scope, constraints, verification and output.
 - [ ] `timeoutSeconds` set; `qualityGate` set when checkable.
-- [ ] `allowedTools` / `deniedTools` follow least privilege.
+- [ ] `allowedTools` / `deniedTools` follow least privilege; shell is absent unless justified.
 - [ ] Matrix: workspaces correct, concurrency capped, failure mode justified.
 - [ ] `dry_run` reviewed.
 - [ ] One successful `run_task_now` with clean `get_history`.

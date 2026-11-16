@@ -53,8 +53,15 @@ import type {
   HistorySettings,
   IntegrationSettings,
   NotificationSettings,
+  PermissionSettings,
   TriageSettings,
 } from "./settings.js";
+import {
+  DEFAULT_PERMISSION_POLICY,
+  buildOpencodeConfig,
+  formatPolicyLog,
+  resolvePermissions,
+} from "./core/permissions.js";
 import { runHistoryRetention, maybeRunHistoryRetention } from "./core/retention.js";
 import { buildAnalytics } from "./core/analytics.js";
 import { generateSelfAnalysisReport } from "./core/self-analysis.js";
@@ -428,13 +435,19 @@ export const scheduleTaskSchema = z.object({
     .array(z.string())
     .optional()
     .describe(
-      "Role-scoped tool allow-list. Metadata-only: logged and recorded in history, not enforced by opencode run yet. An empty array is rejected."
+      "Role-scoped tool allow-list, enforced through OPENCODE_CONFIG_CONTENT. A non-empty list also allows actions that the default policy denies (for example shell). An empty array is rejected."
     ),
   deniedTools: z
     .array(z.string())
     .optional()
     .describe(
-      "Role-scoped tool deny-list (takes precedence over allowedTools). Metadata-only."
+      "Role-scoped tool deny-list (takes precedence over allowedTools and over the default policy). Enforced through OPENCODE_CONFIG_CONTENT."
+    ),
+  legacyShell: z
+    .boolean()
+    .optional()
+    .describe(
+      "Transitional flag (release 1.6): under the hybrid policy, re-enable shell for this task. Prefer listing shell in allowedTools. Ignored by secure/legacy policy."
     ),
   runWhenLoggedOff: z
     .boolean()
@@ -650,6 +663,12 @@ export const updateTaskSchema = z.object({
     .array(z.string())
     .optional()
     .describe("New tool deny-list. Empty array clears it."),
+  legacyShell: z
+    .boolean()
+    .optional()
+    .describe(
+      "Transitional flag (release 1.6): re-enable shell under the hybrid policy for this task."
+    ),
   matrix: matrixSchema
     .nullable()
     .optional()
@@ -867,6 +886,14 @@ export const manageSettingsSchema = z.object({
     .any()
     .optional()
     .describe("Audit log settings patch (enabled, retentionDays, maxRecords)."),
+  permissions: z
+    .object({
+      defaultPolicy: z.enum(["hybrid", "secure", "legacy"]).optional(),
+    })
+    .optional()
+    .describe(
+      "Tool permission policy for background tasks: hybrid (default; shell/question denied), secure (read-only), legacy (allow everything, 1.5.x behaviour)."
+    ),
 });
 
 /** manage_local_ai — настройки локального ассистента и триажа (Спринт 30.7). */
@@ -1209,6 +1236,7 @@ const scheduleTaskExecute = wrapExecute<ScheduleArgs>(async (args) => {
     gitIgnore,
     gitPollSeconds,
     runWhenLoggedOff,
+    legacyShell,
   } = args;
 
   let effectiveRunAt: string | undefined;
@@ -1274,7 +1302,9 @@ const scheduleTaskExecute = wrapExecute<ScheduleArgs>(async (args) => {
         gitPollSeconds,
       },
       // Спринт 27.5.4: Windows — работать без входа (/ru SYSTEM).
-      runWhenLoggedOff === true
+      runWhenLoggedOff === true,
+      undefined,
+      legacyShell === true
     );
   } catch (err: any) {
     return {
@@ -1452,7 +1482,8 @@ async function cancelMatrixRun(
         clone.sessionMaxRuns,
         undefined,
         clone.runWhenLoggedOff,
-        clone.paused
+        clone.paused,
+        clone.legacyShell
       );
     } catch (err: any) {
       warnings.push(
@@ -1949,7 +1980,8 @@ async function updateTaskFromInput(
       sessionMaxRuns,
       triggerExtras,
       input.runWhenLoggedOff ?? previous.runWhenLoggedOff,
-      wasPaused
+      wasPaused,
+      input.legacyShell ?? previous.legacyShell
     );
 
     // Матрица отключена при обновлении — убираем клонов и агрегатор.
@@ -2637,7 +2669,8 @@ const manageSettingsExecute = wrapExecute<SettingsArgs>(async (args) => {
     args.notifications === undefined &&
     args.history === undefined &&
     args.integrations === undefined &&
-    args.audit === undefined
+    args.audit === undefined &&
+    args.permissions === undefined
   ) {
     return {
       content: JSON.stringify({
@@ -2656,6 +2689,7 @@ const manageSettingsExecute = wrapExecute<SettingsArgs>(async (args) => {
     history: args.history as HistorySettings | undefined,
     integrations: args.integrations as IntegrationSettings | undefined,
     audit: args.audit as AuditSettings | undefined,
+    permissions: args.permissions as PermissionSettings | undefined,
   });
   // Локаль процесса меняется сразу — перезапуск плагина не нужен.
   setLocale(settings.locale);
@@ -3936,6 +3970,7 @@ export default Plugin.define({
           session,
           sessionMaxRuns,
           runWhenLoggedOff,
+          legacyShell,
         } = input as {
           name: string;
           schedule?: string;
@@ -3966,6 +4001,7 @@ export default Plugin.define({
           session?: "new" | "reuse" | "last";
           sessionMaxRuns?: number;
           runWhenLoggedOff?: boolean;
+          legacyShell?: boolean;
         };
         let effectiveRunAt: string | undefined;
         if (triggerType === "once") {
@@ -4026,7 +4062,9 @@ export default Plugin.define({
             effectiveSessionId,
             sessionMaxRuns,
             undefined,
-            runWhenLoggedOff === true
+            runWhenLoggedOff === true,
+            undefined,
+            legacyShell === true
           );
           const nextRun = computeTaskNextRun({
             schedule: schedule ?? "",
@@ -4607,7 +4645,7 @@ export default Plugin.define({
         return await loadSettings();
       },
       save_settings: async (input: unknown) => {
-        const { maxConcurrent, locale, winterMode, notifications, history, integrations, audit } = input as {
+        const { maxConcurrent, locale, winterMode, notifications, history, integrations, audit, permissions } = input as {
           maxConcurrent?: number;
           locale?: Locale;
           winterMode?: boolean;
@@ -4615,6 +4653,7 @@ export default Plugin.define({
           history?: HistorySettings;
           integrations?: IntegrationSettings;
           audit?: AuditSettings;
+          permissions?: PermissionSettings;
         };
         const current = await loadSettings();
         if (
@@ -4624,7 +4663,8 @@ export default Plugin.define({
           notifications === undefined &&
           history === undefined &&
           integrations === undefined &&
-          audit === undefined
+          audit === undefined &&
+          permissions === undefined
         ) {
           return {
             success: false,
@@ -4635,6 +4675,7 @@ export default Plugin.define({
             history: current.history,
             integrations: current.integrations,
             audit: current.audit,
+            permissions: current.permissions,
           };
         }
         const settings = await saveSettings({
@@ -4645,6 +4686,7 @@ export default Plugin.define({
           history,
           integrations,
           audit,
+          permissions,
         });
         // Локаль процесса меняется сразу — перезапуск не нужен.
         setLocale(settings.locale);
@@ -4657,6 +4699,7 @@ export default Plugin.define({
           history: settings.history,
           integrations: settings.integrations,
           audit: settings.audit,
+          permissions: settings.permissions,
         };
       },
       test_notification: async () => {
@@ -4930,7 +4973,8 @@ export default Plugin.define({
                   gitPollSeconds: def.gitPollSeconds,
                 },
                 def.runWhenLoggedOff === true,
-                def.paused === true
+                def.paused === true,
+                def.legacyShell === true
               );
               await saveTaskDefinition(def);
               imported.push(def.name);
@@ -5126,7 +5170,12 @@ async function schedulerCreateTask(
    * Спринт 27.5.8: пересоздать задачу сразу отключённой (пауза переживает
    * update). Для матрицы пауза применяется к клонам.
    */
-  paused?: boolean
+  paused?: boolean,
+  /**
+   * Спринт 32 / релиз 1.6: переходный флаг для гибридной политики.
+   * true возвращает shell задаче, созданной до обновления поведения.
+   */
+  legacyShell?: boolean
 ): Promise<void> {
   // Спринт 27.5 (hotfix 1.5.1): проверяем имя до создания wrapper/prompt и записи
   // в БД. Недопустимые символы отклоняются с понятным сообщением, а не ошибкой
@@ -5262,6 +5311,27 @@ async function schedulerCreateTask(
   }
   const normalizedAllowedTools = normalizeToolList(allowedTools);
   const normalizedDeniedTools = normalizeToolList(deniedTools);
+  // Спринт 32 / релиз 1.6: единая политика прав. Вычисляем здесь, чтобы
+  // PowerShell- и bash-обёртки получили одинаковый OPENCODE_CONFIG_CONTENT.
+  const globalPolicy =
+    (await loadSettings()).permissions?.defaultPolicy ?? DEFAULT_PERMISSION_POLICY;
+  const effectivePermissions = resolvePermissions({
+    policy: globalPolicy,
+    legacyShell: legacyShell === true,
+    allowedTools: normalizedAllowedTools,
+    deniedTools: normalizedDeniedTools,
+  });
+  const permissionsConfig = buildOpencodeConfig({
+    policy: globalPolicy,
+    legacyShell: legacyShell === true,
+    allowedTools: normalizedAllowedTools,
+    deniedTools: normalizedDeniedTools,
+  });
+  const policyMeta = {
+    policy: effectivePermissions.policy,
+    legacyShell: effectivePermissions.legacyShell,
+    denied: effectivePermissions.deniedByPolicy,
+  };
 
   // Matrix (fan-out, Спринт 15): валидируем до создания файлов, чтобы не
   // оставить «полу-созданную» задачу. Родитель сам не выполняется — он шаблон.
@@ -5490,7 +5560,10 @@ async function schedulerCreateTask(
         effectiveSession,
         effectiveSessionId,
         retryCount,
-        retryDelay
+        retryDelay,
+        undefined,
+        permissionsConfig,
+        policyMeta
       );
     } else {
       wrapperPath = await writeBashWrapper({
@@ -5509,6 +5582,8 @@ async function schedulerCreateTask(
         workspaceName: workspace?.name,
         allowedTools: normalizedAllowedTools,
         deniedTools: normalizedDeniedTools,
+        policy: globalPolicy,
+        legacyShell: legacyShell === true,
         scheduleGate: wrapperGate,
         envFile: taskEnvFile,
         sessionMode: effectiveSession,
@@ -5658,6 +5733,7 @@ async function schedulerCreateTask(
     pausedUntil: normalizedPausedUntil,
     allowedTools: normalizedAllowedTools,
     deniedTools: normalizedDeniedTools,
+    legacyShell: legacyShell === true ? true : undefined,
     matrix: normalizedMatrix,
     isMatrixParent: normalizedMatrix ? true : undefined,
     matrixParentId,
@@ -5680,7 +5756,15 @@ async function schedulerCreateTask(
   try {
     await saveTaskDefinition(taskDefinition);
     // Аудит политики прав: фиксируем, какие инструменты задача блокирует.
-    recordTaskToolBlocks(name, normalizedAllowedTools, normalizedDeniedTools);
+    recordTaskToolBlocks(
+      name,
+      normalizedAllowedTools,
+      normalizedDeniedTools,
+      "system",
+      "policy",
+      globalPolicy,
+      legacyShell === true
+    );
   } catch {
     // Не критично — основная задача уже создана.
   }
@@ -5726,7 +5810,8 @@ async function schedulerCreateTask(
         clone.sessionMaxRuns,
         undefined,
         clone.runWhenLoggedOff,
-        clone.paused
+        clone.paused,
+        clone.legacyShell
       );
     };
 
@@ -5938,7 +6023,8 @@ async function recreateTaskFromDefinition(definition: TaskDefinition): Promise<v
       gitPollSeconds: definition.gitPollSeconds,
     },
     definition.runWhenLoggedOff,
-    paused
+    paused,
+    definition.legacyShell
   );
 }
 

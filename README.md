@@ -29,7 +29,7 @@ Most schedulers for AI agents are cron wrappers: they run a prompt on a timer an
 - **Matrix builds** — one template, N repositories, parallel or sequential, with concurrency limits and per-workspace overrides.
 - **Quality gates** — a job is marked successful only if `npm test` (or any command) passes.
 - **Observability** — SQLite history, metrics, logs, and a local web dashboard.
-- **Runs without OpenCode open** - jobs are registered with the native OS scheduler (Windows Task Scheduler, launchd, crontab) and survive reboots.
+- **Runs without OpenCode open** - cron and one-shot jobs are registered with the native OS scheduler (Windows Task Scheduler, launchd, crontab) and survive reboots. File, git and MCP-event triggers are watched inside the plugin process, so they need OpenCode running.
 
 Everything runs on your machine. No SaaS, no telemetry, no accounts.
 
@@ -100,7 +100,7 @@ The agent gets the full feature set — 25 tools covering scheduling, pipelines,
 
 | Tool | Arguments | What it does |
 |---|---|---|
-| `schedule_task` | `name`, `prompt`, `schedule` for cron or `runAt` / `delaySeconds` for one-shot, optional `session` / `sessionMaxRuns`, `timeoutSeconds`, `model`, `priority`, `beforeScript`, `afterScript`, `qualityGate`, `dependsOn`, `retryCount`, `retryDelay`, `nextTaskOnSuccess`, `nextTaskOnError`, `triggerType` (`cron`/`file`/`git`/`mcp-event`/`once`), `mcpEvent`, `watchPath`, `watchGlobs`, `watchIgnore`, `gitBranch`, `gitPaths`, `gitIgnore`, `gitPollSeconds`, `activeDays`, `windowPolicy` (`skip`/`postpone`/`run`), `workingDirectory`, `workspaceId`, `allowedTools`, `deniedTools`, `matrix` | Registers a job with the OS scheduler (cron, one-shot, file, git or MCP-event trigger) |
+| `schedule_task` | `name`, `prompt`, `schedule` for cron or `runAt` / `delaySeconds` for one-shot, optional `session` / `sessionMaxRuns`, `timeoutSeconds`, `model`, `priority`, `beforeScript`, `afterScript`, `qualityGate`, `dependsOn`, `retryCount`, `retryDelay`, `nextTaskOnSuccess`, `nextTaskOnError`, `triggerType` (`cron`/`file`/`git`/`mcp-event`/`once`), `mcpEvent`, `watchPath`, `watchGlobs`, `watchIgnore`, `gitBranch`, `gitPaths`, `gitIgnore`, `gitPollSeconds`, `activeDays`, `windowPolicy` (`skip`/`postpone`/`run`), `workingDirectory`, `workspaceId`, `allowedTools`, `deniedTools`, `legacyShell`, `matrix` | Registers a job with the OS scheduler (cron, one-shot, file, git or MCP-event trigger) |
 | `list_tasks` | — | Returns jobs with schedule, status, next run, chains, workspace and matrix summary |
 | `update_task` | `name` + any field to change | Partial update; omitted fields keep their values, empty values clear them, `matrix: null` removes the matrix |
 | `delete_task` | `name` | Deletes a job (a matrix parent deletes clones and aggregator) |
@@ -127,6 +127,22 @@ The agent gets the full feature set — 25 tools covering scheduling, pipelines,
 | `emit_event` | `eventName`, `payload?` | Start tasks subscribed to an MCP event |
 
 `schedule_task` also accepts the full matrix configuration (`workspaceIds`, `strategy`, `failureMode`, `aggregation`, `concurrency`, `overrides`, `createAggregator`).
+
+## Permissions
+
+Agent jobs run with `opencode run --auto`, so their tool policy must be explicit. The global `permissions.defaultPolicy` setting (GUI → Settings, or `manage_settings`) chooses the baseline:
+
+| Policy | Allowed by default | Denied by default |
+|---|---|---|
+| `hybrid` (default) | read, edit, glob, grep, subagent, skill, webfetch, websearch | shell, question |
+| `secure` | read, glob, grep, skill | edit, shell, question, webfetch, websearch, subagent |
+| `legacy` | all ten actions | — |
+
+`deniedTools` always wins. A non-empty `allowedTools` is an allowlist: it denies every action that is not listed, and can explicitly re-enable an action denied by the policy (for example `shell`). `legacyShell: true` re-enables `shell` only under `hybrid`, for tasks migrated from older versions.
+
+Blocked actions are written to the audit journal as `tool.blocked` with `reason: "default-policy"` and a `hint`, and each run logs the active policy.
+
+Recommended pattern: keep `git commit`/`push`, builds and tests outside the agent, in `qualityGate` or `afterScript` (the wrapper runs them with `bash -c`), and leave the agent with `read`/`edit`. Most jobs then need no `shell` at all.
 
 ## Agent skill
 
@@ -215,7 +231,18 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 ## FAQ
 
 **Does it work when OpenCode is closed?**
-Yes. Jobs are registered with the native OS scheduler, so they run without an open OpenCode window.
+Yes, for cron and one-shot jobs. They are registered with the native OS scheduler, so they run without an open OpenCode window.
+
+File (`file`), git (`git`) and MCP-event (`mcp-event`) triggers are watched by the plugin process (chokidar / git polling / the MCP event bus), so OpenCode must be running for those triggers to fire.
+
+| Trigger | Runs without OpenCode? | Mechanism |
+|---|---|---|
+| `cron` | ✅ Yes | Native OS scheduler (Task Scheduler / launchd / crontab) |
+| `once` | ✅ Yes | Native OS scheduler, one-shot registration |
+| `file` | ❌ No | chokidar watcher inside the plugin process |
+| `git` | ❌ No | Git polling inside the plugin process |
+| `mcp-event` | ❌ No | MCP event bus inside the plugin process |
+| `webhook` (`/api/hooks/:name`) | ❌ No | HTTP server inside the plugin process |
 
 **Do jobs run when nobody is logged on?**
 On Windows, only if you opt in with `runWhenLoggedOff: true`: the task is then registered as `schtasks /ru SYSTEM` and runs in session 0 without your profile, mapped drives or saved credentials. The default is interactive only — the job runs while the user is logged on. Linux crontab always runs without a login; a macOS launchd agent runs only inside a user session.
@@ -236,7 +263,7 @@ No. Windows Toast (PowerShell/WinRT), macOS Notification Center (`osascript`) an
 Yes. Set `notifications.quietHours` (`enabled`, `from`, `to` in `HH:MM`). During the window successful and `partial` runs are suppressed, while failures and timeouts are always delivered.
 
 **How do I store secrets?**
-Use `manage_secrets` (or the «🔐 Секреты» panel in the sidebar) to create an encrypted secret. Secrets are stored in `<PLUGIN_DIR>/secrets.json` with AES-256-GCM and a key file (`secrets.key`, rights 0600). In task `env`, reference a secret as `${secret:NAME}` — the value is substituted at run time and masked in logs, history and audit. The secret name can also be set via `manage_settings` → `notifications.telegram.botToken` left empty and `OPENCODE_SCHEDULER_TELEGRAM_BOT_TOKEN` env var instead.
+Use `manage_secrets` (or the «🔐 Секреты» panel in the sidebar) to create an encrypted secret. Secrets are stored in `<PLUGIN_DIR>/secrets.json` with AES-256-GCM and a key file (`secrets.key`; mode 0600 on POSIX, an ACL granting only the current Windows user on Windows). In task `env`, reference a secret as `${secret:NAME}` — the value is substituted at run time and masked in logs, history and audit. The secret name can also be set via `manage_settings` → `notifications.telegram.botToken` left empty and `OPENCODE_SCHEDULER_TELEGRAM_BOT_TOKEN` env var instead.
 
 **Can I see who changed what?**
 Yes. The audit log (`get_audit_log` tool, «📜 Журнал аудита» panel, `GET /api/audit`) records every mutation — task create/update/delete/run, settings, templates, profiles, workspaces, secrets, import, history cleanup — with actor (mcp/gui/http), source, timestamp and redacted details. Retention defaults to 90 days / 10 000 records.

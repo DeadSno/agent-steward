@@ -1,12 +1,15 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { PLUGIN_DIR } from "../types.js";
 
 /**
  * Зашифрованное хранилище секретов (Спринт 26).
  *
- * Зависимостей нет: ключ 32 байта лежит в `secrets.key` (права 0600), сами
+ * Зависимостей нет: ключ 32 байта лежит в `secrets.key` (права 0600 на POSIX,
+ * на Windows — ACL только для текущего пользователя), сами
  * значения — в `secrets.json`, зашифрованные AES-256-GCM. Имя секрета
  * используется как AAD, поэтому перестановка записей между именами ломает
  * расшифровку. В открытом виде секреты не попадают ни в settings.json, ни в
@@ -85,8 +88,54 @@ function ensureDir(): void {
   fs.mkdirSync(PLUGIN_DIR, { recursive: true });
 }
 
+let windowsAclWarned = false;
+
+/**
+ * Windows-учётка для ACL: `DOMAIN\user`, если домен известен, иначе имя
+ * пользователя. icacls принимает оба варианта.
+ */
+function currentWindowsUser(): string {
+  const user = process.env.USERNAME?.trim() || os.userInfo().username;
+  const domain = process.env.USERDOMAIN?.trim();
+  return domain ? `${domain}\\${user}` : user;
+}
+
+/**
+ * Ограничивает доступ к файлу текущим пользователем на Windows.
+ *
+ * На POSIX права задаёт chmod, но на Windows mode из writeFileSync
+ * игнорируется: без явного ACL файл наследует права каталога и может быть
+ * прочитан другими локальными пользователями. `/inheritance:r` убирает
+ * унаследованные ACE, `/grant:r` оставляет полный доступ только владельцу.
+ * Ошибка не критична для работы, но один раз пишется в лог: молчаливое
+ * понижение защиты недопустимо.
+ */
+function restrictWindowsAcl(file: string): void {
+  try {
+    const result = spawnSync(
+      "icacls",
+      [file, "/inheritance:r", "/grant:r", `${currentWindowsUser()}:F`],
+      { windowsHide: true, stdio: "ignore" }
+    );
+    if (result.status === 0) return;
+    throw new Error(
+      result.error?.message ?? `icacls завершился с кодом ${result.status}`
+    );
+  } catch (err) {
+    if (windowsAclWarned) return;
+    windowsAclWarned = true;
+    warn(
+      "не удалось ограничить ACL файла секретов; ключ может быть доступен другим локальным пользователям",
+      err
+    );
+  }
+}
+
 function chmodPrivate(file: string): void {
-  if (process.platform === "win32") return;
+  if (process.platform === "win32") {
+    restrictWindowsAcl(file);
+    return;
+  }
   try {
     fs.chmodSync(file, 0o600);
   } catch {
@@ -105,6 +154,9 @@ function loadKey(): Buffer {
     if (raw.length !== KEY_BYTES) {
       throw new Error("повреждён файл ключа секретов");
     }
+    // Миграция: ключи, созданные до 1.5.5, на Windows могли не иметь ACL.
+    // Повторное ограничение доступа идемпотентно и выполняется один раз за процесс.
+    chmodPrivate(SECRETS_KEY_FILE);
     keyCache = { stamp, key: raw };
     return raw;
   } catch (err: any) {

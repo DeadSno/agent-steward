@@ -1,5 +1,9 @@
 import { getDb } from "../db/index.js";
 import { redactSecretsInText } from "./secrets.js";
+import {
+  resolvePermissions,
+  type PermissionPolicy,
+} from "./permissions.js";
 
 /**
  * Журнал аудита мутаций (Спринт 26).
@@ -216,7 +220,9 @@ export function recordTaskToolBlocks(
   allowedTools: readonly string[] | null | undefined,
   deniedTools: readonly string[] | null | undefined,
   actor: AuditActor = "system",
-  source = "policy"
+  source = "policy",
+  policy?: PermissionPolicy,
+  legacyShell?: boolean
 ): number {
   const normalizedDenied = Array.from(
     new Set(
@@ -258,6 +264,38 @@ export function recordTaskToolBlocks(
       }) != null
     ) {
       written++;
+    }
+  }
+  // Спринт 32 / релиз 1.6: фиксируем инструменты, запрещённые политикой по
+  // умолчанию (hybrid: shell/question; secure: ещё edit/webfetch/websearch/
+  // subagent). Это политика на момент сохранения задачи, а не попытки вызова:
+  // detached-обёртка не имеет доступа к SQLite.
+  if (policy) {
+    const effective = resolvePermissions({
+      policy,
+      legacyShell,
+      allowedTools: normalizedAllowed,
+      deniedTools: normalizedDenied,
+    });
+    for (const denied of effective.deniedByPolicy) {
+      if (
+        recordToolBlocked({
+          task,
+          tool: denied.action,
+          actor,
+          source,
+          details: {
+            reason: "default-policy",
+            policy: effective.policy,
+            legacyShell: effective.legacyShell,
+            hint: denied.hint,
+            allowedTools: normalizedAllowed.length > 0 ? normalizedAllowed : null,
+            deniedTools: normalizedDenied.length > 0 ? normalizedDenied : null,
+          },
+        }) != null
+      ) {
+        written++;
+      }
     }
   }
   return written;
