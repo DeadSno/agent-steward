@@ -70,6 +70,7 @@ import {
   shadowReport,
   resetShadowDecisions,
 } from "./core/triage-shadow.js";
+import { compareTriage } from "./core/triage-compare.js";
 import { applyLocalAiPatch, summarizeLocalAi, type LocalAiPatch } from "./core/local-ai.js";
 import { classifyNotification, type TriageInput } from "./core/triage.js";
 import {
@@ -4566,6 +4567,33 @@ export default Plugin.define({
           fallback: patch.fallback,
           confidenceThreshold: patch.confidenceThreshold,
         });
+      },
+
+      // --- Спринт 31.5: сравнение триажа «до/после» --------------------------
+      compare_triage: async (input: unknown) => {
+        const args = (input ?? {}) as {
+          taskName?: string;
+          status?: string;
+          error?: string | null;
+          durationMs?: number | null;
+          tokens?: number | null;
+          costUsd?: number | null;
+          before?: TriageSettings | null;
+          after?: TriageSettings | null;
+          dedupCount?: number;
+        };
+        const triageInput: TriageInput = {
+          taskName: String(args.taskName ?? "task"),
+          status: String(args.status ?? "success"),
+          ...(args.error ? { error: args.error } : {}),
+          ...(typeof args.durationMs === "number" ? { durationMs: args.durationMs } : {}),
+          ...(typeof args.tokens === "number" ? { tokens: args.tokens } : {}),
+          ...(typeof args.costUsd === "number" ? { costUsd: args.costUsd } : {}),
+        };
+        const before = args.before ?? undefined;
+        const after = args.after ?? undefined;
+        const result = await compareTriage(triageInput, before, after, args.dedupCount ?? 1);
+        return { success: true, result };
       },
 
       // --- Спринт 26: секреты и аудит -------------------------------------

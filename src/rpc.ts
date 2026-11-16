@@ -853,6 +853,35 @@ const GetAuditOutput = {
   required: ["success", "records", "total"],
 } as const;
 
+/** Сравнение триажа «до/после» (Спринт 31.5). */
+const CompareTriageInput = {
+  type: "object" as const,
+  properties: {
+    taskName: { type: "string" },
+    status: { type: "string" },
+    error: { type: ["string", "null"] },
+    durationMs: { type: "number" },
+    tokens: { type: "number" },
+    costUsd: { type: "number" },
+    before: { type: ["object", "null"] },
+    after: { type: ["object", "null"] },
+    dedupCount: { type: "number" },
+  },
+  required: ["taskName", "status"],
+  additionalProperties: false,
+} as const;
+
+const CompareTriageOutput = {
+  type: "object" as const,
+  properties: {
+    success: { type: "boolean" },
+    result: { type: "object" },
+    error: { type: "string" },
+  },
+  required: ["success", "result"],
+  additionalProperties: false,
+} as const;
+
 const TemplateItem = {
   type: "object" as const,
   properties: {
@@ -1522,6 +1551,10 @@ export const SchedulerRpc = Rpc.define({
     save_secret: { input: SaveSecretInput, output: SaveSecretOutput },
     delete_secret: { input: DeleteSecretInput, output: DeleteSecretOutput },
     get_audit: { input: GetAuditInput, output: GetAuditOutput },
+    compare_triage: {
+      input: CompareTriageInput,
+      output: CompareTriageOutput,
+    },
   },
   events: {},
 });

@@ -449,6 +449,12 @@ export default Plugin.define({
     const [localAiResult, setLocalAiResult] = createSignal<string | null>(null)
     // Спринт 31.13: видимый статус подключения к провайдеру.
     const [localAiState, setLocalAiState] = createSignal<"idle" | "checking" | "ok" | "error">("idle")
+    // Спринт 31.4: мастер настройки триажа.
+    const [wizardOpen, setWizardOpen] = createSignal(false)
+    const [wizardStep, setWizardStep] = createSignal<1 | 2 | 3>(1)
+    const [wizardProvider, setWizardProvider] = createSignal<"ollama" | "openai">("ollama")
+    const [wizardModel, setWizardModel] = createSignal("")
+    const [wizardPreset, setWizardPreset] = createSignal<"minimal" | "recommended" | null>(null)
     const localAiStatusColor = () => {
       switch (localAiState()) {
         case "ok":
@@ -3448,6 +3454,19 @@ export default Plugin.define({
                       {localAiResult() && <span style="font-size:11px;color:#8e8e93">{localAiResult()}</span>}
                     </div>
                     <div style="font-size:11px;color:#8e8e93">{gt("localAi.hint")}</div>
+                    <button
+                      onClick={() => {
+                        setWizardStep(1)
+                        setWizardProvider("ollama")
+                        setWizardModel("")
+                        setWizardPreset(null)
+                        setWizardOpen(true)
+                      }}
+                      disabled={!notificationsEnabled()}
+                      style={`padding:4px 8px;background:#546e7a;color:white;border:none;border-radius:4px;cursor:${notificationsEnabled() ? "pointer" : "not-allowed"};font-size:12px;margin-top:6px`}
+                    >
+                      {gt("localAi.wizard")}
+                    </button>
                     {(localAiMode() === "llm" || localAiMode() === "auto") && (
                       <div style="font-size:11px;color:#d9a441;margin-top:4px">{gt("localAi.asyncHint")}</div>
                     )}
@@ -4932,6 +4951,141 @@ export default Plugin.define({
                   {logs().split("\n").map((line, i) => (
                     <div key={i} style="white-space:pre-wrap;margin-bottom:2px">{line}</div>
                   ))}
+                </div>
+              </div>
+            )}
+            {/* Мастер настройки триажа (Спринт 31.4) */}
+            {wizardOpen() && (
+              <div style="position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.6)">
+                <div style="background:#1a1a1a;border:1px solid #333;border-radius:8px;width:560px;max-width:92vw;max-height:92vh;overflow:hidden;display:flex;flex-direction:column;color:#e0e0e0;font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">
+                  <div style="padding:16px 20px;border-bottom:1px solid #333;display:flex;justify-content:space-between;align-items:center">
+                    <div style="font-size:16px;font-weight:600">{wizardStep() === 1 ? gt("localAi.wizard.screen1.title") : wizardStep() === 2 ? gt("localAi.wizard.screen2.title") : gt("localAi.wizard.screen3.title")}</div>
+                    <button onClick={() => setWizardOpen(false)} style="background:none;border:none;color:#8e8e93;cursor:pointer;font-size:18px;padding:0">✕</button>
+                  </div>
+                  <div style="padding:16px 20px;overflow-y:auto">
+                    {wizardStep() === 1 && (
+                      <div style="display:flex;flex-direction:column;gap:12px">
+                        <div style="font-size:13px;color:#b0b0b0">{gt("localAi.wizard.screen1.desc")}</div>
+                        <div style="font-size:12px;font-weight:500;color:#e0e0e0;margin-top:4px">{gt("localAi.wizard.screen1.provider")}</div>
+                        <div style="display:flex;gap:10px">
+                          <button
+                            onClick={() => setWizardProvider("ollama")}
+                            style={`flex:1;padding:8px 12px;background:${wizardProvider() === "ollama" ? "#007acc" : "#2a2a2a"};border:1px solid ${wizardProvider() === "ollama" ? "#007acc" : "#333"};border-radius:6px;color:#fff;cursor:pointer;font-size:12px`}
+                          >
+                            {gt("localAi.wizard.screen1.provider.ollama")}
+                          </button>
+                          <button
+                            onClick={() => setWizardProvider("openai")}
+                            style={`flex:1;padding:8px 12px;background:${wizardProvider() === "openai" ? "#007acc" : "#2a2a2a"};border:1px solid ${wizardProvider() === "openai" ? "#007acc" : "#333"};border-radius:6px;color:#fff;cursor:pointer;font-size:12px`}
+                          >
+                            {gt("localAi.wizard.screen1.provider.openai")}
+                          </button>
+                        </div>
+                        <div style="font-size:12px;font-weight:500;color:#e0e0e0;margin-top:8px">{gt("localAi.wizard.screen1.model")}</div>
+                        <input
+                          type="text"
+                          value={wizardModel()}
+                          placeholder={gt("localAi.wizard.screen1.modelDesc")}
+                          onInput={(e) => setWizardModel(e.currentTarget.value)}
+                          style="width:100%;padding:6px 8px;background:#0f0f0f;border:1px solid #333;border-radius:4px;color:#fff;font-size:12px"
+                        />
+                        <div style="font-size:11px;color:#8e8e93;margin-top:6px">{gt("localAi.wizard.screen1.consequence")}</div>
+                      </div>
+                    )}
+                    {wizardStep() === 2 && (
+                      <div style="display:flex;flex-direction:column;gap:12px">
+                        <div style="font-size:13px;color:#b0b0b0">{gt("localAi.wizard.screen2.desc")}</div>
+                        <button
+                          onClick={() => setWizardPreset("minimal")}
+                          style={`flex:1;padding:14px 16px;background:${wizardPreset() === "minimal" ? "#007acc" : "#2a2a2a"};border:1px solid ${wizardPreset() === "minimal" ? "#007acc" : "#333"};border-radius:6px;color:#fff;cursor:pointer;text-align:left;font-size:13px`}
+                        >
+                          <div style="font-weight:600">{gt("localAi.wizard.screen2.preset.minimal")}</div>
+                          <div style="font-size:11px;color:#b0b0b0;margin-top:4px">{gt("localAi.wizard.screen2.preset.minimal.desc")}</div>
+                        </button>
+                        <button
+                          onClick={() => setWizardPreset("recommended")}
+                          style={`flex:1;padding:14px 16px;background:${wizardPreset() === "recommended" ? "#007acc" : "#2a2a2a"};border:1px solid ${wizardPreset() === "recommended" ? "#007acc" : "#333"};border-radius:6px;color:#fff;cursor:pointer;text-align:left;font-size:13px`}
+                        >
+                          <div style="font-weight:600">{gt("localAi.wizard.screen2.preset.recommended")}</div>
+                          <div style="font-size:11px;color:#b0b0b0;margin-top:4px">{gt("localAi.wizard.screen2.preset.recommended.desc")}</div>
+                        </button>
+                      </div>
+                    )}
+                    {wizardStep() === 3 && (
+                      <div style="display:flex;flex-direction:column;gap:12px">
+                        <div style="font-size:13px;color:#b0b0b0">{gt("localAi.wizard.screen3.desc")}</div>
+                        <div style="font-size:12px;font-weight:500;color:#e0e0e0">{gt("localAi.wizard.screen3.ruleOrder")}</div>
+                        <div style="background:#0f0f0f;border:1px solid #333;border-radius:6px;padding:10px;font-size:11px;color:#b0b0b0;line-height:1.6">
+                          <div>1. error-timeout — таймаут / сетевая ошибка</div>
+                          <div>2. error-permission — отказ в доступе</div>
+                          <div>3. error-network — сеть / DNS</div>
+                          <div>4. error-quality — качество / сборка</div>
+                          <div>5. cost-high — стоимость ≥ $1</div>
+                          <div>6. task-important — deploy/release/backup/миграция</div>
+                          <div>7. status-error — ошибка задачи</div>
+                          <div>8. status-success — успех задачи</div>
+                        </div>
+                        <div style="font-size:12px;font-weight:500;color:#e0e0e0;margin-top:8px">{gt("localAi.wizard.screen3.confidenceThreshold")}</div>
+                        <div style="font-size:11px;color:#8e8e93">{gt("localAi.wizard.screen3.confidenceHint")}</div>
+                      </div>
+                    )}
+                  </div>
+                  <div style="padding:12px 20px;border-top:1px solid #333;display:flex;justify-content:space-between;gap:8px">
+                    {wizardStep() > 1 && (
+                      <button
+                        onClick={() => setWizardStep((s) => s - 1)}
+                        style="padding:6px 16px;background:#2a2a2a;border:1px solid #333;border-radius:4px;color:#b0b0b0;cursor:pointer;font-size:12px"
+                      >
+                        {gt("localAi.wizard.back")}
+                      </button>
+                    )}
+                    <button
+                      onClick={async () => {
+                        if (wizardStep() === 1) {
+                          if (!wizardModel().trim()) return
+                          setWizardStep(2)
+                        } else if (wizardStep() === 2) {
+                          if (!wizardPreset()) return
+                          setWizardStep(3)
+                        } else {
+                          // Apply settings
+                          const mode = wizardPreset() === "minimal" ? "rules" : "auto"
+                          const baseUrl = wizardProvider() === "ollama" ? "http://127.0.0.1:11434" : ""
+                          const model = wizardModel().trim() || (wizardProvider() === "ollama" ? "qwen3:4b" : "")
+                          setLocalAiMode(mode)
+                          setLocalAiBaseUrl(baseUrl)
+                          setLocalAiModel(model)
+                          setLocalAiTimeoutMs(60000)
+                          setLocalAiThreshold(0.7)
+                          setLocalAiFallback("rules")
+                          setLocalAiState("idle")
+                          setLocalAiResult(null)
+                          setShadowEnabled(false)
+                          try {
+                            await persistSettings({
+                              notifications: {
+                                triage: {
+                                  mode,
+                                  baseUrl,
+                                  model,
+                                  timeoutMs: 60000,
+                                  fallback: "rules",
+                                  confidenceThreshold: 0.7,
+                                  shadow: { enabled: false, days: 14, startedAt: null },
+                                },
+                              },
+                            })
+                          } catch (err: any) {
+                            console.error("wizard save failed:", err)
+                          }
+                          setWizardOpen(false)
+                        }
+                      }}
+                      style={`padding:6px 16px;background:#007acc;border:none;border-radius:4px;color:#fff;cursor:pointer;font-size:12px;font-weight:500`}
+                    >
+                      {wizardStep() === 3 ? gt("localAi.wizard.finish") : gt("localAi.wizard.next")}
+                    </button>
+                  </div>
                 </div>
               </div>
             )}
