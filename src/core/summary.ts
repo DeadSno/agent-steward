@@ -62,7 +62,7 @@ class SummaryParseFailure extends Error {
       | "invalid-json"
       | "invalid-schema"
       | "invalid-response",
-    message: string
+    message: string,
   ) {
     super(message);
   }
@@ -77,13 +77,13 @@ function resolveEndpoint(baseUrl: string): {
   protocol: "ollama" | "openai";
 } {
   const base = baseUrl.replace(/\/+$/, "");
-  if (/\/v1$/.test(base)) {
+  if (base.endsWith("/v1")) {
     return { url: `${base}/chat/completions`, protocol: "openai" };
   }
   return { url: `${base}/api/chat`, protocol: "ollama" };
 }
 
-function buildMessages(input: SummaryInput): Array<{ role: string; content: string }> {
+function buildMessages(input: SummaryInput): { role: string; content: string }[] {
   const payload = {
     task: input.taskName,
     status: input.status,
@@ -181,7 +181,7 @@ function formatDuration(ms: number): string {
 export function truncateSummary(
   input: SummaryInput,
   maxLines: number,
-  maxChars: number
+  maxChars: number,
 ): string[] {
   const lines: string[] = [];
   lines.push(`${input.taskName}: ${input.status}`.slice(0, maxChars));
@@ -218,7 +218,7 @@ export async function summarizeNotification(
   input: SummaryInput,
   settings: NotificationSummarySettings,
   provider: SummaryProvider,
-  options: { timeoutMs?: number } = {}
+  options: { timeoutMs?: number } = {},
 ): Promise<SummaryResult> {
   const startedAt = Date.now();
   const maxLines = settings.maxLines || 3;
@@ -250,26 +250,26 @@ export async function summarizeNotification(
     const body =
       protocol === "openai"
         ? {
-            model,
-            messages,
-            temperature: 0,
-            stream: false,
-            response_format: {
-              type: "json_schema",
-              json_schema: {
-                name: "notification_summary",
-                strict: true,
-                schema: SUMMARY_SCHEMA,
-              },
+          model,
+          messages,
+          temperature: 0,
+          stream: false,
+          response_format: {
+            type: "json_schema",
+            json_schema: {
+              name: "notification_summary",
+              strict: true,
+              schema: SUMMARY_SCHEMA,
             },
-          }
+          },
+        }
         : {
-            model,
-            messages,
-            stream: false,
-            format: SUMMARY_SCHEMA,
-            options: { temperature: 0 },
-          };
+          model,
+          messages,
+          stream: false,
+          format: SUMMARY_SCHEMA,
+          options: { temperature: 0 },
+        };
 
     const response = await fetch(url, {
       method: "POST",
@@ -291,7 +291,7 @@ export async function summarizeNotification(
     const lines = parseSummary(
       contentFromBody(parsed, protocol),
       maxLines,
-      maxChars
+      maxChars,
     );
     clearTimeout(timer);
     return {
@@ -312,7 +312,7 @@ export async function summarizeNotification(
 
 /** Провайдер из настроек триажа: baseUrl/model используются те же. */
 export function summaryProviderFromTriage(
-  triage: TriageSettings | undefined
+  triage: TriageSettings | undefined,
 ): SummaryProvider {
   return { baseUrl: triage?.baseUrl, model: triage?.model };
 }

@@ -52,7 +52,7 @@ function normalizeOverride(value: unknown): number | undefined {
 
 function effectiveLimits(
   settings: HistorySettings,
-  overrides: RetentionOverrides
+  overrides: RetentionOverrides,
 ): { retentionDays: number; maxRecords: number } {
   return {
     retentionDays:
@@ -67,7 +67,7 @@ function effectiveLimits(
  * `cleanup_history` заодно настраивает ретеншн.
  */
 export async function runHistoryRetention(
-  overrides: RetentionOverrides = {}
+  overrides: RetentionOverrides = {},
 ): Promise<RetentionReport> {
   const settings = await loadSettings();
   const base = settings.history ?? defaultHistorySettings();
@@ -127,7 +127,7 @@ export async function runHistoryRetention(
  * `force` игнорирует интервал (используется в тестах).
  */
 export async function maybeRunHistoryRetention(
-  force = false
+  force = false,
 ): Promise<RetentionReport | undefined> {
   const settings = await loadSettings();
   const history = settings.history ?? defaultHistorySettings();

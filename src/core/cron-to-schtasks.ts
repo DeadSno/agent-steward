@@ -46,7 +46,7 @@ function isStar(value: string): boolean {
  * Возвращает N или undefined.
  */
 function parseStep(value: string): number | undefined {
-  const match = value.match(/^\*\/(\d+)$/);
+  const match = /^\*\/(\d+)$/.exec(value);
   if (!match) return undefined;
   const n = parseInt(match[1], 10);
   return n > 0 ? n : undefined;
@@ -74,7 +74,7 @@ export function convertCronToSchTasks(cron: string): CronConversion {
       "Ожидалось 5 полей cron-выражения (минута час день_месяца месяц день_недели), получено " +
         fields.length +
         ".\n\n" +
-        UNSUPPORTED_ERROR
+        UNSUPPORTED_ERROR,
     );
   }
 
@@ -108,24 +108,30 @@ export function convertCronToSchTasks(cron: string): CronConversion {
         "Интервал /mo " +
           stepN +
           " минут превышает максимально допустимый для schtasks (1439 минут).\n\n" +
-          UNSUPPORTED_ERROR
+          UNSUPPORTED_ERROR,
       );
     }
-    // schtasks /mo N запускает задачу каждые N минут начиная с момента создания
-    // задачи, а cron */N — в минуты 0, N, 2N внутри каждого часа. Семантики
-    // совпадают только когда N делит 60 без остатка; иначе отдаём задачу в
-    // минутный опрос с gate во враппере (needsPollMode).
+    // schtasks /mo Nanchors на момент создания задачи, а cron */N означает
+    // минуты 0, N, 2N … внутри часа. Семантики совпадают только когда N
+    // делит 60 без остатка И есть выровненный старт (00:00), поэтому ниже
+    // добавляется startTime: "00:00". Для N, не делящих 60, выбрасывается
+    // ошибка — задача уходит в минутный опрос с gate во враппере
+    // (needsPollMode в windows.ts), а не конвертируется здесь нативно.
     if (60 % stepN !== 0) {
       throw new Error(
         "Интервал */" +
           stepN +
           " не делит час нацело: cron и schtasks понимают его по-разному.\n\n" +
-          UNSUPPORTED_ERROR
+          UNSUPPORTED_ERROR,
       );
     }
     return {
       sc: "MINUTE",
       extraFlags: ["/mo", String(stepN)],
+      // schtasks /mo Nanchors на момент создания задачи; cron */N означает
+      // минуты 0, N, 2N … внутри часа. Выровненный старт 00:00 делает
+      // расписание идентичным cron для любого N, делящего 60.
+      startTime: "00:00",
     };
   }
 
@@ -184,91 +190,6 @@ export function convertCronToSchTasks(cron: string): CronConversion {
 
   // Ни один поддерживаемый паттерн не совпал.
   throw new Error(UNSUPPORTED_ERROR);
-}
-
-/**
- * Вычисляет ближайшее прошедшее (<= now) время срабатывания для поддерживаемых
- * cron-выражений. Нужно для восстановления пропущенных запусков (catch-up):
- * сравнивая это время с историей, можно понять, выполнялась ли задача.
- *
- * Возвращает null, если выражение не поддерживается или не распознано.
- */
-export function previousRunTime(cron: string, now: Date = new Date()): Date | null {
-  const fields = cron.trim().split(/\s+/);
-  if (fields.length !== 5) return null;
-
-  const [minute, hour, dayOfMonth, month, dayOfWeek] = fields;
-  const star = (value: string) => value === "*";
-  const intIn = (value: string, min: number, max: number): number | undefined => {
-    if (!/^\d+$/.test(value)) return undefined;
-    const n = parseInt(value, 10);
-    return n >= min && n <= max ? n : undefined;
-  };
-  const nowMs = now.getTime();
-
-  // * * * * * — каждую минуту: последняя граница минуты.
-  if (star(minute) && star(hour) && star(dayOfMonth) && star(month) && star(dayOfWeek)) {
-    return new Date(Math.floor(nowMs / 60000) * 60000);
-  }
-
-  // */N * * * * — каждые N минут внутри часа (минуты 0, N, 2N...).
-  const step = /^\*\/(\d+)$/.exec(minute);
-  if (step && star(hour) && star(dayOfMonth) && star(month) && star(dayOfWeek)) {
-    const n = parseInt(step[1], 10);
-    if (n > 0) {
-      const result = new Date(now);
-      result.setSeconds(0, 0);
-      const minuteOfHour = result.getMinutes();
-      result.setMinutes(n >= 60 ? 0 : minuteOfHour - (minuteOfHour % n));
-      return result;
-    }
-    return null;
-  }
-
-  // M * * * * — каждый час в минуту M.
-  const hourlyMinute = intIn(minute, 0, 59);
-  if (
-    hourlyMinute !== undefined &&
-    star(hour) &&
-    star(dayOfMonth) &&
-    star(month) &&
-    star(dayOfWeek)
-  ) {
-    const result = new Date(now);
-    result.setSeconds(0, 0);
-    result.setMinutes(hourlyMinute);
-    if (result.getTime() > nowMs) result.setHours(result.getHours() - 1);
-    return result;
-  }
-
-  const m = intIn(minute, 0, 59);
-  const h = intIn(hour, 0, 23);
-  if (m === undefined || h === undefined || !star(dayOfMonth) || !star(month)) {
-    return null;
-  }
-
-  // M H * * * — ежедневно в HH:MM.
-  if (star(dayOfWeek)) {
-    const result = new Date(now);
-    result.setSeconds(0, 0);
-    result.setHours(h, m, 0, 0);
-    if (result.getTime() > nowMs) result.setDate(result.getDate() - 1);
-    return result;
-  }
-
-  // M H * * D — еженедельно в день D (0 и 7 — воскресенье) в HH:MM.
-  const dow = intIn(dayOfWeek, 0, 7);
-  if (dow === undefined) return null;
-  const targetDow = dow === 7 ? 0 : dow;
-  const result = new Date(now);
-  result.setSeconds(0, 0);
-  result.setHours(h, m, 0, 0);
-  // Не больше 8 итераций: одна неделя гарантированно содержит нужный день.
-  for (let i = 0; i <= 8; i += 1) {
-    if (result.getTime() <= nowMs && result.getDay() === targetDow) return result;
-    result.setDate(result.getDate() - 1);
-  }
-  return null;
 }
 
 /**

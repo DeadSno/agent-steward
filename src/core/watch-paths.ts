@@ -42,7 +42,7 @@ export function normalizeWatchPath(watchPath: string, baseDir: string): string {
   const rel = relative(baseDir, resolved);
   if (rel === ".." || rel.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) || isAbsolute(rel)) {
     throw new Error(
-      `Путь наблюдения выходит за пределы рабочей директории задачи: "${trimmed}".`
+      `Путь наблюдения выходит за пределы рабочей директории задачи: "${trimmed}".`,
     );
   }
   return resolved;

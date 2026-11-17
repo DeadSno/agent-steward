@@ -76,7 +76,7 @@ function detailsOf(record: { details: unknown }): Record<string, any> {
 export function recordTriageOutcome(
   input: TriageInput,
   decision: TriageDecision,
-  options: TriageOutcomeOptions = {}
+  options: TriageOutcomeOptions = {},
 ): number | null {
   const shadow = Boolean(options.shadowActive);
   const suppressed = Boolean(options.suppressed);
@@ -112,7 +112,7 @@ export function recordTriageOutcome(
 /** Обратная совместимость: запись shadow-решения без деталей доставки. */
 export function recordShadowDecision(
   input: TriageInput,
-  decision: TriageDecision
+  decision: TriageDecision,
 ): void {
   recordTriageOutcome(input, decision, { shadowActive: true });
 }
@@ -124,7 +124,7 @@ export function recordShadowDecision(
  * shadow-записи или все решения.
  */
 export function readTriageDecisions(
-  filter: { since?: string; until?: string; taskName?: string; limit?: number } = {}
+  filter: { since?: string; until?: string; taskName?: string; limit?: number } = {},
 ): ShadowDecisionRecord[] {
   const result = readAuditLog({
     action: TRIAGE_AUDIT_ACTION,
@@ -185,15 +185,15 @@ export interface ShadowReport {
 
 /** Сформировать отчёт по persistent-журналу за текущий/прошлый период. */
 export function shadowReport(
-  shadow: TriageShadowSettings | undefined
+  shadow: TriageShadowSettings | undefined,
 ): ShadowReport {
   const startedAt = shadow?.startedAt ?? null;
   const days = shadow?.days ?? 0;
   const until =
     startedAt && days > 0
       ? new Date(
-          new Date(startedAt).getTime() + days * 24 * 60 * 60 * 1000
-        ).toISOString()
+        new Date(startedAt).getTime() + days * 24 * 60 * 60 * 1000,
+      ).toISOString()
       : undefined;
 
   const records = readTriageDecisions({
@@ -231,7 +231,7 @@ export function resetShadowDecisions(): void {
       .prepare(
         `DELETE FROM audit_log
           WHERE action = ?
-            AND json_extract(details_json, '$.shadow') = 1`
+            AND json_extract(details_json, '$.shadow') = 1`,
       )
       .run(TRIAGE_AUDIT_ACTION);
   } catch {

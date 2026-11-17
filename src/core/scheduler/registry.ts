@@ -27,6 +27,8 @@ export interface RegistryEntry {
   model?: string;
   /** Приоритет задачи 0..10 (опционально). */
   priority?: number;
+  /** IANA-таймзона задачи (опционально, undefined — системная). */
+  timezone?: string;
 }
 
 /** Реестр задач конкретного бэкенда: <pluginDir>/scheduler-<backend>.json. */
@@ -51,7 +53,7 @@ export class TaskRegistry {
       if (!Array.isArray(parsed)) return [];
       return parsed.filter(
         (entry): entry is RegistryEntry =>
-          entry && typeof entry.name === "string" && typeof entry.command === "string"
+          entry && typeof entry.name === "string" && typeof entry.command === "string",
       );
     } catch {
       return [];
@@ -73,7 +75,7 @@ export class TaskRegistry {
   async upsert(entry: RegistryEntry): Promise<void> {
     const entries = await this.load();
     const index = entries.findIndex(
-      (e) => e.name.toLowerCase() === entry.name.toLowerCase()
+      (e) => e.name.toLowerCase() === entry.name.toLowerCase(),
     );
     if (index === -1) entries.push(entry);
     else entries[index] = entry;
@@ -83,14 +85,14 @@ export class TaskRegistry {
   async remove(name: string): Promise<void> {
     const entries = await this.load();
     await this.save(
-      entries.filter((e) => e.name.toLowerCase() !== name.toLowerCase())
+      entries.filter((e) => e.name.toLowerCase() !== name.toLowerCase()),
     );
   }
 
   async setPaused(name: string, paused: boolean): Promise<void> {
     const entries = await this.load();
     const entry = entries.find(
-      (e) => e.name.toLowerCase() === name.toLowerCase()
+      (e) => e.name.toLowerCase() === name.toLowerCase(),
     );
     if (!entry) return;
     entry.paused = paused;

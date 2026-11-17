@@ -45,7 +45,7 @@ export function listMatrixClones(parentName: string): TaskDefinition[] {
   return listTasks().filter(
     (definition) =>
       typeof definition.matrixParentId === "string" &&
-      definition.matrixParentId.trim().toLowerCase() === target
+      definition.matrixParentId.trim().toLowerCase() === target,
   );
 }
 
@@ -53,9 +53,9 @@ export function listMatrixClones(parentName: string): TaskDefinition[] {
 export function getTask(name: string): TaskDefinition | undefined {
   const row = getDb()
     .prepare(
-      "SELECT definition_json FROM tasks WHERE lower(name) = lower(?) LIMIT 1"
+      "SELECT definition_json FROM tasks WHERE lower(name) = lower(?) LIMIT 1",
     )
-    .get(name) as any;
+    .get(name);
   return row ? rowToDefinition(row) : undefined;
 }
 
@@ -67,9 +67,9 @@ export function saveTask(definition: TaskDefinition): void {
   const instance = getDb();
   const existing = instance
     .prepare(
-      "SELECT name, definition_json, created_at FROM tasks WHERE lower(name) = lower(?) LIMIT 1"
+      "SELECT name, definition_json, created_at FROM tasks WHERE lower(name) = lower(?) LIMIT 1",
     )
-    .get(definition.name) as any;
+    .get(definition.name);
 
   let existingCreatedAt: string | undefined;
   if (existing) {
@@ -105,7 +105,7 @@ export function saveTask(definition: TaskDefinition): void {
   if (existing) {
     instance
       .prepare(
-        "UPDATE tasks SET name = ?, definition_json = ?, created_at = ?, updated_at = ?, matrix_parent_id = ?, is_matrix_parent = ? WHERE name = ?"
+        "UPDATE tasks SET name = ?, definition_json = ?, created_at = ?, updated_at = ?, matrix_parent_id = ?, is_matrix_parent = ? WHERE name = ?",
       )
       .run(
         definition.name,
@@ -114,12 +114,12 @@ export function saveTask(definition: TaskDefinition): void {
         now,
         matrixParentId,
         isMatrixParent,
-        existing.name
+        existing.name,
       );
   } else {
     instance
       .prepare(
-        "INSERT INTO tasks (name, definition_json, created_at, updated_at, matrix_parent_id, is_matrix_parent) VALUES (?, ?, ?, ?, ?, ?)"
+        "INSERT INTO tasks (name, definition_json, created_at, updated_at, matrix_parent_id, is_matrix_parent) VALUES (?, ?, ?, ?, ?, ?)",
       )
       .run(
         definition.name,
@@ -127,7 +127,7 @@ export function saveTask(definition: TaskDefinition): void {
         createdAt,
         now,
         matrixParentId,
-        isMatrixParent
+        isMatrixParent,
       );
   }
 }
@@ -142,7 +142,7 @@ export function deleteTask(name: string): boolean {
 
 /** Количество задач (для миграции и тестов). */
 export function countTasks(): number {
-  const row = getDb().prepare("SELECT COUNT(*) AS count FROM tasks").get() as any;
+  const row = getDb().prepare("SELECT COUNT(*) AS count FROM tasks").get();
   return Number(row?.count) || 0;
 }
 

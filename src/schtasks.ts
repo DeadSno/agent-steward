@@ -28,7 +28,7 @@ const backend = new WindowsScheduler();
 export async function createTask(
   name: string,
   trCommand: string,
-  scheduleFlags: string[]
+  scheduleFlags: string[],
 ): Promise<void> {
   const args = [
     "/create",
@@ -44,7 +44,7 @@ export async function createTask(
     throw new SchtasksError(
       `Не удалось создать задачу "${name}": ${result.stderr || result.stdout}`,
       result.code,
-      result.stderr
+      result.stderr,
     );
   }
 }

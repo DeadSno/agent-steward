@@ -63,7 +63,7 @@ const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
  * Бросает понятную ошибку при нарушении (её показывает GUI/RPC).
  */
 export function normalizeWorkspaceEnv(
-  value: unknown
+  value: unknown,
 ): Record<string, string> | undefined {
   if (value == null) return undefined;
   if (typeof value !== "object" || Array.isArray(value)) {
@@ -72,7 +72,7 @@ export function normalizeWorkspaceEnv(
   const entries = Object.entries(value as Record<string, unknown>);
   if (entries.length > MAX_WORKSPACE_ENV_PAIRS) {
     throw new Error(
-      `Слишком много env-переменных: ${entries.length} (максимум ${MAX_WORKSPACE_ENV_PAIRS}).`
+      `Слишком много env-переменных: ${entries.length} (максимум ${MAX_WORKSPACE_ENV_PAIRS}).`,
     );
   }
   const result: Record<string, string> = {};
@@ -80,7 +80,7 @@ export function normalizeWorkspaceEnv(
     const key = String(rawKey).trim();
     if (!ENV_KEY_RE.test(key)) {
       throw new Error(
-        `Недопустимое имя env-переменной '${rawKey}': нужны латиница, цифры и '_', не с цифры.`
+        `Недопустимое имя env-переменной '${rawKey}': нужны латиница, цифры и '_', не с цифры.`,
       );
     }
     if (rawValue == null) {
@@ -141,7 +141,7 @@ export function readWorkspaceEnvFile(envFile?: string): Record<string, string> {
  */
 export function resolveWorkspaceEnv(
   workspace: Workspace | undefined,
-  allowedSecretNames?: string[]
+  allowedSecretNames?: string[],
 ): Record<string, string> {
   if (!workspace) return {};
   const merged = {
@@ -151,7 +151,7 @@ export function resolveWorkspaceEnv(
   const resolved = resolveSecretRefs(merged, allowedSecretNames);
   if (resolved.missing.length > 0) {
     console.warn(
-      `[workspace] "${workspace.name}": не найдены секреты: ${resolved.missing.join(", ")}`
+      `[workspace] "${workspace.name}": не найдены секреты: ${resolved.missing.join(", ")}`,
     );
   }
   return resolved.env;
@@ -200,7 +200,7 @@ export function writeWorkspaceEnvFile(
   workspace: Workspace | undefined,
   pluginDir: string,
   sanitizedName: string,
-  allowedSecretNames?: string[]
+  allowedSecretNames?: string[],
 ): string | undefined {
   if (!workspace) return undefined;
   const file = join(workspaceEnvDir(pluginDir), `${sanitizedName}.env`);
@@ -308,7 +308,7 @@ export function readGitBranch(workspacePath: string): string | undefined {
     const result = spawnSync(
       "git",
       ["-C", workspacePath, "rev-parse", "--abbrev-ref", "HEAD"],
-      { encoding: "utf8", timeout: 5000, windowsHide: true }
+      { encoding: "utf8", timeout: 5000, windowsHide: true },
     );
     if (result.status !== 0) return undefined;
     const branch = String(result.stdout || "").trim();
@@ -322,14 +322,14 @@ export function readGitBranch(workspacePath: string): string | undefined {
 export function listWorkspaces(): Workspace[] {
   const rows = getDb()
     .prepare("SELECT * FROM workspaces ORDER BY name COLLATE NOCASE ASC")
-    .all() as any[];
+    .all();
   return rows.map(rowToWorkspace);
 }
 
 /** Workspace по id. */
 export function getWorkspace(id: string): Workspace | undefined {
   if (!id) return undefined;
-  const row = getDb().prepare("SELECT * FROM workspaces WHERE id = ?").get(id) as any;
+  const row = getDb().prepare("SELECT * FROM workspaces WHERE id = ?").get(id);
   return row ? rowToWorkspace(row) : undefined;
 }
 
@@ -338,7 +338,7 @@ export function getWorkspaceByPath(workspacePath: string): Workspace | undefined
   const normalized = normalizePath(workspacePath);
   const row = getDb()
     .prepare("SELECT * FROM workspaces WHERE lower(path) = lower(?) LIMIT 1")
-    .get(normalized) as any;
+    .get(normalized);
   return row ? rowToWorkspace(row) : undefined;
 }
 
@@ -374,7 +374,7 @@ export function addWorkspace(input: AddWorkspaceInput): Workspace {
   getDb()
     .prepare(
       `INSERT INTO workspaces (id, name, path, git_remote, color, env_json, env_file, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       id,
@@ -384,7 +384,7 @@ export function addWorkspace(input: AddWorkspaceInput): Workspace {
       color,
       env ? JSON.stringify(env) : null,
       envFile ?? null,
-      createdAt
+      createdAt,
     );
 
   return { id, name, path: workspacePath, gitRemote, color, env, envFile, createdAt };
@@ -435,7 +435,7 @@ export function updateWorkspace(id: string, patch: UpdateWorkspacePatch): Worksp
 
   getDb()
     .prepare(
-      "UPDATE workspaces SET name = ?, path = ?, git_remote = ?, color = ?, env_json = ?, env_file = ? WHERE id = ?"
+      "UPDATE workspaces SET name = ?, path = ?, git_remote = ?, color = ?, env_json = ?, env_file = ? WHERE id = ?",
     )
     .run(
       nextName,
@@ -444,7 +444,7 @@ export function updateWorkspace(id: string, patch: UpdateWorkspacePatch): Worksp
       nextColor ?? null,
       nextEnv ? JSON.stringify(nextEnv) : null,
       nextEnvFile ?? null,
-      id
+      id,
     );
 
   return {
@@ -472,7 +472,7 @@ export function deleteWorkspace(id: string): boolean {
     console.warn(
       `[workspace] Удалён workspace '${workspace.name}'. ` +
         `Отвязано задач: ${affected.length} (${affected.join(", ")}). ` +
-        `Задачи не удалены, workspaceId очищен.`
+        "Задачи не удалены, workspaceId очищен.",
     );
   }
 
@@ -482,6 +482,6 @@ export function deleteWorkspace(id: string): boolean {
 
 /** Количество workspace (для сводок и тестов). */
 export function countWorkspaces(): number {
-  const row = getDb().prepare("SELECT COUNT(*) AS count FROM workspaces").get() as any;
+  const row = getDb().prepare("SELECT COUNT(*) AS count FROM workspaces").get();
   return Number(row?.count) || 0;
 }

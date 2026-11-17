@@ -85,7 +85,7 @@ function roundUsd(value: number): number {
  */
 export function computeSavings(
   records: SavingsRecord[],
-  options: ComputeSavingsOptions = {}
+  options: ComputeSavingsOptions = {},
 ): SavingsReport {
   const reference = positiveNumber(options.referenceCostPer1kTokensUsd)
     || CLOUD_REFERENCE_COST_PER_1K_TOKENS_USD;

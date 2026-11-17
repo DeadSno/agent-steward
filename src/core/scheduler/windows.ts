@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import iconv from "iconv-lite";
 import type { ScheduledTaskInfo } from "../../types.js";
-import { TASK_FOLDER, TASK_FOLDER_NAME, taskFolderNameForProfile } from "../../types.js";
+import { TASK_FOLDER, TASK_FOLDER_NAME, LEGACY_TASK_FOLDER_NAME, taskFolderNameForProfile, legacyTaskFolderNameForProfile } from "../../types.js";
 import { getProfileName } from "../../profiles.js";
 import { buildScheduleFlags, convertCronToSchTasks } from "../cron-to-schtasks.js";
 import { buildWindowsOneShotFlags } from "../one-shot.js";
@@ -15,15 +15,50 @@ import type {
 
 const execFileAsync = promisify(execFile);
 
+/** Кэш формата даты локали Windows (ShortDatePattern), полученного через PowerShell. */
+let windowsDateFormatCache: string | null = null;
+
+/** Определяет формат даты системной локали через PowerShell (P1-8). */
+async function getWindowsDateFormat(): Promise<string> {
+  if (windowsDateFormatCache !== null) return windowsDateFormatCache;
+  try {
+    const { stdout } = await execFileAsync(
+      "powershell.exe",
+      ["-NoProfile", "-Command", "(Get-Culture).DateTimeFormat.ShortDatePattern"],
+      { maxBuffer: MAX_OUTPUT_BUFFER },
+    );
+    const pattern = String(stdout).trim();
+    windowsDateFormatCache = pattern || "dd.MM.yyyy";
+    return windowsDateFormatCache;
+  } catch {
+    windowsDateFormatCache = "dd.MM.yyyy";
+    return windowsDateFormatCache;
+  }
+}
+
+/** Форматирует дату «никогда» (заглушка для file/git/mcp-триггеров) в формате локали. */
+async function buildNeverDate(format: string): Promise<string> {
+  const { formatDateByLocalePattern } = await import("../one-shot.js");
+  return formatDateByLocalePattern(new Date("2099-12-31T00:00:00Z"), format);
+}
+
 /** Максимальный размер вывода schtasks (обычно хватает с большим запасом). */
 const MAX_OUTPUT_BUFFER = 10 * 1024 * 1024;
 
 /** Префикс папки задач плагина в Планировщике заданий Windows. */
 export const WINDOWS_TASK_PREFIX = `\\${TASK_FOLDER}\\${TASK_FOLDER_NAME}\\`;
 
-/** Префикс папки задач конкретного профиля (для удаления неактивного профиля). */
+/** Префикс старой папки (до переименования) — поддерживается для миграции. */
+export const LEGACY_WINDOWS_TASK_PREFIX = `\\${TASK_FOLDER}\\${LEGACY_TASK_FOLDER_NAME}\\`;
+
+/** Префикс папки конкретного профиля (для удаления неактивного профиля). */
 export function windowsTaskPrefixForProfile(profile: string): string {
   return `\\${TASK_FOLDER}\\${taskFolderNameForProfile(profile)}\\`;
+}
+
+/** Префикс старой папки конкретного профиля. */
+export function legacyWindowsTaskPrefixForProfile(profile: string): string {
+  return `\\${TASK_FOLDER}\\${legacyTaskFolderNameForProfile(profile)}\\`;
 }
 
 /** Полное имя задачи в папке конкретного профиля. */
@@ -68,8 +103,8 @@ export async function getOemCodePage(): Promise<number> {
     // поэтому декодировать можно через cp866/utf8 — цифры не пострадают.
     const text = decodeConsoleOutputSync(stdout);
     // Значение может быть REG_DWORD (0x362) или REG_SZ (866 / "866").
-    const hexMatch = text.match(/0x([0-9A-Fa-f]{1,8})/i);
-    const decMatch = text.match(/\b(\d{2,5})\b/);
+    const hexMatch = /0x([0-9A-Fa-f]{1,8})/i.exec(text);
+    const decMatch = /\b(\d{2,5})\b/.exec(text);
     let cp: number | null = null;
     if (hexMatch) {
       cp = parseInt(hexMatch[1], 16);
@@ -167,7 +202,7 @@ export interface SchtasksResult {
  */
 export function explainSchtasksError(
   code: number | null,
-  text: string
+  text: string,
 ): string | null {
   // HRESULT-коды приходят как знаковые 32-битные числа; приводим к unsigned.
   const unsigned =
@@ -193,7 +228,7 @@ export function explainSchtasksError(
   }
 
   const lower = text.toLowerCase();
-  const byText: Array<[string[], string]> = [
+  const byText: [string[], string][] = [
     [
       ["access is denied", "отказано в доступе"],
       "Нет прав на операцию с задачей (access denied).",
@@ -223,7 +258,7 @@ export class SchtasksError extends Error {
   constructor(
     message: string,
     public readonly code: number | null,
-    public readonly stderr: string
+    public readonly stderr: string,
   ) {
     const hint = explainSchtasksError(code, `${message} ${stderr}`);
     super(hint ? `${message} | пояснение: ${hint}` : message);
@@ -258,24 +293,54 @@ export async function runSchtasks(args: string[]): Promise<SchtasksResult> {
     throw new SchtasksError(
       `schtasks error: ${buildErrorDetails(err, stdout, stderr)}`,
       e.code ?? null,
-      stderr
+      stderr,
     );
   }
 }
 
 /** Формирует полное имя задачи с папкой плагина. */
 export function taskFullName(name: string): string {
-  if (name.startsWith(WINDOWS_TASK_PREFIX)) {
+  if (
+    name.startsWith(WINDOWS_TASK_PREFIX) ||
+    name.startsWith(LEGACY_WINDOWS_TASK_PREFIX)
+  ) {
     return name;
   }
   return WINDOWS_TASK_PREFIX + name;
 }
 
-/** Убирает папку плагина из полного имени задачи. */
+/** Убирает папку плагина (новую или старую) из полного имени задачи. */
 function shortTaskName(fullName: string): string {
-  return fullName.startsWith(WINDOWS_TASK_PREFIX)
-    ? fullName.slice(WINDOWS_TASK_PREFIX.length)
-    : fullName;
+  if (fullName.startsWith(WINDOWS_TASK_PREFIX)) {
+    return fullName.slice(WINDOWS_TASK_PREFIX.length);
+  }
+  if (fullName.startsWith(LEGACY_WINDOWS_TASK_PREFIX)) {
+    return fullName.slice(LEGACY_WINDOWS_TASK_PREFIX.length);
+  }
+  return fullName;
+}
+
+/**
+ * Признак того, что schtasks не нашёл задачу (локаль-независимый набор фраз).
+ * Используется для fallback на старую папку windows-scheduler.
+ */
+function isTaskNotFoundText(text: string): boolean {
+  const t = text.toLowerCase();
+  return (
+    t.includes("cannot find") ||
+    t.includes("не удалось найти") ||
+    t.includes("не удается найти") ||
+    t.includes("не может найти") ||
+    t.includes("не найдено") ||
+    t.includes("the system cannot find the file specified") ||
+    t.includes("no tasks") ||
+    t.includes("could not find")
+  );
+}
+
+function isTaskNotFoundError(err: unknown): boolean {
+  if (!(err instanceof SchtasksError)) return false;
+  return isTaskNotFoundText(`${err.message} ${err.stderr}`);
 }
 
 /**
@@ -286,27 +351,48 @@ function shortTaskName(fullName: string): string {
  */
 export class WindowsScheduler implements SchedulerBackend {
   readonly platform: NodeJS.Platform = "win32";
-  readonly title = "Планировщик Windows";
+  readonly title = "agent-steward by DeadSno";
 
   /** Имя папки задач и её префикс — в пространстве имён своего профиля. */
   private readonly taskFolderName: string;
   private readonly taskPrefix: string;
+  /** Старая (до переименования) папка — только чтение/миграция. */
+  private readonly legacyTaskFolderName: string;
+  private readonly legacyTaskPrefix: string;
 
   constructor(profile: string = getProfileName()) {
     this.taskFolderName = taskFolderNameForProfile(profile);
     this.taskPrefix = windowsTaskPrefixForProfile(profile);
+    this.legacyTaskFolderName = legacyTaskFolderNameForProfile(profile);
+    this.legacyTaskPrefix = legacyWindowsTaskPrefixForProfile(profile);
   }
 
   /** Полное имя задачи (\OpenCode\<профиль>\<name>) для этого бэкенда. */
   private fullName(name: string): string {
-    return name.startsWith(this.taskPrefix) ? name : this.taskPrefix + name;
+    return name.startsWith(this.taskPrefix) || name.startsWith(this.legacyTaskPrefix)
+      ? name
+      : this.taskPrefix + name;
   }
 
-  /** Убирает папку профиля из полного имени задачи. */
+  /** Оба возможных полных имени: новое и старое (для поиска legacy-задач). */
+  private fullNames(name: string): string[] {
+    const candidate = this.fullName(name);
+    const names = [candidate];
+    if (!candidate.startsWith(this.legacyTaskPrefix)) {
+      names.push(this.legacyTaskPrefix + name);
+    }
+    return names;
+  }
+
+  /** Убирает папку профиля (новую или старую) из полного имени задачи. */
   private shortName(fullName: string): string {
-    return fullName.startsWith(this.taskPrefix)
-      ? fullName.slice(this.taskPrefix.length)
-      : fullName;
+    if (fullName.startsWith(this.taskPrefix)) {
+      return fullName.slice(this.taskPrefix.length);
+    }
+    if (fullName.startsWith(this.legacyTaskPrefix)) {
+      return fullName.slice(this.legacyTaskPrefix.length);
+    }
+    return fullName;
   }
 
   async createTask(options: CreateTaskOptions): Promise<void> {
@@ -319,14 +405,25 @@ export class WindowsScheduler implements SchedulerBackend {
       // единственного запуска, повторных срабатываний не будет.
       if (!options.runAt) {
         throw new Error(
-          `Задача "${name}": для triggerType=once не передано время runAt.`
+          `Задача "${name}": для triggerType=once не передано время runAt.`,
         );
       }
-      scheduleFlags = buildWindowsOneShotFlags(options.runAt);
+      const dateFormat = await getWindowsDateFormat();
+      scheduleFlags = buildWindowsOneShotFlags(options.runAt, dateFormat);
     } else if (triggerType && triggerType !== "cron") {
       // Файловый или MCP-триггер: однократный запуск в далёком будущем.
       // Активация — только вручную (runTask / файловый watcher / emit_event).
-      scheduleFlags = ["/sc", "ONCE", "/sd", "31.12.2099", "/st", "00:00"];
+      // Дата форматируется в формате системной локали (P1-8), а не захардкожена
+      // под русскую DD.MM.YYYY.
+      const dateFormat = await getWindowsDateFormat();
+      scheduleFlags = [
+        "/sc",
+        "ONCE",
+        "/sd",
+        await buildNeverDate(dateFormat),
+        "/st",
+        "00:00",
+      ];
     } else {
       // Выражения, которые Windows не выражает нативно (список через запятую, L, #,
       // именованные месяцы и т.д.), падают в минутный опрос + gate во враппере.
@@ -341,7 +438,8 @@ export class WindowsScheduler implements SchedulerBackend {
       }
     }
 
-    const fullName = this.fullName(name);
+    // Создаём всегда в новой папке, даже если передано полное legacy-имя.
+    const fullName = this.taskPrefix + this.shortName(name);
     // Спринт 27.5.4: по умолчанию задача интерактивная — schtasks запускает её
     // только при активном входе пользователя (Interactive only). Для работы без
     // входа нужен SYSTEM: он не требует пароля, но работает в session 0 без
@@ -378,7 +476,7 @@ export class WindowsScheduler implements SchedulerBackend {
         throw new SchtasksError(
           `Задача с именем "${name}" уже существует и выполняется. Дождитесь её завершения или удалите её.`,
           err.code,
-          err.stderr
+          err.stderr,
         );
       }
 
@@ -389,7 +487,7 @@ export class WindowsScheduler implements SchedulerBackend {
         throw new SchtasksError(
           `Задача с именем "${name}" уже существует. Используйте delete_task или выберите другое имя.`,
           err.code,
-          err.stderr
+          err.stderr,
         );
       }
 
@@ -398,10 +496,31 @@ export class WindowsScheduler implements SchedulerBackend {
           err.stderr || err.message || "неизвестная ошибка schtasks"
         }`,
         err.code,
-        err.stderr
+        err.stderr,
       );
     }
-    if (result.code === 0) return;
+    if (result.code === 0) {
+      // После успешного создания в новой папке убираем возможный дубль из
+      // legacy-папки (best-effort: отсутствие дубля — не ошибка).
+      await this.removeLegacyDuplicate(name);
+      return;
+    }
+  }
+
+  /** Удаляет одноимённую задачу из старой папки, если она там осталась. */
+  private async removeLegacyDuplicate(name: string): Promise<void> {
+    if (this.legacyTaskPrefix === this.taskPrefix) return;
+    const legacyFull = this.legacyTaskPrefix + this.shortName(name);
+    try {
+      await runSchtasks([
+        "/delete",
+        "/tn",
+        legacyFull.replace(/^\\+/, ""),
+        "/f",
+      ]);
+    } catch {
+      // Дубликата нет или нет прав — создание уже прошло, не мешаем.
+    }
   }
 
   async listTasks(): Promise<ScheduledTaskInfo[]> {
@@ -419,22 +538,30 @@ export class WindowsScheduler implements SchedulerBackend {
       throw err;
     }
 
-    if (!result.stdout || !result.stdout.trim()) {
+    if (!result.stdout?.trim()) {
       return [];
     }
 
     const allTasks = parseListOutput(result.stdout).filter((task) =>
-      Boolean(task.taskName)
+      Boolean(task.taskName),
     );
-    const filtered = allTasks.filter((task) =>
-      (task.taskName || "").startsWith(this.taskPrefix)
-    );
+    const filtered = allTasks.filter((task) => {
+      const name = task.taskName || "";
+      return (
+        name.startsWith(this.taskPrefix) ||
+        name.startsWith(this.legacyTaskPrefix)
+      );
+    });
 
     // Fallback: если структурный парсер не распознал ключи (нестандартная
     // локаль/кодировка), вытаскиваем имена задач по префиксу папки.
-    if (filtered.length === 0 && result.stdout.includes(this.taskFolderName)) {
+    if (
+      filtered.length === 0 &&
+      (result.stdout.includes(this.taskFolderName) ||
+        result.stdout.includes(this.legacyTaskFolderName))
+    ) {
       const names = new Set<string>();
-      const folderPattern = `${TASK_FOLDER}[\\\\/]${this.taskFolderName}[\\\\/]`;
+      const folderPattern = `${TASK_FOLDER}[\\\\/](?:${this.taskFolderName}|${this.legacyTaskFolderName})[\\\\/]`;
       const re = new RegExp(`${folderPattern}([^\\r\\n"']+)`, "gi");
       let m: RegExpExecArray | null;
       while ((m = re.exec(result.stdout)) !== null) {
@@ -443,86 +570,100 @@ export class WindowsScheduler implements SchedulerBackend {
       }
       if (names.size > 0) {
         return Array.from(names).map(
-          (nm) => ({ taskName: nm } as ScheduledTaskInfo)
+          (nm) => ({ taskName: nm }),
         );
       }
     }
 
-    return filtered.map((task) => ({
-      ...task,
-      taskName: this.shortName(task.taskName || ""),
-      paused: /disabled|отключ|запрещ/i.test(task.status ?? ""),
-    }));
+    // Если в обеих папках остались задачи с одинаковым коротким именем,
+    // показываем одну (новую) — дубликат мог остаться после миграции.
+    const seen = new Set<string>();
+    const output: ScheduledTaskInfo[] = [];
+    for (const task of filtered) {
+      const short = this.shortName(task.taskName || "");
+      const key = short.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      output.push({
+        ...task,
+        taskName: short,
+        paused: /disabled|отключ|запрещ/i.test(task.status ?? ""),
+      });
+    }
+    return output;
   }
 
   async deleteTask(name: string): Promise<void> {
     // schtasks /delete требует имя без ведущего обратного слэша.
-    const fullName = taskFullName(name).replace(/^\\+/, "");
-    const args = ["/delete", "/tn", fullName, "/f"];
-    try {
-      await runSchtasks(args);
-    } catch (err: any) {
-      if (err instanceof SchtasksError) {
-        const text = `${err.message} ${err.stderr}`.toLowerCase();
-        const alreadyGone =
-          text.includes("cannot find") ||
-          text.includes("не удалось найти") ||
-          text.includes("не удается найти") ||
-          text.includes("не может найти") ||
-          text.includes("не найдено") ||
-          text.includes("the system cannot find the file specified") ||
-          text.includes("no tasks") ||
-          text.includes("could not find");
-        if (alreadyGone) return;
+    let lastError: unknown = null;
+    for (const candidate of this.fullNames(name)) {
+      const fullName = candidate.replace(/^\\+/, "");
+      try {
+        await runSchtasks(["/delete", "/tn", fullName, "/f"]);
+        return;
+      } catch (err) {
+        lastError = err;
+        // Новая папки нет — пробуем legacy. Прочие ошибки прерывают цикл.
+        if (!isTaskNotFoundError(err)) break;
       }
-      throw new SchtasksError(
-        `Не удалось удалить задачу "${name}"`,
-        err.code ?? null,
-        err.stderr ?? ""
-      );
     }
+    if (isTaskNotFoundError(lastError)) return;
+    const err = lastError as { code?: number | null; stderr?: string };
+    throw new SchtasksError(
+      `Не удалось удалить задачу "${name}"`,
+      err?.code ?? null,
+      err?.stderr ?? "",
+    );
   }
 
   /** Ставит задачу на паузу (/disable). */
   async pauseTask(name: string): Promise<void> {
-    const fullName = taskFullName(name).replace(/^\\+/, "");
-    const args = ["/change", "/tn", fullName, "/disable"];
-    try {
-      await runSchtasks(args);
-    } catch (err: any) {
-      if (err instanceof SchtasksError) {
-        const text = `${err.message} ${err.stderr}`.toLowerCase();
-        const alreadyDisabled =
-          text.includes("disabled") || text.includes("запрещена");
-        if (alreadyDisabled) return;
+    let lastError: unknown = null;
+    for (const candidate of this.fullNames(name)) {
+      const fullName = candidate.replace(/^\\+/, "");
+      try {
+        await runSchtasks(["/change", "/tn", fullName, "/disable"]);
+        return;
+      } catch (err) {
+        lastError = err;
+        if (err instanceof SchtasksError) {
+          const text = `${err.message} ${err.stderr}`.toLowerCase();
+          if (text.includes("disabled") || text.includes("запрещена")) return;
+        }
+        if (!isTaskNotFoundError(err)) break;
       }
-      throw new SchtasksError(
-        `Не удалось поставить задачу "${name}" на паузу`,
-        err.code ?? null,
-        err.stderr ?? ""
-      );
     }
+    const err = lastError as { code?: number | null; stderr?: string };
+    throw new SchtasksError(
+      `Не удалось поставить задачу "${name}" на паузу`,
+      err?.code ?? null,
+      err?.stderr ?? "",
+    );
   }
 
   /** Снимает задачу с паузы (/enable). */
   async resumeTask(name: string): Promise<void> {
-    const fullName = taskFullName(name).replace(/^\\+/, "");
-    const args = ["/change", "/tn", fullName, "/enable"];
-    try {
-      await runSchtasks(args);
-    } catch (err: any) {
-      if (err instanceof SchtasksError) {
-        const text = `${err.message} ${err.stderr}`.toLowerCase();
-        const alreadyEnabled =
-          text.includes("enabled") || text.includes("включена");
-        if (alreadyEnabled) return;
+    let lastError: unknown = null;
+    for (const candidate of this.fullNames(name)) {
+      const fullName = candidate.replace(/^\\+/, "");
+      try {
+        await runSchtasks(["/change", "/tn", fullName, "/enable"]);
+        return;
+      } catch (err) {
+        lastError = err;
+        if (err instanceof SchtasksError) {
+          const text = `${err.message} ${err.stderr}`.toLowerCase();
+          if (text.includes("enabled") || text.includes("включена")) return;
+        }
+        if (!isTaskNotFoundError(err)) break;
       }
-      throw new SchtasksError(
-        `Не удалось снять задачу "${name}" с паузы`,
-        err.code ?? null,
-        err.stderr ?? ""
-      );
     }
+    const err = lastError as { code?: number | null; stderr?: string };
+    throw new SchtasksError(
+      `Не удалось снять задачу "${name}" с паузы`,
+      err?.code ?? null,
+      err?.stderr ?? "",
+    );
   }
 
   /**
@@ -533,7 +674,7 @@ export class WindowsScheduler implements SchedulerBackend {
     try {
       const tasks = await this.listTasks();
       const task = tasks.find(
-        (t) => (t.taskName ?? "").toLowerCase() === name.toLowerCase()
+        (t) => (t.taskName ?? "").toLowerCase() === name.toLowerCase(),
       );
       return /running|выполняется/i.test(task?.status ?? "");
     } catch {
@@ -542,39 +683,51 @@ export class WindowsScheduler implements SchedulerBackend {
   }
 
   async runTask(name: string): Promise<RunTaskResult> {
-    const fullName = this.fullName(name);
-    const args = ["/run", "/tn", fullName];
+    const candidates = this.fullNames(name);
+    for (let i = 0; i < candidates.length; i++) {
+      const args = ["/run", "/tn", candidates[i]];
 
-    // schtasks /run не требует смены кодировки — вызываем напрямую.
-    try {
-      await execFileAsync("schtasks", args, {
-        windowsHide: true,
-        encoding: "buffer",
-        maxBuffer: MAX_OUTPUT_BUFFER,
-      });
-      return { alreadyRunning: false };
-    } catch (err) {
-      const e = err as { message?: string; code?: number | null };
-      const stdout = await decodeConsoleOutput(errorBuffer(err, "stdout"));
-      const stderr = await decodeConsoleOutput(errorBuffer(err, "stderr"));
-      const errorDetails = buildErrorDetails(err, stdout, stderr);
+      // schtasks /run не требует смены кодировки — вызываем напрямую.
+      try {
+        await execFileAsync("schtasks", args, {
+          windowsHide: true,
+          encoding: "buffer",
+          maxBuffer: MAX_OUTPUT_BUFFER,
+        });
+        return { alreadyRunning: false };
+      } catch (err) {
+        const e = err as { message?: string; code?: number | null };
+        const stdout = await decodeConsoleOutput(errorBuffer(err, "stdout"));
+        const stderr = await decodeConsoleOutput(errorBuffer(err, "stderr"));
+        const errorDetails = buildErrorDetails(err, stdout, stderr);
 
-      const text = errorDetails.toLowerCase();
-      const saysAlreadyRunning =
-        text.includes("already running") ||
-        text.includes("уже выполняется") ||
-        text.includes("уже запущена");
+        const text = errorDetails.toLowerCase();
+        const saysAlreadyRunning =
+          text.includes("already running") ||
+          text.includes("уже выполняется") ||
+          text.includes("уже запущена");
 
-      if (saysAlreadyRunning || (await this.isTaskRunning(name))) {
-        return { alreadyRunning: true };
+        if (saysAlreadyRunning || (await this.isTaskRunning(name))) {
+          return { alreadyRunning: true };
+        }
+
+        // Новая папка пуста — задача могла остаться в legacy-папке.
+        if (isTaskNotFoundText(errorDetails) && i < candidates.length - 1) {
+          continue;
+        }
+
+        throw new SchtasksError(
+          `schtasks error: ${errorDetails}`,
+          e.code ?? null,
+          stderr,
+        );
       }
-
-      throw new SchtasksError(
-        `schtasks error: ${errorDetails}`,
-        e.code ?? null,
-        stderr
-      );
     }
+    throw new SchtasksError(
+      `Не удалось запустить задачу "${name}": задача не найдена`,
+      null,
+      "",
+    );
   }
 }
 
@@ -632,7 +785,7 @@ function parseListOutput(output: string): ScheduledTaskInfo[] {
 }
 
 /** Сохраняет поле в объект задачи, преобразуя ключи schtasks в camelCase. */
-function setTaskField(task: any, key: string, value: string): void {
+export function setTaskField(task: any, key: string, value: string): void {
   const keyLower = key.toLowerCase();
 
   const map: Record<string, string> = {
@@ -702,9 +855,26 @@ function setTaskField(task: any, key: string, value: string): void {
     "tryb logowania": "logonMode",
     "ostatnie uruchomienie": "lastRunTime",
     "ostatni wynik": "lastResult",
+    // Chinese (ZH)
+    "文件夹": "folder",
+    "任务名": "taskName",
+    "任务名称": "taskName",
+    "要运行的任务": "taskToRun",
+    "运行的任务": "taskToRun",
+    "下次运行时间": "nextRunTime",
+    "下一次运行时间": "nextRunTime",
+    "状态": "status",
+    "登录模式": "logonMode",
+    "登录状态": "logonMode",
+    "上次运行时间": "lastRunTime",
+    "上一次运行时间": "lastRunTime",
+    "上次结果": "lastResult",
+    "作者": "author",
+    "注释": "comment",
   };
 
-  const field = map[keyLower];
+  const field =
+    map[keyLower] ?? map[keyLower.replace(/\s+/g, "")];
   if (field) {
     task[field] = value;
   }

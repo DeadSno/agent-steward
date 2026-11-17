@@ -70,11 +70,11 @@ const defaultRunner: GitRunner = (cwd, args) =>
       { timeout: GIT_COMMAND_TIMEOUT_MS, windowsHide: true, maxBuffer: 4 * 1024 * 1024 },
       (err, stdout) => {
         if (err) {
-          reject(err);
+          reject(err instanceof Error ? err : new Error(String(err)));
           return;
         }
         resolve(String(stdout ?? ""));
-      }
+      },
     );
   });
 
@@ -113,7 +113,7 @@ export async function gitChangedFiles(
   cwd: string,
   from: string | null,
   to: string,
-  run: GitRunner = defaultRunner
+  run: GitRunner = defaultRunner,
 ): Promise<string[]> {
   const args = from
     ? ["diff", "--name-only", `${from}..${to}`]
@@ -126,7 +126,7 @@ export async function gitChangedFiles(
 }
 
 function branchMatches(branch: string | null, pattern?: string): boolean {
-  if (!pattern || !pattern.trim()) return true;
+  if (!pattern?.trim()) return true;
   if (!branch) return false;
   const normalize = (value: string) =>
     process.platform === "win32" ? value.toLowerCase() : value;
@@ -151,7 +151,7 @@ function branchMatches(branch: string | null, pattern?: string): boolean {
  */
 export async function checkGitTrigger(
   task: GitTriggerTask,
-  options: { run?: GitRunner; persist?: boolean } = {}
+  options: { run?: GitRunner; persist?: boolean } = {},
 ): Promise<GitCheckResult> {
   const run = options.run ?? defaultRunner;
   const persist = options.persist !== false;
@@ -328,7 +328,7 @@ export class GitTriggerManager {
       return checkGitTrigger(this.taskSpec(managed.def), { run: this.run });
     }
     const def = (await loadTaskDefinitions()).find(
-      (d) => d.triggerType === "git" && d.name.toLowerCase() === taskName.toLowerCase()
+      (d) => d.triggerType === "git" && d.name.toLowerCase() === taskName.toLowerCase(),
     );
     if (!def) return null;
     return checkGitTrigger(this.taskSpec(def), { run: this.run });
@@ -354,13 +354,13 @@ export class GitTriggerManager {
       if (result.status === "changed") {
         await this.handler(managed.def.name, { ...result, cwd: cwdOf(managed.def) });
       } else if (result.status === "error") {
-        console.error(`[windows-scheduler] git-триггер «${managed.def.name}»: ${result.message}`);
+        console.error(`[agent-steward] git-триггер «${managed.def.name}»: ${result.message}`);
       }
     } catch (err: any) {
       console.error(
-        `[windows-scheduler] git-триггер «${managed.def.name}»: ${
+        `[agent-steward] git-триггер «${managed.def.name}»: ${
           err instanceof Error ? err.message : String(err)
-        }`
+        }`,
       );
     } finally {
       managed.busy = false;

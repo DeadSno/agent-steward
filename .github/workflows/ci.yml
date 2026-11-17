@@ -25,10 +25,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: ${{ matrix.node }}
           cache: npm
@@ -44,6 +44,10 @@ jobs:
 
       - name: Test
         run: npm run test:parallel
+
+      # P3-2: ESLint — цветной вывод в редакторе, не падает на legacy-аннотации any/unsafe
+      - name: Lint
+        run: npm run lint
 
       - name: Test in English locale
         if: matrix.os == 'ubuntu-latest'
@@ -62,10 +66,10 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: "22.22.0"
           cache: npm
@@ -91,10 +95,10 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: "22.22.0"
           cache: npm
@@ -110,4 +114,52 @@ jobs:
           node test-dual-entry.mjs
           node test-v1-integration.mjs
           node test-docs.mjs
+
+  # P0-1: smoke-проверка, что шим opencode-windows-scheduler устанавливается
+  # в чистую директорию (ETARGET раньше ломал fresh-install).
+  shim-smoke:
+    name: Shim smoke (opencode-windows-scheduler install)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22.22.0"
+          cache: npm
+
+      - name: Install shim in clean directory
+        run: |
+          mkdir -p /tmp/shim-smoke
+          cd /tmp/shim-smoke
+          npm init -y >/dev/null 2>&1 || true
+          npm install opencode-windows-scheduler@1.5.7
+
+  # P3-1: дрейф lock-файла на свежем npm. Ловит плавающие диапазоны (">=") и
+  # lock, который перестал соответствовать package.json, до того как это
+  # заметит пользователь на чистой установке.
+  lockfile-drift:
+    name: Lockfile drift (npm@latest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - name: Use newest npm
+        run: npm install -g npm@latest
+
+      - name: Check lock matches package.json
+        run: npm ci --dry-run
+
+      - name: Check publish payload
+        run: npm pack --dry-run
 

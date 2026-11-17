@@ -70,7 +70,7 @@ export function signHookPayload(secret: string, body: Buffer | string): string {
 export function signHookPayloadWithTimestamp(
   secret: string,
   timestamp: string,
-  body: Buffer | string
+  body: Buffer | string,
 ): string {
   const payload = Buffer.isBuffer(body) ? body : Buffer.from(body, "utf8");
   const prefixed = Buffer.concat([Buffer.from(`${timestamp}.`, "utf8"), payload]);
@@ -106,7 +106,7 @@ export function verifyHookSignature(
   secret: string,
   body: Buffer | string,
   signature: string | null,
-  timestamp?: string | null
+  timestamp?: string | null,
 ): boolean {
   if (!secret || !signature) return false;
   const normalized = signature.trim();
@@ -128,7 +128,7 @@ export function verifyHookSignature(
 export function verifyHookTimestamp(
   value: string | null,
   toleranceSeconds: number,
-  nowMs = Date.now()
+  nowMs = Date.now(),
 ): { ok: boolean; reason?: string } {
   if (!value || toleranceSeconds <= 0) return { ok: true };
   const trimmed = value.trim();
@@ -219,7 +219,7 @@ export function authenticateHookRequest(input: HookAuthInput): HookAuthResult {
         settings.secret,
         input.body,
         input.signature,
-        needsSignedTimestamp ? timestampValue : null
+        needsSignedTimestamp ? timestampValue : null,
       )
     ) {
       return { ok: false, status: 401, error: "Неверная HMAC-подпись." };
@@ -228,7 +228,7 @@ export function authenticateHookRequest(input: HookAuthInput): HookAuthResult {
   const timestamp = verifyHookTimestamp(
     timestampValue,
     settings.timestampToleranceSeconds,
-    input.nowMs
+    input.nowMs,
   );
   if (!timestamp.ok) {
     return { ok: false, status: 401, error: timestamp.reason };
@@ -248,7 +248,7 @@ export type BodyReadResult =
  */
 export function readRequestBody(
   req: http.IncomingMessage,
-  maxBytes: number
+  maxBytes: number,
 ): Promise<BodyReadResult> {
   return new Promise((resolve) => {
     const limit = Math.max(1, Math.floor(maxBytes) || 1);

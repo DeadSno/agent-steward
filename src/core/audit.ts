@@ -110,7 +110,7 @@ export function recordAudit(entry: AuditEntryInput): number | null {
       .prepare(
         `INSERT INTO audit_log
            (ts, action, target_type, target, actor, source, details_json, remote)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         ts,
@@ -120,7 +120,7 @@ export function recordAudit(entry: AuditEntryInput): number | null {
         String(entry.actor || "system").slice(0, 32),
         entry.source == null ? null : String(entry.source).slice(0, 128),
         safeJson(entry.details),
-        entry.remote == null ? null : String(entry.remote).slice(0, 128)
+        entry.remote == null ? null : String(entry.remote).slice(0, 128),
       );
     maybeCleanup();
     return Number(result.lastInsertRowid) || null;
@@ -129,7 +129,7 @@ export function recordAudit(entry: AuditEntryInput): number | null {
       console.warn(
         `[audit] не удалось записать событие: ${
           err instanceof Error ? err.message : String(err)
-        }`
+        }`,
       );
     } catch {
       // console недоступен — молча игнорируем.
@@ -222,21 +222,21 @@ export function recordTaskToolBlocks(
   actor: AuditActor = "system",
   source = "policy",
   policy?: PermissionPolicy,
-  legacyShell?: boolean
+  legacyShell?: boolean,
 ): number {
   const normalizedDenied = Array.from(
     new Set(
       (deniedTools ?? [])
         .map((tool) => String(tool).trim())
-        .filter(Boolean)
-    )
+        .filter(Boolean),
+    ),
   );
   const normalizedAllowed = Array.from(
     new Set(
       (allowedTools ?? [])
         .map((tool) => String(tool).trim())
-        .filter(Boolean)
-    )
+        .filter(Boolean),
+    ),
   );
   const details = {
     reason: "deniedTools",
@@ -331,17 +331,17 @@ export function readAuditLog(filter: ReadAuditFilter = {}): ReadAuditResult {
     const db = getDb();
     const totalRow = db
       .prepare(`SELECT COUNT(*) AS count FROM audit_log ${clause}`)
-      .get(...params) as any;
+      .get(...params);
     const rows = db
       .prepare(`SELECT * FROM audit_log ${clause} ORDER BY ts DESC, id DESC LIMIT ?`)
-      .all(...params, limit) as any[];
+      .all(...params, limit);
     return { records: rows.map(rowToRecord), total: Number(totalRow?.count) || 0 };
   } catch (err) {
     try {
       console.warn(
         `[audit] не удалось прочитать журнал: ${
           err instanceof Error ? err.message : String(err)
-        }`
+        }`,
       );
     } catch {
       // ignore
@@ -360,23 +360,23 @@ export function cleanupAuditLog(options: {
 } = {}): number {
   const retentionDays = Math.max(
     0,
-    Math.floor(options.retentionDays ?? DEFAULT_AUDIT_RETENTION_DAYS) || 0
+    Math.floor(options.retentionDays ?? DEFAULT_AUDIT_RETENTION_DAYS) || 0,
   );
   const maxRecords = Math.max(
     100,
-    Math.floor(options.maxRecords ?? DEFAULT_AUDIT_MAX_RECORDS) || DEFAULT_AUDIT_MAX_RECORDS
+    Math.floor(options.maxRecords ?? DEFAULT_AUDIT_MAX_RECORDS) || DEFAULT_AUDIT_MAX_RECORDS,
   );
   let deleted = 0;
   try {
     const db = getDb();
     if (retentionDays > 0) {
       const cutoff = new Date(
-        Date.now() - retentionDays * 24 * 60 * 60 * 1000
+        Date.now() - retentionDays * 24 * 60 * 60 * 1000,
       ).toISOString();
       const result = db.prepare("DELETE FROM audit_log WHERE ts < ?").run(cutoff);
       deleted += Number(result.changes) || 0;
     }
-    const countRow = db.prepare("SELECT COUNT(*) AS count FROM audit_log").get() as any;
+    const countRow = db.prepare("SELECT COUNT(*) AS count FROM audit_log").get();
     const count = Number(countRow?.count) || 0;
     if (count > maxRecords) {
       const excess = count - maxRecords;
@@ -384,7 +384,7 @@ export function cleanupAuditLog(options: {
         .prepare(
           `DELETE FROM audit_log WHERE id IN (
              SELECT id FROM audit_log ORDER BY ts ASC, id ASC LIMIT ?
-           )`
+           )`,
         )
         .run(excess);
       deleted += Number(result.changes) || 0;
@@ -394,7 +394,7 @@ export function cleanupAuditLog(options: {
       console.warn(
         `[audit] не удалось очистить журнал: ${
           err instanceof Error ? err.message : String(err)
-        }`
+        }`,
       );
     } catch {
       // ignore

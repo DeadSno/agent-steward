@@ -164,7 +164,7 @@ function percent(part: number, total: number): number {
  */
 export function buildAnalytics(
   records: AnalyticsRecord[],
-  options: BuildAnalyticsOptions = {}
+  options: BuildAnalyticsOptions = {},
 ): AnalyticsReport {
   const windowDays = Math.max(1, Math.floor(options.days ?? 14));
   const topLimit = Math.max(1, Math.floor(options.topLimit ?? 10));
@@ -416,7 +416,7 @@ export function historyToCsv(records: AnalyticsRecord[]): string {
         record.error ?? "",
       ]
         .map(csvCell)
-        .join(";")
+        .join(";"),
     );
   }
   // BOM, чтобы Excel корректно открыл UTF-8 с кириллицей.

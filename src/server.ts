@@ -60,7 +60,7 @@ function normalizeProcessName(name: string): string {
 
 /** Маркер-заголовок: по нему узнаём «свой» дашборд, уже слушающий порт. */
 const DASHBOARD_HEADER = "x-plugin-dashboard";
-const DASHBOARD_MARKER = "opencode-windows-scheduler";
+const DASHBOARD_MARKER = "agent-steward";
 
 /** Переопределение портов (используется в тестах; по умолчанию 3782/4782). */
 export interface DashboardPorts {
@@ -72,7 +72,7 @@ export interface DashboardPorts {
 export interface DashboardDeps {
   /** Список задач плагина (тот же вид, что отдаёт get_tasks / list_tasks). */
   getTasks: () => Promise<
-    Array<{
+    {
       name: string;
       schedule: string;
       status: string;
@@ -122,7 +122,7 @@ export interface DashboardDeps {
         status: string;
         message: string;
       } | null;
-    }>
+    }[]
   >;
   /** Немедленный запуск задачи (schtasks /run через обёртку плагина). */
   runTask: (name: string) => Promise<{ alreadyRunning?: boolean }>;
@@ -189,13 +189,13 @@ function estimateCost(tokens: number, model: string | undefined): number {
  * Возвращает данные для GET /api/models-analysis и блока дашборда.
  */
 function aggregateModels(
-  history: Array<{
+  history: {
     status: string;
     durationMs: number;
     tokens?: number;
     costUsd?: number;
     model?: string;
-  }>
+  }[],
 ) {
   const map = new Map<
     string,
@@ -352,7 +352,7 @@ export function needsDashboardSourceCheck(pathname: string): boolean {
  */
 export async function startDashboardServer(
   deps: DashboardDeps,
-  ports?: DashboardPorts
+  ports?: DashboardPorts,
 ): Promise<{ port: number } | null> {
   if (running) return { port: running.port };
   if (starting) return starting;
@@ -371,14 +371,14 @@ export async function startDashboardServer(
         const server = await listenOn(port, deps);
         const actualPort = resolveServerPort(server, port);
         running = { server, port: actualPort };
-        console.log(`[windows-scheduler] Веб-дашборд запущен: http://localhost:${actualPort}`);
+        console.log(`[agent-steward] Веб-дашборд запущен: http://localhost:${actualPort}`);
         return { port: actualPort };
       } catch (err: any) {
         if (err?.code !== "EADDRINUSE") {
           console.error(
-            `[windows-scheduler] Не удалось запустить дашборд на порту ${port}: ${
+            `[agent-steward] Не удалось запустить дашборд на порту ${port}: ${
               err instanceof Error ? err.message : String(err)
-            }`
+            }`,
           );
           return null;
         }
@@ -387,7 +387,7 @@ export async function startDashboardServer(
         // в том же процессе/сессии), переиспользуем его, а не вешаем второй порт.
         if (port !== 0 && (await isOwnDashboardOn(port))) {
           console.log(
-            `[windows-scheduler] Дашборд уже запущен на http://localhost:${port} — переиспользуем его.`
+            `[agent-steward] Дашборд уже запущен на http://localhost:${port} — переиспользуем его.`,
           );
           return { port };
         }
@@ -402,7 +402,7 @@ export async function startDashboardServer(
             try {
               const server = await listenOn(port, deps);
               running = { server, port };
-              console.log(`[windows-scheduler] Веб-дашборд запущен: http://localhost:${port}`);
+              console.log(`[agent-steward] Веб-дашборд запущен: http://localhost:${port}`);
               return { port };
             } catch {
               // Не вышло — идём к следующему порту.
@@ -413,7 +413,7 @@ export async function startDashboardServer(
       }
     }
     console.error(
-      `[windows-scheduler] Не удалось подобрать свободный порт — веб-дашборд не запущен.`
+      "[agent-steward] Не удалось подобрать свободный порт — веб-дашборд не запущен.",
     );
     return null;
   })();
@@ -447,19 +447,20 @@ async function tryFreeZombiePort(port: number): Promise<boolean> {
     const normName = normalizeProcessName(info.name.toLowerCase());
     if (!ZOMBIE_IMAGE_NAMES.has(normName)) {
       console.warn(
-        `[windows-scheduler] Порт ${port} занят процессом ${info.name} (PID ${pid}) — не трогаем, пробуем другой порт.`
+        `[agent-steward] Порт ${port} занят процессом ${info.name} (PID ${pid}) — не трогаем, пробуем другой порт.`,
       );
       continue;
     }
 
     const cmd = (info.commandLine || "").toLowerCase();
     const looksLikeOurs =
-      cmd.includes("opencode-windows-scheduler") ||
+      cmd.includes("agent-steward") ||
+      cmd.includes("opencode-windows-scheduler") || // legacy name — старые зомби-процессы
       cmd.includes("dist/server") ||
       cmd.includes("dist\\server");
     if (!looksLikeOurs) {
       console.warn(
-        `[windows-scheduler] Порт ${port} занят node/bun (PID ${pid}), но это не процесс плагина — не трогаем.`
+        `[agent-steward] Порт ${port} занят node/bun (PID ${pid}), но это не процесс плагина — не трогаем.`,
       );
       continue;
     }
@@ -471,14 +472,14 @@ async function tryFreeZombiePort(port: number): Promise<boolean> {
         process.kill(pid, "SIGKILL");
       }
       console.log(
-        `[windows-scheduler] Снят зомби-процесс ${info.name} (PID ${pid}), державший порт ${port}.`
+        `[agent-steward] Снят зомби-процесс ${info.name} (PID ${pid}), державший порт ${port}.`,
       );
       killed = true;
     } catch (err: any) {
       console.warn(
-        `[windows-scheduler] Не удалось снять процесс PID ${pid}: ${
+        `[agent-steward] Не удалось снять процесс PID ${pid}: ${
           err instanceof Error ? err.message : String(err)
-        }`
+        }`,
       );
     }
   }
@@ -535,7 +536,7 @@ async function findListeningPidsPosix(port: number): Promise<number[]> {
     const { stdout } = await execFileAsync(
       "lsof",
       ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-t"],
-      { windowsHide: true }
+      { windowsHide: true },
     );
     const pids = stdout
       .split(/\s+/)
@@ -573,7 +574,7 @@ async function getProcessInfo(pid: number): Promise<{ name: string; commandLine:
 
 /** Имя процесса и командная строка через CIM (Windows PowerShell). */
 async function getProcessInfoWindows(
-  pid: number
+  pid: number,
 ): Promise<{ name: string; commandLine: string } | null> {
   try {
     const script =
@@ -583,7 +584,7 @@ async function getProcessInfoWindows(
     const { stdout } = await execFileAsync(
       "powershell.exe",
       ["-NoProfile", "-NonInteractive", "-Command", script],
-      { windowsHide: true }
+      { windowsHide: true },
     );
     const line = stdout.trim();
     if (!line) return null;
@@ -597,7 +598,7 @@ async function getProcessInfoWindows(
 
 /** Имя процесса и командная строка через ps (macOS/Linux). */
 async function getProcessInfoPosix(
-  pid: number
+  pid: number,
 ): Promise<{ name: string; commandLine: string } | null> {
   try {
     // NOTE: на Linux у Node главный поток помечен как "MainThread", поэтому
@@ -676,7 +677,7 @@ function listenOn(port: number, deps: DashboardDeps): Promise<http.Server> {
 async function handleRequest(
   req: http.IncomingMessage,
   res: http.ServerResponse,
-  deps: DashboardDeps
+  deps: DashboardDeps,
 ): Promise<void> {
   try {
     let url: URL;
@@ -710,8 +711,8 @@ async function handleRequest(
       pathname === "/api/health" ||
       pathname === "/api/logs" ||
       pathname === "/metrics" ||
-      /^\/api\/dry-run\//.test(pathname) ||
-      /^\/api\/matrix\//.test(pathname);
+      pathname.startsWith("/api/dry-run/") ||
+      pathname.startsWith("/api/matrix/");
     if (knownGet && req.method !== "GET") {
       sendJson(res, 405, { error: t("server.methodNotAllowed") });
       return;
@@ -797,7 +798,7 @@ async function handleRequest(
           200,
           "application/x-ndjson; charset=utf-8",
           body ? `${body}\n` : "",
-          `logs-${stamp}.jsonl`
+          `logs-${stamp}.jsonl`,
         );
         return;
       }
@@ -910,7 +911,7 @@ async function handleRequest(
       }
       if (statusFilter) {
         records = records.filter(
-          (record) => String(record.status).toLowerCase() === statusFilter
+          (record) => String(record.status).toLowerCase() === statusFilter,
         );
       }
       const total = records.length;
@@ -928,11 +929,11 @@ async function handleRequest(
     if (req.method === "GET" && pathname === "/api/analytics") {
       const days = Math.min(
         365,
-        Math.max(1, Math.floor(Number(url.searchParams.get("days")) || 14))
+        Math.max(1, Math.floor(Number(url.searchParams.get("days")) || 14)),
       );
       const topLimit = Math.max(
         1,
-        Math.floor(Number(url.searchParams.get("top")) || 10)
+        Math.floor(Number(url.searchParams.get("top")) || 10),
       );
       const records = getHistory(null, 20000);
       const tasks = await deps.getTasks();
@@ -965,7 +966,7 @@ async function handleRequest(
           200,
           "application/json; charset=utf-8",
           JSON.stringify(buildOtlpExport(records), null, 2),
-          `history-${stamp}.otlp.json`
+          `history-${stamp}.otlp.json`,
         );
       } else if (format === "json") {
         sendAttachment(
@@ -973,7 +974,7 @@ async function handleRequest(
           200,
           "application/json; charset=utf-8",
           JSON.stringify({ exportedAt: new Date().toISOString(), records }, null, 2),
-          `history-${stamp}.json`
+          `history-${stamp}.json`,
         );
       } else {
         sendAttachment(
@@ -981,7 +982,7 @@ async function handleRequest(
           200,
           "text/csv; charset=utf-8",
           historyToCsv(records),
-          `history-${stamp}.csv`
+          `history-${stamp}.csv`,
         );
       }
       return;
@@ -1021,7 +1022,7 @@ async function handleRequest(
           200,
           "application/octet-stream",
           data,
-          `scheduler-${stamp}.db`
+          `scheduler-${stamp}.db`,
         );
       } catch (err: any) {
         sendJson(res, 500, {
@@ -1053,7 +1054,7 @@ async function handleRequest(
     }
 
     // Входящий webhook-триггер (Спринт 22): POST /api/hooks/:task?token=…
-    const hookMatch = req.method === "POST" && pathname.match(/^\/api\/hooks\/(.+)$/);
+    const hookMatch = req.method === "POST" && (/^\/api\/hooks\/(.+)$/.exec(pathname));
     if (hookMatch) {
       const taskName = hookMatch[1].replace(/\/+$/, "").trim();
       const remote = req.socket.remoteAddress ?? null;
@@ -1066,7 +1067,7 @@ async function handleRequest(
         httpStatus: number,
         status: "accepted" | "rejected",
         reason?: string,
-        payloadBytes = declaredBytes
+        payloadBytes = declaredBytes,
       ) => {
         appendStructuredLog({
           event: "hook.received",
@@ -1166,7 +1167,7 @@ async function handleRequest(
     }
 
     // Запуск задачи: POST /api/run/:name (имя URL-кодируется на клиенте).
-    const runMatch = req.method === "POST" && pathname.match(/^\/api\/run\/(.+)$/);
+    const runMatch = req.method === "POST" && (/^\/api\/run\/(.+)$/.exec(pathname));
     if (runMatch) {
       const name = runMatch[1].replace(/\/+$/, "");
       if (!name) {
@@ -1201,7 +1202,7 @@ async function handleRequest(
 
     // Lifecycle матриц (Спринт 16): отмена выполняющейся матрицы.
     const cancelMatrixMatch =
-      req.method === "POST" && pathname.match(/^\/api\/cancel-matrix\/(.+)$/);
+      req.method === "POST" && (/^\/api\/cancel-matrix\/(.+)$/.exec(pathname));
     if (cancelMatrixMatch) {
       const name = decodeURIComponent(cancelMatrixMatch[1]).replace(/\/+$/, "");
       if (!name) {
@@ -1272,7 +1273,7 @@ async function handleRequest(
     }
 
     // Удаление задачи: POST /api/delete/:name (кнопка «Удалить» в таблице).
-    const deleteMatch = req.method === "POST" && pathname.match(/^\/api\/delete\/(.+)$/);
+    const deleteMatch = req.method === "POST" && (/^\/api\/delete\/(.+)$/.exec(pathname));
     if (deleteMatch) {
       const name = deleteMatch[1].replace(/\/+$/, "");
       if (!name) {
@@ -1304,7 +1305,7 @@ async function handleRequest(
     sendJson(res, 404, { error: t("server.notFound") });
   } catch (err: any) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error(`[windows-scheduler] Ошибка обработки запроса ${req.url}: ${message}`);
+    console.error(`[agent-steward] Ошибка обработки запроса ${req.url}: ${message}`);
     if (res.headersSent) {
       res.destroy();
       return;
@@ -1352,7 +1353,7 @@ function sendBuffer(
   status: number,
   contentType: string,
   body: Buffer,
-  filename: string
+  filename: string,
 ): void {
   if (res.headersSent) {
     res.end();
@@ -1375,7 +1376,7 @@ function sendAttachment(
   status: number,
   contentType: string,
   body: string,
-  filename: string
+  filename: string,
 ): void {
   if (res.headersSent) {
     res.end();
@@ -1786,7 +1787,7 @@ function renderPage(): string {
           ' | Content-Type: ' + (ct || '(пусто)') +
           '\\nПервые 2000 символов ответа:\\n' + text.slice(0, 2000)
         );
-        if (marker !== 'opencode-windows-scheduler') {
+        if (marker !== 'agent-steward' && marker !== 'opencode-windows-scheduler') {
           console.error(
             'Ответ пришёл не от дашборда плагина: нет заголовка x-plugin-dashboard. ' +
             'Похоже, на этом порту работает другой сервис.'

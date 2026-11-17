@@ -55,13 +55,34 @@ export const WRAPPER_SCRIPT = `param(
     [int]$GateTimeoutSeconds = 300,
     [int]$StaleLockMaxAgeMs = 86400000,
     [string]$PermissionsB64 = "",
-    [string]$PolicyB64 = ""
+    [string]$PolicyB64 = "",
+    [string]$ModelB64 = "",
+    [string]$WorkspaceNameB64 = "",
+    [string]$AllowedToolsB64 = "",
+    [string]$DeniedToolsB64 = ""
 )
 
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 
 $ErrorActionPreference = "Continue"
+
+# P2-11: свободный текст (модель, имя workspace, списки инструментов) приходит
+# в base64, чтобы символы подстановки PowerShell/cmd не разворачивались.
+function ConvertFrom-B64Text {
+    param([string]$Value)
+    if (-not $Value) { return "" }
+    try {
+        return [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($Value))
+    } catch {
+        return ""
+    }
+}
+
+if ($ModelB64) { $Model = ConvertFrom-B64Text $ModelB64 }
+if ($WorkspaceNameB64) { $WorkspaceName = ConvertFrom-B64Text $WorkspaceNameB64 }
+if ($AllowedToolsB64) { $AllowedTools = ConvertFrom-B64Text $AllowedToolsB64 }
+if ($DeniedToolsB64) { $DeniedTools = ConvertFrom-B64Text $DeniedToolsB64 }
 
 function Write-Log {
     param([string]$Message)
@@ -99,7 +120,7 @@ if ($LogFile) {
     } catch {}
 }
 
-Write-Log "[windows-scheduler] Запуск задачи '$TaskName'..."
+Write-Log "[agent-steward] Запуск задачи '$TaskName'..."
 
 $startTime = Get-Date
 $script:exitCode = 0
@@ -179,11 +200,11 @@ if ($LockFile) {
             }
         }
         if (-not $script:lockAcquired) {
-            Write-Log "[windows-scheduler] Запуск задачи '$TaskName' пропущен: удерживается активная блокировка."
+            Write-Log "[agent-steward] Запуск задачи '$TaskName' пропущен: удерживается активная блокировка."
             exit 0
         }
     } catch {
-        Write-Log "[windows-scheduler] Не удалось захватить блокировку задачи '$TaskName': $_"
+        Write-Log "[agent-steward] Не удалось захватить блокировку задачи '$TaskName': $_"
         exit 0
     }
 }
@@ -247,7 +268,7 @@ function Invoke-HookScript {
             try { & taskkill.exe /F /T /PID $proc.Id 2>$null | Out-Null } catch {}
             try { $proc.WaitForExit(5000) | Out-Null } catch {}
             $code = 124
-            Write-Log "[windows-scheduler] Таймаут хука ($timeout с): $Command"
+            Write-Log "[agent-steward] Таймаут хука ($timeout с): $Command"
         } else {
             try { $proc.WaitForExit() } catch {}
             $code = $proc.ExitCode
@@ -265,7 +286,7 @@ function Invoke-HookScript {
         }
         return $code
     } catch {
-        Write-Log "[windows-scheduler] Не удалось выполнить хук: $_"
+        Write-Log "[agent-steward] Не удалось выполнить хук: $_"
         return 1
     } finally {
         Remove-Item -LiteralPath $hookFile -Force -ErrorAction SilentlyContinue
@@ -358,7 +379,7 @@ function Invoke-OpenCodeOnce {
     }
 
     if ($script:timedOut) {
-        Write-Log "[windows-scheduler] Таймаут: задача '$TaskName' превысила лимит $TimeoutSeconds с — процесс остановлен."
+        Write-Log "[agent-steward] Таймаут: задача '$TaskName' превысила лимит $TimeoutSeconds с — процесс остановлен."
         $script:errorMessage = "Таймаут: превышено $TimeoutSeconds с"
         return 124
     }
@@ -600,17 +621,17 @@ try {
 
     # Pre-flight: выполняется ДО основной задачи. Ненулевой код отменяет запуск.
     if ($BeforeScript) {
-        Write-Log "[windows-scheduler] Pre-flight: $BeforeScript"
+        Write-Log "[agent-steward] Pre-flight: $BeforeScript"
         $preCode = Invoke-HookScript -Command $BeforeScript
         if ($preCode -ne 0) {
-            Write-Log "[windows-scheduler] ОШИБКА: Pre-flight script failed (код $preCode)."
+            Write-Log "[agent-steward] ОШИБКА: Pre-flight script failed (код $preCode)."
             $script:preFlightStatus = "error"
             $script:errorMessage = "Pre-flight script failed"
             $script:exitCode = 1
             $script:skipMainTask = $true
         } else {
             $script:preFlightStatus = "success"
-            Write-Log "[windows-scheduler] Pre-flight успешно завершён."
+            Write-Log "[agent-steward] Pre-flight успешно завершён."
         }
     }
 
@@ -633,9 +654,9 @@ try {
                     Set-Item -Path ("env:" + $matches[1]) -Value $matches[2]
                 }
             }
-            Write-Log "[windows-scheduler] Переменные окружения workspace загружены."
+            Write-Log "[agent-steward] Переменные окружения workspace загружены."
         } catch {
-            Write-Log "[windows-scheduler] Не удалось загрузить env-файл workspace: $($_.Exception.Message)"
+            Write-Log "[agent-steward] Не удалось загрузить env-файл workspace: $($_.Exception.Message)"
         }
     }
 
@@ -658,7 +679,7 @@ try {
                 $fromFile = (Get-Content -LiteralPath $SessionFile -Raw -ErrorAction Stop).Trim()
                 if ($fromFile) { $effectiveSessionId = $fromFile }
             } catch {
-                Write-Log "[windows-scheduler] Не удалось прочитать файл сессии: $($_.Exception.Message)"
+                Write-Log "[agent-steward] Не удалось прочитать файл сессии: $($_.Exception.Message)"
             }
         }
         if ($effectiveSessionId) {
@@ -682,7 +703,7 @@ try {
         $attempt++
         if ($attempt -gt 1) {
             $waitSeconds = [Math]::Max(0, $RetryDelaySeconds)
-            Write-Log "[windows-scheduler] Повтор $($attempt - 1) из $($maxAttempts - 1) через $waitSeconds с..."
+            Write-Log "[agent-steward] Повтор $($attempt - 1) из $($maxAttempts - 1) через $waitSeconds с..."
             if ($waitSeconds -gt 0) { Start-Sleep -Seconds $waitSeconds }
             $script:errorMessage = ""
         }
@@ -691,47 +712,47 @@ try {
         # Таймаут повторять бессмысленно: каждая попытка снова съест весь лимит.
         if ($script:timedOut) { break }
         if ($attempt -lt $maxAttempts) {
-            Write-Log "[windows-scheduler] Попытка $attempt завершилась с кодом $($script:exitCode)."
+            Write-Log "[agent-steward] Попытка $attempt завершилась с кодом $($script:exitCode)."
         }
     }
 
     # Quality Gate: проверочная команда выполняется ТОЛЬКО после успешного
     # завершения opencode run. Если ИИ упал — шлюз не запускаем.
     if ($QualityGate -and $script:exitCode -eq 0) {
-        Write-Log "[windows-scheduler] Запуск Quality Gate: $QualityGate"
+        Write-Log "[agent-steward] Запуск Quality Gate: $QualityGate"
         # Тот же таймаут, что у хуков: зависший gate не должен держать lock.
         $gateCode = Invoke-HookScript -Command $QualityGate
 
         if ($gateCode -eq 124) {
-            Write-Log "[windows-scheduler] ОШИБКА: Quality Gate превысил таймаут $GateTimeoutSeconds с и был остановлен."
+            Write-Log "[agent-steward] ОШИБКА: Quality Gate превысил таймаут $GateTimeoutSeconds с и был остановлен."
             $script:errorMessage = "Quality Gate: превышен таймаут $GateTimeoutSeconds с"
             $script:exitCode = 1
         } elseif ($gateCode -ne 0) {
-            Write-Log "[windows-scheduler] ОШИБКА: Quality Gate провален. Код возврата: $gateCode"
+            Write-Log "[agent-steward] ОШИБКА: Quality Gate провален. Код возврата: $gateCode"
             $script:errorMessage = "Quality Gate провален. Код возврата: $gateCode"
             $script:exitCode = 1
         } else {
-            Write-Log "[windows-scheduler] Quality Gate пройден."
+            Write-Log "[agent-steward] Quality Gate пройден."
         }
     }
 
     if ($script:exitCode -ne 0) {
-        Write-Log "[windows-scheduler] Задача '$TaskName' завершилась с кодом $script:exitCode."
+        Write-Log "[agent-steward] Задача '$TaskName' завершилась с кодом $script:exitCode."
     } else {
-        Write-Log "[windows-scheduler] Задача '$TaskName' успешно завершена."
+        Write-Log "[agent-steward] Задача '$TaskName' успешно завершена."
     }
     } # конец блока основной задачи
 } catch {
-    Write-Log "[windows-scheduler] Ошибка выполнения задачи '$TaskName': $_"
+    Write-Log "[agent-steward] Ошибка выполнения задачи '$TaskName': $_"
     $script:errorMessage = "Ошибка выполнения задачи: $_"
     $script:exitCode = 1
 } finally {
     # Post-flight: выполняется ВСЕГДА, даже если основная задача упала.
     if ($AfterScript) {
-        Write-Log "[windows-scheduler] Post-flight: $AfterScript"
+        Write-Log "[agent-steward] Post-flight: $AfterScript"
         $postCode = Invoke-HookScript -Command $AfterScript
         if ($postCode -ne 0) {
-            Write-Log "[windows-scheduler] ОШИБКА: Post-flight script failed (код $postCode)."
+            Write-Log "[agent-steward] ОШИБКА: Post-flight script failed (код $postCode)."
             $script:postFlightStatus = "error"
             if ($script:exitCode -eq 0) {
                 $script:errorMessage = "Post-flight script failed"
@@ -739,7 +760,7 @@ try {
             }
         } else {
             $script:postFlightStatus = "success"
-            Write-Log "[windows-scheduler] Post-flight успешно завершён."
+            Write-Log "[agent-steward] Post-flight успешно завершён."
         }
     }
 
@@ -870,7 +891,7 @@ export function lockFilePath(taskName: string): string {
 async function writeHookFile(
   sanitizedName: string,
   kind: "before" | "after" | "gate",
-  command: string
+  command: string,
 ): Promise<string> {
   const dir = path.join(WRAPPER_DIR, "hooks");
   await fs.mkdir(dir, { recursive: true });
@@ -909,7 +930,7 @@ export async function writeWrapperCmd(
   gateTimeoutSeconds?: number,
   permissionsConfig?: string,
   policyMeta?: unknown,
-  sessionFile?: string
+  sessionFile?: string,
 ): Promise<string> {
   await fs.mkdir(WRAPPER_DIR, { recursive: true });
   const cmdPath = path.join(WRAPPER_DIR, `run-${sanitizedName}.cmd`);
@@ -961,29 +982,28 @@ export async function writeWrapperCmd(
   if (model?.trim()) {
     const safeModel = model.replace(/[\r\n"]+/g, "").trim();
     if (safeModel) {
-      psArgs.push(`-Model "${safeModel}"`);
+      const modelB64 = Buffer.from(safeModel, "utf8").toString("base64");
+      psArgs.push(`-ModelB64 "${modelB64}"`);
     }
   }
 
   if (workspaceName?.trim()) {
-    const safeWorkspace = workspaceName.replace(/[\r\n"]+/g, "'").trim();
-    if (safeWorkspace) {
-      psArgs.push(`-WorkspaceName "${safeWorkspace}"`);
-    }
+    const workspaceB64 = Buffer.from(workspaceName.trim(), "utf8").toString("base64");
+    psArgs.push(`-WorkspaceNameB64 "${workspaceB64}"`);
   }
 
   // Role-scoped tools (спринт 14): передаём списки одной строкой через запятую.
   for (const [flag, list] of [
-    ["-AllowedTools", allowedTools],
-    ["-DeniedTools", deniedTools],
+    ["-AllowedToolsB64", allowedTools],
+    ["-DeniedToolsB64", deniedTools],
   ] as const) {
     const joined = (Array.isArray(list) ? list : [])
       .map((item) => String(item).trim())
       .filter(Boolean)
       .join(",");
     if (joined) {
-      const safe = joined.replace(/[\r\n"]+/g, "'");
-      psArgs.push(`${flag} "${safe}"`);
+      const b64 = Buffer.from(joined, "utf8").toString("base64");
+      psArgs.push(`${flag} "${b64}"`);
     }
   }
 
@@ -1085,7 +1105,7 @@ export async function writeWrapperCmd(
       gateArgs.push(`>> "${logFile.trim()}" 2>&1`);
     }
     lines.push(gateArgs.join(" "));
-    lines.push(`if "%errorlevel%"=="3" exit /b 0`);
+    lines.push("if \"%errorlevel%\"==\"3\" exit /b 0");
   }
 
   lines.push(psArgs.join(" "));

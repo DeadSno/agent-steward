@@ -1220,7 +1220,7 @@ export default Plugin.define({
         const url = URL.createObjectURL(blob)
         const a = document.createElement("a")
         a.href = url
-        a.download = `windows-scheduler-tasks-${new Date().toISOString().slice(0, 10)}.json`
+        a.download = `agent-steward-tasks-${new Date().toISOString().slice(0, 10)}.json`
         document.body.appendChild(a)
         a.click()
         document.body.removeChild(a)

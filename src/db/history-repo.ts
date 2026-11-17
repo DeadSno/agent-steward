@@ -105,7 +105,7 @@ export function insertHistory(record: StoredHistoryRecord): number {
       record.nextTask ?? null,
       record.workspaceId ?? null,
       record.allowedTools == null ? null : JSON.stringify(record.allowedTools),
-      record.deniedTools == null ? null : JSON.stringify(record.deniedTools)
+      record.deniedTools == null ? null : JSON.stringify(record.deniedTools),
     );
   return lastId(result);
 }
@@ -116,7 +116,7 @@ export function startRun(
   startedAt = new Date().toISOString(),
   workspaceId?: string | null,
   allowedTools?: string[] | null,
-  deniedTools?: string[] | null
+  deniedTools?: string[] | null,
 ): number {
   const id = insertHistory({
     taskName,
@@ -153,7 +153,7 @@ export function finishRun(
   costUsd?: number,
   model?: string,
   preFlightStatus?: "success" | "error" | "skipped",
-  postFlightStatus?: "success" | "error" | "skipped"
+  postFlightStatus?: "success" | "error" | "skipped",
 ): boolean {
   const safeDuration = Number.isFinite(durationMs) ? Math.max(0, Math.floor(durationMs)) : 0;
   const finishedAt = new Date().toISOString();
@@ -163,7 +163,7 @@ export function finishRun(
     const instance = getDb();
     const row = instance
       .prepare("SELECT finished_at FROM history WHERE id = ?")
-      .get(id) as any;
+      .get(id);
     if (!row || row.finished_at != null) return false;
 
     instance
@@ -172,7 +172,7 @@ export function finishRun(
            status = ?, finished_at = ?, duration_ms = ?, error = ?, next_task = ?,
            tokens = ?, cost_usd = ?, model = ?,
            pre_flight_status = ?, post_flight_status = ?
-         WHERE id = ?`
+         WHERE id = ?`,
       )
       .run(
         status,
@@ -185,12 +185,12 @@ export function finishRun(
         model ?? null,
         preFlightStatus ?? null,
         postFlightStatus ?? null,
-        id
+        id,
       );
 
     const taskRow = instance
       .prepare("SELECT task_name, started_at FROM history WHERE id = ?")
-      .get(id) as any;
+      .get(id);
     incrementMetricsUnsafe(String(taskRow.task_name), status, tokens, costUsd);
     completed = {
       taskName: String(taskRow.task_name),
@@ -240,7 +240,7 @@ export function recordRun(
   finishedAt = new Date().toISOString(),
   workspaceId?: string | null,
   allowedTools?: string[] | null,
-  deniedTools?: string[] | null
+  deniedTools?: string[] | null,
 ): number {
   const safeDuration = Math.max(0, Math.floor(Number(durationMs) || 0));
   const id = withTransaction(() => {
@@ -261,7 +261,7 @@ export function recordRun(
         nextTask ?? null,
         workspaceId ?? null,
         allowedTools == null ? null : JSON.stringify(allowedTools),
-        deniedTools == null ? null : JSON.stringify(deniedTools)
+        deniedTools == null ? null : JSON.stringify(deniedTools),
       );
     incrementMetricsUnsafe(taskName, status, tokens, costUsd);
     return lastId(result);
@@ -291,7 +291,7 @@ export function recordRun(
 export function getHistory(
   taskName?: string | null,
   limit = 200,
-  status?: string | null
+  status?: string | null,
 ): StoredHistoryRecord[] {
   const safeLimit = Math.max(1, Math.min(100000, Math.floor(limit) || 1));
   const clauses: string[] = [];
@@ -320,16 +320,16 @@ export function getHistory(
     .prepare(
       `SELECT * FROM history${where}
        ORDER BY started_at DESC, id DESC
-       LIMIT ?`
+       LIMIT ?`,
     )
-    .all(...params) as any[];
+    .all(...params);
   return rows.map(rowToRecord);
 }
 
 /** История запусков, начатых не раньше timestamp (ISO-строка). */
 export function getHistorySince(
   timestamp: string,
-  limit = 5000
+  limit = 5000,
 ): StoredHistoryRecord[] {
   const safeLimit = Math.max(1, Math.min(100000, Math.floor(limit) || 1));
   const rows = getDb()
@@ -337,9 +337,9 @@ export function getHistorySince(
       `SELECT * FROM history
        WHERE started_at >= ?
        ORDER BY started_at DESC, id DESC
-       LIMIT ?`
+       LIMIT ?`,
     )
-    .all(timestamp, safeLimit) as any[];
+    .all(timestamp, safeLimit);
   return rows.map(rowToRecord);
 }
 
@@ -363,7 +363,7 @@ export function recoverInterrupted(): number {
            duration_ms,
            CAST((julianday(?) - julianday(started_at)) * 86400000 AS INTEGER)
          )
-       WHERE finished_at IS NULL`
+       WHERE finished_at IS NULL`,
     )
     .run(now, now);
   return Number(result.changes) || 0;
@@ -371,7 +371,7 @@ export function recoverInterrupted(): number {
 
 /** Количество записей истории (для миграции и тестов). */
 export function countHistory(): number {
-  const row = getDb().prepare("SELECT COUNT(*) AS count FROM history").get() as any;
+  const row = getDb().prepare("SELECT COUNT(*) AS count FROM history").get();
   return Number(row?.count) || 0;
 }
 
@@ -379,7 +379,7 @@ export function countHistory(): number {
 export function countRunningRecords(): number {
   const row = getDb()
     .prepare("SELECT COUNT(*) AS count FROM history WHERE finished_at IS NULL")
-    .get() as any;
+    .get();
   return Number(row?.count) || 0;
 }
 
@@ -396,9 +396,9 @@ export function listRunningRecords(): RunningHistoryRecord[] {
     .prepare(
       `SELECT id, task_name, started_at FROM history
        WHERE finished_at IS NULL
-       ORDER BY started_at ASC, id ASC`
+       ORDER BY started_at ASC, id ASC`,
     )
-    .all() as any[];
+    .all();
   return rows.map((row) => ({
     id: Number(row.id) || 0,
     taskName: String(row.task_name ?? ""),
@@ -445,7 +445,7 @@ export function pruneHistory(options: PruneHistoryOptions = {}): PruneHistoryRes
     const result = instance
       .prepare(
         `DELETE FROM history
-         WHERE finished_at IS NOT NULL AND finished_at < ?`
+         WHERE finished_at IS NOT NULL AND finished_at < ?`,
       )
       .run(cutoff);
     deletedByAge = Number(result.changes) || 0;
@@ -462,7 +462,7 @@ export function pruneHistory(options: PruneHistoryOptions = {}): PruneHistoryRes
              WHERE finished_at IS NOT NULL
              ORDER BY started_at DESC, id DESC
              LIMIT ?
-           )`
+           )`,
       )
       .run(Math.max(0, Math.floor(maxRecords)));
     deletedByCount = Number(result.changes) || 0;

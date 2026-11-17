@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Документация
+    url: https://github.com/DeadSno/agent-steward/tree/main/docs
+    about: Архитектура, совместимость, миграция и FAQ.
+  - name: Вопросы и обсуждения
+    url: https://github.com/DeadSno/agent-steward/discussions
+    about: Задайте вопрос, если это не баг и не запрос фичи.

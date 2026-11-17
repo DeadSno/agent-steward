@@ -115,7 +115,7 @@ npm run build && npm run build:gui
 
 ## Agent 工具
 
-agent 可获得完整功能 —— 25 个工具，覆盖调度、流水线、运维、可观测性与管理：
+agent 可获得完整功能 —— 26 个工具，覆盖调度、流水线、运维、可观测性与管理：
 
 | 工具 | 参数 | 作用 |
 |---|---|---|
@@ -133,6 +133,7 @@ agent 可获得完整功能 —— 25 个工具，覆盖调度、流水线、运
 | `matrix_control` | `action`、`name?` | 矩阵结果、取消待运行克隆、清理孤儿、预览克隆 |
 | `get_metrics` | — | 汇总的运行数、成功数与失败数 |
 | `get_analytics` | `days?`、`topLimit?` | 周期报告：数量、成功率、耗时、token、成本、热门任务 |
+| `self_analysis` | `days?`、`topLimit?`、`includeAnomalies?` | 周期自检报告：健康评分、异常检测、趋势分析与优化建议 |
 | `manage_settings` | `action`、`maxConcurrent?`、`winterMode?`、`notifications?`、`history?` | 读取/更新全局设置（并发、通知、保留策略） |
 | `manage_local_ai` | `action`（`get`/`update`/`test`）、`mode?`、`baseUrl?`、`model?`、`timeoutMs?`、`fallback?`、`confidenceThreshold?`、`shadow?` | 读取、更新或测试本地分诊助手；`test` 会发送一条合成通知并返回延迟与判定结果 |
 | `manage_templates` | `action`、模板字段 | 列出、保存或删除可复用的任务模板 |
@@ -230,7 +231,7 @@ src/
 npm install
 npm run build        # tsc
 npm run build:gui    # vite
-npm test             # 58 test suites, 600+ checks
+npm test             # 67 test suites, 600+ checks
 npm run test:en      # same suites with the English locale
 ```
 

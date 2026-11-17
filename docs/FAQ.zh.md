@@ -17,8 +17,8 @@ Translations: [English](FAQ.md) · [Русский](FAQ.ru.md)
 
 恢复步骤：
 
-1. 在插件目录中找到该文件：`%APPDATA%\opencode\windows-scheduler\`（Windows）
-   或 `~/.config/opencode/windows-scheduler/`（macOS/Linux，或 `$XDG_CONFIG_HOME`）。
+1. 在插件目录中找到该文件：`%APPDATA%\opencode\agent-steward\`（Windows）
+   或 `~/.config/opencode/agent-steward/`（macOS/Linux，或 `$XDG_CONFIG_HOME`）。
 2. 用编辑器打开：通常是截断的 JSON，修正语法。
 3. 把修好的文件复制回 `secrets.json`（保留 `.corrupt-*` 副本作为备份），
    用 `manage_secrets`（`action: "list"`）验证。

@@ -39,7 +39,7 @@ export class FileWatchManager {
 
   constructor(
     private readonly handler: FileTriggerHandler,
-    private readonly debounceMs: number = FILE_TRIGGER_DEBOUNCE_MS
+    private readonly debounceMs: number = FILE_TRIGGER_DEBOUNCE_MS,
   ) {}
 
   /** Сколько задач сейчас отслеживается. */
@@ -61,7 +61,7 @@ export class FileWatchManager {
         (d) =>
           d.triggerType === "file" &&
           typeof d.watchPath === "string" &&
-          d.watchPath.trim().length > 0
+          d.watchPath.trim().length > 0,
       )
       .map((d) => ({
         name: d.name.trim(),
@@ -79,13 +79,13 @@ export class FileWatchManager {
         // watcher на путях с управляющими символами или выходом через `..`.
         if (hasPathControlChars(d.path)) {
           console.error(
-            `[windows-scheduler] Задача "${d.name}": путь наблюдения содержит управляющие символы — пропущен.`
+            `[agent-steward] Задача "${d.name}": путь наблюдения содержит управляющие символы — пропущен.`,
           );
           return false;
         }
         if (!isAbsolute(d.path) && d.path.split(/[\\/]/).includes("..")) {
           console.error(
-            `[windows-scheduler] Задача "${d.name}": относительный путь наблюдения выходит за рабочую директорию — пропущен.`
+            `[agent-steward] Задача "${d.name}": относительный путь наблюдения выходит за рабочую директорию — пропущен.`,
           );
           return false;
         }
@@ -130,7 +130,7 @@ export class FileWatchManager {
     name: string,
     watchPath: string,
     globs: string[] = [],
-    ignore: string[] = []
+    ignore: string[] = [],
   ): void {
     // Спринт 27: маски с "**" требуют рекурсивного обхода директории.
     const needsRecursive = globs.some((g) => g.includes("**"));
@@ -148,9 +148,9 @@ export class FileWatchManager {
       });
     } catch (err: any) {
       console.error(
-        `[windows-scheduler] Не удалось начать отслеживание "${watchPath}" для задачи "${name}": ${
+        `[agent-steward] Не удалось начать отслеживание "${watchPath}" для задачи "${name}": ${
           err instanceof Error ? err.message : String(err)
-        }`
+        }`,
       );
       return;
     }
@@ -174,7 +174,7 @@ export class FileWatchManager {
       const rel = relativeTo(watchPath, changedPath);
       const candidates = rel ? [rel, changedPath] : [changedPath];
       return candidates.some(
-        (candidate) => filterPaths([candidate], globs, ignore).length > 0
+        (candidate) => filterPaths([candidate], globs, ignore).length > 0,
       );
     };
 
@@ -187,20 +187,20 @@ export class FileWatchManager {
         if (this.stopped) return;
         try {
           const result = this.handler(name, changedPath);
-          if (result && typeof (result as Promise<void>).catch === "function") {
-            (result as Promise<void>).catch((err: any) => {
+          if (result && typeof (result).catch === "function") {
+            (result).catch((err: any) => {
               console.error(
-                `[windows-scheduler] Ошибка запуска задачи "${name}" по изменению файла: ${
+                `[agent-steward] Ошибка запуска задачи "${name}" по изменению файла: ${
                   err instanceof Error ? err.message : String(err)
-                }`
+                }`,
               );
             });
           }
         } catch (err: any) {
           console.error(
-            `[windows-scheduler] Ошибка запуска задачи "${name}" по изменению файла: ${
+            `[agent-steward] Ошибка запуска задачи "${name}" по изменению файла: ${
               err instanceof Error ? err.message : String(err)
-            }`
+            }`,
           );
         }
       }, this.debounceMs);
@@ -216,15 +216,15 @@ export class FileWatchManager {
 
     watcher.on("error", (err) => {
       console.error(
-        `[windows-scheduler] Ошибка наблюдения за "${watchPath}" (задача "${name}"): ${
+        `[agent-steward] Ошибка наблюдения за "${watchPath}" (задача "${name}"): ${
           (err as any)?.message ?? String(err)
-        }`
+        }`,
       );
     });
 
     this.entries.set(name.toLowerCase(), entry);
     console.log(
-      `[windows-scheduler] Слежу за "${watchPath}" — задача "${name}" запускается при изменении файла.`
+      `[agent-steward] Слежу за "${watchPath}" — задача "${name}" запускается при изменении файла.`,
     );
   }
 

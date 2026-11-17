@@ -42,7 +42,7 @@ function doubleAttr(key: string, value: number | null | undefined): OtlpAttribut
   return { key, value: { doubleValue: value } };
 }
 
-function compact(attrs: Array<OtlpAttribute | null>): OtlpAttribute[] {
+function compact(attrs: (OtlpAttribute | null)[]): OtlpAttribute[] {
   return attrs.filter((attr): attr is OtlpAttribute => attr != null);
 }
 
@@ -58,7 +58,7 @@ function hashIds(record: StoredHistoryRecord): { traceId: string; spanId: string
     .createHash("sha256")
     .update(
       `${record.taskName}|${record.startedAt}|${record.id ?? 0}`,
-      "utf8"
+      "utf8",
     )
     .digest("hex");
   return { traceId: digest.slice(0, 32), spanId: digest.slice(32, 48) };
@@ -107,7 +107,7 @@ export function buildOtlpExport(records: StoredHistoryRecord[]): Record<string, 
       {
         resource: {
           attributes: compact([
-            stringAttr("service.name", "opencode-windows-scheduler"),
+            stringAttr("service.name", "agent-steward"),
             stringAttr("service.version", version),
             stringAttr("scheduler.profile", getProfileName()),
             stringAttr("scheduler.backend", getSchedulerTitle()),
@@ -116,7 +116,7 @@ export function buildOtlpExport(records: StoredHistoryRecord[]): Record<string, 
         scopeSpans: [
           {
             scope: {
-              name: "opencode-windows-scheduler",
+              name: "agent-steward",
               version,
             },
             spans,

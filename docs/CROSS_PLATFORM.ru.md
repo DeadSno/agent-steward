@@ -50,23 +50,25 @@ interface SchedulerBackend {
 ## Как работает каждая ОС
 
 ### Windows (поведение не изменилось)
-- Задачи регистрируются в Планировщике Windows через `schtasks` в папке `\OpenCode\windows-scheduler\`.
-- Обёртка: `run-task.ps1` + персональный `run-<name>.cmd` в `%APPDATA%\opencode\windows-scheduler\wrapper`.
-- Логи: `%APPDATA%\opencode\windows-scheduler\logs\<name>.log`.
+- Задачи регистрируются в Планировщике Windows через `schtasks` в папке `\OpenCode\agent-steward\` (профили — `\OpenCode\agent-steward-<profile>\`). Legacy-папка `\OpenCode\windows-scheduler\` по-прежнему читается, переименовывается и удаляется по требованию.
+- Обёртка: `run-task.ps1` + персональный `run-<name>.cmd` в `%APPDATA%\opencode\agent-steward\wrapper`. Legacy-каталог `%APPDATA%\opencode\windows-scheduler` переносится при первом запуске.
+- Логи: `%APPDATA%\opencode\agent-steward\logs\<name>.log`.
 - cron конвертируется в schtasks (`convertCronToSchTasks`) — поддерживается тот же набор шаблонов.
 
 ### Linux
 - Задачи живут в управляемом блоке `crontab`:
   ```
-  # >>> opencode-scheduler >>>
+  # >>> opencode-scheduler:agent-steward >>>
   # task: my-task
   */5 * * * * /bin/bash '/…/wrapper/run-my-task.sh' >> '/…/logs/my-task.log' 2>&1
-  # <<< opencode-scheduler <<<
+  # <<< opencode-scheduler:agent-steward <<<
   ```
+  Блоки без суффикса `:<folder>` (legacy) по-прежнему читаются и удаляются.
 - Пауза = строка с префиксом `# PAUSED: ` (блок пересобирается из реестра).
 - Задачи с триггером `file` в crontab не попадают — их запускает FileWatchManager плагина.
-- Обёртка: `~/.config/opencode/windows-scheduler/wrapper/run-<name>.sh` (chmod 0755).
+- Обёртка: `~/.config/opencode/agent-steward/wrapper/run-<name>.sh` (chmod 0755).
 - Полный cron-синтаксис (в отличие от Windows), т.к. crontab понимает его нативно.
+- Разовый запуск (`once`): `at -t`; если `at` не установлен, плагин ставит отвязанный процесс `sleep && команда` (`pid:<pid>` в реестре). Fallback не переживает перезагрузку — для надёжности установите пакет `at`.
 - Удаление/пересборка — только своего блока, остальные строки `crontab` не трогаются.
 
 ### macOS
@@ -75,7 +77,7 @@ interface SchedulerBackend {
   `M H * * *`, `M H * * D`.
 - Пауза = `launchctl unload -w`, возобновление = `launchctl load -w`.
 - Обёртка — тот же `.sh`, что и на Linux; пути конфигов:
-  `~/.config/opencode/windows-scheduler/` (или `$XDG_CONFIG_HOME`).
+  `~/.config/opencode/agent-steward/` (или `$XDG_CONFIG_HOME`).
 
 ### Общая POSIX-обёртка (`.sh`)
 - `cd` в рабочую директорию, `opencode run` с промптом из файла.
@@ -98,7 +100,7 @@ interface SchedulerBackend {
 | Пауза / возобновление | `schtasks /change /disable` / `/enable` | строка `# PAUSED:` в управляемом блоке | `launchctl unload -w` / `load -w` |
 | Файловые триггеры | in-process `FileWatchManager` | так же | так же |
 | Обёртки задач | `.cmd` + `.ps1` | `.sh` | `.sh` |
-| Логи | `%APPDATA%\opencode\windows-scheduler\logs` | `~/.config/opencode/windows-scheduler/logs` | как на Linux |
+| Логи | `%APPDATA%\opencode\agent-steward\logs` | `~/.config/opencode/agent-steward/logs` | как на Linux |
 | Защита `secrets.key` | `icacls` (только владелец) + `chmod` как fallback | `chmod 0600` | `chmod 0600` |
 | Дашборд | `127.0.0.1`, динамический заголовок | так же | так же |
 | DAG / matrix / quality gates / уведомления | в плагине, не зависят от ОС | так же | так же |
@@ -145,6 +147,6 @@ interface SchedulerBackend {
 2. cron → launchd поддерживает тот же ограниченный набор шаблонов, что и Windows
    (`* * * * *`, `*/N * * * *`, `M * * * *`, `M H * * *`, `M H * * D`).
    На Linux доступен полный cron.
-3. Префикс задач Windows (`\OpenCode\windows-scheduler\`) и id плагина сохранены для обратной совместимости.
+3. Префикс задач Windows теперь `\OpenCode\agent-steward\` (legacy `\OpenCode\windows-scheduler\` по-прежнему распознаётся); id плагина сохранён для обратной совместимости.
 4. `src/schtasks.ts` оставлен как тонкий shim для старых скриптов (`test-create.cjs`, `test-run.cjs`),
    вся логика теперь в `core/scheduler/windows.ts`.

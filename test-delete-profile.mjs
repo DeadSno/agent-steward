@@ -52,17 +52,17 @@ const check = (name, ok, extra) => {
 // --- 3. Задачи адресуются в пространстве имён СВОЕГО профиля ---
 {
   check(
-    "taskFolderNameForProfile: default = windows-scheduler",
-    taskFolderNameForProfile(DEFAULT_PROFILE) === "windows-scheduler"
+    "taskFolderNameForProfile: default = agent-steward",
+    taskFolderNameForProfile(DEFAULT_PROFILE) === "agent-steward"
   );
   check(
-    "taskFolderNameForProfile: work = windows-scheduler-work",
-    taskFolderNameForProfile("work") === "windows-scheduler-work"
+    "taskFolderNameForProfile: work = agent-steward-work",
+    taskFolderNameForProfile("work") === "agent-steward-work"
   );
   const workTask = taskFullNameForProfile("probe", "work");
   check(
     "taskFullNameForProfile: задача work в папке work",
-    workTask === "\\OpenCode\\windows-scheduler-work\\probe",
+    workTask === "\\OpenCode\\agent-steward-work\\probe",
     workTask
   );
   check(

@@ -15,6 +15,7 @@ const {
   buildAtTimestamp,
   buildLaunchdCalendar,
   buildLaunchdOneShotCleanup,
+  buildOneShotGuardCommand,
 } = await import("./dist/core/one-shot.js");
 const { initDb, closeDb } = await import("./dist/db/index.js");
 const {
@@ -110,6 +111,25 @@ try {
     check("cleanup вызывает bootout", cleanup.includes("bootout"));
     check("cleanup содержит имя санитизированной задачи", cleanup.includes("com.opencode.scheduler.My-Task_1.plist"));
     check("cleanup не прерывает обёртку при отсутствии агента", cleanup.includes("|| true"));
+
+    // P2-12.T2: guard от раннего запуска и повторной годовщины launchd.
+    const guard = buildOneShotGuardCommand(
+      "/bin/bash '/tmp/task.sh'",
+      sample,
+      "/tmp/agents/My-Task_1.once.done"
+    );
+    const sampleEpoch = Math.floor(Date.parse(sample) / 1000);
+    check("guard содержит epoch runAt", guard.includes(`-lt ${sampleEpoch}`));
+    check("guard выходит до runAt", guard.includes("exit 0"));
+    check("guard проверяет маркер выполнения", guard.includes('[ -f "$stamp" ]'));
+    check("guard создаёт маркер", guard.includes(': > "$stamp"'));
+    check("guard выполняет исходную команду", guard.includes("/bin/bash '/tmp/task.sh'"));
+    check(
+      "guard экранирует одинарную кавычку в пути маркера",
+      buildOneShotGuardCommand("true", sample, "/tmp/it's.done").includes(
+        `stamp='/tmp/it'\\''s.done'`
+      )
+    );
   }
 
   section("Export/import round-trip для one-shot");

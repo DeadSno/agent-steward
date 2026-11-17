@@ -93,7 +93,7 @@ export interface EffectivePermissions {
 /** Приводит произвольное значение к известной политике. */
 export function normalizePolicy(
   value: unknown,
-  fallback: PermissionPolicy = DEFAULT_PERMISSION_POLICY
+  fallback: PermissionPolicy = DEFAULT_PERMISSION_POLICY,
 ): PermissionPolicy {
   return typeof value === "string" &&
     (PERMISSION_POLICIES as readonly string[]).includes(value)
@@ -103,14 +103,14 @@ export function normalizePolicy(
 
 /** Нормализует список инструментов: trim, lower-case, без пустых и дублей. */
 export function normalizeToolList(
-  value: readonly string[] | null | undefined
+  value: readonly string[] | null | undefined,
 ): string[] {
   return Array.from(
     new Set(
       (value ?? [])
         .map((tool) => String(tool).trim().toLowerCase())
-        .filter(Boolean)
-    )
+        .filter(Boolean),
+    ),
   );
 }
 
@@ -186,7 +186,7 @@ export function buildOpencodeConfig(input: PermissionInput = {}): string {
       permissions: effective.permissions,
     },
     null,
-    2
+    2,
   );
 }
 

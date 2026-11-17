@@ -34,7 +34,20 @@ check("ARCHITECTURE: пути плагина %APPDATA% и XDG", arch.includes("%
 check("ARCHITECTURE: security-модель (localhost, metadata, plaintext)", arch.includes("no authentication") && arch.includes("metadata") && arch.includes("plain text"));
 
 const feat = fs.readFileSync(path.join(docs, "FEATURES.md"), "utf8");
-check("FEATURES: все 22 инструмента агента", ["schedule_task", "update_task", "pause_task", "resume_task", "get_history", "get_task_logs", "dry_run", "manage_workspaces", "matrix_control", "list_tasks", "delete_task", "run_task_now", "get_metrics", "get_analytics", "manage_settings", "manage_templates", "manage_profiles", "transfer_tasks", "send_notification", "get_dashboard_info", "cleanup_history", "emit_event"].every((t) => feat.includes(t)));
+// Список инструментов берём из реестра кода, а не хардкодим: иначе новый
+// инструмент (как было с self_analysis) выпадает из документации незаметно.
+const toolRegistry = [...fs.readFileSync(path.join(root, "src", "index.ts"), "utf8").matchAll(/^\s+name: "([a-z_]+)",$/gm)].map((m) => m[1]);
+const toolsMissingInFeatures = toolRegistry.filter((t) => !feat.includes("`" + t + "`"));
+check(
+  `FEATURES: все ${toolRegistry.length} инструментов реестра описаны`,
+  toolRegistry.length >= 26 && toolsMissingInFeatures.length === 0
+);
+const readmeMain = fs.readFileSync(path.join(root, "README.md"), "utf8");
+check(
+  "README: счётчик инструментов совпадает с реестром кода",
+  readmeMain.includes(`${toolRegistry.length} agent tools`) &&
+    readmeMain.includes(`${toolRegistry.length} tools covering`)
+);
 check("FEATURES: матрица со всеми полями конфига", ["strategy", "failureMode", "concurrency", "overrides", "createAggregator", "aggregation"].every((k) => feat.includes(k)));
 check("FEATURES: статусы истории incl. partial", feat.includes("`partial`"));
 check("FEATURES: ограничения (limits) честно перечислены", feat.includes("No one-shot") && feat.toLowerCase().includes("restrict the agent process") && feat.toLowerCase().includes("session continuity"));
@@ -130,7 +143,7 @@ check(
 );
 check(
   "COMPATIBILITY: инварианты перечисляют id, пути, БД и префикс",
-  ["opencode-windows-scheduler", "scheduler.db", "%APPDATA%", "\\OpenCode\\windows-scheduler\\"].every(
+  ["opencode-windows-scheduler", "scheduler.db", "%APPDATA%", "\\OpenCode\\agent-steward\\", "\\OpenCode\\windows-scheduler\\"].every(
     (needle) => compatText.includes(needle)
   )
 );
@@ -139,6 +152,32 @@ check(
   'src/index.ts: plugin id остаётся "opencode-windows-scheduler"',
   /id:\s*"opencode-windows-scheduler"/.test(indexSrc)
 );
+// Регресс «RPC is unavailable: opencode-windows-scheduler»: сервер
+// регистрирует RPC под SchedulerRpc.id, а GUI строит URL
+// /api/rpc/<SchedulerRpc.id>/<method> из своего (заранее собранного)
+// бандла. Если id в src/rpc.ts и в gui-experimental.cjs разойдутся,
+// все вызовы панели вернут 400. Поэтому проверяем совпадение трёх id.
+const rpcSrc = fs.readFileSync(path.join(root, "src", "rpc.ts"), "utf8");
+const rpcId = (rpcSrc.match(/export const SchedulerRpc = Rpc\.define\(\{[\s\S]*?id:\s*"([^"]+)"/) || [])[1];
+check(
+  'src/rpc.ts: RPC-канал называется "opencode-windows-scheduler"',
+  rpcId === "opencode-windows-scheduler",
+  String(rpcId)
+);
+check(
+  "src/rpc.ts: id RPC-канала совпадает с id плагина в src/index.ts",
+  rpcId !== undefined && new RegExp(`id:\\s*"${rpcId}"`).test(indexSrc)
+);
+const guiBundlePath = path.join(root, "gui-experimental.cjs");
+if (fs.existsSync(guiBundlePath)) {
+  const guiCode = fs.readFileSync(guiBundlePath, "utf8");
+  const guiRpcId = (guiCode.match(/Rpc\.define\(\{id:"([^"]+)"/) || [])[1];
+  check(
+    "gui-experimental.cjs: id RPC-канала совпадает с src/rpc.ts (бандл не устарел)",
+    guiRpcId === rpcId,
+    `bundle=${guiRpcId}, src=${rpcId}`
+  );
+}
 check(
   "src/index.ts: setup V2 стартует через общий createRuntime",
   /export async function createRuntime\(/.test(indexSrc) &&
@@ -320,8 +359,8 @@ check(
 );
 const profilesSrc = fs.readFileSync(path.join(root, "src", "profiles.ts"), "utf8");
 check(
-  'src/profiles.ts: каталог "opencode/windows-scheduler" не переименован',
-  profilesSrc.includes('"opencode", "windows-scheduler"')
+  'src/profiles.ts: целевой каталог agent-steward, legacy windows-scheduler',
+  profilesSrc.includes('"agent-steward"') && profilesSrc.includes('"windows-scheduler"')
 );
 const dbSrc = fs.readFileSync(path.join(root, "src", "db", "index.ts"), "utf8");
 check(
@@ -351,6 +390,36 @@ const configKeysOk = readmeFiles.filter((rel) => {
 check(
   `README (${readmeFiles.length} локали): ключи plugin (V1) и plugins (V2)`,
   configKeysOk.length === readmeFiles.length
+);
+
+// P3-7: явный контракт паритета zh. test-i18n проверяет locales/*.json,
+// но не сами .md-переводы — здесь фиксируем структуру документов.
+const zhPairs = [
+  ["docs/README.zh.md", "docs/README.ru.md"],
+  ["docs/FAQ.zh.md", "docs/FAQ.ru.md"],
+  ["docs/SAVINGS.zh.md", "docs/SAVINGS.ru.md"],
+  ["docs/CROSS_PLATFORM.zh.md", "docs/CROSS_PLATFORM.ru.md"],
+  ["docs/FEATURES.zh.md", "docs/FEATURES.md"],
+];
+const h2Count = (rel) =>
+  (fs.readFileSync(path.join(root, rel), "utf8").match(/^## /gm) || []).length;
+const fenceCount = (rel) =>
+  (fs.readFileSync(path.join(root, rel), "utf8").match(/^```/gm) || []).length;
+const zhMissing = zhPairs.filter(
+  ([zh, ref]) =>
+    !fs.existsSync(path.join(root, zh)) || !fs.existsSync(path.join(root, ref))
+);
+check("zh-документация: все пары zh + базовая локаль существуют", zhMissing.length === 0);
+const zhHeadingDrift = zhPairs
+  .filter(([zh, ref]) => h2Count(zh) !== h2Count(ref));
+check(
+  `zh: число разделов h2 совпадает с базовой локалью (${zhPairs.length} пар)`,
+  zhHeadingDrift.length === 0
+);
+const zhFenceDrift = zhPairs.filter(([zh, ref]) => fenceCount(zh) !== fenceCount(ref));
+check(
+  "zh: число блоков кода совпадает с базовой локалью",
+  zhFenceDrift.length === 0
 );
 const compatibilitySrc = fs.readFileSync(
   path.join(root, "docs", "COMPATIBILITY.md"),
@@ -386,6 +455,30 @@ check(
   "locales: значения не пустые",
   ruKeys.every((k) => typeof ruCatalog[k] === "string" && ruCatalog[k].length > 0) &&
     enKeys.every((k) => typeof enCatalog[k] === "string" && enCatalog[k].length > 0)
+);
+
+// P3-6: шаблоны сообщества и DX-ярлыки не должны незаметно пропадать.
+const pkgJson = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
+check(
+  ".github: шаблон bug report",
+  fs.existsSync(path.join(root, ".github", "ISSUE_TEMPLATE", "bug_report.yml"))
+);
+check(
+  ".github: шаблон feature request",
+  fs.existsSync(path.join(root, ".github", "ISSUE_TEMPLATE", "feature_request.yml"))
+);
+check(
+  ".github: pull request template",
+  fs.existsSync(path.join(root, ".github", "pull_request_template.md"))
+);
+check(
+  "package.json: ярлык test:triage-compare указывает на существующую сюиту",
+  typeof pkgJson.scripts?.["test:triage-compare"] === "string" &&
+    fs.existsSync(path.join(root, "test-triage-compare.mjs"))
+);
+check(
+  "package.json: pretest:parallel собирает проект перед параллельным прогоном",
+  pkgJson.scripts?.["pretest:parallel"] === "npm run build"
 );
 
 const failed = results.filter((r) => !r.ok);

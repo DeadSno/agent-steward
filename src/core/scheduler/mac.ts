@@ -6,7 +6,11 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { sanitizeName } from "../../types.js";
 import { getProfileDir, getProfileName } from "../../profiles.js";
-import { buildLaunchdCalendar, launchdLabel } from "../one-shot.js";
+import { buildLaunchdCalendar, buildOneShotGuardCommand, launchdLabel } from "../one-shot.js";
+import {
+  needsPollMode,
+  systemTimeZone,
+} from "../schedule-v2.js";
 import { PosixSchedulerBase } from "./posix.js";
 import type { RegistryEntry } from "./registry.js";
 
@@ -24,12 +28,23 @@ function xmlEscape(value: string): string {
     .replace(/"/g, "&quot;");
 }
 
+/** Один элемент StartCalendarInterval. */
+interface LaunchdCalendar {
+  Minute?: number;
+  Hour?: number;
+  Weekday?: number;
+  Month?: number;
+  Day?: number;
+}
+
 /** Расписание launchd, полученное из cron-выражения. */
 interface LaunchdSchedule {
-  /** StartInterval в секундах (для «каждые N минут»). */
+  /** StartInterval в секундах (для poll-режима «каждую минуту»). */
   interval?: number;
-  /** StartCalendarInterval (для фиксированного времени). */
-  calendar?: { Minute?: number; Hour?: number; Weekday?: number };
+  /** Одиночный StartCalendarInterval (фиксированное время). */
+  calendar?: LaunchdCalendar;
+  /** Массив StartCalendarInterval (например, минуты 0,15,30,45). */
+  calendars?: LaunchdCalendar[];
 }
 
 /**
@@ -40,7 +55,7 @@ export function cronToLaunchdSchedule(cron: string): LaunchdSchedule {
   const fields = cron.trim().split(/\s+/);
   if (fields.length !== 5) {
     throw new Error(
-      `Ожидалось 5 полей cron-выражения, получено ${fields.length}.`
+      `Ожидалось 5 полей cron-выражения, получено ${fields.length}.`,
     );
   }
 
@@ -61,7 +76,14 @@ export function cronToLaunchdSchedule(cron: string): LaunchdSchedule {
   const step = /^\*\/(\d+)$/.exec(minute);
   if (step && star(hour) && star(dayOfMonth) && star(month) && star(dayOfWeek)) {
     const n = parseInt(step[1], 10);
-    if (n > 0) return { interval: n * 60 };
+    if (n > 0) {
+      // P1-6: выравниваем по cron-сетке (0, N, 2N, …), а не отсчитываем
+      // интервал от момента загрузки агента. launchd принимает массив
+      // StartCalendarInterval — по dict на каждую минуту.
+      const calendars: LaunchdCalendar[] = [];
+      for (let m = 0; m < 60; m += n) calendars.push({ Minute: m });
+      return { calendars };
+    }
   }
 
   const m = intIn(minute, 0, 59);
@@ -92,83 +114,114 @@ export function cronToLaunchdSchedule(cron: string): LaunchdSchedule {
   return { calendar: { Minute: m, Hour: h, Weekday: d } };
 }
 
+/** Добавляет поля одного StartCalendarInterval-dict с заданным отступом. */
+function pushCalendarFields(
+  out: string[],
+  cal: LaunchdCalendar,
+  indent: string,
+): void {
+  const fields: [string, number | undefined][] = [
+    ["Minute", cal.Minute],
+    ["Hour", cal.Hour],
+    ["Weekday", cal.Weekday],
+    ["Month", cal.Month],
+    ["Day", cal.Day],
+  ];
+  for (const [key, value] of fields) {
+    if (value === undefined) continue;
+    out.push(`${indent}<key>${key}</key>`, `${indent}<integer>${value}</integer>`);
+  }
+}
+
 /** Собирает XML plist для задачи. */
 function buildPlist(label: string, entry: RegistryEntry): string {
   const schedule: {
     interval?: number;
-    calendar?: {
-      Minute?: number;
-      Hour?: number;
-      Weekday?: number;
-      Month?: number;
-      Day?: number;
-    };
+    calendar?: LaunchdCalendar;
+    calendars?: LaunchdCalendar[];
   } =
     entry.triggerType === "once"
       ? (() => {
-          if (!entry.runAt) {
-            throw new Error(
-              `Задача "${entry.name}": для one-shot не задано runAt.`
-            );
-          }
-          return { calendar: buildLaunchdCalendar(entry.runAt) };
-        })()
+        if (!entry.runAt) {
+          throw new Error(
+            `Задача "${entry.name}": для one-shot не задано runAt.`,
+          );
+        }
+        return { calendar: buildLaunchdCalendar(entry.runAt) };
+      })()
       : entry.triggerType !== "cron"
         ? { interval: 315_360_000 } // file/mcp-event: 10 лет — фактически «никогда».
-        : cronToLaunchdSchedule(entry.schedule);
+        : (() => {
+          // P1-5: чужой IANA-таймзона — poll-режим (StartInterval 60 + gate во враппере),
+          // иначе crontab сработает по системному времени, а не по таймзоне задачи.
+          const tz = entry.timezone?.trim();
+          if (tz && tz !== systemTimeZone()) return { interval: 60 };
+          // P1-6: неконвертируемый cron (списки, диапазоны, L, #, @daily и т.п.)
+          // — poll-режим вместо бросания ошибки. Gate во враппере уже есть
+          // (buildScheduleGate), поэтому достаточно StartInterval 60.
+          try {
+            return cronToLaunchdSchedule(entry.schedule);
+          } catch {
+            return { interval: 60 };
+          }
+        })();
 
   const scheduleXml: string[] = [];
   if (schedule.interval !== undefined) {
     scheduleXml.push(
       "  <key>StartInterval</key>",
-      `  <integer>${schedule.interval}</integer>`
+      `  <integer>${schedule.interval}</integer>`,
     );
   }
   if (schedule.calendar) {
     scheduleXml.push("  <key>StartCalendarInterval</key>", "  <dict>");
-    if (schedule.calendar.Minute !== undefined) {
-      scheduleXml.push(
-        "    <key>Minute</key>",
-        `    <integer>${schedule.calendar.Minute}</integer>`
-      );
-    }
-    if (schedule.calendar.Hour !== undefined) {
-      scheduleXml.push(
-        "    <key>Hour</key>",
-        `    <integer>${schedule.calendar.Hour}</integer>`
-      );
-    }
-    if (schedule.calendar.Weekday !== undefined) {
-      scheduleXml.push(
-        "    <key>Weekday</key>",
-        `    <integer>${schedule.calendar.Weekday}</integer>`
-      );
-    }
-    if (schedule.calendar.Month !== undefined) {
-      scheduleXml.push(
-        "    <key>Month</key>",
-        `    <integer>${schedule.calendar.Month}</integer>`
-      );
-    }
-    if (schedule.calendar.Day !== undefined) {
-      scheduleXml.push(
-        "    <key>Day</key>",
-        `    <integer>${schedule.calendar.Day}</integer>`
-      );
-    }
+    pushCalendarFields(scheduleXml, schedule.calendar, "    ");
     scheduleXml.push("  </dict>");
+  }
+  if (schedule.calendars && schedule.calendars.length > 0) {
+    scheduleXml.push("  <key>StartCalendarInterval</key>", "  <array>");
+    for (const cal of schedule.calendars) {
+      scheduleXml.push("    <dict>");
+      pushCalendarFields(scheduleXml, cal, "      ");
+      scheduleXml.push("    </dict>");
+    }
+    scheduleXml.push("  </array>");
   }
 
   const workdir = entry.workingDirectory || process.cwd();
   const log = entry.logFile;
   const logXml = log
     ? [
-        "  <key>StandardOutPath</key>",
-        `  <string>${xmlEscape(log)}</string>`,
-        "  <key>StandardErrorPath</key>",
-        `  <string>${xmlEscape(log)}</string>`,
-      ]
+      "  <key>StandardOutPath</key>",
+      `  <string>${xmlEscape(log)}</string>`,
+      "  <key>StandardErrorPath</key>",
+      `  <string>${xmlEscape(log)}</string>`,
+    ]
     : [];
+
+  // P2-12.T2: launchd не умеет год в StartCalendarInterval. Для one-shot
+  // запускаем bash -c с проверкой runAt и маркером выполнения, иначе задача
+  // сработает в ближайшую годовщину и повторится через год.
+  const programArgsXml =
+    entry.triggerType === "once" && entry.runAt
+      ? (() => {
+        const epoch = Math.floor(Date.parse(entry.runAt) / 1000);
+        const stamp = path.join(
+          LAUNCH_AGENTS_DIR,
+          `${label}.once-${epoch}.done`,
+        );
+        return [
+          "    <string>/bin/bash</string>",
+          "    <string>-c</string>",
+          `    <string>${xmlEscape(
+            buildOneShotGuardCommand(entry.command, entry.runAt, stamp),
+          )}</string>`,
+        ];
+      })()
+      : [
+        "    <string>/bin/bash</string>",
+        `    <string>${xmlEscape(entry.command)}</string>`,
+      ];
 
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
@@ -180,8 +233,7 @@ function buildPlist(label: string, entry: RegistryEntry): string {
     `  <string>${xmlEscape(label)}</string>`,
     "  <key>ProgramArguments</key>",
     "  <array>",
-    "    <string>/bin/bash</string>",
-    `    <string>${xmlEscape(entry.command)}</string>`,
+    ...programArgsXml,
     "  </array>",
     "  <key>WorkingDirectory</key>",
     `  <string>${xmlEscape(workdir)}</string>`,
@@ -204,7 +256,7 @@ function buildPlist(label: string, entry: RegistryEntry): string {
  */
 export class MacScheduler extends PosixSchedulerBase {
   readonly platform: NodeJS.Platform = "darwin";
-  readonly title = "OpenCode Scheduler";
+  readonly title = "agent-steward by DeadSno";
 
   constructor(profile: string = getProfileName()) {
     super("mac", profile);

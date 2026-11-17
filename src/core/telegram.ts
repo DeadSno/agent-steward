@@ -34,7 +34,7 @@ export interface TelegramSendOptions {
 /** Экранирует текст под выбранный parse_mode. */
 export function escapeTelegramText(
   text: string,
-  parseMode: TelegramParseMode = ""
+  parseMode: TelegramParseMode = "",
 ): string {
   const value = String(text ?? "");
   if (parseMode === "HTML") {
@@ -69,7 +69,7 @@ function escapeHtmlAttribute(url: string): string {
 export function formatTelegramText(
   text: string,
   parseMode: TelegramParseMode = "",
-  dashboardUrl?: string | null
+  dashboardUrl?: string | null,
 ): string {
   const body = escapeTelegramText(text, parseMode);
   const url = (dashboardUrl ?? "").trim();
@@ -148,7 +148,7 @@ const TELEGRAM_MAX_RETRIES = 3;
  */
 export function splitTelegramMessage(
   text: string,
-  limit = TELEGRAM_MAX_MESSAGE_LENGTH
+  limit = TELEGRAM_MAX_MESSAGE_LENGTH,
 ): string[] {
   const value = String(text ?? "");
   const max = Math.max(1, Math.floor(limit));
@@ -213,13 +213,13 @@ function cutRawChunk(
   text: string,
   start: number,
   maxFormatted: number,
-  parseMode: TelegramParseMode
+  parseMode: TelegramParseMode,
 ): number {
   let index = start;
   let used = 0;
   let lastNewline = -1;
   while (index < text.length) {
-    const codePoint = text.codePointAt(index) as number;
+    const codePoint = text.codePointAt(index)!;
     const ch = String.fromCodePoint(codePoint);
     const cost = escapedCharLength(ch, parseMode);
     if (used + cost > maxFormatted) break;
@@ -233,7 +233,7 @@ function cutRawChunk(
   }
   if (index <= start) {
     // Гарантируем прогресс хотя бы на один code point.
-    const codePoint = text.codePointAt(start) as number;
+    const codePoint = text.codePointAt(start)!;
     index = start + String.fromCodePoint(codePoint).length;
   }
   return index;
@@ -250,7 +250,7 @@ function splitRawMessageForSend(
   text: string,
   limit: number,
   parseMode: TelegramParseMode,
-  linkReserve = 0
+  linkReserve = 0,
 ): string[] {
   const value = String(text ?? "");
   const max = Math.max(1, Math.floor(limit));
@@ -303,7 +303,7 @@ export async function sendTelegramMessage(
   token: string,
   chatId: string,
   text: string,
-  options: TelegramSendOptions = {}
+  options: TelegramSendOptions = {},
 ): Promise<void> {
   const safeToken = validateTelegramToken(token);
   const target = (chatId ?? "").trim();
@@ -324,12 +324,12 @@ export async function sendTelegramMessage(
     text,
     TELEGRAM_MAX_MESSAGE_LENGTH,
     parseMode,
-    linkSuffix.length
+    linkSuffix.length,
   );
 
   const timeoutMs = Math.max(
     1_000,
-    Math.floor(options.timeoutMs ?? DEFAULT_TIMEOUT_MS)
+    Math.floor(options.timeoutMs ?? DEFAULT_TIMEOUT_MS),
   );
   const fetchImpl = options.fetchImpl ?? fetch;
   const url = `${apiBase}/bot${safeToken}/sendMessage`;
@@ -341,7 +341,7 @@ export async function sendTelegramMessage(
     const chunk = formatTelegramText(
       rawChunks[chunkIndex],
       parseMode,
-      isLastChunk ? dashboardUrl : null
+      isLastChunk ? dashboardUrl : null,
     );
     let parseModeForChunk = parseMode;
     let downgradedParseMode = false;
@@ -398,14 +398,14 @@ export async function sendTelegramMessage(
           parseModeForChunk &&
           !downgradedParseMode &&
           /parse entities|can't parse|unsupported start tag|can't find end/i.test(
-            description
+            description,
           )
         ) {
           console.warn(
             `[notify] Telegram отклонил разметку (${sanitizeErrorText(
               description,
-              safeToken
-            )}) — чанк повторно отправлен без parse_mode. Проверьте шаблоны уведомлений.`
+              safeToken,
+            )}) — чанк повторно отправлен без parse_mode. Проверьте шаблоны уведомлений.`,
           );
           downgradedParseMode = true;
           parseModeForChunk = "";
@@ -414,7 +414,7 @@ export async function sendTelegramMessage(
 
         if (!response.ok || parsed?.ok === false) {
           throw new Error(
-            `Telegram API: ${sanitizeErrorText(description, safeToken)}`
+            `Telegram API: ${sanitizeErrorText(description, safeToken)}`,
           );
         }
         break;
@@ -423,7 +423,7 @@ export async function sendTelegramMessage(
           throw new Error(
             t("notify.error.telegramTimeout", {
               seconds: Math.floor(timeoutMs / 1000),
-            })
+            }),
           );
         }
         const message = err instanceof Error ? err.message : String(err);

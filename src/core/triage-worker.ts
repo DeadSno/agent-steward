@@ -171,7 +171,7 @@ function safeUnlink(file: string | undefined): void {
 export function writeTriageJob(
   input: TriageInput,
   triage: TriageSettings,
-  options: { tmpDir?: string } = {}
+  options: { tmpDir?: string } = {},
 ): string {
   const payload: TriageJobPayload = {
     version: 1,
@@ -238,7 +238,7 @@ export interface ScheduleTriageOptions {
 export function scheduleTriageJob(
   input: TriageInput,
   triage: TriageSettings,
-  options: ScheduleTriageOptions = {}
+  options: ScheduleTriageOptions = {},
 ): { scheduled: boolean; file?: string; error?: string } {
   let file: string | undefined;
   try {
@@ -261,7 +261,7 @@ export function scheduleTriageJob(
         stdio: "ignore",
         windowsHide: true,
         env: options.env ?? process.env,
-      }
+      },
     );
     child.unref();
     // Если процесс не стартовал, файл задания останется сиротой — убираем.
@@ -281,7 +281,7 @@ async function main(): Promise<void> {
   const index = process.argv.indexOf(TRIAGE_WORKER_FLAG);
   const file = index >= 0 ? process.argv[index + 1] : undefined;
   if (!file) {
-    console.error("[windows-scheduler] triage worker: не указан файл задания");
+    console.error("[agent-steward] triage worker: не указан файл задания");
     process.exitCode = 1;
     return;
   }
@@ -317,9 +317,9 @@ async function drainQueue(first: string): Promise<void> {
       await runTriageJob(file);
     } catch (err: any) {
       console.error(
-        `[windows-scheduler] triage worker: ${
+        `[agent-steward] triage worker: ${
           err instanceof Error ? err.message : String(err)
-        }`
+        }`,
       );
       process.exitCode = 1;
     } finally {

@@ -24,7 +24,7 @@ export type { RegistryEntry } from "./registry.js";
  */
 export function createSchedulerBackend(
   platform: NodeJS.Platform = process.platform,
-  profile?: string
+  profile?: string,
 ): SchedulerBackend {
   if (platform === "win32") return new WindowsScheduler(profile);
   if (platform === "darwin") return new MacScheduler(profile);
@@ -38,7 +38,7 @@ export function createSchedulerBackend(
  */
 export function createSchedulerBackendForProfile(
   profile: string,
-  platform: NodeJS.Platform = process.platform
+  platform: NodeJS.Platform = process.platform,
 ): SchedulerBackend {
   return createSchedulerBackend(platform, profile);
 }
@@ -50,7 +50,7 @@ export function createSchedulerBackendForProfile(
  */
 export async function removeScheduledTasksForProfile(
   profile: string,
-  platform: NodeJS.Platform = process.platform
+  platform: NodeJS.Platform = process.platform,
 ): Promise<number> {
   const scheduler = createSchedulerBackendForProfile(profile, platform);
   const tasks = await scheduler.listTasks();

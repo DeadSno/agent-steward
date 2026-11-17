@@ -67,7 +67,7 @@ export function preservedSessionRunCount(
     | { session?: SessionMode; sessionId?: string; sessionRunCount?: number }
     | undefined,
   session: SessionMode,
-  sessionId: string | undefined
+  sessionId: string | undefined,
 ): number {
   if (!previous) return 0;
   if (previous.session !== session || previous.sessionId !== sessionId) return 0;
@@ -86,7 +86,7 @@ export function sessionStatePath(taskName: string): string {
  */
 export async function writeSessionStateFile(
   taskName: string,
-  sessionId: string | undefined
+  sessionId: string | undefined,
 ): Promise<void> {
   try {
     const file = sessionStatePath(taskName);
@@ -99,7 +99,7 @@ export async function writeSessionStateFile(
   } catch (error) {
     console.warn(
       `[session] Не удалось обновить файл сессии задачи "${taskName}":`,
-      error
+      error,
     );
   }
 }

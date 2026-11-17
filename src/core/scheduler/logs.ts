@@ -10,7 +10,7 @@ import { LOG_DIR, sanitizeName } from "../../types.js";
  */
 export async function getTaskLogs(
   name: string,
-  limit = 50
+  limit = 50,
 ): Promise<{ logs: string; error?: string }> {
   const logPath = path.join(LOG_DIR, `${sanitizeName(name)}.log`);
   try {

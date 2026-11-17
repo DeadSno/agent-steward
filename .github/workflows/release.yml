@@ -11,35 +11,34 @@ permissions:
   id-token: write
 
 jobs:
-  publish:
-    name: Publish to npm
-    runs-on: ubuntu-latest
-    # npm test runs ~56 suites sequentially; the English-locale pass adds a
-    # second full run. 20 minutes was too tight and could cancel a valid release.
+  # P3-5: тег не проходит через обычный CI (он слушает только ветки и PR),
+  # поэтому релиз обязан сам прогнать тесты на всех трёх ОС. Публикация
+  # начинается только после зелёного verify (needs ниже).
+  verify:
+    name: Verify ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 40
-    env:
-      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: npm
-          registry-url: https://registry.npmjs.org
-
-      # Trusted publishing needs npm >= 11.5.1. Older bundled npm versions fail
-      # with a misleading E404 on `npm publish` (npm/cli#9088), so upgrade first.
-      - name: Upgrade npm
-        run: npm install -g npm@latest
 
       - name: Install dependencies
         run: npm ci
 
       - name: Verify version matches tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
         run: |
           TAG="${GITHUB_REF_NAME#v}"
           PKG=$(node -e "console.log(require('./package.json').version)")
@@ -57,13 +56,50 @@ jobs:
       - name: Test
         run: npm run test:parallel
 
-      # Locale tests are separate from `npm test`: catch a broken English UI
-      # before publishing, not after the release.
+      # Локальные тесты отдельно: ловят сломанный перевод до публикации.
+      # Достаточно одного прогона на ubuntu — строки локалей от ОС не зависят.
       - name: Test in English locale
+        if: matrix.os == 'ubuntu-latest'
         run: npm run test:parallel:en
 
       - name: Test in Chinese locale
+        if: matrix.os == 'ubuntu-latest'
         run: npm run test:parallel:zh
+
+  publish:
+    name: Publish to npm
+    needs: verify
+    runs-on: ubuntu-latest
+    # Публикация после зелёной матрицы: сборка + npm publish, без повторного
+    # прогона всех сюит (он уже выполнен в verify).
+    timeout-minutes: 20
+    env:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      # Trusted publishing needs npm >= 11.5.1. Older bundled npm versions fail
+      # with a misleading E404 on `npm publish` (npm/cli#9088), so upgrade first.
+      - name: Upgrade npm
+        run: npm install -g npm@latest
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build backend
+        run: npm run build
+
+      - name: Build GUI
+        run: npm run build:gui
 
       # Publish to npm. Two supported paths, no silent skip either way:
       #   1. NPM_TOKEN secret in the repo -> token auth.

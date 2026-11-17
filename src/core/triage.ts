@@ -99,7 +99,7 @@ const SYSTEM_PROMPT = [
 class ParseFailure extends Error {
   constructor(
     readonly failure: "invalid-json" | "invalid-schema" | "invalid-response",
-    message: string
+    message: string,
   ) {
     super(message);
   }
@@ -120,7 +120,7 @@ function resolveEndpoint(baseUrl: string): {
   return { url: `${base}/api/chat`, protocol: "ollama" };
 }
 
-function buildMessages(input: TriageInput): Array<{ role: string; content: string }> {
+function buildMessages(input: TriageInput): { role: string; content: string }[] {
   const payload = {
     task: input.taskName,
     status: input.status,
@@ -164,7 +164,7 @@ function parseVerdict(raw: string): TriageVerdict {
   } catch (err: any) {
     throw new ParseFailure(
       "invalid-json",
-      `Ответ модели не парсится как JSON: ${err instanceof Error ? err.message : String(err)}`
+      `Ответ модели не парсится как JSON: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
 
@@ -232,11 +232,11 @@ const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 export async function classifyNotification(
   input: TriageInput,
   settings: TriageSettings | undefined,
-  options: TriageOptions = {}
+  options: TriageOptions = {},
 ): Promise<TriageResult> {
   const startedAt = Date.now();
   const model = settings?.model?.trim() ?? "";
-  if (!settings || !settings.baseUrl?.trim() || !model) {
+  if (!settings?.baseUrl?.trim() || !model) {
     return {
       ok: false,
       failure: "disabled",
@@ -276,26 +276,26 @@ export async function classifyNotification(
       const body: Record<string, unknown> =
         protocol === "openai"
           ? {
-              model,
-              messages,
-              temperature: 0,
-              stream: false,
-              response_format: {
-                type: "json_schema",
-                json_schema: {
-                  name: "notification_triage",
-                  strict: true,
-                  schema: TRIAGE_SCHEMA,
-                },
+            model,
+            messages,
+            temperature: 0,
+            stream: false,
+            response_format: {
+              type: "json_schema",
+              json_schema: {
+                name: "notification_triage",
+                strict: true,
+                schema: TRIAGE_SCHEMA,
               },
-            }
+            },
+          }
           : {
-              model,
-              messages,
-              stream: false,
-              format: TRIAGE_SCHEMA,
-              options: { temperature: 0 },
-            };
+            model,
+            messages,
+            stream: false,
+            format: TRIAGE_SCHEMA,
+            options: { temperature: 0 },
+          };
 
       const response = await fetch(url, {
         method: "POST",

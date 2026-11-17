@@ -61,7 +61,7 @@ export interface Metrics {
  * `records` должны быть отсортированы от новых к старым (как loadHistory).
  */
 export function latestHistoryByTask(
-  records: readonly HistoryRecord[]
+  records: readonly HistoryRecord[],
 ): Map<string, HistoryRecord> {
   const latest = new Map<string, HistoryRecord>();
   for (const record of records) {
@@ -75,12 +75,12 @@ export function latestHistoryByTask(
 export async function loadHistory(
   taskName?: string | null,
   limit = 200,
-  status?: string | null
+  status?: string | null,
 ): Promise<HistoryRecord[]> {
   return getHistory(taskName, limit, status).map((record) => ({
     taskName: record.taskName,
     // Незавершённые записи до recovery показываем как error для GUI.
-    status: (record.status === "running" ? "error" : record.status) as TaskStatus,
+    status: (record.status === "running" ? "error" : record.status),
     startedAt: record.startedAt,
     finishedAt: record.finishedAt ?? "",
     durationMs: record.durationMs ?? 0,
@@ -120,7 +120,7 @@ export async function recordTaskRun(
   taskName: string,
   status: TaskStatus,
   durationMs: number,
-  error?: string | null
+  error?: string | null,
 ): Promise<void> {
   const finishedAt = new Date().toISOString();
   const startedAt = new Date(Date.now() - durationMs).toISOString();

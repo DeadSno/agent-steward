@@ -118,7 +118,7 @@ const ESTIMATE_SAMPLE = 10;
 export const ESTIMATED_COST_PER_1K_TOKENS_USD = 0.003;
 
 /** Опасные паттерны, о которых обязательно предупреждаем (ключи каталога). */
-const DANGEROUS_PATTERNS: Array<{ test: RegExp; messageKey: string }> = [
+const DANGEROUS_PATTERNS: { test: RegExp; messageKey: string }[] = [
   { test: /rm\s+-rf\s+\/(?:\s|$)/, messageKey: "dryRun.danger.rmRoot" },
   { test: /git\s+push\s+.*--force(?:\s|$)/, messageKey: "dryRun.danger.forcePush" },
 ];
@@ -165,7 +165,7 @@ async function describeTrigger(opts: DescribeTriggerOptions): Promise<DryRunTrig
             paths: def.gitPaths ?? undefined,
             ignore: def.gitIgnore ?? undefined,
           },
-          { persist: false }
+          { persist: false },
         );
         base.git = {
           branch: result.branch ?? null,
@@ -180,7 +180,7 @@ async function describeTrigger(opts: DescribeTriggerOptions): Promise<DryRunTrig
           warnings.push(t("dryRun.git.notRepo"));
         } else if (result.status === "branch-mismatch") {
           warnings.push(
-            t("dryRun.git.branchMismatch", { branch: def.gitBranch ?? "" })
+            t("dryRun.git.branchMismatch", { branch: def.gitBranch ?? "" }),
           );
         }
       } catch (err: any) {
@@ -213,14 +213,14 @@ async function describeTrigger(opts: DescribeTriggerOptions): Promise<DryRunTrig
 
     case "mcp-event": {
       const ev = def.mcpEvent;
-      base.explanation = ev && ev.event
+      base.explanation = ev?.event
         ? t("dryRun.mcp.event", {
-            server: ev.server,
-            event: ev.event,
-            filter: ev.filter
-              ? t("dryRun.mcp.filter", { filter: ev.filter })
-              : "",
-          })
+          server: ev.server,
+          event: ev.event,
+          filter: ev.filter
+            ? t("dryRun.mcp.filter", { filter: ev.filter })
+            : "",
+        })
         : t("dryRun.mcp.missing");
       break;
     }
@@ -228,9 +228,9 @@ async function describeTrigger(opts: DescribeTriggerOptions): Promise<DryRunTrig
     case "cron": {
       base.explanation = def.timezone
         ? t("dryRun.cronTimezone", {
-            schedule: def.schedule,
-            timezone: def.timezone,
-          })
+          schedule: def.schedule,
+          timezone: def.timezone,
+        })
         : t("dryRun.cron", { schedule: def.schedule });
       break;
     }
@@ -273,14 +273,14 @@ async function describeTrigger(opts: DescribeTriggerOptions): Promise<DryRunTrig
         warnings.push(
           iso
             ? t("dryRun.window.postpone", { reason, nextOpenAt: iso })
-            : t("dryRun.window.noOpening", { reason })
+            : t("dryRun.window.noOpening", { reason }),
         );
       }
     } else if (!state.active && policy === "run") {
       warnings.push(
         t("dryRun.window.run", {
           reason: state.reason ?? t("dryRun.window.outside"),
-        })
+        }),
       );
     }
   }
@@ -376,13 +376,13 @@ export async function simulatePipeline(taskName: string): Promise<DryRunReport> 
 
   // Matrix (Спринт 15): родитель сам не выполняется — вместо него в отчёте
   // показываем клоны, по одному на workspace, с их cwd и оценками.
-  const units: Array<{ def: TaskDefinition; matrixParent?: string }> = [];
+  const units: { def: TaskDefinition; matrixParent?: string }[] = [];
   for (const def of ordered) {
     if (def.matrix) {
       try {
         const clones = expandMatrixTask(def);
         warnings.push(
-          t("dryRun.matrix.parent", { name: def.name, count: clones.length })
+          t("dryRun.matrix.parent", { name: def.name, count: clones.length }),
         );
         for (const clone of clones) units.push({ def: clone, matrixParent: def.name });
       } catch (err: any) {
@@ -390,7 +390,7 @@ export async function simulatePipeline(taskName: string): Promise<DryRunReport> 
         list.push(
           t("dryRun.matrix.expandError", {
             error: err instanceof Error ? err.message : String(err),
-          })
+          }),
         );
         warningsPerTask.set(def.name.toLowerCase(), list);
         warnings.push(`[${def.name}] ${list[list.length - 1]}`);
@@ -404,7 +404,7 @@ export async function simulatePipeline(taskName: string): Promise<DryRunReport> 
   const parallelMatrixParents = new Set(
     allDefs
       .filter((d) => d.matrix && (d.matrix.strategy ?? "parallel") !== "sequential")
-      .map((d) => d.name.toLowerCase())
+      .map((d) => d.name.toLowerCase()),
   );
   const parallelGroups = new Map<string, { maxDuration: number }>();
 
@@ -481,7 +481,7 @@ export async function simulatePipeline(taskName: string): Promise<DryRunReport> 
     for (const { test, messageKey } of DANGEROUS_PATTERNS) {
       if (test.test(scanned)) {
         taskWarnings.push(
-          t("dryRun.dangerPattern", { message: t(messageKey) })
+          t("dryRun.dangerPattern", { message: t(messageKey) }),
         );
       }
     }
@@ -519,7 +519,7 @@ export async function simulatePipeline(taskName: string): Promise<DryRunReport> 
         }
       } catch {
         taskWarnings.push(
-          t("dryRun.cronParseError", { schedule: def.schedule })
+          t("dryRun.cronParseError", { schedule: def.schedule }),
         );
       }
       scheduleDetails = {
@@ -581,14 +581,14 @@ export async function simulatePipeline(taskName: string): Promise<DryRunReport> 
   }
 
   const hasAnyEstimate = tasks.some(
-    (t) => t.estimatedDurationSec != null || t.estimatedCostUsd != null || t.estimatedTokens != null
+    (t) => t.estimatedDurationSec != null || t.estimatedCostUsd != null || t.estimatedTokens != null,
   );
   const totals: DryRunTotals = hasAnyEstimate
     ? {
-        estimatedDurationSec: totalDuration != null ? Math.round(totalDuration * 10) / 10 : null,
-        estimatedCostUsd: totalCost != null ? Math.round(totalCost * 10000) / 10000 : null,
-        estimatedTokens: totalTokens != null ? Math.round(totalTokens) : null,
-      }
+      estimatedDurationSec: totalDuration != null ? Math.round(totalDuration * 10) / 10 : null,
+      estimatedCostUsd: totalCost != null ? Math.round(totalCost * 10000) / 10000 : null,
+      estimatedTokens: totalTokens != null ? Math.round(totalTokens) : null,
+    }
     : { estimatedDurationSec: null, estimatedCostUsd: null, estimatedTokens: null };
 
   return {

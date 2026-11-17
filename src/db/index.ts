@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { PLUGIN_DIR } from "../types.js";
-import { applySchema } from "./schema.js";
+import { applySchema, getSchemaVersion, SCHEMA_VERSION } from "./schema.js";
 
 /**
  * Подключение к SQLite через встроенный `node:sqlite` (Node 22.5+).
@@ -43,7 +43,7 @@ function loadSqlite(): DatabaseSyncCtor {
   } catch (err: any) {
     throw new Error(
       `node:sqlite недоступен (${err instanceof Error ? err.message : String(err)}). ` +
-        "Планировщику требуется Node.js 22.5+ (рекомендуется Node 24)."
+        "Планировщику требуется Node.js 22.5+ (рекомендуется Node 24).",
     );
   }
 }
@@ -114,11 +114,15 @@ export function getDbStatus(): {
   file: string;
   journalMode: string;
   wal: boolean;
-} {
+  schemaVersion: number;
+  expectedSchemaVersion: number;
+  } {
   let journalMode = "unknown";
+  let schemaVersion = 0;
   try {
-    const row = getDb().prepare("PRAGMA journal_mode;").get() as any;
+    const row = getDb().prepare("PRAGMA journal_mode;").get();
     journalMode = String(row?.journal_mode ?? "unknown");
+    schemaVersion = getSchemaVersion(getDb());
   } catch {
     // Если БД ещё не открыта — не роняем health-check.
   }
@@ -127,6 +131,8 @@ export function getDbStatus(): {
     file: dbFile,
     journalMode,
     wal: journalMode.toLowerCase() === "wal",
+    schemaVersion,
+    expectedSchemaVersion: SCHEMA_VERSION,
   };
 }
 
@@ -159,8 +165,8 @@ export function isDatabaseEmpty(): boolean {
          (SELECT COUNT(*) FROM tasks) +
          (SELECT COUNT(*) FROM history) +
          (SELECT COUNT(*) FROM metrics) +
-         (SELECT COUNT(*) FROM templates) AS count`
+         (SELECT COUNT(*) FROM templates) AS count`,
     )
-    .get() as any;
+    .get();
   return Number(row?.count) === 0;
 }

@@ -114,7 +114,7 @@ export function wallToUtc(y: number, m: number, d: number, h: number, mi: number
   // «следующего запуска» берём ПЕРВОЕ (более раннее) вхождение, а не то, к
   // которому сошлась итерация. Обычно совпадение одно, тогда результат тот же.
   const probes = [0, -30, 30, -60, 60, -90, 90, -120, 120].map(
-    (minutes) => guess + minutes * 60_000
+    (minutes) => guess + minutes * 60_000,
   );
   let best: number | null = null;
   for (const ms of probes) {
@@ -142,9 +142,9 @@ function expandField(token: string, min: number, max: number, names?: Record<str
     let item = raw.trim().toUpperCase();
     if (!item)
       throw new Error(t("schedule.error.cronEmptyItem", { token }));
-    if (names && names[item] !== undefined) item = String(names[item]);
+    if (names?.[item] !== undefined) item = String(names[item]);
     // шаг: a-b/n или */n
-    const stepMatch = item.match(/^(.*)\/([0-9]+)$/);
+    const stepMatch = /^(.*)\/([0-9]+)$/.exec(item);
     let step = 1;
     if (stepMatch) {
       item = (stepMatch[1] ?? "").trim();
@@ -154,7 +154,7 @@ function expandField(token: string, min: number, max: number, names?: Record<str
           t("schedule.error.cronStepInvalid", {
             step: stepMatch[2],
             raw,
-          })
+          }),
         );
       }
       if (item === "")
@@ -164,12 +164,12 @@ function expandField(token: string, min: number, max: number, names?: Record<str
       for (let v = min; v <= max; v += step) result.add(v);
       continue;
     }
-    const rangeMatch = item.match(/^([0-9A-Z]+)-([0-9A-Z]+)$/);
+    const rangeMatch = /^([0-9A-Z]+)-([0-9A-Z]+)$/.exec(item);
     if (rangeMatch) {
       let aToken = rangeMatch[1];
       let bToken = rangeMatch[2];
-      if (names && names[aToken] !== undefined) aToken = String(names[aToken]);
-      if (names && names[bToken] !== undefined) bToken = String(names[bToken]);
+      if (names?.[aToken] !== undefined) aToken = String(names[aToken]);
+      if (names?.[bToken] !== undefined) bToken = String(names[bToken]);
       const a = Number(aToken);
       const b = Number(bToken);
       if (!Number.isFinite(a) || !Number.isFinite(b)) {
@@ -177,7 +177,7 @@ function expandField(token: string, min: number, max: number, names?: Record<str
       }
       if (a < min || b > max || a > b) {
         throw new Error(
-          t("schedule.error.cronRangeBounds", { item, min, max })
+          t("schedule.error.cronRangeBounds", { item, min, max }),
         );
       }
       for (let v = a; v <= b; v += step) result.add(v);
@@ -186,7 +186,7 @@ function expandField(token: string, min: number, max: number, names?: Record<str
     const num = Number(item);
     if (!Number.isInteger(num) || num < min || num > max) {
       throw new Error(
-        t("schedule.error.cronValueBounds", { raw, min, max })
+        t("schedule.error.cronValueBounds", { raw, min, max }),
       );
     }
     result.add(num);
@@ -207,13 +207,13 @@ export interface ParsedCron {
   /** День недели 0(Вс)..6(Сб) или null, если поле = «*» и не содержит «#». */
   dayOfWeek: Set<number> | null;
   /** Пары {weekday, n} для «#». */
-  nthWeekday: Array<{ weekday: number; n: number }>;
+  nthWeekday: { weekday: number; n: number }[];
 }
 
 /** Разворачивает «@every 15m|2h|1d» в обычный cron. */
 export function normalizeCron(expr: string): string {
   const trimmed = expr.trim();
-  const match = trimmed.match(/^@every\s+(\d+)([mhd])$/i);
+  const match = /^@every\s+(\d+)([mhd])$/i.exec(trimmed);
   if (!match) return trimmed;
   const n = Number(match[1]);
   const unit = match[2].toLowerCase();
@@ -221,7 +221,7 @@ export function normalizeCron(expr: string): string {
   if (unit === "h" && n >= 1 && n <= 23) return `0 */${n} * * *`;
   if (unit === "d" && n >= 1 && n <= 31) return `0 0 */${n} * *`;
   throw new Error(
-    t("schedule.error.everyInterval", { value: `${n}${unit}` })
+    t("schedule.error.everyInterval", { value: `${n}${unit}` }),
   );
 }
 
@@ -231,7 +231,7 @@ export function parseCron(expr: string): ParsedCron {
   const fields = raw.split(/\s+/);
   if (fields.length !== 5) {
     throw new Error(
-      t("schedule.error.cronFields", { count: fields.length, raw })
+      t("schedule.error.cronFields", { count: fields.length, raw }),
     );
   }
   const [minF, hourF, domF, monthF, dowF] = fields;
@@ -257,12 +257,12 @@ export function parseCron(expr: string): ParsedCron {
 
   // dow: «*» + имена + «d#n».
   let dayOfWeek: Set<number> | null = null;
-  const nthWeekday: Array<{ weekday: number; n: number }> = [];
+  const nthWeekday: { weekday: number; n: number }[] = [];
   {
     const tokens = dowF.trim().toUpperCase().split(",").map((s) => s.trim());
     const kept: string[] = [];
     for (const token of tokens) {
-      const hash = token.match(/^([0-9A-Z]+)#([1-5])$/);
+      const hash = /^([0-9A-Z]+)#([1-5])$/.exec(token);
       if (hash) {
         let dToken = hash[1];
         if (DOW_NAMES[dToken] !== undefined) dToken = String(DOW_NAMES[dToken]);
@@ -272,7 +272,7 @@ export function parseCron(expr: string): ParsedCron {
             t("schedule.error.weekdayBounds", {
               value: hash[1],
               field: dowF,
-            })
+            }),
           );
         }
         nthWeekday.push({ weekday: weekday % 7, n: Number(hash[2]) });
@@ -340,10 +340,10 @@ function candidatesOnDay(
   d: number,
   notBefore: { hour: number; minute: number } | null,
   notAfter: { hour: number; minute: number } | null,
-): Array<{ hour: number; minute: number }> {
+): { hour: number; minute: number }[] {
   const hours = [...spec.hour].sort((a, b) => a - b);
   const minutes = [...spec.minute].sort((a, b) => a - b);
-  const result: Array<{ hour: number; minute: number }> = [];
+  const result: { hour: number; minute: number }[] = [];
   for (const hour of hours) {
     for (const minute of minutes) {
       if (notBefore) {
@@ -470,8 +470,8 @@ function wallMinutes(date: Date, timeZone?: string): { minutes: number; seconds:
 export function isInWindow(now: Date, notBefore?: string | null, notAfter?: string | null, timeZone?: string): boolean {
   if (validateLaunchWindow(notBefore, notAfter) !== null) return true; // невалидное окно не должно блокировать
   if (!notBefore?.trim() && !notAfter?.trim()) return true;
-  const start = dailyTimeToMinutes(notBefore as string);
-  const end = dailyTimeToMinutes(notAfter as string);
+  const start = dailyTimeToMinutes(notBefore!);
+  const end = dailyTimeToMinutes(notAfter!);
   const { minutes } = wallMinutes(now, timeZone);
   if (start < end) return minutes >= start && minutes < end;
   return minutes >= start || minutes < end; // через полночь
@@ -482,7 +482,7 @@ export function windowDelayMs(now: Date, notBefore?: string | null, notAfter?: s
   if (validateLaunchWindow(notBefore, notAfter) !== null) return 0;
   if (!notBefore?.trim() && !notAfter?.trim()) return 0;
   if (isInWindow(now, notBefore, notAfter, timeZone)) return 0;
-  const start = dailyTimeToMinutes(notBefore as string);
+  const start = dailyTimeToMinutes(notBefore!);
   const { minutes, seconds, ms } = wallMinutes(now, timeZone);
   const deltaMin = (start - minutes + 1440) % 1440;
   const deltaSec = deltaMin * 60 - seconds;
@@ -499,7 +499,7 @@ export function normalizeActiveDays(days?: number[] | null): number[] | undefine
     ...new Set(
       days
         .map((value) => Math.floor(Number(value)))
-        .filter((value) => Number.isInteger(value) && value >= 0 && value <= 6)
+        .filter((value) => Number.isInteger(value) && value >= 0 && value <= 6),
     ),
   ].sort((a, b) => a - b);
   if (unique.length === 0 || unique.length === 7) return undefined;
@@ -569,7 +569,7 @@ export function activeWindowState(now: Date, options: ActiveWindowOptions = {}):
       t("schedule.reason.outsideWindow", {
         notBefore: options.notBefore,
         notAfter: options.notAfter,
-      })
+      }),
     );
   }
   return {
@@ -649,7 +649,7 @@ export function buildScheduleGate(
   notBefore?: string,
   notAfter?: string,
   days?: number[] | null,
-  windowPolicy?: string | null
+  windowPolicy?: string | null,
 ): ScheduleGateSpec | undefined {
   const tz = (timezone || "").trim() || undefined;
   const poll = needsPollMode(expr, tz);

@@ -12,9 +12,9 @@ function rowToTemplate(row: any): TaskTemplate {
 export function listTemplates(): TaskTemplate[] {
   const rows = getDb()
     .prepare(
-      "SELECT id, name, definition_json FROM templates ORDER BY name COLLATE NOCASE ASC"
+      "SELECT id, name, definition_json FROM templates ORDER BY name COLLATE NOCASE ASC",
     )
-    .all() as any[];
+    .all();
   return rows
     .map(rowToTemplate)
     .filter(
@@ -22,7 +22,7 @@ export function listTemplates(): TaskTemplate[] {
         item &&
         typeof item.id === "string" &&
         typeof item.name === "string" &&
-        typeof item.prompt === "string"
+        typeof item.prompt === "string",
     );
 }
 
@@ -30,7 +30,7 @@ export function listTemplates(): TaskTemplate[] {
 export function getTemplate(id: string): TaskTemplate | undefined {
   const row = getDb()
     .prepare("SELECT definition_json FROM templates WHERE id = ? LIMIT 1")
-    .get(id) as any;
+    .get(id);
   return row ? rowToTemplate(row) : undefined;
 }
 
@@ -39,7 +39,7 @@ export function getTemplate(id: string): TaskTemplate | undefined {
  * Пустое название — ошибка (как в старом saveTemplate).
  */
 export function saveTemplate(
-  template: Omit<TaskTemplate, "id"> & { id?: string }
+  template: Omit<TaskTemplate, "id"> & { id?: string },
 ): TaskTemplate {
   const normalized: TaskTemplate = {
     ...template,
@@ -58,7 +58,7 @@ export function saveTemplate(
        VALUES (?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          name = excluded.name,
-         definition_json = excluded.definition_json`
+         definition_json = excluded.definition_json`,
     )
     .run(normalized.id, normalized.name, JSON.stringify(normalized));
 
@@ -72,6 +72,6 @@ export function deleteTemplate(id: string): void {
 
 /** Количество шаблонов (для миграции и тестов). */
 export function countTemplates(): number {
-  const row = getDb().prepare("SELECT COUNT(*) AS count FROM templates").get() as any;
+  const row = getDb().prepare("SELECT COUNT(*) AS count FROM templates").get();
   return Number(row?.count) || 0;
 }

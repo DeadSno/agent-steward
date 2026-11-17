@@ -213,13 +213,13 @@ rename в `agent-steward` (Д7): иначе пользователи теряю�
 | Что | Значение | Где |
 |---|---|---|
 | `plugin id` | `opencode-windows-scheduler` | `src/index.ts`, `Plugin.define({ id })` |
-| Каталог состояния (default) | Windows: `%APPDATA%\opencode\windows-scheduler`; macOS/Linux: `$XDG_CONFIG_HOME/opencode/windows-scheduler` или `~/.config/opencode/windows-scheduler` | `src/profiles.ts` |
+| Каталог состояния (default) | Windows: `%APPDATA%\opencode\agent-steward`; macOS/Linux: `$XDG_CONFIG_HOME/opencode/agent-steward` или `~/.config/opencode/agent-steward` | `src/profiles.ts` |
 | Каталог нестандартного профиля | `<каталог состояния>/profiles/<profile>` | `src/profiles.ts` |
 | SQLite | `<PLUGIN_DIR>/scheduler.db`; `OPENCODE_SCHEDULER_DB` — только для тестов | `src/db/index.ts` |
 | Логи, обёртки, locks | `<PLUGIN_DIR>/logs`, `<PLUGIN_DIR>/wrappers`, `<PLUGIN_DIR>/locks` | `src/types.ts` |
 | Промпты и env-файлы задач | `<PLUGIN_DIR>/prompts`, `<PLUGIN_DIR>/env` | `src/index.ts` |
 | Секреты | `<PLUGIN_DIR>/secrets.json`, `<PLUGIN_DIR>/secrets.key` | `src/core/secrets.ts` |
-| Префикс задач Windows | `\OpenCode\windows-scheduler\`; профиль: `\OpenCode\windows-scheduler-<profile>\` | `src/core/scheduler/windows.ts` |
+| Префикс задач Windows | `\OpenCode\agent-steward\` (новый, профиль: `\OpenCode\agent-steward-<profile>\`); legacy `\OpenCode\windows-scheduler\` по-прежнему распознаётся (алиасинг) | `src/core/scheduler/windows.ts` |
 | Блок crontab | `# >>> opencode-scheduler:<folder> >>>` … `# <<< opencode-scheduler:<folder> <<<` (legacy-блок без суффикса читается) | `src/core/scheduler/linux.ts` |
 | launchd label | `com.opencode.scheduler.<name>` | `src/core/scheduler/mac.ts` |
 

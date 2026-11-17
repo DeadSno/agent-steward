@@ -97,7 +97,7 @@ function toCompared(
   input: TriageInput,
   decision: TriageDecision,
   baseMessage: string,
-  dedupCount: number
+  dedupCount: number,
 ): ComparedDecision {
   const suppressed = decision.action === "skip";
   const message = suppressed
@@ -143,7 +143,7 @@ function timeoutDecision(): TriageDecision {
 async function decideWithTimeout(
   input: TriageInput,
   settings: TriageSettings,
-  timeoutMs: number
+  timeoutMs: number,
 ): Promise<TriageDecision> {
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
     return decideTriage(input, settings);
@@ -172,7 +172,7 @@ export async function compareTriage(
   beforeSettings: TriageSettings | undefined,
   afterSettings: TriageSettings | undefined,
   dedupCount = 1,
-  timeoutMs = DEFAULT_COMPARE_TIMEOUT_MS
+  timeoutMs = DEFAULT_COMPARE_TIMEOUT_MS,
 ): Promise<CompareTriageResult> {
   const durationMs =
     typeof input.durationMs === "number" && Number.isFinite(input.durationMs)
@@ -187,7 +187,7 @@ export async function compareTriage(
       tokens: input.tokens ?? undefined,
       costUsd: input.costUsd ?? undefined,
     },
-    undefined
+    undefined,
   );
 
   // before/after приходят из RPC как пользовательский ввод: нормализуем их
@@ -235,7 +235,7 @@ export async function compareTriage(
         after: after.verdict?.confidence ?? null,
         changed: changed(
           before.verdict?.confidence ?? null,
-          after.verdict?.confidence ?? null
+          after.verdict?.confidence ?? null,
         ),
       },
       category: {
@@ -243,7 +243,7 @@ export async function compareTriage(
         after: after.verdict?.category ?? null,
         changed: changed(
           before.verdict?.category ?? null,
-          after.verdict?.category ?? null
+          after.verdict?.category ?? null,
         ),
       },
       severity: {
@@ -251,7 +251,7 @@ export async function compareTriage(
         after: after.verdict?.severity ?? null,
         changed: changed(
           before.verdict?.severity ?? null,
-          after.verdict?.severity ?? null
+          after.verdict?.severity ?? null,
         ),
       },
       reason: {
@@ -259,7 +259,7 @@ export async function compareTriage(
         after: after.verdict?.reason ?? null,
         changed: changed(
           before.verdict?.reason ?? null,
-          after.verdict?.reason ?? null
+          after.verdict?.reason ?? null,
         ),
       },
       suppressed: {

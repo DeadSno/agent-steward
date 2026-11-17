@@ -79,7 +79,7 @@ export const STRUCTURED_LOG_MAX_BYTES = 10 * 1024 * 1024;
 function warn(message: string, err: unknown): void {
   try {
     console.warn(
-      `[structured-log] ${message}: ${err instanceof Error ? err.message : String(err)}`
+      `[structured-log] ${message}: ${err instanceof Error ? err.message : String(err)}`,
     );
   } catch {
     // console может быть недоступен в урезанном окружении — молча игнорируем.
@@ -112,7 +112,7 @@ function rotateIfNeeded(): void {
  * Не бросает исключений.
  */
 export function appendStructuredLog(
-  record: Omit<StructuredLogRecord, "ts"> & { ts?: string }
+  record: Omit<StructuredLogRecord, "ts"> & { ts?: string },
 ): boolean {
   try {
     ensureLogDir();
@@ -156,7 +156,7 @@ function readLines(file: string): string[] {
  * `total` считается до применения limit, чтобы клиент знал полный объём.
  */
 export function readStructuredLogs(
-  filter: ReadStructuredLogsFilter = {}
+  filter: ReadStructuredLogsFilter = {},
 ): ReadStructuredLogsResult {
   const limit = Math.max(1, Math.min(5000, Math.floor(filter.limit ?? 200) || 200));
   const task = filter.task?.trim().toLowerCase();

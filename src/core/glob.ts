@@ -196,7 +196,7 @@ export function isIgnored(path: unknown, ignore: unknown): boolean {
 export function filterPaths(
   files: string[],
   include?: string[] | null,
-  ignore?: string[] | null
+  ignore?: string[] | null,
 ): string[] {
   const list = Array.isArray(files) ? files : [];
   const includes = Array.isArray(include) ? include.filter(Boolean) : [];

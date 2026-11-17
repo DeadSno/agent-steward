@@ -70,7 +70,7 @@ export function protocolFor(baseUrl: string): "openai" | "ollama" {
  */
 export function applyLocalAiPatch(
   current: TriageSettings,
-  patch: LocalAiPatch
+  patch: LocalAiPatch,
 ): { settings: TriageSettings; changed: string[] } {
   const next: TriageSettings = { ...current, shadow: { ...current.shadow } as TriageShadowSettings };
   const changed: string[] = [];
@@ -98,7 +98,7 @@ export function applyLocalAiPatch(
       patch.timeoutMs,
       LOCAL_AI_TIMEOUT_MIN,
       LOCAL_AI_TIMEOUT_MAX,
-      current.timeoutMs
+      current.timeoutMs,
     );
     if (timeoutMs !== current.timeoutMs) {
       next.timeoutMs = timeoutMs;

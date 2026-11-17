@@ -1,0 +1,35 @@
+# P3-1: обновления зависимостей приходят PR-ами, а не «внезапным» дрейфом лока.
+# Группировка держит шум в разумных пределах: один PR на dev-зависимости,
+# один на OpenTelemetry, остальное — по одному.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 5
+    versioning-strategy: increase-if-necessary
+    commit-message:
+      prefix: "deps"
+      include: scope
+    groups:
+      dev-dependencies:
+        dependency-type: development
+      opentelemetry:
+        patterns:
+          - "@opentelemetry/*"
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "ci"
+    groups:
+      actions:
+        patterns:
+          - "*"

@@ -567,8 +567,8 @@ side effect of a read operation — recovery is **manual by design** so that no
 automatic rewrite can destroy data:
 
 1. Find the quarantined file in the plugin directory: `secrets.json.corrupt-*`
-   (Windows: `%APPDATA%\opencode\windows-scheduler\`, macOS/Linux:
-   `~/.config/opencode/windows-scheduler/` or `$XDG_CONFIG_HOME`).
+   (Windows: `%APPDATA%\opencode\agent-steward\`, macOS/Linux:
+   `~/.config/opencode/agent-steward/` or `$XDG_CONFIG_HOME`).
 2. Inspect it: the corruption is usually truncated JSON (interrupted write) or
    manual editing. Fix the JSON syntax in a text editor.
 3. Copy the fixed file back to `secrets.json` (keep the `.corrupt-*` copy as a
@@ -610,10 +610,11 @@ the `cleanup_history` RPC and the GUI's **Clear now** button. Aggregates in
 
 ## Agent interface
 
-Twenty-five tools: `schedule_task`, `list_tasks`, `update_task`, `delete_task`,
+Twenty-six tools: `schedule_task`, `list_tasks`, `update_task`, `delete_task`,
 `run_task_now`, `pause_task`, `resume_task`, `get_history`, `get_task_logs`, `dry_run`,
 `manage_workspaces`, `matrix_control` (results/cancel/cleanup/preview), `get_metrics`,
-`get_analytics`, `manage_settings`, `manage_local_ai`, `manage_templates`, `manage_profiles`,
+`get_analytics`, `self_analysis` (health score, anomalies, trends), `manage_settings`,
+`manage_local_ai`, `manage_templates`, `manage_profiles`,
 `transfer_tasks`, `send_notification`, `get_dashboard_info`, `cleanup_history`,
 `manage_secrets`, `get_audit_log`,
 `emit_event`.

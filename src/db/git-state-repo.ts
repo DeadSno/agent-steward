@@ -40,7 +40,7 @@ export function setGitState(taskName: string, commitSha: string, branch?: string
        ON CONFLICT(task_name) DO UPDATE SET
          commit_sha = excluded.commit_sha,
          branch = excluded.branch,
-         updated_at = excluded.updated_at`
+         updated_at = excluded.updated_at`,
     )
     .run(taskName, commitSha, branch ?? null, new Date().toISOString());
 }

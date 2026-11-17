@@ -256,7 +256,7 @@ history and settings are **unchanged**.
 | V1 config key | `"plugin": ["opencode-windows-scheduler"]` | same (unchanged) |
 | V2 config key | `"plugins": ["opencode-windows-scheduler"]` | same (unchanged) |
 | `plugin id` | `opencode-windows-scheduler` | same (unchanged) |
-| State paths | `%APPDATA%\opencode\windows-scheduler` / `~/.config/opencode/windows-scheduler` | same (unchanged) |
+| State paths | `%APPDATA%\opencode\agent-steward` / `~/.config/opencode/agent-steward` | same (unchanged) |
 
 **Only the npm package name and GitHub repository changed.** Your tasks, schedules,
 SQLite history, profiles, secrets and dashboard settings continue to work without

@@ -32,22 +32,113 @@ export interface ProfileInfo {
 /**
  * Базовая директория плагина (до профилей).
  *
- * Windows: %APPDATA%\opencode\windows-scheduler.
- * macOS/Linux: $XDG_CONFIG_HOME/opencode/windows-scheduler или
- *              ~/.config/opencode/windows-scheduler.
+ * Windows: %APPDATA%\opencode\agent-steward.
+ * macOS/Linux: $XDG_CONFIG_HOME/opencode/agent-steward или
+ *              ~/.config/opencode/agent-steward.
  * OPENCODE_SCHEDULER_HOME переопределяет всё (тесты, кастомные установки).
+ *
+ * При первом запуске после переименования данные из исторической
+ * .../opencode/windows-scheduler копируются в новую директорию (legacy
+ * остаётся на месте как резервная копия).
  */
 export function getBasePluginDir(): string {
   const custom = process.env.OPENCODE_SCHEDULER_HOME?.trim();
   if (custom) return path.resolve(custom);
 
-  if (process.platform === "win32") {
-    const base = process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming");
-    return path.join(base, "opencode", "windows-scheduler");
-  }
+  const root = path.join(pluginConfigRoot(), "opencode");
+  const target = path.join(root, "agent-steward");
+  const legacy = path.join(root, "windows-scheduler");
 
-  const configHome = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config");
-  return path.join(configHome, "opencode", "windows-scheduler");
+  if (fs.existsSync(target) || !fs.existsSync(legacy)) return target;
+
+  try {
+    migrateLegacyBaseDir(legacy, target);
+    return target;
+  } catch (error) {
+    // Не теряем доступ к данным: продолжаем работать в старой директории.
+    console.error(
+      `[agent-steward] Не удалось перенести данные из "${legacy}" в "${target}": ${
+        error instanceof Error ? error.message : String(error)
+      }. Использую старую директорию.`,
+    );
+    return legacy;
+  }
+}
+
+/** Корень конфигурации пользователя (без .../opencode). */
+function pluginConfigRoot(): string {
+  if (process.platform === "win32") {
+    return process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming");
+  }
+  return process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config");
+}
+
+const MIGRATION_MARKER = ".migrated-from-windows-scheduler";
+
+/** Расширения текстовых файлов, в которых могут быть абсолютные пути. */
+const PATH_REWRITE_EXTENSIONS = new Set([
+  ".json",
+  ".cmd",
+  ".sh",
+  ".bash",
+  ".ps1",
+  ".txt",
+]);
+
+/**
+ * Копирует legacy-директорию в новую и переписывает в текстовых файлах
+ * абсолютные пути старой директории на новую. Копия делается во временную
+ * директорию и переименовывается атомарно, чтобы не оставить половину данных.
+ */
+function migrateLegacyBaseDir(legacy: string, target: string): void {
+  const temp = `${target}.migrating-${process.pid}`;
+  fs.rmSync(temp, { recursive: true, force: true });
+  fs.cpSync(legacy, temp, { recursive: true });
+
+  rewriteAbsolutePaths(temp, legacy, target);
+  fs.writeFileSync(
+    path.join(temp, MIGRATION_MARKER),
+    `${new Date().toISOString()}\n`,
+    "utf8",
+  );
+
+  try {
+    fs.renameSync(temp, target);
+  } catch (error) {
+    fs.rmSync(temp, { recursive: true, force: true });
+    // Параллельный процесс мог успеть создать target — это не ошибка.
+    if (fs.existsSync(target)) return;
+    throw error;
+  }
+}
+
+function rewriteAbsolutePaths(root: string, from: string, to: string): void {
+  const variants = [
+    from,
+    from.replace(/\\/g, "/"),
+    from.replace(/\\/g, "\\\\"),
+  ].filter((value, index, all) => value && all.indexOf(value) === index);
+
+  const walk = (dir: string): void => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(full);
+        continue;
+      }
+      if (!PATH_REWRITE_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) {
+        continue;
+      }
+      const text = fs.readFileSync(full, "utf8");
+      let next = text;
+      for (const variant of variants) {
+        next = next.split(variant).join(variant.includes("\\\\") ? to.replace(/\\/g, "\\\\") : variant.includes("/") ? to.replace(/\\/g, "/") : to);
+      }
+      if (next !== text) fs.writeFileSync(full, next, "utf8");
+    }
+  };
+
+  walk(root);
 }
 
 /** Нормализует имя профиля: нижний регистр, только [a-z0-9_-]. */

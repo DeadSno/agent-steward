@@ -86,7 +86,7 @@ export function loadSchedulerSkill(): SchedulerSkill | undefined {
     raw = fs.readFileSync(skillPath, "utf8");
   } catch {
     if (process.env.OPENCODE_SCHEDULER_DEBUG_SKILL) {
-      console.error(`[windows-scheduler] Скилл не найден: ${skillPath}`);
+      console.error(`[agent-steward] Скилл не найден: ${skillPath}`);
     }
     return undefined;
   }

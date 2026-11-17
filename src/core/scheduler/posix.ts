@@ -45,6 +45,7 @@ export abstract class PosixSchedulerBase implements SchedulerBackend {
       createdAt: new Date().toISOString(),
       ...(options.model ? { model: options.model } : {}),
       ...(options.priority !== undefined ? { priority: options.priority } : {}),
+      ...(options.timezone ? { timezone: options.timezone } : {}),
     };
 
     await this.registry.upsert(entry);
@@ -98,6 +99,19 @@ export abstract class PosixSchedulerBase implements SchedulerBackend {
       stdio: "ignore",
       cwd: entry.workingDirectory || process.cwd(),
     });
+
+    // spawn не бросает синхронно: ошибки (например, удалённый
+    // workingDirectory → ENOENT) приходят событием 'error'. Без слушателя
+    // это uncaught exception в plugin-host. Ждём 'spawn' либо 'error'.
+    const spawnError = await new Promise<Error | null>((resolve) => {
+      child.once("spawn", () => resolve(null));
+      child.once("error", (error) => resolve(error));
+    });
+    if (spawnError) {
+      throw new Error(
+        `Не удалось запустить задачу "${name}": ${spawnError.message}`,
+      );
+    }
     child.unref();
 
     return { alreadyRunning: false };
@@ -110,5 +124,5 @@ export abstract class PosixSchedulerBase implements SchedulerBackend {
  */
 export function shellQuote(value: string): string {
   if (value === "") return "''";
-  return `'${value.replace(/'/g, `'\\''`)}'`;
+  return `'${value.replace(/'/g, "'\\''")}'`;
 }

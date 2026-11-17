@@ -50,23 +50,25 @@ The factory picks an implementation from `process.platform`:
 ## How each OS works
 
 ### Windows (behaviour unchanged)
-- Tasks are registered in Windows Task Scheduler via `schtasks` under `\OpenCode\windows-scheduler\`.
-- Wrapper: `run-task.ps1` plus a per-task `run-<name>.cmd` in `%APPDATA%\opencode\windows-scheduler\wrapper`.
-- Logs: `%APPDATA%\opencode\windows-scheduler\logs\<name>.log`.
+- Tasks are registered in Windows Task Scheduler via `schtasks` under `\OpenCode\agent-steward\` (profiles use `\OpenCode\agent-steward-<profile>\`). The legacy `\OpenCode\windows-scheduler\` folder is still read, renamed and deleted on demand.
+- Wrapper: `run-task.ps1` plus a per-task `run-<name>.cmd` in `%APPDATA%\opencode\agent-steward\wrapper`. The legacy `%APPDATA%\opencode\windows-scheduler` directory is migrated on first start.
+- Logs: `%APPDATA%\opencode\agent-steward\logs\<name>.log`.
 - cron is converted to schtasks (`convertCronToSchTasks`) — the same pattern set as before.
 
 ### Linux
 - Tasks live in a managed `crontab` block:
   ```
-  # >>> opencode-scheduler >>>
+  # >>> opencode-scheduler:agent-steward >>>
   # task: my-task
   */5 * * * * /bin/bash '/…/wrapper/run-my-task.sh' >> '/…/logs/my-task.log' 2>&1
-  # <<< opencode-scheduler <<<
+  # <<< opencode-scheduler:agent-steward <<<
   ```
+  Legacy blocks without the `:<folder>` suffix are still read and removed.
 - Pause = a line prefixed with `# PAUSED: ` (the block is rebuilt from the registry).
 - Tasks with a `file` trigger never reach crontab — the plugin's FileWatchManager starts them.
-- Wrapper: `~/.config/opencode/windows-scheduler/wrapper/run-<name>.sh` (chmod 0755).
+- Wrapper: `~/.config/opencode/agent-steward/wrapper/run-<name>.sh` (chmod 0755).
 - Full cron syntax (unlike Windows), because crontab understands it natively.
+- One-shot (`once`): `at -t`; if `at` is not installed, the plugin falls back to a detached `sleep && command` process (`pid:<pid>` in the registry). The fallback does not survive a reboot — install the `at` package for durable one-shot runs.
 - Delete/rebuild touches only its own block; other `crontab` lines are left alone.
 
 ### macOS
@@ -75,7 +77,7 @@ The factory picks an implementation from `process.platform`:
   `M H * * *`, `M H * * D`.
 - Pause = `launchctl unload -w`, resume = `launchctl load -w`.
 - Wrapper is the same `.sh` as on Linux; config paths:
-  `~/.config/opencode/windows-scheduler/` (or `$XDG_CONFIG_HOME`).
+  `~/.config/opencode/agent-steward/` (or `$XDG_CONFIG_HOME`).
 
 ### Shared POSIX wrapper (`.sh`)
 - `cd` into the working directory, `opencode run` with the prompt read from a file.
@@ -98,7 +100,7 @@ The factory picks an implementation from `process.platform`:
 | Pause / resume | `schtasks /change /disable` / `/enable` | `# PAUSED:` line in the managed block | `launchctl unload -w` / `load -w` |
 | File triggers | in-process `FileWatchManager` | same | same |
 | Task wrappers | `.cmd` + `.ps1` | `.sh` | `.sh` |
-| Logs | `%APPDATA%\opencode\windows-scheduler\logs` | `~/.config/opencode/windows-scheduler/logs` | same as Linux |
+| Logs | `%APPDATA%\opencode\agent-steward\logs` | `~/.config/opencode/agent-steward/logs` | same as Linux |
 | `secrets.key` protection | `icacls` (owner only) + `chmod` fallback | `chmod 0600` | `chmod 0600` |
 | Dashboard | `127.0.0.1`, dynamic title | same | same |
 | DAG / matrix / quality gates / notifications | in-plugin, OS-independent | same | same |
@@ -144,6 +146,6 @@ The factory picks an implementation from `process.platform`:
 2. cron → launchd supports the same limited pattern set as Windows
    (`* * * * *`, `*/N * * * *`, `M * * * *`, `M H * * *`, `M H * * D`).
    Linux gets full cron.
-3. The Windows task prefix (`\OpenCode\windows-scheduler\`) and the plugin id are kept for backwards compatibility.
+3. The Windows task prefix is now `\OpenCode\agent-steward\` (legacy `\OpenCode\windows-scheduler\` is still recognized); the plugin id is kept for backwards compatibility.
 4. `src/schtasks.ts` remains as a thin shim for old scripts (`test-create.cjs`, `test-run.cjs`);
    all logic now lives in `core/scheduler/windows.ts`.

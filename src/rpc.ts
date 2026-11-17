@@ -1,4 +1,4 @@
-import { Rpc } from "@opencode/plugin/rpc"
+import { Rpc } from "@opencode/plugin/rpc";
 
 /**
  * Общее определение RPC-контракта между серверной частью плагина (src/index.ts)
@@ -1538,6 +1538,10 @@ const DeleteProfileOutput = {
 } as const;
 
 export const SchedulerRpc = Rpc.define({
+  // ВАЖНО: id RPC-канала совпадает с id плагина и должен оставаться
+  // "opencode-windows-scheduler". GUI OpenCode строит URL
+  // /api/rpc/<plugin-id>/<method>; если id разойдётся, все вызовы
+  // вернут 400 "RPC is unavailable: opencode-windows-scheduler".
   id: "opencode-windows-scheduler",
   methods: {
     get_tasks: { input: GetTasksInput, output: GetTasksOutput },

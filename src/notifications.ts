@@ -91,7 +91,7 @@ export function wildcardMatch(pattern: string, value: string): boolean {
 /** Проверяет, разрешена ли задача фильтрами include/exclude. */
 export function isTaskAllowed(
   taskName: string,
-  filters?: NotificationFilters
+  filters?: NotificationFilters,
 ): boolean {
   if (!filters) return true;
   const name = (taskName ?? "").trim();
@@ -106,10 +106,10 @@ export function isTaskAllowed(
 /** Подставляет {key} в шаблон; неизвестные плейсхолдеры остаются как есть. */
 export function renderTemplate(
   template: string,
-  vars: Record<string, string>
+  vars: Record<string, string>,
 ): string {
   return template.replace(/\{(\w+)\}/g, (match, key: string) =>
-    Object.prototype.hasOwnProperty.call(vars, key) ? vars[key] : match
+    Object.prototype.hasOwnProperty.call(vars, key) ? vars[key] : match,
   );
 }
 
@@ -120,7 +120,7 @@ export function renderTemplate(
  */
 export function formatNotificationMessage(
   payload: NotificationPayload,
-  templates?: NotificationTemplates
+  templates?: NotificationTemplates,
 ): string {
   const { taskName, status, durationMs, error } = payload;
   const duration = formatDuration(durationMs);
@@ -250,7 +250,7 @@ function validateWebhookUrl(url: string): URL {
 async function postOnce(
   parsed: URL,
   message: string,
-  timeoutMs: number
+  timeoutMs: number,
 ): Promise<void> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -267,14 +267,14 @@ async function postOnce(
       const retryable = response.status >= 500 || response.status === 429;
       throw new WebhookError(
         `HTTP ${response.status}${body ? `: ${body.slice(0, 200)}` : ""}`,
-        retryable
+        retryable,
       );
     }
   } catch (err: any) {
     if (err?.name === "AbortError") {
       throw new WebhookError(
         t("notify.error.webhookTimeout", { seconds: timeoutMs / 1000 }),
-        true
+        true,
       );
     }
     if (err instanceof WebhookError) throw err;
@@ -296,7 +296,7 @@ async function postOnce(
 export async function sendWebhook(
   url: string,
   message: string,
-  options: WebhookOptions = {}
+  options: WebhookOptions = {},
 ): Promise<void> {
   const parsed = validateWebhookUrl(url);
   const timeoutMs = Math.max(1, Math.floor(options.timeoutMs ?? REQUEST_TIMEOUT_MS));
@@ -316,7 +316,7 @@ export async function sendWebhook(
       if (!retryable || attempt === attempts - 1) break;
       const delay = Math.min(
         MAX_RETRY_DELAY_MS,
-        retryDelayMs * 2 ** attempt
+        retryDelayMs * 2 ** attempt,
       );
       await sleep(delay);
     }
@@ -349,12 +349,12 @@ export interface ChannelDeliveryResult {
  */
 export function isQuietHours(
   now: Date,
-  quiet?: { enabled?: boolean; from?: string; to?: string } | null
+  quiet?: { enabled?: boolean; from?: string; to?: string } | null,
 ): boolean {
   if (!quiet?.enabled) return false;
   const parse = (value: unknown): number | null => {
     const match = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(
-      typeof value === "string" ? value.trim() : ""
+      typeof value === "string" ? value.trim() : "",
     );
     return match ? Number(match[1]) * 60 + Number(match[2]) : null;
   };
@@ -369,7 +369,7 @@ export function isQuietHours(
 
 /** URL дашборда: настройка, иначе фактический порт сервера, иначе null. */
 async function resolveDashboardUrl(
-  config: NotificationSettings
+  config: NotificationSettings,
 ): Promise<string | null> {
   const custom = (config.dashboardUrl ?? "").trim();
   if (custom) return custom;
@@ -403,7 +403,7 @@ function telegramCredentials(config: NotificationSettings): {
 async function deliverDetailed(
   config: NotificationSettings,
   message: string,
-  only?: NotificationChannel
+  only?: NotificationChannel,
 ): Promise<ChannelDeliveryResult[]> {
   const results: ChannelDeliveryResult[] = [];
   const dashboardUrl = await resolveDashboardUrl(config);
@@ -417,11 +417,11 @@ async function deliverDetailed(
   ) {
     try {
       await sendWebhook(webhook.url, message, webhookOptionsFrom(config));
-      console.log("[windows-scheduler] Уведомление отправлено в webhook.");
+      console.log("[agent-steward] Уведомление отправлено в webhook.");
       results.push({ channel: "webhook", ok: true });
     } catch (err: any) {
       const text = err instanceof Error ? err.message : String(err);
-      console.error(`[windows-scheduler] Webhook: ${text}`);
+      console.error(`[agent-steward] Webhook: ${text}`);
       results.push({ channel: "webhook", ok: false, error: text });
     }
   }
@@ -431,7 +431,7 @@ async function deliverDetailed(
     const { token, chatId } = telegramCredentials(config);
     if (!token || !chatId) {
       const text = t("notify.error.telegramNoCreds");
-      console.error(`[windows-scheduler] ${text}`);
+      console.error(`[agent-steward] ${text}`);
       results.push({ channel: "telegram", ok: false, error: text });
     } else {
       try {
@@ -443,11 +443,11 @@ async function deliverDetailed(
           includeDashboardLink: telegram.includeDashboardLink,
           dashboardUrl,
         });
-        console.log("[windows-scheduler] Уведомление отправлено в Telegram.");
+        console.log("[agent-steward] Уведомление отправлено в Telegram.");
         results.push({ channel: "telegram", ok: true });
       } catch (err: any) {
         const text = err instanceof Error ? err.message : String(err);
-        console.error(`[windows-scheduler] Telegram: ${text}`);
+        console.error(`[agent-steward] Telegram: ${text}`);
         results.push({ channel: "telegram", ok: false, error: text });
       }
     }
@@ -457,14 +457,14 @@ async function deliverDetailed(
   if ((!only || only === "native") && config.enabled && native?.enabled) {
     const result = await sendNativeNotification(
       { title: t("notify.native.title"), body: message, sound: native.sound },
-      {}
+      {},
     );
     if (result.success) {
-      console.log("[windows-scheduler] Нативное уведомление показано.");
+      console.log("[agent-steward] Нативное уведомление показано.");
       results.push({ channel: "native", ok: true });
     } else {
       const text = result.error ?? t("notify.error.nativeFailed");
-      console.error(`[windows-scheduler] Нативное уведомление: ${text}`);
+      console.error(`[agent-steward] Нативное уведомление: ${text}`);
       results.push({ channel: "native", ok: false, error: text });
     }
   }
@@ -507,7 +507,7 @@ export interface DedupRecord {
 
 /** Ключ дедупа: комбинация задачи и статуса. */
 function dedupKey(taskName: string, status: string): string {
-  return (taskName + '|' + status).toLowerCase();
+  return (taskName + "|" + status).toLowerCase();
 }
 
 /** Читает или создаёт запись дедупа. Возвращает { record, isDuplicate }.
@@ -519,7 +519,7 @@ function dedupReadOrCreate(
   key: string,
   taskName: string,
   status: string,
-  dedup: NotificationDedupSettings
+  dedup: NotificationDedupSettings,
 ): { record: DedupRecord; isDuplicate: boolean } {
   const now = new Date().toISOString();
   const row = db
@@ -528,7 +528,7 @@ function dedupReadOrCreate(
 
   if (!row) {
     db.prepare(
-      "INSERT INTO notification_dedup (key, task_name, status, count, first_at, last_at, window_minutes) VALUES (?, ?, ?, 1, ?, ?, ?)"
+      "INSERT INTO notification_dedup (key, task_name, status, count, first_at, last_at, window_minutes) VALUES (?, ?, ?, 1, ?, ?, ?)",
     ).run(key, taskName, status, now, now, dedup.windowMinutes);
     return {
       record: {
@@ -551,7 +551,7 @@ function dedupReadOrCreate(
   if (nowMs - last > windowMs) {
     // Окно истекло — начинаем заново.
     db.prepare(
-      "UPDATE notification_dedup SET count = 1, first_at = ?, last_at = ?, window_minutes = ? WHERE key = ?"
+      "UPDATE notification_dedup SET count = 1, first_at = ?, last_at = ?, window_minutes = ? WHERE key = ?",
     ).run(now, now, dedup.windowMinutes, key);
     return {
       record: {
@@ -569,7 +569,7 @@ function dedupReadOrCreate(
 
   const count = Math.min(Number(row.count) + 1, dedup.maxCount);
   db.prepare(
-    "UPDATE notification_dedup SET count = ?, last_at = ? WHERE key = ?"
+    "UPDATE notification_dedup SET count = ?, last_at = ? WHERE key = ?",
   ).run(count, now, key);
   return {
     record: {
@@ -588,10 +588,10 @@ function dedupReadOrCreate(
 /** Подавлять ли уведомление по дедупу: только если не важный статус. */
 function isDedupSuppressed(
   status: string,
-  dedup: NotificationDedupSettings
+  dedup: NotificationDedupSettings,
 ): boolean {
   const important = dedup.importantStatuses.some(
-    (s: string) => s.toLowerCase() === status.toLowerCase()
+    (s: string) => s.toLowerCase() === status.toLowerCase(),
   );
   return !important;
 }
@@ -599,7 +599,7 @@ function isDedupSuppressed(
 /** Добавляет счётчик повторов к сообщению, если это не первое уведомление. */
 function messageWithDedupCount(message: string, count: number): string {
   if (count <= 1) return message;
-  return message + ' ' + t("notify.dedup.count", { count });
+  return message + " " + t("notify.dedup.count", { count });
 }
 
 /**
@@ -636,7 +636,7 @@ function fnv1a32(value: string): number {
 }
 
 function embeddingKey(taskName: string, status: string): string {
-  return `emb:${(taskName + '|' + status).toLowerCase()}`;
+  return `emb:${(taskName + "|" + status).toLowerCase()}`;
 }
 
 /** Простой токенизатор: слова, цифры, нижний регистр. */
@@ -710,21 +710,21 @@ function embeddingExists(
   status: string,
   message: string,
   threshold: number,
-  windowMinutes: number
+  windowMinutes: number,
 ): { found: boolean; key: string } | null {
   const since = new Date(
-    Date.now() - windowMinutes * 60_000
+    Date.now() - windowMinutes * 60_000,
   ).toISOString();
   const rows = db
     .prepare(
       "SELECT key, embedding_json FROM notification_embeddings " +
         "WHERE task_name = ? AND status = ? AND created_at >= ? " +
-        "ORDER BY created_at DESC LIMIT 500"
+        "ORDER BY created_at DESC LIMIT 500",
     )
-    .all(taskName, status, since) as Array<{
+    .all(taskName, status, since) as {
     key: string;
     embedding_json: string;
-  }>;
+  }[];
   const vec = textToVector(message);
   let bestKey = "";
   let bestSim = 0;
@@ -757,14 +757,14 @@ function storeEmbedding(
   status: string,
   message: string,
   vector: number[],
-  windowMinutes: number
+  windowMinutes: number,
 ): void {
   const now = new Date().toISOString();
   const key =
     embeddingKey(taskName, status) +
     `:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 8)}`;
   db.prepare(
-    "INSERT INTO notification_embeddings (key, task_name, status, message_text, embedding_json, dimension, created_at, window_minutes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    "INSERT INTO notification_embeddings (key, task_name, status, message_text, embedding_json, dimension, created_at, window_minutes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
   ).run(
     key,
     taskName,
@@ -773,7 +773,7 @@ function storeEmbedding(
     JSON.stringify(vector),
     vector.length,
     now,
-    windowMinutes
+    windowMinutes,
   );
 }
 
@@ -781,18 +781,18 @@ function storeEmbedding(
 function cleanupEmbeddings(
   db: ReturnType<typeof getDb>,
   windowMinutes: number,
-  maxVectors?: number
+  maxVectors?: number,
 ): void {
   const since = new Date(
-    Date.now() - windowMinutes * 60_000
+    Date.now() - windowMinutes * 60_000,
   ).toISOString();
   db.prepare(
-    "DELETE FROM notification_embeddings WHERE created_at < ?"
+    "DELETE FROM notification_embeddings WHERE created_at < ?",
   ).run(since);
   if (maxVectors && maxVectors > 0) {
     db.prepare(
       "DELETE FROM notification_embeddings WHERE key NOT IN (" +
-        "SELECT key FROM notification_embeddings ORDER BY created_at DESC LIMIT ?)"
+        "SELECT key FROM notification_embeddings ORDER BY created_at DESC LIMIT ?)",
     ).run(maxVectors);
   }
 }
@@ -804,7 +804,7 @@ export async function notifyTaskCompletion(
   error?: string | null,
   tokens?: number | null,
   costUsd?: number | null,
-  options: NotifyTaskOptions = {}
+  options: NotifyTaskOptions = {},
 ): Promise<void> {
   try {
     const settings = await loadSettings();
@@ -834,23 +834,23 @@ export async function notifyTaskCompletion(
       try {
         const job = (options.scheduleTriage ?? scheduleTriageJob)(
           triageInput,
-          triageSettings
+          triageSettings,
         );
         // Injected scheduler может быть асинхронным — не оставляем rejection.
         if (job && typeof (job as PromiseLike<unknown>).then === "function") {
           void Promise.resolve(job).catch((err: any) => {
             console.error(
-              `[windows-scheduler] Ошибка фонового триажа: ${
+              `[agent-steward] Ошибка фонового триажа: ${
                 err instanceof Error ? err.message : String(err)
-              }`
+              }`,
             );
           });
         }
       } catch (err: any) {
         console.error(
-          `[windows-scheduler] Не удалось запустить фоновый триаж: ${
+          `[agent-steward] Не удалось запустить фоновый триаж: ${
             err instanceof Error ? err.message : String(err)
-          }`
+          }`,
         );
       }
     } else if (mode !== "off") {
@@ -870,7 +870,7 @@ export async function notifyTaskCompletion(
       // Читать-изменять-записать нужно атомарно: иначе два процесса
       // (задача + дашборд) теряют инкременты счётчика повторов.
       const { record, isDuplicate } = withTransaction(() =>
-        dedupReadOrCreate(db, key, taskName, status, dedup)
+        dedupReadOrCreate(db, key, taskName, status, dedup),
       );
       dedupCount = record.count;
       if (isDuplicate && isDedupSuppressed(status, dedup)) {
@@ -881,9 +881,9 @@ export async function notifyTaskCompletion(
     const baseMessage = messageWithDedupCount(
       formatNotificationMessage(
         { taskName, status, durationMs, error, tokens, costUsd },
-        config.templates
+        config.templates,
       ),
-      dedupCount
+      dedupCount,
     );
 
     // Эмбеддинг-дедуп (31.1): семантическое подавление похожих сообщений.
@@ -898,7 +898,7 @@ export async function notifyTaskCompletion(
         status,
         message,
         config.embedding.threshold,
-        config.embedding.windowMinutes ?? 60
+        config.embedding.windowMinutes ?? 60,
       );
       if (
         hit &&
@@ -919,12 +919,12 @@ export async function notifyTaskCompletion(
         status,
         message,
         vec,
-        config.embedding.windowMinutes ?? 60
+        config.embedding.windowMinutes ?? 60,
       );
       cleanupEmbeddings(
         db,
         config.embedding.windowMinutes ?? 60,
-        config.embedding.maxVectors
+        config.embedding.maxVectors,
       );
     }
 
@@ -943,12 +943,12 @@ export async function notifyTaskCompletion(
         },
         config.summary,
         summaryProviderFromTriage(config.triage),
-        {}
+        {},
       );
       if (summary.lines.length) {
         finalMessage = messageWithDedupCount(
           `${taskName} — ${status}\n${summary.lines.join("\n")}`,
-          dedupCount
+          dedupCount,
         );
       }
     }
@@ -956,9 +956,9 @@ export async function notifyTaskCompletion(
   } catch (err: any) {
     // Уведомление не должно ломать запись истории и саму задачу.
     console.error(
-      `[windows-scheduler] Ошибка подготовки уведомления: ${
+      `[agent-steward] Ошибка подготовки уведомления: ${
         err instanceof Error ? err.message : String(err)
-      }`
+      }`,
     );
   }
 }
@@ -970,7 +970,7 @@ export async function notifyTaskCompletion(
  * `matrix.onAllFailed`; успех — только когда `onlyOnError === false`.
  */
 export async function notifyMatrixCompletion(
-  info: MatrixNotificationInfo
+  info: MatrixNotificationInfo,
 ): Promise<void> {
   try {
     const settings = await loadSettings();
@@ -990,9 +990,9 @@ export async function notifyMatrixCompletion(
     await deliver(config, formatMatrixMessage(info));
   } catch (err: any) {
     console.error(
-      `[windows-scheduler] Ошибка уведомления о матрице: ${
+      `[agent-steward] Ошибка уведомления о матрице: ${
         err instanceof Error ? err.message : String(err)
-      }`
+      }`,
     );
   }
 }
@@ -1021,7 +1021,7 @@ export function findStuckMatrixClones(
   running: RunningTaskRecord[],
   parentByClone: Map<string, string>,
   now: Date,
-  thresholdMinutes: number
+  thresholdMinutes: number,
 ): StuckMatrixClone[] {
   if (!Number.isFinite(thresholdMinutes) || thresholdMinutes <= 0) return [];
   const thresholdMs = thresholdMinutes * 60_000;
@@ -1065,9 +1065,9 @@ export async function notifyStuckMatrix(stuck: StuckMatrixClone): Promise<boolea
     return await deliver(config, formatStuckMatrixMessage(stuck));
   } catch (err: any) {
     console.error(
-      `[windows-scheduler] Ошибка уведомления о зависшей матрице: ${
+      `[agent-steward] Ошибка уведомления о зависшей матрице: ${
         err instanceof Error ? err.message : String(err)
-      }`
+      }`,
     );
     return false;
   }
@@ -1102,7 +1102,7 @@ function formatLocalDate(date: Date): string {
 /** Строит сводку дайджеста из записей истории. */
 export function buildDigestSummary(
   records: AnalyticsRecord[],
-  options: { frequency: DigestFrequency; now?: Date }
+  options: { frequency: DigestFrequency; now?: Date },
 ): DigestSummary {
   const now = options.now ?? new Date();
   const windowDays = options.frequency === "weekly" ? 7 : 1;
@@ -1128,7 +1128,7 @@ export function buildDigestSummary(
 /** Текст дайджеста. */
 export function formatDigestMessage(
   summary: DigestSummary,
-  now: Date = new Date()
+  now: Date = new Date(),
 ): string {
   const periodLabel =
     summary.period === "weekly"
@@ -1152,7 +1152,7 @@ export function formatDigestMessage(
     lines.push(t("notify.digest.topErrors"));
     for (const row of summary.topErrors) {
       lines.push(
-        t("notify.digest.topErrorRow", { message: row.message, count: row.count })
+        t("notify.digest.topErrorRow", { message: row.message, count: row.count }),
       );
     }
   } else if (summary.total > 0) {
@@ -1195,7 +1195,7 @@ export function isDigestDue(digest: DigestSettings, now: Date): boolean {
  * «Отправить сейчас» не должна сдвигать расписание.
  */
 export async function sendDigestNow(
-  options: { now?: Date; updateLastSentAt?: boolean } = {}
+  options: { now?: Date; updateLastSentAt?: boolean } = {},
 ): Promise<{ success: boolean; message: string }> {
   const now = options.now ?? new Date();
   try {
@@ -1257,16 +1257,16 @@ export async function maybeSendDigest(now: Date = new Date()): Promise<boolean> 
     if (!isDigestDue(digest, now)) return false;
     const result = await sendDigestNow({ now, updateLastSentAt: true });
     if (result.success) {
-      console.log("[windows-scheduler] Дайджест уведомлений отправлен.");
+      console.log("[agent-steward] Дайджест уведомлений отправлен.");
       return true;
     }
-    console.error(`[windows-scheduler] Дайджест не отправлен: ${result.message}`);
+    console.error(`[agent-steward] Дайджест не отправлен: ${result.message}`);
     return false;
   } catch (err: any) {
     console.error(
-      `[windows-scheduler] Ошибка дайджеста: ${
+      `[agent-steward] Ошибка дайджеста: ${
         err instanceof Error ? err.message : String(err)
-      }`
+      }`,
     );
     return false;
   }
@@ -1278,7 +1278,7 @@ export async function maybeSendDigest(now: Date = new Date()): Promise<boolean> 
  * результат возвращается пользователю: при тесте важна причина ошибки.
  */
 export async function sendTestNotification(
-  channel: "all" | NotificationChannel = "all"
+  channel: "all" | NotificationChannel = "all",
 ): Promise<{
   success: boolean;
   message: string;
@@ -1313,7 +1313,7 @@ export async function sendTestNotification(
     const results = await deliverDetailed(
       config,
       t("notify.test.body"),
-      channel === "all" ? undefined : channel
+      channel === "all" ? undefined : channel,
     );
     const sent = results.filter((item) => item.ok).map((item) => item.channel);
     const failed = results.filter((item) => !item.ok);
@@ -1327,10 +1327,10 @@ export async function sendTestNotification(
           errors: failed
             .map(
               (item) =>
-                `${item.channel} — ${item.error ?? t("notify.error.testUnknown")}`
+                `${item.channel} — ${item.error ?? t("notify.error.testUnknown")}`,
             )
             .join("; "),
-        })
+        }),
       );
     }
     return {

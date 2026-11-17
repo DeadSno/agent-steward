@@ -32,6 +32,7 @@ All notable changes to this project are documented here. Format follows [Keep a 
 - **Matrix:** при коллизии имён клонов выбрасывается ошибка `matrix.error.duplicateCloneName` вместо молчаливого пропуска; ключ добавлен в `locales/ru.json`, `locales/en.json`, `locales/zh.json`.
 - **ScheduleJobArgs:** латинский regex имени заменён на `superRefine` с общим `validateTaskName` — кириллица разрешена, схема и фактическая валидация приведены к одному правилу.
 - **update_task:** при смене регистра имени задачи ссылки в `dependsOn`/`nextTaskOnSuccess`/`nextTaskOnError` других задач обновляются на новое имя (case-insensitive поиск и замена).
+- **Шим `opencode-windows-scheduler@1.5.7`:** задепрекейчен (`npm deprecate`) — требует `agent-steward: ^1.5.6`, что неудовлетворимо (опубликованы только `0.0.x`, см. P0-1). Диапазон в `legacy/package.json` обновлён на `^0.0.2`; шим остаётся thin re-export для обратной совместимости на один major.
 
 ## [1.5.5] - 2026-11-16
 

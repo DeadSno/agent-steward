@@ -6,7 +6,7 @@ import {
   type PluginModule as V1PluginModule,
 } from "@opencode-ai/plugin";
 import { z } from "zod";
-import { Tool } from "@opencode/schema/tool";
+import type { Tool } from "@opencode/schema/tool";
 import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
@@ -19,6 +19,7 @@ import {
   STALE_LOCK_MAX_AGE_MS,
   WRAPPER_DIR,
   sanitizeName,
+  validateModelId,
   validateTaskName,
 } from "./types.js";
 import { parseCron, buildScheduleGate, isValidIanaTimeZone, validateLaunchWindow, prevRun, nextRun as cronNextRun, normalizeActiveDays, activeWindowState, nextWindowOpenDelayMs } from "./core/schedule-v2.js";
@@ -172,8 +173,8 @@ const recorderPath = (() => {
     .replace(/\.ts$/, ".js");
   if (existsSync(distPath)) return distPath;
   console.warn(
-    "[windows-scheduler] Не найден собранный record-history.js: " +
-      `${distPath}. История/метрики не будут записываться. Выполните npm run build.`
+    "[agent-steward] Не найден собранный record-history.js: " +
+      `${distPath}. История/метрики не будут записываться. Выполните npm run build.`,
   );
   return distPath;
 })();
@@ -190,8 +191,8 @@ const gatePath = (() => {
     .replace(/\.ts$/, ".js");
   if (existsSync(distPath)) return distPath;
   console.warn(
-    "[windows-scheduler] Не найден собранный schedule-gate.js: " +
-      `${distPath}. Гейт расписания не будет проверяться. Выполните npm run build.`
+    "[agent-steward] Не найден собранный schedule-gate.js: " +
+      `${distPath}. Гейт расписания не будет проверяться. Выполните npm run build.`,
   );
   return distPath;
 })();
@@ -217,37 +218,37 @@ export const matrixSchema = z.object({
     .enum(["parallel", "sequential"])
     .optional()
     .describe(
-      "parallel (default) starts all clones at once; sequential starts the next clone only after the previous one finishes."
+      "parallel (default) starts all clones at once; sequential starts the next clone only after the previous one finishes.",
     ),
   failureMode: z
     .enum(["continue", "stop"])
     .optional()
     .describe(
-      "continue (default) keeps running the remaining clones after a failure; stop aborts the rest."
+      "continue (default) keeps running the remaining clones after a failure; stop aborts the rest.",
     ),
   aggregation: z
     .enum(["summary", "per-task"])
     .optional()
     .describe(
-      "summary (default) writes one aggregate record for the parent; per-task keeps per-clone records."
+      "summary (default) writes one aggregate record for the parent; per-task keeps per-clone records.",
     ),
   createAggregator: z
     .boolean()
     .optional()
     .describe(
-      "Also create the <parent>-matrix-complete task depending on every clone."
+      "Also create the <parent>-matrix-complete task depending on every clone.",
     ),
   concurrency: z
     .number()
     .optional()
     .describe(
-      "Maximum number of clones running at the same time (>= 1). Ignored for sequential (always 1) and capped by the global maxConcurrent setting."
+      "Maximum number of clones running at the same time (>= 1). Ignored for sequential (always 1) and capped by the global maxConcurrent setting.",
     ),
   overrides: z
     .record(z.string(), matrixOverrideSchema)
     .optional()
     .describe(
-      "Per-workspace overrides keyed by workspace id. Keys must be present in workspaceIds."
+      "Per-workspace overrides keyed by workspace id. Keys must be present in workspaceIds.",
     ),
 });
 
@@ -256,19 +257,19 @@ export const scheduleTaskSchema = z.object({
   name: z
     .string()
     .describe(
-      "Unique task name (the plugin prefix is applied automatically). Allowed: letters (including Cyrillic), digits, space, dot, underscore and hyphen."
+      "Unique task name (the plugin prefix is applied automatically). Allowed: letters (including Cyrillic), digits, space, dot, underscore and hyphen.",
     ),
   schedule: z
     .string()
     .optional()
     .describe(
-      "Cron expression (5 fields: minute hour day-of-month month day-of-week). Required for triggerType=cron; ignored for file/mcp-event. Supports ranges, lists, */N steps, month/weekday names, @every 15m|2h|1d, L (last day of month) and FRI#3 (third Friday). Expressions schtasks cannot express are checked every minute inside the wrapper."
+      "Cron expression (5 fields: minute hour day-of-month month day-of-week). Required for triggerType=cron; ignored for file/mcp-event. Supports ranges, lists, */N steps, month/weekday names, @every 15m|2h|1d, L (last day of month) and FRI#3 (third Friday). Expressions schtasks cannot express are checked every minute inside the wrapper.",
     ),
   runAt: z
     .string()
     .optional()
     .describe(
-      "Absolute one-shot start time in ISO-8601 (e.g. 2026-12-01T09:00:00Z). Requires triggerType=once; mutually exclusive with delaySeconds (runAt wins)."
+      "Absolute one-shot start time in ISO-8601 (e.g. 2026-12-01T09:00:00Z). Requires triggerType=once; mutually exclusive with delaySeconds (runAt wins).",
     ),
   delaySeconds: z
     .number()
@@ -276,13 +277,13 @@ export const scheduleTaskSchema = z.object({
     .positive()
     .optional()
     .describe(
-      "One-shot delay in seconds from now. Requires triggerType=once. Convenient alternative to runAt."
+      "One-shot delay in seconds from now. Requires triggerType=once. Convenient alternative to runAt.",
     ),
   session: z
     .enum(["new", "reuse", "last"])
     .optional()
     .describe(
-      "OpenCode session mode for the task: new (default, fresh session per run), reuse (keep a persistent session stored on the task — sessionId is auto-generated), last (continue the latest session via --continue)."
+      "OpenCode session mode for the task: new (default, fresh session per run), reuse (keep a persistent session stored on the task — sessionId is auto-generated), last (continue the latest session via --continue).",
     ),
   sessionMaxRuns: z
     .number()
@@ -291,19 +292,19 @@ export const scheduleTaskSchema = z.object({
     .max(10000)
     .optional()
     .describe(
-      "Only for session=reuse: how many runs the reused session survives before it is deleted and a fresh one is created. Unset/0 — no limit."
+      "Only for session=reuse: how many runs the reused session survives before it is deleted and a fresh one is created. Unset/0 — no limit.",
     ),
   timezone: z
     .string()
     .optional()
     .describe(
-      "IANA timezone of the schedule, e.g. Europe/Moscow. Defaults to the system timezone. A zone different from the system one is evaluated by the wrapper (poll mode)."
+      "IANA timezone of the schedule, e.g. Europe/Moscow. Defaults to the system timezone. A zone different from the system one is evaluated by the wrapper (poll mode).",
     ),
   notBefore: z
     .string()
     .optional()
     .describe(
-      "Launch window start in HH:MM (24h). Together with notAfter: a run outside the window is postponed to the next window opening, not skipped."
+      "Launch window start in HH:MM (24h). Together with notAfter: a run outside the window is postponed to the next window opening, not skipped.",
     ),
   notAfter: z
     .string()
@@ -320,7 +321,7 @@ export const scheduleTaskSchema = z.object({
     .string()
     .optional()
     .describe(
-      "LLM model in OpenCode format, e.g. anthropic/claude-3-5-sonnet. Defaults to the OpenCode default model."
+      "LLM model in OpenCode format, e.g. anthropic/claude-3-5-sonnet. Defaults to the OpenCode default model.",
     ),
   priority: z
     .number()
@@ -330,25 +331,25 @@ export const scheduleTaskSchema = z.object({
     .string()
     .optional()
     .describe(
-      "Pre-flight shell command executed before the run (e.g. git pull). A non-zero exit code cancels the run."
+      "Pre-flight shell command executed before the run (e.g. git pull). A non-zero exit code cancels the run.",
     ),
   afterScript: z
     .string()
     .optional()
     .describe(
-      "Post-flight shell command executed after the run (e.g. git push). Runs even when the task fails."
+      "Post-flight shell command executed after the run (e.g. git push). Runs even when the task fails.",
     ),
   qualityGate: z
     .string()
     .optional()
     .describe(
-      "Shell command executed after a successful AI response (e.g. npm test). A non-zero exit code marks the run as a Quality Gate failure."
+      "Shell command executed after a successful AI response (e.g. npm test). A non-zero exit code marks the run as a Quality Gate failure.",
     ),
   dependsOn: z
     .array(z.string())
     .optional()
     .describe(
-      "DAG dependencies: tasks that must finish successfully before this task starts."
+      "DAG dependencies: tasks that must finish successfully before this task starts.",
     ),
   retryCount: z
     .number()
@@ -370,7 +371,7 @@ export const scheduleTaskSchema = z.object({
     .enum(["cron", "file", "git", "mcp-event", "once"])
     .optional()
     .describe(
-      "Trigger type: cron (default), file, git (new commits in the task working directory), mcp-event or once (single run at runAt/delaySeconds)."
+      "Trigger type: cron (default), file, git (new commits in the task working directory), mcp-event or once (single run at runAt/delaySeconds).",
     ),
   mcpEvent: z
     .object({
@@ -380,37 +381,37 @@ export const scheduleTaskSchema = z.object({
     })
     .optional()
     .describe(
-      "MCP event trigger: server, event name and an optional filter (key=value or regex)."
+      "MCP event trigger: server, event name and an optional filter (key=value or regex).",
     ),
   watchPath: z
     .string()
     .optional()
     .describe(
-      "File or directory to watch when triggerType is \"file\". Can be set here or later via update_task."
+      "File or directory to watch when triggerType is \"file\". Can be set here or later via update_task.",
     ),
   watchGlobs: z
     .array(z.string())
     .optional()
     .describe(
-      "Glob masks that limit a file trigger, e.g. [\"**/*.md\", \"src/**\"]. Empty means any change under watchPath."
+      "Glob masks that limit a file trigger, e.g. [\"**/*.md\", \"src/**\"]. Empty means any change under watchPath.",
     ),
   watchIgnore: z
     .array(z.string())
     .optional()
     .describe(
-      "Glob masks excluded from a file trigger, e.g. [\"node_modules/**\", \"*.log\"]. Supports leading ! to re-include."
+      "Glob masks excluded from a file trigger, e.g. [\"node_modules/**\", \"*.log\"]. Supports leading ! to re-include.",
     ),
   gitBranch: z
     .string()
     .optional()
     .describe(
-      "Only for triggerType=git: branch name or glob (main, release/*, comma-separated). Empty means any branch."
+      "Only for triggerType=git: branch name or glob (main, release/*, comma-separated). Empty means any branch.",
     ),
   gitPaths: z
     .array(z.string())
     .optional()
     .describe(
-      "Only for triggerType=git: glob masks of changed files that must match to start the task (git diff --name-only)."
+      "Only for triggerType=git: glob masks of changed files that must match to start the task (git diff --name-only).",
     ),
   gitIgnore: z
     .array(z.string())
@@ -426,54 +427,54 @@ export const scheduleTaskSchema = z.object({
     .array(z.number().int().min(0).max(6))
     .optional()
     .describe(
-      "Allowed weekdays 0=Sunday..6=Saturday for cron and event triggers. Empty or all seven means every day."
+      "Allowed weekdays 0=Sunday..6=Saturday for cron and event triggers. Empty or all seven means every day.",
     ),
   windowPolicy: z
     .enum(["skip", "postpone", "run"])
     .optional()
     .describe(
-      "Behaviour outside the launch window / active days: postpone (default, wait for the next opening), skip or run anyway."
+      "Behaviour outside the launch window / active days: postpone (default, wait for the next opening), skip or run anyway.",
     ),
   workingDirectory: z
     .string()
     .optional()
     .describe(
-      "Working directory of the task. Defaults to the current project folder so opencode run picks up the project's opencode.json with MCP servers."
+      "Working directory of the task. Defaults to the current project folder so opencode run picks up the project's opencode.json with MCP servers.",
     ),
   workspaceId: z
     .string()
     .optional()
     .describe(
-      "Multi-repo workspace binding. When set, cwd = workspace path and workingDirectory is ignored."
+      "Multi-repo workspace binding. When set, cwd = workspace path and workingDirectory is ignored.",
     ),
   allowedTools: z
     .array(z.string())
     .optional()
     .describe(
-      "Role-scoped tool allow-list, enforced through OPENCODE_CONFIG_CONTENT. A non-empty list also allows actions that the default policy denies (for example shell). An empty array is rejected."
+      "Role-scoped tool allow-list, enforced through OPENCODE_CONFIG_CONTENT. A non-empty list also allows actions that the default policy denies (for example shell). An empty array is rejected.",
     ),
   deniedTools: z
     .array(z.string())
     .optional()
     .describe(
-      "Role-scoped tool deny-list (takes precedence over allowedTools and over the default policy). Enforced through OPENCODE_CONFIG_CONTENT."
+      "Role-scoped tool deny-list (takes precedence over allowedTools and over the default policy). Enforced through OPENCODE_CONFIG_CONTENT.",
     ),
   legacyShell: z
     .boolean()
     .optional()
     .describe(
-      "Transitional flag (release 1.6): under the hybrid policy, re-enable shell for this task. Prefer listing shell in allowedTools. Ignored by secure/legacy policy."
+      "Transitional flag (release 1.6): under the hybrid policy, re-enable shell for this task. Prefer listing shell in allowedTools. Ignored by secure/legacy policy.",
     ),
   runWhenLoggedOff: z
     .boolean()
     .optional()
     .describe(
-      "Windows only: run the task even when no user is logged on (/ru SYSTEM). The task runs in session 0 without the user's profile, mapped drives or saved credentials, so tasks that need the user's environment may fail. Creating such a task usually requires an elevated shell. Default false: interactive only — the task runs only while the user is logged on."
+      "Windows only: run the task even when no user is logged on (/ru SYSTEM). The task runs in session 0 without the user's profile, mapped drives or saved credentials, so tasks that need the user's environment may fail. Creating such a task usually requires an elevated shell. Default false: interactive only — the task runs only while the user is logged on.",
     ),
   matrix: matrixSchema
     .optional()
     .describe(
-      "Matrix fan-out: the task becomes a template that is expanded into clones, one per workspace. The parent never runs itself. Cannot be combined with workspaceId."
+      "Matrix fan-out: the task becomes a template that is expanded into clones, one per workspace. The parent never runs itself. Cannot be combined with workspaceId.",
     ),
 }).superRefine((value, ctx) => {
   const trigger = value.triggerType ?? "cron";
@@ -531,7 +532,7 @@ export const updateTaskSchema = z.object({
     .string()
     .optional()
     .describe(
-      "New one-shot time in ISO-8601. Requires triggerType=once. Empty string clears it."
+      "New one-shot time in ISO-8601. Requires triggerType=once. Empty string clears it.",
     ),
   delaySeconds: z
     .number()
@@ -539,13 +540,13 @@ export const updateTaskSchema = z.object({
     .positive()
     .optional()
     .describe(
-      "New one-shot delay in seconds from now. Requires triggerType=once."
+      "New one-shot delay in seconds from now. Requires triggerType=once.",
     ),
   session: z
     .enum(["new", "reuse", "last"])
     .optional()
     .describe(
-      "OpenCode session mode for the task: new (fresh session per run), reuse (keep a persistent session stored on the task — sessionId is auto-generated), last (continue the latest session via --continue)."
+      "OpenCode session mode for the task: new (fresh session per run), reuse (keep a persistent session stored on the task — sessionId is auto-generated), last (continue the latest session via --continue).",
     ),
   sessionMaxRuns: z
     .number()
@@ -554,7 +555,7 @@ export const updateTaskSchema = z.object({
     .max(10000)
     .optional()
     .describe(
-      "Only for session=reuse: how many runs the reused session survives before it is deleted and a fresh one is created. Unset/0 — no limit."
+      "Only for session=reuse: how many runs the reused session survives before it is deleted and a fresh one is created. Unset/0 — no limit.",
     ),
   timezone: z
     .string()
@@ -572,7 +573,7 @@ export const updateTaskSchema = z.object({
     .array(z.number().int().min(0).max(6))
     .optional()
     .describe(
-      "New allowed weekdays 0=Sunday..6=Saturday. Empty array clears the restriction."
+      "New allowed weekdays 0=Sunday..6=Saturday. Empty array clears the restriction.",
     ),
   windowPolicy: z
     .enum(["skip", "postpone", "run"])
@@ -582,7 +583,7 @@ export const updateTaskSchema = z.object({
     .boolean()
     .optional()
     .describe(
-      "Windows only: true runs the task without a logged-on user (/ru SYSTEM, session 0 without the user profile, mapped drives or saved credentials; usually requires an elevated shell). false/omitted keeps the task interactive-only."
+      "Windows only: true runs the task without a logged-on user (/ru SYSTEM, session 0 without the user profile, mapped drives or saved credentials; usually requires an elevated shell). false/omitted keeps the task interactive-only.",
     ),
   watchGlobs: z
     .array(z.string())
@@ -682,13 +683,13 @@ export const updateTaskSchema = z.object({
     .boolean()
     .optional()
     .describe(
-      "Transitional flag (release 1.6): re-enable shell under the hybrid policy for this task."
+      "Transitional flag (release 1.6): re-enable shell under the hybrid policy for this task.",
     ),
   matrix: matrixSchema
     .nullable()
     .optional()
     .describe(
-      "New matrix configuration. Pass null to turn the matrix off (clones and aggregator are removed)."
+      "New matrix configuration. Pass null to turn the matrix off (clones and aggregator are removed).",
     ),
 }).superRefine((value, ctx) => {
   if (
@@ -717,7 +718,7 @@ const pauseTaskSchema = z.object({
     .string()
     .optional()
     .describe(
-      "Optional ISO date/time to resume automatically (e.g. 2026-12-01T09:00:00Z). The plugin re-enables the task at that moment."
+      "Optional ISO date/time to resume automatically (e.g. 2026-12-01T09:00:00Z). The plugin re-enables the task at that moment.",
     ),
 });
 
@@ -753,7 +754,7 @@ const dryRunSchema = z.object({
     .string()
     .optional()
     .describe(
-      "Task name to simulate. When omitted, every task is simulated (pipeline dry run, nothing is executed)."
+      "Task name to simulate. When omitted, every task is simulated (pipeline dry run, nothing is executed).",
     ),
 });
 
@@ -770,7 +771,7 @@ const manageWorkspacesSchema = z.object({
     .nullable()
     .optional()
     .describe(
-      "Workspace environment variables (key → value). Override envFile values; secrets are masked in logs (add/update)."
+      "Workspace environment variables (key → value). Override envFile values; secrets are masked in logs (add/update).",
     ),
   envFile: z
     .string()
@@ -783,7 +784,7 @@ export const matrixControlSchema = z.object({
   action: z
     .enum(["results", "cancel", "cleanup", "preview"])
     .describe(
-      "results — aggregate status of a matrix; cancel — cancel pending clones; cleanup — delete orphaned clones and aggregators; preview — dry-expand a matrix config into clone names without creating anything."
+      "results — aggregate status of a matrix; cancel — cancel pending clones; cleanup — delete orphaned clones and aggregators; preview — dry-expand a matrix config into clone names without creating anything.",
     ),
   name: z
     .string()
@@ -874,7 +875,7 @@ export const manageSettingsSchema = z.object({
     .enum(["auto", "ru", "en", "zh"])
     .optional()
     .describe(
-      "Interface language: auto (follow OpenCode), ru (default), en or zh. Applies without restart."
+      "Interface language: auto (follow OpenCode), ru (default), en or zh. Applies without restart.",
     ),
   winterMode: z
     .boolean()
@@ -895,7 +896,7 @@ export const manageSettingsSchema = z.object({
     .any()
     .optional()
     .describe(
-      "Integration settings patch (hooks: enabled, token, secret, requireSignature, maxBodyBytes, timestampToleranceSeconds)."
+      "Integration settings patch (hooks: enabled, token, secret, requireSignature, maxBodyBytes, timestampToleranceSeconds).",
     ),
   audit: z
     .any()
@@ -907,7 +908,7 @@ export const manageSettingsSchema = z.object({
     })
     .optional()
     .describe(
-      "Tool permission policy for background tasks: hybrid (default; shell/question denied), secure (read-only), legacy (allow everything, 1.5.x behaviour)."
+      "Tool permission policy for background tasks: hybrid (default; shell/question denied), secure (read-only), legacy (allow everything, 1.5.x behaviour).",
     ),
 });
 
@@ -916,20 +917,20 @@ export const manageLocalAiSchema = z.object({
   action: z
     .enum(["get", "update", "test"])
     .describe(
-      "get — current triage settings and shadow state; update — merge fields and save; test — one classification request against the configured model."
+      "get — current triage settings and shadow state; update — merge fields and save; test — one classification request against the configured model.",
     ),
   mode: z
     .enum(["off", "rules", "llm", "auto"])
     .optional()
     .describe(
-      "off — no triage; rules — built-in rules only; llm — model only; auto — model, then rules (default)."
+      "off — no triage; rules — built-in rules only; llm — model only; auto — model, then rules (default).",
     ),
   baseUrl: z
     .string()
     .max(500)
     .optional()
     .describe(
-      "Ollama or OpenAI-compatible base URL, for example http://127.0.0.1:11434. A URL ending with /v1 switches to the OpenAI protocol."
+      "Ollama or OpenAI-compatible base URL, for example http://127.0.0.1:11434. A URL ending with /v1 switches to the OpenAI protocol.",
     ),
   model: z
     .string()
@@ -947,7 +948,7 @@ export const manageLocalAiSchema = z.object({
     .enum(["rules", "notify", "skip"])
     .optional()
     .describe(
-      "When the model fails or is unsure: rules - apply rules (fail-open, default); notify - skip the rules step and deliver the notification; skip - legacy alias for notify."
+      "When the model fails or is unsure: rules - apply rules (fail-open, default); notify - skip the rules step and deliver the notification; skip - legacy alias for notify.",
     ),
   confidenceThreshold: z
     .number()
@@ -1110,7 +1111,7 @@ let projectDirectory: string | undefined;
  * Использует Tool.Context из @opencode/schema/tool.
  */
 function wrapExecute<Args>(
-  fn: (args: Args, ctx: Tool.Context) => Promise<Tool.Result>
+  fn: (args: Args, ctx: Tool.Context) => Promise<Tool.Result>,
 ): (input: Args, context: Tool.Context) => Promise<Tool.Result> {
   return async (input, context) => {
     try {
@@ -1152,7 +1153,7 @@ function computeTaskNextRun(
         | "pausedUntil"
       >
     | undefined,
-  options: { paused?: boolean; now?: Date } = {}
+  options: { paused?: boolean; now?: Date } = {},
 ): string | null {
   if (!def) return null;
   if (options.paused) return null;
@@ -1319,7 +1320,7 @@ const scheduleTaskExecute = wrapExecute<ScheduleArgs>(async (args) => {
       // Спринт 27.5.4: Windows — работать без входа (/ru SYSTEM).
       runWhenLoggedOff === true,
       undefined,
-      legacyShell === true
+      legacyShell === true,
     );
   } catch (err: any) {
     return {
@@ -1429,10 +1430,10 @@ const listTasksExecute = wrapExecute<ListArgs>(async () => {
  * чтобы матрицу можно было запустить повторно.
  */
 async function cancelMatrixRun(
-  name: string
+  name: string,
 ): Promise<{ cancelled: string[]; running: string[]; message: string; warnings: string[] }> {
   const definition = (await loadTaskDefinitions()).find(
-    (def) => def.name.toLowerCase() === name.trim().toLowerCase()
+    (def) => def.name.toLowerCase() === name.trim().toLowerCase(),
   );
   if (!definition?.matrix) {
     throw new Error(t("tool.error.matrixNotMatrix", { name }));
@@ -1443,7 +1444,7 @@ async function cancelMatrixRun(
 
   for (const cloneName of result.running) {
     const clone = (await loadTaskDefinitions()).find(
-      (def) => def.name.toLowerCase() === cloneName.toLowerCase()
+      (def) => def.name.toLowerCase() === cloneName.toLowerCase(),
     );
     if (!clone) continue;
 
@@ -1455,7 +1456,7 @@ async function cancelMatrixRun(
         t("tool.matrix.stopFailed", {
           clone: clone.name,
           error: err instanceof Error ? err.message : String(err),
-        })
+        }),
       );
       continue;
     }
@@ -1498,14 +1499,14 @@ async function cancelMatrixRun(
         undefined,
         clone.runWhenLoggedOff,
         clone.paused,
-        clone.legacyShell
+        clone.legacyShell,
       );
     } catch (err: any) {
       warnings.push(
         t("tool.matrix.recreateFailed", {
           clone: clone.name,
           error: err instanceof Error ? err.message : String(err),
-        })
+        }),
       );
     }
   }
@@ -1556,7 +1557,7 @@ async function cleanupOrphanedMatrixTasks(): Promise<string[]> {
 
   if (removed.length > 0) {
     console.log(
-      `[matrix] Очищены осиротевшие задачи матриц: ${removed.join(", ")}`
+      `[matrix] Очищены осиротевшие задачи матриц: ${removed.join(", ")}`,
     );
   }
   return removed;
@@ -1647,7 +1648,7 @@ async function garbageCollectTaskArtifacts(): Promise<void> {
 }
 
 async function deleteTaskWithFamily(
-  name: string
+  name: string,
 ): Promise<{ removed: string[]; existed: boolean }> {
   const trimmed = name.trim();
   const guard = getMatrixDeletionGuard(trimmed);
@@ -1663,7 +1664,7 @@ async function deleteTaskWithFamily(
     try {
       const osTasks = await scheduler.listTasks();
       existed = osTasks.some(
-        (task) => task.taskName.toLowerCase() === trimmed.toLowerCase()
+        (task) => task.taskName.toLowerCase() === trimmed.toLowerCase(),
       );
     } catch {
       // ОС-планировщик недоступен — довольствуемся данными БД.
@@ -1768,7 +1769,7 @@ const runTaskNowExecute = wrapExecute<RunNowArgs>(async (args) => {
  */
 function clearableString(
   next: string | undefined,
-  current: string | undefined
+  current: string | undefined,
 ): string | undefined {
   if (next === undefined) return current;
   const trimmed = next.trim();
@@ -1777,7 +1778,7 @@ function clearableString(
 
 function clearableList(
   next: string[] | undefined,
-  current: string[] | undefined
+  current: string[] | undefined,
 ): string[] | undefined {
   if (next === undefined) return current;
   const cleaned = next.map((value) => value.trim()).filter(Boolean);
@@ -1808,7 +1809,7 @@ async function removeMatrixChildrenFromScheduler(name: string): Promise<string[]
  * Используется инструментом update_task и RPC-методом update_task.
  */
 async function updateTaskFromInput(
-  input: UpdateArgs & { newSchedule?: string; newPrompt?: string }
+  input: UpdateArgs & { newSchedule?: string; newPrompt?: string },
 ): Promise<{
   success: boolean;
   message: string;
@@ -1859,8 +1860,8 @@ async function updateTaskFromInput(
       input.runAt !== undefined
         ? input.runAt
         : input.delaySeconds !== undefined
-        ? undefined
-        : previous.runAt;
+          ? undefined
+          : previous.runAt;
     const normalized = normalizeOneShotRunAt({
       runAt: candidateRunAt,
       delaySeconds: input.delaySeconds,
@@ -1921,7 +1922,7 @@ async function updateTaskFromInput(
   // Спринт 27: параметры триггеров сохраняются, если поле не передано.
   const mergeStringList = (
     next: string[] | undefined,
-    prev: string[] | undefined
+    prev: string[] | undefined,
   ): string[] | undefined => {
     if (next === undefined) return prev;
     const cleaned = next
@@ -1950,8 +1951,22 @@ async function updateTaskFromInput(
   // после create — иначе задача молча начинает выполняться по расписанию.
   const wasPaused = Boolean(
     previous.paused === true ||
-      (previous.pausedUntil && Date.parse(previous.pausedUntil) > Date.now())
+      (previous.pausedUntil && Date.parse(previous.pausedUntil) > Date.now()),
   );
+
+  const nextModel = clearableString(input.model, previous.model);
+  if (nextModel) {
+    const modelError = validateModelId(nextModel);
+    if (modelError) {
+      return {
+        success: false,
+        message: t("tool.error.modelInvalid", {
+          model: nextModel,
+          error: modelError,
+        }),
+      };
+    }
+  }
 
   let previousDeleted = false;
   try {
@@ -1972,7 +1987,7 @@ async function updateTaskFromInput(
       triggerType,
       clearableString(input.watchPath, previous.watchPath),
       clearableList(input.dependsOn, previous.dependsOn),
-      clearableString(input.model, previous.model),
+      nextModel,
       input.priority ?? previous.priority,
       clearableString(input.beforeScript, previous.beforeScript),
       clearableString(input.afterScript, previous.afterScript),
@@ -1996,7 +2011,7 @@ async function updateTaskFromInput(
       triggerExtras,
       input.runWhenLoggedOff ?? previous.runWhenLoggedOff,
       wasPaused,
-      input.legacyShell ?? previous.legacyShell
+      input.legacyShell ?? previous.legacyShell,
     );
 
     // Матрица отключена при обновлении — убираем клонов и агрегатор.
@@ -2109,7 +2124,7 @@ const updateTaskExecute = wrapExecute<UpdateArgs>(async (args) => {
 async function pauseOrResumeTask(
   name: string,
   paused: boolean,
-  until?: string
+  until?: string,
 ): Promise<{
   success: boolean;
   message: string;
@@ -2190,7 +2205,7 @@ async function pauseOrResumeTask(
       affected.push(target);
     } catch (err: any) {
       warnings.push(
-        `${target}: ${err instanceof Error ? err.message : String(err)}`
+        `${target}: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
   }
@@ -2211,7 +2226,7 @@ async function pauseOrResumeTask(
       warnings.push(
         t("tool.task.autosave", {
           error: err instanceof Error ? err.message : String(err),
-        })
+        }),
       );
     }
   }
@@ -2222,20 +2237,20 @@ async function pauseOrResumeTask(
   const verb = paused ? t("tool.task.paused") : t("tool.task.resumed");
   const message = definition.matrix
     ? t("tool.task.matrixPaused", {
-        name: trimmed,
-        verb,
-        until: untilText,
-        affected: affected.length,
-        total: targets.length,
-      }) +
+      name: trimmed,
+      verb,
+      until: untilText,
+      affected: affected.length,
+      total: targets.length,
+    }) +
       (warnings.length > 0
         ? t("tool.task.matrixPauseErrors", { warnings: warnings.join("; ") })
         : "")
     : t("tool.task.pausedText", {
-        name: trimmed,
-        verb,
-        until: untilText,
-      }) +
+      name: trimmed,
+      verb,
+      until: untilText,
+    }) +
       (warnings.length > 0
         ? t("tool.task.pauseError", { warnings: warnings.join("; ") })
         : "");
@@ -2304,13 +2319,13 @@ async function resumeExpiredPauses(): Promise<void> {
         paused: false,
       });
       console.log(
-        `[windows-scheduler] Автопродолжение: задача "${definition.name}" включена (пауза истекла).`
+        `[agent-steward] Автопродолжение: задача "${definition.name}" включена (пауза истекла).`,
       );
     } catch (err: any) {
       console.error(
-        `[windows-scheduler] Не удалось автопродолжить задачу "${definition.name}": ${
+        `[agent-steward] Не удалось автопродолжить задачу "${definition.name}": ${
           err instanceof Error ? err.message : String(err)
-        }`
+        }`,
       );
     }
   }
@@ -2566,7 +2581,7 @@ const matrixControlExecute = wrapExecute<MatrixControlArgs>(async (args) => {
         failureMode: args.failureMode,
         aggregation: args.aggregation,
       },
-    } as any);
+    });
     return {
       content: JSON.stringify({
         success: true,
@@ -2945,7 +2960,7 @@ const transferTasksExecute = wrapExecute<TransferArgs>(async (args) => {
   if (args.action === "export") {
     const tasks = await scheduler.listTasks();
     const { data, count } = await buildExportJson(
-      tasks.map((task) => ({ ...task, name: task.taskName || "" }))
+      tasks.map((task) => ({ ...task, name: task.taskName || "" })),
     );
     return { content: JSON.stringify({ success: true, data, count }) };
   }
@@ -2997,7 +3012,7 @@ const transferTasksExecute = wrapExecute<TransferArgs>(async (args) => {
         def.notBefore,
         def.notAfter,
         def.pausedUntil,
-        def.runAt
+        def.runAt,
       );
       await saveTaskDefinition(def);
       imported.push(def.name);
@@ -3047,11 +3062,11 @@ const cleanupHistoryExecute = wrapExecute<CleanupHistoryArgs>(async (args) => {
       message: report.skipped
         ? report.skipped
         : t("tool.history.cleaned", {
-            deleted: report.deleted,
-            byAge: report.deletedByAge,
-            byCount: report.deletedByCount,
-            kept: report.kept,
-          }),
+          deleted: report.deleted,
+          byAge: report.deletedByAge,
+          byCount: report.deletedByCount,
+          kept: report.kept,
+        }),
       report,
     }),
   };
@@ -3070,11 +3085,11 @@ const emitEventExecute = wrapExecute<EmitEventArgs>(async (args) => {
       (def) =>
         def.triggerType === "mcp-event" &&
         def.mcpEvent?.event?.toLowerCase() === eventName.toLowerCase() &&
-        matchesEventFilter(def.mcpEvent?.filter, payload)
+        matchesEventFilter(def.mcpEvent?.filter, payload),
     )
     .sort(
       (a, b) =>
-        (normalizePriority(b.priority) ?? 0) - (normalizePriority(a.priority) ?? 0)
+        (normalizePriority(b.priority) ?? 0) - (normalizePriority(a.priority) ?? 0),
     );
 
   const triggered: string[] = [];
@@ -3083,7 +3098,7 @@ const emitEventExecute = wrapExecute<EmitEventArgs>(async (args) => {
       await runTaskEntry(def.name);
       triggered.push(def.name);
     } catch (err: any) {
-      console.error(`[windows-scheduler] emit_event: не удалось запустить ${def.name}:`, err);
+      console.error(`[agent-steward] emit_event: не удалось запустить ${def.name}:`, err);
     }
   }
   return {
@@ -3167,7 +3182,7 @@ const getAuditLogExecute = wrapExecute<AuditLogArgs>(async (args) => {
 function withAudit<A>(
   toolName: string,
   describe: (args: A) => Omit<AuditEntryInput, "actor"> | null,
-  execute: (args: A, context: Tool.Context) => Promise<Tool.Result>
+  execute: (args: A, context: Tool.Context) => Promise<Tool.Result>,
 ): (args: A, context: Tool.Context) => Promise<Tool.Result> {
   return async (args: A, context: Tool.Context) => {
     const result = await execute(args, context);
@@ -3271,7 +3286,7 @@ function withRpcAudit<T extends Record<string, (...args: any[]) => any>>(handler
       const input = args[0] ?? {};
       const result = await handler(...args);
       try {
-        if ((result as any)?.success !== false) {
+        if ((result)?.success !== false) {
           recordAudit({
             action: rule.action,
             targetType: rule.targetType,
@@ -3313,9 +3328,9 @@ async function refreshTriggers(): Promise<void> {
       await fileWatcherManager.refresh();
     } catch (err: any) {
       console.error(
-        `[windows-scheduler] Не удалось обновить файловые триггеры: ${
+        `[agent-steward] Не удалось обновить файловые триггеры: ${
           err instanceof Error ? err.message : String(err)
-        }`
+        }`,
       );
     }
   }
@@ -3324,9 +3339,9 @@ async function refreshTriggers(): Promise<void> {
       await gitTriggerManager.refresh();
     } catch (err: any) {
       console.error(
-        `[windows-scheduler] Не удалось обновить git-триггеры: ${
+        `[agent-steward] Не удалось обновить git-триггеры: ${
           err instanceof Error ? err.message : String(err)
-        }`
+        }`,
       );
     }
   }
@@ -3357,16 +3372,16 @@ async function scheduleEventRun(taskName: string, reason: string): Promise<void>
   if (state.active || policy === "run") {
     await runTaskEntry(taskName);
     console.log(
-      `[windows-scheduler] Запуск задачи "${taskName}" (${reason}).`
+      `[agent-steward] Запуск задачи "${taskName}" (${reason}).`,
     );
     return;
   }
 
   if (policy === "skip") {
     console.log(
-      `[windows-scheduler] Задача "${taskName}" не запущена (${reason}): ${
+      `[agent-steward] Задача "${taskName}" не запущена (${reason}): ${
         state.reason ?? "вне окна"
-      } — политика skip.`
+      } — политика skip.`,
     );
     return;
   }
@@ -3374,24 +3389,24 @@ async function scheduleEventRun(taskName: string, reason: string): Promise<void>
   const delay = nextWindowOpenDelayMs(now, options);
   if (delay <= 0 || delay > EVENT_POSTPONE_MAX_MS) {
     console.log(
-      `[windows-scheduler] Задача "${taskName}" не запущена (${reason}): ${
+      `[agent-steward] Задача "${taskName}" не запущена (${reason}): ${
         state.reason ?? "вне окна"
-      } — до открытия окна больше 12 ч.`
+      } — до открытия окна больше 12 ч.`,
     );
     return;
   }
 
   console.log(
-    `[windows-scheduler] Задача "${taskName}" (${reason}) отложена на ~${Math.round(
-      delay / 60000
-    )} мин: ${state.reason ?? "вне окна"}.`
+    `[agent-steward] Задача "${taskName}" (${reason}) отложена на ~${Math.round(
+      delay / 60000,
+    )} мин: ${state.reason ?? "вне окна"}.`,
   );
   const timer = setTimeout(() => {
     void scheduleEventRun(taskName, reason).catch((err: any) => {
       console.error(
-        `[windows-scheduler] Не удалось запустить отложенную задачу "${taskName}": ${
+        `[agent-steward] Не удалось запустить отложенную задачу "${taskName}": ${
           err instanceof Error ? err.message : String(err)
-        }`
+        }`,
       );
     });
   }, delay);
@@ -3443,7 +3458,7 @@ export async function createRuntime(ctxLike: RuntimeContextLike): Promise<Schedu
     console.error(
       `[migrate] Не удалось мигрировать JSON → SQLite: ${
         err instanceof Error ? err.message : String(err)
-      }`
+      }`,
     );
   }
   try {
@@ -3452,7 +3467,7 @@ export async function createRuntime(ctxLike: RuntimeContextLike): Promise<Schedu
     console.error(
       `[recovery] Не удалось восстановить незавершённые запуски: ${
         err instanceof Error ? err.message : String(err)
-      }`
+      }`,
     );
   }
   checkJsonBackups();
@@ -3468,7 +3483,7 @@ export async function createRuntime(ctxLike: RuntimeContextLike): Promise<Schedu
         console.log(
           `[retention] Удалено ${report.deleted} записей истории ` +
             `(по возрасту: ${report.deletedByAge}, по лимиту: ${report.deletedByCount}); ` +
-            `осталось ${report.kept}.`
+            `осталось ${report.kept}.`,
         );
       }
     })
@@ -3476,7 +3491,7 @@ export async function createRuntime(ctxLike: RuntimeContextLike): Promise<Schedu
       console.error(
         `[retention] Не удалось очистить историю: ${
           err instanceof Error ? err.message : String(err)
-        }`
+        }`,
       );
     });
 
@@ -3484,17 +3499,17 @@ export async function createRuntime(ctxLike: RuntimeContextLike): Promise<Schedu
   // Проверяем сразу при старте и далее раз в 5 минут, пока плагин жив.
   void resumeExpiredPauses().catch((err: any) => {
     console.error(
-      `[windows-scheduler] Не удалось проверить автопродолжение: ${
+      `[agent-steward] Не удалось проверить автопродолжение: ${
         err instanceof Error ? err.message : String(err)
-      }`
+      }`,
     );
   });
   const pausedUntilTimer = setInterval(() => {
     void resumeExpiredPauses().catch((err: any) => {
       console.error(
-        `[windows-scheduler] Не удалось проверить автопродолжение: ${
+        `[agent-steward] Не удалось проверить автопродолжение: ${
           err instanceof Error ? err.message : String(err)
-        }`
+        }`,
       );
     });
   }, PAUSED_UNTIL_CHECK_MS);
@@ -3506,9 +3521,9 @@ export async function createRuntime(ctxLike: RuntimeContextLike): Promise<Schedu
     void maybeSendDigest().catch(() => undefined);
     void checkStuckMatrices().catch((err: any) => {
       console.error(
-        `[windows-scheduler] Детектор зависших матриц: ${
+        `[agent-steward] Детектор зависших матриц: ${
           err instanceof Error ? err.message : String(err)
-        }`
+        }`,
       );
     });
   }, NOTIFICATION_CHECK_MS);
@@ -3532,7 +3547,7 @@ export async function createRuntime(ctxLike: RuntimeContextLike): Promise<Schedu
 
       // Сначала запускаем задачи с более высоким приоритетом (10 — максимум).
       const prioritized = [...definitions].sort(
-        (a, b) => (normalizePriority(b.priority) ?? 5) - (normalizePriority(a.priority) ?? 5)
+        (a, b) => (normalizePriority(b.priority) ?? 5) - (normalizePriority(a.priority) ?? 5),
       );
 
       for (const def of prioritized) {
@@ -3550,7 +3565,7 @@ export async function createRuntime(ctxLike: RuntimeContextLike): Promise<Schedu
         const ranAfter = history.some(
           (r) =>
             r.taskName.toLowerCase() === def.name.toLowerCase() &&
-            new Date(r.startedAt).getTime() >= prev.getTime()
+            new Date(r.startedAt).getTime() >= prev.getTime(),
         );
         if (ranAfter) continue;
 
@@ -3558,19 +3573,19 @@ export async function createRuntime(ctxLike: RuntimeContextLike): Promise<Schedu
         try {
           await runTaskEntry(def.name);
           console.log(
-            `[windows-scheduler] Запущено восстановление пропущенной задачи "${def.name}" (последний срабатывал ~${Math.round(ageMs / 1000)} с назад).`
+            `[agent-steward] Запущено восстановление пропущенной задачи "${def.name}" (последний срабатывал ~${Math.round(ageMs / 1000)} с назад).`,
           );
         } catch (err: any) {
           console.error(
-            `[windows-scheduler] Не удалось восстановить задачу "${def.name}": ${
+            `[agent-steward] Не удалось восстановить задачу "${def.name}": ${
               err instanceof Error ? err.message : String(err)
-            }`
+            }`,
           );
         }
       }
     } catch (err: any) {
       console.error(
-        `[windows-scheduler] Catch-up ошибка: ${err instanceof Error ? err.message : String(err)}`
+        `[agent-steward] Catch-up ошибка: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
   })();
@@ -3582,9 +3597,9 @@ export async function createRuntime(ctxLike: RuntimeContextLike): Promise<Schedu
       await scheduleEventRun(taskName, "изменение отслеживаемого файла");
     } catch (err: any) {
       console.error(
-        `[windows-scheduler] Не удалось запустить задачу "${taskName}" по файловому триггеру: ${
+        `[agent-steward] Не удалось запустить задачу "${taskName}" по файловому триггеру: ${
           err instanceof Error ? err.message : String(err)
-        }`
+        }`,
       );
     }
   });
@@ -3596,9 +3611,9 @@ export async function createRuntime(ctxLike: RuntimeContextLike): Promise<Schedu
       await scheduleEventRun(taskName, `новый коммит ${info.head?.slice(0, 7) ?? ""}`);
     } catch (err: any) {
       console.error(
-        `[windows-scheduler] Не удалось запустить задачу "${taskName}" по git-триггеру: ${
+        `[agent-steward] Не удалось запустить задачу "${taskName}" по git-триггеру: ${
           err instanceof Error ? err.message : String(err)
-        }`
+        }`,
       );
     }
   });
@@ -3710,7 +3725,7 @@ export interface ShutdownResource {
 export function createShutdownHandler(
   runtime: SchedulerRuntime,
   registrations: ShutdownResource[] = [],
-  options: { waitMs?: number } = {}
+  options: { waitMs?: number } = {},
 ): () => Promise<void> {
   const waitMs = options.waitMs ?? SHUTDOWN_WAIT_MS;
 
@@ -3722,9 +3737,9 @@ export function createShutdownHandler(
         await registration.dispose();
       } catch (err) {
         console.warn(
-          `[windows-scheduler] Выгрузка: ошибка освобождения регистрации — ${
+          `[agent-steward] Выгрузка: ошибка освобождения регистрации — ${
             err instanceof Error ? err.message : String(err)
-          }`
+          }`,
         );
       }
     }
@@ -3737,7 +3752,7 @@ export function createShutdownHandler(
     const wait = await shutdownGate.waitForIdle(waitMs);
     if (wait.timedOut) {
       console.warn(
-        `[windows-scheduler] Выгрузка: ${wait.remaining} запуск(ов) не завершились за ${waitMs} мс — закрываем БД.`
+        `[agent-steward] Выгрузка: ${wait.remaining} запуск(ов) не завершились за ${waitMs} мс — закрываем БД.`,
       );
     }
     // Чекпойнт WAL выполняется в closeDb.
@@ -3860,10 +3875,10 @@ export function createToolSpecs(runtime: SchedulerRuntime): ToolSpec[] {
         args.action === "list"
           ? null
           : {
-              action: `workspace.${args.action}`,
-              targetType: "workspace",
-              target: args.id || args.name || "",
-            },
+            action: `workspace.${args.action}`,
+            targetType: "workspace",
+            target: args.id || args.name || "",
+          },
       execute: handlers.manage_workspaces as any,
     },
     {
@@ -3874,10 +3889,10 @@ export function createToolSpecs(runtime: SchedulerRuntime): ToolSpec[] {
       audit: (args: MatrixControlArgs) =>
         args.action === "cancel" || args.action === "cleanup"
           ? {
-              action: `matrix.${args.action}`,
-              targetType: "matrix",
-              target: args.name || "",
-            }
+            action: `matrix.${args.action}`,
+            targetType: "matrix",
+            target: args.name || "",
+          }
           : null,
       execute: handlers.matrix_control as any,
     },
@@ -3936,10 +3951,10 @@ export function createToolSpecs(runtime: SchedulerRuntime): ToolSpec[] {
         args.action === "list"
           ? null
           : {
-              action: `template.${args.action}`,
-              targetType: "template",
-              target: args.id || args.name || "",
-            },
+            action: `template.${args.action}`,
+            targetType: "template",
+            target: args.id || args.name || "",
+          },
       execute: handlers.manage_templates as any,
     },
     {
@@ -3951,10 +3966,10 @@ export function createToolSpecs(runtime: SchedulerRuntime): ToolSpec[] {
         args.action === "list"
           ? null
           : {
-              action: `profile.${args.action}`,
-              targetType: "profile",
-              target: args.name || "",
-            },
+            action: `profile.${args.action}`,
+            targetType: "profile",
+            target: args.name || "",
+          },
       execute: handlers.manage_profiles as any,
     },
     {
@@ -4001,10 +4016,10 @@ export function createToolSpecs(runtime: SchedulerRuntime): ToolSpec[] {
         args.action === "list"
           ? null
           : {
-              action: `secret.${args.action}`,
-              targetType: "secret",
-              target: (args.name ?? "").trim(),
-            },
+            action: `secret.${args.action}`,
+            targetType: "secret",
+            target: (args.name ?? "").trim(),
+          },
       execute: handlers.manage_secrets as any,
     },
     {
@@ -4041,7 +4056,7 @@ async function startSchedulerDashboard(): Promise<void> {
   });
   if (dashboard) {
     console.log(
-      `[windows-scheduler] Открыть дашборд в браузере: http://localhost:${dashboard.port}`
+      `[agent-steward] Открыть дашборд в браузере: http://localhost:${dashboard.port}`,
     );
   }
 }
@@ -4089,9 +4104,9 @@ const v2Plugin = Plugin.define({
       }
     } catch (err: any) {
       console.error(
-        `[windows-scheduler] Не удалось зарегистрировать скилл "${SCHEDULER_SKILL_ID}": ${
+        `[agent-steward] Не удалось зарегистрировать скилл "${SCHEDULER_SKILL_ID}": ${
           err instanceof Error ? err.message : String(err)
-        }`
+        }`,
       );
     }
 
@@ -4108,7 +4123,7 @@ const v2Plugin = Plugin.define({
         };
       },
       create_task: async (input: unknown) => {
-        console.log("[windows-scheduler] create_task input:", input);
+        console.log("[agent-steward] create_task input:", input);
         const {
           name,
           schedule,
@@ -4233,7 +4248,7 @@ const v2Plugin = Plugin.define({
             undefined,
             runWhenLoggedOff === true,
             undefined,
-            legacyShell === true
+            legacyShell === true,
           );
           const nextRun = computeTaskNextRun({
             schedule: schedule ?? "",
@@ -4263,9 +4278,9 @@ const v2Plugin = Plugin.define({
             message:
               removed.length > 0
                 ? t("tool.task.matrixDeletedCount", {
-                    name,
-                    count: removed.length,
-                  })
+                  name,
+                  count: removed.length,
+                })
                 : t("tool.task.deleted", { name }),
           };
         } catch (err: any) {
@@ -4313,7 +4328,7 @@ const v2Plugin = Plugin.define({
         try {
           // Matrix-родитель не выполняется сам: запускаем его клоны (fan-out).
           const definition = (await loadTaskDefinitions()).find(
-            (def) => def.name.toLowerCase() === name.trim().toLowerCase()
+            (def) => def.name.toLowerCase() === name.trim().toLowerCase(),
           );
           if (definition?.matrix) {
             const matrixResult = await runMatrix(definition);
@@ -4326,13 +4341,13 @@ const v2Plugin = Plugin.define({
               }) +
               (matrixResult.skipped.length
                 ? t("tool.matrix.startedSkipped", {
-                    count: matrixResult.skipped.length,
-                  })
+                  count: matrixResult.skipped.length,
+                })
                 : "") +
               (matrixResult.errors.length
                 ? t("tool.matrix.startedErrors", {
-                    errors: matrixResult.errors.join("; "),
-                  })
+                  errors: matrixResult.errors.join("; "),
+                })
                 : ".");
             return { success: matrixResult.success, message };
           }
@@ -4342,7 +4357,7 @@ const v2Plugin = Plugin.define({
           if (settings.maxConcurrent > 0) {
             const allTasks = await scheduler.listTasks();
             const runningCount = allTasks.filter((t) =>
-              /running|выполняется/i.test(t.status ?? "")
+              /running|выполняется/i.test(t.status ?? ""),
             ).length;
             if (runningCount >= settings.maxConcurrent) {
               return {
@@ -4381,12 +4396,12 @@ const v2Plugin = Plugin.define({
           .filter((def) => (def.triggerType ?? "cron") === "mcp-event")
           .filter(
             (def) =>
-              def.mcpEvent?.event?.trim().toLowerCase() === normalized.toLowerCase()
+              def.mcpEvent?.event?.trim().toLowerCase() === normalized.toLowerCase(),
           )
           .filter((def) => matchesEventFilter(def.mcpEvent?.filter, payload))
           .sort(
             (a, b) =>
-              (normalizePriority(b.priority) ?? 5) - (normalizePriority(a.priority) ?? 5)
+              (normalizePriority(b.priority) ?? 5) - (normalizePriority(a.priority) ?? 5),
           );
 
         const triggered: string[] = [];
@@ -4395,13 +4410,13 @@ const v2Plugin = Plugin.define({
             await runTaskEntry(def.name);
             triggered.push(def.name);
             console.log(
-              `[windows-scheduler] Запуск задачи "${def.name}" по MCP-событию "${normalized}".`
+              `[agent-steward] Запуск задачи "${def.name}" по MCP-событию "${normalized}".`,
             );
           } catch (err: any) {
             console.error(
-              `[windows-scheduler] Не удалось запустить "${def.name}" по событию "${normalized}": ${
+              `[agent-steward] Не удалось запустить "${def.name}" по событию "${normalized}": ${
                 err instanceof Error ? err.message : String(err)
-              }`
+              }`,
             );
           }
         }
@@ -4460,11 +4475,11 @@ const v2Plugin = Plugin.define({
           const message = report.skipped
             ? report.skipped
             : t("tool.history.cleaned", {
-                deleted: report.deleted,
-                byAge: report.deletedByAge,
-                byCount: report.deletedByCount,
-                kept: report.kept,
-              });
+              deleted: report.deleted,
+              byAge: report.deletedByAge,
+              byCount: report.deletedByCount,
+              kept: report.kept,
+            });
           return {
             success: true,
             message,
@@ -4497,7 +4512,7 @@ const v2Plugin = Plugin.define({
         try {
           const windowDays = Math.min(
             365,
-            Math.max(1, Math.floor(Number(days) || 14))
+            Math.max(1, Math.floor(Number(days) || 14)),
           );
           const records = getHistory(null, 20000);
           const definitions = await loadTaskDefinitions();
@@ -4529,7 +4544,7 @@ const v2Plugin = Plugin.define({
         try {
           const windowDays = Math.min(
             365,
-            Math.max(1, Math.floor(Number(days) || 14))
+            Math.max(1, Math.floor(Number(days) || 14)),
           );
           const records = getHistory(null, 20000);
           const definitions = await loadTaskDefinitions();
@@ -5014,7 +5029,7 @@ const v2Plugin = Plugin.define({
         try {
           return { templates: await loadTemplates() };
         } catch (err: any) {
-          console.error("[windows-scheduler] get_templates error:", err);
+          console.error("[agent-steward] get_templates error:", err);
           return { templates: [] };
         }
       },
@@ -5038,10 +5053,10 @@ const v2Plugin = Plugin.define({
               source.triggerType === "file"
                 ? "file"
                 : source.triggerType === "mcp-event"
-                ? "mcp-event"
-                : source.triggerType
-                ? "cron"
-                : undefined,
+                  ? "mcp-event"
+                  : source.triggerType
+                    ? "cron"
+                    : undefined,
           });
           return { success: true, template };
         } catch (err: any) {
@@ -5144,7 +5159,7 @@ const v2Plugin = Plugin.define({
                 },
                 def.runWhenLoggedOff === true,
                 def.paused === true,
-                def.legacyShell === true
+                def.legacyShell === true,
               );
               await saveTaskDefinition(def);
               imported.push(def.name);
@@ -5166,7 +5181,7 @@ const v2Plugin = Plugin.define({
 
     const rpcRegistration = await ctx.rpc.register(
       SchedulerRpc,
-      withRpcAudit(rpcHandlers) as typeof rpcHandlers
+      withRpcAudit(rpcHandlers),
     );
 
     // Lifecycle матриц (Спринт 16): при старте вычищаем клоны/агрегаторы,
@@ -5175,7 +5190,7 @@ const v2Plugin = Plugin.define({
       console.log(
         `[matrix] Не удалось очистить осиротевшие задачи: ${
           err instanceof Error ? err.message : String(err)
-        }`
+        }`,
       );
     });
 
@@ -5219,7 +5234,7 @@ export function toV1ToolArgs(spec: ToolSpec): Record<string, any> {
   const shape = (spec.input as { shape?: unknown } | undefined)?.shape;
   if (!shape || typeof shape !== "object") {
     throw new Error(
-      `V1-адаптер: схема инструмента "${spec.name}" должна быть z.object(...)`
+      `V1-адаптер: схема инструмента "${spec.name}" должна быть z.object(...)`,
     );
   }
   return shape as Record<string, any>;
@@ -5255,7 +5270,7 @@ export function createV1Tools(runtime: SchedulerRuntime): Record<string, any> {
  */
 export async function createV1Hooks(
   input: Pick<V1PluginInput, "directory"> = { directory: process.cwd() },
-  options: { startDashboard?: boolean } = {}
+  options: { startDashboard?: boolean } = {},
 ): Promise<V1Hooks> {
   const runtime = await createRuntime({ location: { directory: input.directory } });
   const tools = createV1Tools(runtime);
@@ -5286,7 +5301,7 @@ export default { ...v2Plugin, ...v1Plugin };
 function resolveMatrixExtraConfig(
   name: string,
   matrix: MatrixConfig,
-  ids: string[]
+  ids: string[],
 ): { concurrency?: number; overrides?: Record<string, MatrixWorkspaceOverride> } {
   const extra: {
     concurrency?: number;
@@ -5300,7 +5315,7 @@ function resolveMatrixExtraConfig(
       matrix.concurrency < 1
     ) {
       throw new Error(
-        t("tool.error.matrixConcurrency", { task: name })
+        t("tool.error.matrixConcurrency", { task: name }),
       );
     }
     extra.concurrency = Math.floor(matrix.concurrency);
@@ -5316,7 +5331,7 @@ function resolveMatrixExtraConfig(
           t("tool.error.matrixOverride", {
             task: name,
             workspace: workspaceKey,
-          })
+          }),
         );
       }
       if (!value || typeof value !== "object") continue;
@@ -5329,7 +5344,21 @@ function resolveMatrixExtraConfig(
         "afterScript",
       ] as const) {
         const raw = (value as Record<string, unknown>)[field];
-        if (typeof raw === "string" && raw.trim()) override[field] = raw.trim();
+        if (typeof raw === "string" && raw.trim()) {
+          const trimmed = raw.trim();
+          if (field === "model") {
+            const modelError = validateModelId(trimmed);
+            if (modelError) {
+              throw new Error(
+                t("tool.error.modelInvalid", {
+                  model: trimmed,
+                  error: modelError,
+                }),
+              );
+            }
+          }
+          override[field] = trimmed;
+        }
       }
       if (Object.keys(override).length > 0) overrides[workspaceKey] = override;
     }
@@ -5413,7 +5442,7 @@ async function schedulerCreateTask(
    * Спринт 32 / релиз 1.6: переходный флаг для гибридной политики.
    * true возвращает shell задаче, созданной до обновления поведения.
    */
-  legacyShell?: boolean
+  legacyShell?: boolean,
 ): Promise<void> {
   // Спринт 27.5 (hotfix 1.5.1): проверяем имя до создания wrapper/prompt и записи
   // в БД. Недопустимые символы отклоняются с понятным сообщением, а не ошибкой
@@ -5432,14 +5461,14 @@ async function schedulerCreateTask(
   if (process.platform === "win32") {
     if (prompt.length > 30000) {
       throw new Error(
-        `Промпт задачи "${normalizedName}" слишком длинный для командной строки Windows: ${prompt.length} символов (максимум 30000). Сократите промпт или вынесите инструкции в файл.`
+        `Промпт задачи "${normalizedName}" слишком длинный для командной строки Windows: ${prompt.length} символов (максимум 30000). Сократите промпт или вынесите инструкции в файл.`,
       );
     }
   } else {
     const promptBytes = Buffer.byteLength(prompt, "utf8");
     if (promptBytes > POSIX_MAX_PROMPT_BYTES) {
       throw new Error(
-        `Промпт задачи "${normalizedName}" слишком длинный для командной строки POSIX: ${promptBytes} байт (максимум ${POSIX_MAX_PROMPT_BYTES}). Сократите промпт или вынесите инструкции в файл.`
+        `Промпт задачи "${normalizedName}" слишком длинный для командной строки POSIX: ${promptBytes} байт (максимум ${POSIX_MAX_PROMPT_BYTES}). Сократите промпт или вынесите инструкции в файл.`,
       );
     }
   }
@@ -5448,6 +5477,14 @@ async function schedulerCreateTask(
   const definitionExisted = Boolean(getTask(normalizedName));
 
   const normalizedModel = model?.trim() || undefined;
+  if (normalizedModel) {
+    const modelError = validateModelId(normalizedModel);
+    if (modelError) {
+      throw new Error(
+        t("tool.error.modelInvalid", { model: normalizedModel, error: modelError }),
+      );
+    }
+  }
   const normalizedPriority = normalizePriority(priority);
   const normalizedBefore = beforeScript?.trim() || undefined;
   const normalizedAfter = afterScript?.trim() || undefined;
@@ -5467,8 +5504,8 @@ async function schedulerCreateTask(
         raw
           .filter((item): item is string => typeof item === "string")
           .map((item) => item.trim())
-          .filter(Boolean)
-      )
+          .filter(Boolean),
+      ),
     );
     return cleaned.length > 0 ? cleaned : undefined;
   };
@@ -5489,12 +5526,12 @@ async function schedulerCreateTask(
       ? Math.floor(triggerExtras.gitPollSeconds)
       : undefined;
   const normalizedMcpEvent =
-    mcpEvent && mcpEvent.event?.trim()
+    mcpEvent?.event?.trim()
       ? {
-          server: mcpEvent.server?.trim() || "",
-          event: mcpEvent.event.trim(),
-          ...(mcpEvent.filter?.trim() ? { filter: mcpEvent.filter.trim() } : {}),
-        }
+        server: mcpEvent.server?.trim() || "",
+        event: mcpEvent.event.trim(),
+        ...(mcpEvent.filter?.trim() ? { filter: mcpEvent.filter.trim() } : {}),
+      }
       : undefined;
   let effectiveTriggerType = triggerType ?? "cron";
   // One-shot: нормализуем время до создания файлов и задачи в ОС.
@@ -5515,11 +5552,11 @@ async function schedulerCreateTask(
     const normalizedSession = normalizeSessionMode(session);
     if (!normalizedSession) {
       throw new Error(
-      t("tool.error.sessionUnknown", {
-        name,
-        session: String(session),
-      })
-    );
+        t("tool.error.sessionUnknown", {
+          name,
+          session: String(session),
+        }),
+      );
     }
     effectiveSession = normalizedSession;
   }
@@ -5537,14 +5574,14 @@ async function schedulerCreateTask(
           .filter((t): t is string => typeof t === "string")
           .map((t) => t.trim())
           .filter(Boolean)
-          .map((t) => [t.toLowerCase(), t] as const)
-      ).values()
+          .map((t) => [t.toLowerCase(), t] as const),
+      ).values(),
     );
     return cleaned.length > 0 ? cleaned : undefined;
   };
   if (Array.isArray(allowedTools) && allowedTools.filter((t) => typeof t === "string" && t.trim()).length === 0) {
     throw new Error(
-      t("tool.error.allowedToolsEmpty", { task: name })
+      t("tool.error.allowedToolsEmpty", { task: name }),
     );
   }
   const normalizedAllowedTools = normalizeToolList(allowedTools);
@@ -5577,7 +5614,7 @@ async function schedulerCreateTask(
   if (matrix) {
     if (workspaceId?.trim()) {
       throw new Error(
-        t("tool.error.workspaceIdConflict", { task: name })
+        t("tool.error.workspaceIdConflict", { task: name }),
       );
     }
     const ids = Array.from(
@@ -5585,19 +5622,19 @@ async function schedulerCreateTask(
         (Array.isArray(matrix.workspaceIds) ? matrix.workspaceIds : [])
           .filter((id): id is string => typeof id === "string")
           .map((id) => id.trim())
-          .filter(Boolean)
-      )
+          .filter(Boolean),
+      ),
     );
     if (ids.length === 0) {
       throw new Error(
-        t("tool.error.workspaceIdsEmpty", { task: name })
+        t("tool.error.workspaceIdsEmpty", { task: name }),
       );
     }
     for (const id of ids) {
       const ws = getWorkspace(id);
       if (!ws) {
         throw new Error(
-          t("tool.error.workspaceMissing", { task: name, id })
+          t("tool.error.workspaceMissing", { task: name, id }),
         );
       }
       try {
@@ -5608,7 +5645,7 @@ async function schedulerCreateTask(
             task: name,
             workspace: ws.name,
             path: ws.path,
-          })
+          }),
         );
       }
     }
@@ -5639,12 +5676,12 @@ async function schedulerCreateTask(
       : workingDirectory?.trim() || projectDirectory || process.cwd();
     if (!gitCwd) {
       throw new Error(
-        t("tool.error.gitCwdRequired", { task: name })
+        t("tool.error.gitCwdRequired", { task: name }),
       );
     }
     if (!readGitBranch(gitCwd)) {
       throw new Error(
-        t("tool.error.gitNoRepo", { task: name, path: gitCwd })
+        t("tool.error.gitNoRepo", { task: name, path: gitCwd }),
       );
     }
   }
@@ -5663,12 +5700,12 @@ async function schedulerCreateTask(
         t("tool.error.timezone", {
           task: name,
           timezone: normalizedTz,
-        })
+        }),
       );
     }
     const windowError = validateLaunchWindow(
       normalizedNotBefore,
-      normalizedNotAfter
+      normalizedNotAfter,
     );
     if (windowError) {
       throw new Error(t("tool.error.window", { task: name, error: windowError }));
@@ -5691,21 +5728,21 @@ async function schedulerCreateTask(
   const gate =
     effectiveTriggerType === "cron"
       ? buildScheduleGate(
-          schedule,
-          normalizedTz,
-          normalizedNotBefore,
-          normalizedNotAfter,
-          normalizedActiveDays,
-          normalizedWindowPolicy
-        )
+        schedule,
+        normalizedTz,
+        normalizedNotBefore,
+        normalizedNotAfter,
+        normalizedActiveDays,
+        normalizedWindowPolicy,
+      )
       : undefined;
   const wrapperGate = gate
     ? {
-        ...gate,
-        gateFile: gatePath,
-        deferFile: `${lockFile}.defer`,
-        forceFile: `${lockFile}.force`,
-      }
+      ...gate,
+      gateFile: gatePath,
+      deferFile: `${lockFile}.defer`,
+      forceFile: `${lockFile}.force`,
+    }
     : undefined;
   // Workspace имеет приоритет над workingDirectory: одна задача = один repo
   // = один cwd. Мы не угадываем, куда мержить, и не смешиваем контексты.
@@ -5715,7 +5752,7 @@ async function schedulerCreateTask(
     throw new Error(
       t("tool.error.workspaceIdMissing", {
         id: normalizedWorkspaceId,
-      })
+      }),
     );
   }
   if (workspace) {
@@ -5726,13 +5763,13 @@ async function schedulerCreateTask(
         t("tool.error.workspacePathMissing", {
           name: workspace.name,
           path: workspace.path,
-        })
+        }),
       );
     }
     if (workingDirectory?.trim() && workingDirectory.trim() !== workspace.path) {
       console.warn(
         `[workspace] Задача "${name}": workingDirectory "${workingDirectory.trim()}" ` +
-          `игнорируется, cwd = workspace "${workspace.name}" (${workspace.path}).`
+          `игнорируется, cwd = workspace "${workspace.name}" (${workspace.path}).`,
       );
     }
   }
@@ -5747,7 +5784,7 @@ async function schedulerCreateTask(
       effectiveWatchPath = normalizeWatchPath(effectiveWatchPath, effectiveWorkingDirectory);
     } catch (err: any) {
       throw new Error(
-        t("tool.error.taskReason", { name, error: err.message || String(err) })
+        t("tool.error.taskReason", { name, error: err.message || String(err) }),
       );
     }
   }
@@ -5756,7 +5793,7 @@ async function schedulerCreateTask(
     validateWatchGlobs(normalizedWatchIgnore);
   } catch (err: any) {
     throw new Error(
-      t("tool.error.taskReason", { name, error: err.message || String(err) })
+      t("tool.error.taskReason", { name, error: err.message || String(err) }),
     );
   }
 
@@ -5766,13 +5803,13 @@ async function schedulerCreateTask(
     prompt,
     beforeScript,
     afterScript,
-    qualityGate
+    qualityGate,
   );
   const taskEnvFile = writeWorkspaceEnvFile(
     workspace,
     PLUGIN_DIR,
     sanitized,
-    usedSecretNames
+    usedSecretNames,
   );
   if (taskEnvFile) {
     console.log(`[workspace] Задача "${name}": env-переменные workspace подключены.`);
@@ -5787,7 +5824,7 @@ async function schedulerCreateTask(
     throw new Error(
       t("tool.error.prepareFiles", {
         error: err.message || String(err),
-      })
+      }),
     );
   }
 
@@ -5827,7 +5864,7 @@ async function schedulerCreateTask(
         undefined,
         permissionsConfig,
         policyMeta,
-        sessionFile
+        sessionFile,
       );
     } else {
       wrapperPath = await writeBashWrapper({
@@ -5862,7 +5899,7 @@ async function schedulerCreateTask(
     throw new Error(
       t("tool.error.wrapper", {
         error: err.message || String(err),
-      })
+      }),
     );
   }
 
@@ -5872,8 +5909,8 @@ async function schedulerCreateTask(
     if (definitionExisted) return;
     await Promise.all(
       [wrapperPath, promptFile, logFile, taskEnvFile].map((file) =>
-        file ? fs.unlink(file).catch(() => undefined) : Promise.resolve()
-      )
+        file ? fs.unlink(file).catch(() => undefined) : Promise.resolve(),
+      ),
     );
   };
 
@@ -5904,7 +5941,7 @@ async function schedulerCreateTask(
   // 200 мс. Это ловит случай, когда ОС/обёртка вернула код 0, но задачи нет.
   const isListed = (tasks: Awaited<ReturnType<typeof scheduler.listTasks>>): boolean =>
     tasks.some(
-      (task) => (task.taskName || "").trim().toLowerCase() === name.toLowerCase()
+      (task) => (task.taskName || "").trim().toLowerCase() === name.toLowerCase(),
     );
   let listedTasks: Awaited<ReturnType<typeof scheduler.listTasks>> | undefined;
   let verifyQueryError: unknown;
@@ -5929,16 +5966,16 @@ async function schedulerCreateTask(
         " " +
         (definitionExisted
           ? t("tool.error.schedulerKeptFiles")
-          : t("tool.error.schedulerRemovedFiles"))
+          : t("tool.error.schedulerRemovedFiles")),
     );
   }
   if (!listedTasks && verifyQueryError) {
     // Список получить не удалось — не удаляем возможно созданную задачу,
     // но явно предупреждаем: проверка наличия не выполнена.
     console.warn(
-      `[windows-scheduler] Задача "${name}" создана, но проверить её в планировщике не удалось: ${
+      `[agent-steward] Задача "${name}" создана, но проверить её в планировщике не удалось: ${
         verifyQueryError instanceof Error ? verifyQueryError.message : String(verifyQueryError)
-      }`
+      }`,
     );
   }
 
@@ -5976,7 +6013,7 @@ async function schedulerCreateTask(
     sessionRunCount: preservedSessionRunCount(
       previousDefinition,
       effectiveSession,
-      effectiveSessionId
+      effectiveSessionId,
     ),
     watchPath: normalizedMatrix ? undefined : effectiveWatchPath,
     timezone: normalizedTz,
@@ -6009,13 +6046,13 @@ async function schedulerCreateTask(
     dependsOn:
       Array.isArray(dependsOn) && dependsOn.length > 0
         ? Array.from(
-            new Set(
-              dependsOn
-                .filter((dep): dep is string => typeof dep === "string")
-                .map((dep) => dep.trim())
-                .filter(Boolean)
-            )
-          )
+          new Set(
+            dependsOn
+              .filter((dep): dep is string => typeof dep === "string")
+              .map((dep) => dep.trim())
+              .filter(Boolean),
+          ),
+        )
         : undefined,
   };
   try {
@@ -6028,7 +6065,7 @@ async function schedulerCreateTask(
       "system",
       "policy",
       globalPolicy,
-      legacyShell === true
+      legacyShell === true,
     );
   } catch {
     // Не критично — основная задача уже создана.
@@ -6080,7 +6117,7 @@ async function schedulerCreateTask(
         undefined,
         clone.runWhenLoggedOff,
         clone.paused,
-        clone.legacyShell
+        clone.legacyShell,
       );
     };
 
@@ -6126,7 +6163,7 @@ async function schedulerCreateTask(
         undefined,
         cloneNames,
         normalizedModel,
-        normalizedPriority
+        normalizedPriority,
       );
       return aggregatorName;
     };
@@ -6149,7 +6186,7 @@ async function schedulerCreateTask(
         console.log(
           `[matrix] ${name}: синхронизация — создано ${syncResult.created.length}, ` +
             `обновлено ${syncResult.updated.length}, удалено ${syncResult.removed.length}, ` +
-            `занято ${syncResult.running.length}`
+            `занято ${syncResult.running.length}`,
         );
       }
     } else {
@@ -6176,7 +6213,7 @@ async function schedulerCreateTask(
                 clone: clone.name,
                 workspace: workspaceLabel,
                 error: err instanceof Error ? err.message : String(err),
-              })
+              }),
             );
           }
         }
@@ -6208,7 +6245,7 @@ async function schedulerCreateTask(
           t("tool.error.matrixExpandRuntime", {
             name,
             error: err instanceof Error ? err.message : String(err),
-          })
+          }),
         );
       }
     }
@@ -6225,9 +6262,9 @@ async function schedulerCreateTask(
         await scheduler.pauseTask(target);
       } catch (err: any) {
         console.warn(
-          `[windows-scheduler] Задача "${target}": пауза не восстановлена после пересоздания: ${
+          `[agent-steward] Задача "${target}": пауза не восстановлена после пересоздания: ${
             err instanceof Error ? err.message : String(err)
-          }`
+          }`,
         );
       }
     }
@@ -6246,7 +6283,7 @@ async function schedulerCreateTask(
 async function recreateTaskFromDefinition(definition: TaskDefinition): Promise<void> {
   const paused = Boolean(
     definition.paused === true ||
-      (definition.pausedUntil && Date.parse(definition.pausedUntil) > Date.now())
+      (definition.pausedUntil && Date.parse(definition.pausedUntil) > Date.now()),
   );
   await schedulerCreateTask(
     definition.name,
@@ -6293,7 +6330,7 @@ async function recreateTaskFromDefinition(definition: TaskDefinition): Promise<v
     },
     definition.runWhenLoggedOff,
     paused,
-    definition.legacyShell
+    definition.legacyShell,
   );
 }
 
@@ -6304,13 +6341,13 @@ async function recreateTaskFromDefinition(definition: TaskDefinition): Promise<v
 async function runTaskEntry(name: string): Promise<{ alreadyRunning: boolean }> {
   if (shutdownGate.isShuttingDown()) {
     throw new Error(
-      "Плагин выгружается: новые запуски не принимаются. Повторите после перезапуска."
+      "Плагин выгружается: новые запуски не принимаются. Повторите после перезапуска.",
     );
   }
 
   const run = (async () => {
     const definition = (await loadTaskDefinitions()).find(
-      (def) => def.name.toLowerCase() === name.trim().toLowerCase()
+      (def) => def.name.toLowerCase() === name.trim().toLowerCase(),
     );
     if (definition?.matrix) {
       await runMatrix(definition);
@@ -6347,7 +6384,7 @@ async function runTaskEntry(name: string): Promise<{ alreadyRunning: boolean }> 
  */
 async function readOsTasksWithRetry(
   expectNonEmpty: boolean,
-  delayMs = 300
+  delayMs = 300,
 ): Promise<{
   tasks: Awaited<ReturnType<typeof scheduler.listTasks>>;
   osAvailable: boolean;
@@ -6398,7 +6435,7 @@ async function collectTasksView() {
   // (накопительные итоги, не зависят от retention истории). Для задач, у
   // которых метрик ещё нет, считаем по загруженной истории.
   const metricsByName = new Map(
-    getAllMetrics(true).map((row) => [row.taskName.toLowerCase(), row])
+    getAllMetrics(true).map((row) => [row.taskName.toLowerCase(), row]),
   );
   const historyCounts = new Map<
     string,
@@ -6427,10 +6464,10 @@ async function collectTasksView() {
   const orphanNames = defs
     .filter((def) => !osNames.has(def.name.toLowerCase()))
     .map((def) => def.name);
-  const sources: Array<{ task: (typeof tasks)[number]; orphaned: boolean }> = [
+  const sources: { task: (typeof tasks)[number]; orphaned: boolean }[] = [
     ...tasks.map((task) => ({ task, orphaned: false })),
     ...orphanNames.map((name) => ({
-      task: { taskName: name } as (typeof tasks)[number],
+      task: { taskName: name },
       orphaned: true,
     })),
   ];
@@ -6466,17 +6503,17 @@ async function collectTasksView() {
     const metricsRow = metricsByName.get(name.toLowerCase());
     const counts = metricsRow
       ? {
-          total: metricsRow.total,
-          success: metricsRow.success,
-          error: metricsRow.error,
-          partial: metricsRow.partial,
-        }
+        total: metricsRow.total,
+        success: metricsRow.success,
+        error: metricsRow.error,
+        partial: metricsRow.partial,
+      }
       : historyCounts.get(name.toLowerCase()) ?? {
-          total: 0,
-          success: 0,
-          error: 0,
-          partial: 0,
-        };
+        total: 0,
+        success: 0,
+        error: 0,
+        partial: 0,
+      };
 
     // Спринт 27.5.2: пауза учитывает и флаг ОС, и активный pausedUntil.
     // nextRun считаем из определения — schtasks после мутации отдаёт
@@ -6543,13 +6580,13 @@ async function collectTasksView() {
       isMatrixParent: Boolean(def?.matrix),
       matrixSummary: matrixAggregate
         ? {
-            totalCount: matrixAggregate.totalCount,
-            successCount: matrixAggregate.successCount,
-            errorCount: matrixAggregate.errorCount,
-            pendingCount: matrixAggregate.pendingCount,
-            status: matrixAggregate.status,
-            message: matrixAggregate.message,
-          }
+          totalCount: matrixAggregate.totalCount,
+          successCount: matrixAggregate.successCount,
+          errorCount: matrixAggregate.errorCount,
+          pendingCount: matrixAggregate.pendingCount,
+          status: matrixAggregate.status,
+          message: matrixAggregate.message,
+        }
         : null,
       prompt: def?.prompt ?? "",
     };

@@ -425,7 +425,7 @@ export function defaultPermissionsSettings(): PermissionSettings {
 /** Приводит настройки прав к безопасному виду. */
 function normalizePermissionsSettings(
   value: unknown,
-  fallback: PermissionSettings
+  fallback: PermissionSettings,
 ): PermissionSettings {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return { ...fallback };
@@ -439,7 +439,7 @@ function normalizePermissionsSettings(
 /** Приводит настройки аудита к безопасному виду. */
 function normalizeAuditSettings(
   value: unknown,
-  fallback: AuditSettings
+  fallback: AuditSettings,
 ): AuditSettings {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return { ...fallback };
@@ -449,7 +449,7 @@ function normalizeAuditSettings(
     enabled: typeof raw.enabled === "boolean" ? raw.enabled : fallback.enabled,
     retentionDays: normalizeRetentionLimit(
       raw.retentionDays,
-      fallback.retentionDays
+      fallback.retentionDays,
     ),
     maxRecords: normalizeRetentionLimit(raw.maxRecords, fallback.maxRecords),
   };
@@ -498,7 +498,7 @@ function normalizeRetentionLimit(value: unknown, fallback: number): number {
 /** Приводит настройки ретеншна к безопасному виду. */
 function normalizeHistorySettings(
   value: unknown,
-  fallback: HistorySettings
+  fallback: HistorySettings,
 ): HistorySettings {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return { ...fallback };
@@ -514,7 +514,7 @@ function normalizeHistorySettings(
     lastCleanupAt,
     lastCleanupDeleted: normalizeRetentionLimit(
       raw.lastCleanupDeleted,
-      fallback.lastCleanupDeleted
+      fallback.lastCleanupDeleted,
     ),
   };
 }
@@ -625,7 +625,7 @@ function normalizeIntInRange(
   value: unknown,
   fallback: number,
   min: number,
-  max: number
+  max: number,
 ): number {
   const n = Number(value);
   if (!Number.isFinite(n)) return fallback;
@@ -637,7 +637,7 @@ function normalizeFloatInRange(
   value: unknown,
   fallback: number,
   min: number,
-  max: number
+  max: number,
 ): number {
   const n = Number(value);
   if (!Number.isFinite(n)) return fallback;
@@ -670,7 +670,7 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 /** Приводит parse_mode Telegram к допустимому значению. */
 function normalizeTelegramParseMode(
   value: unknown,
-  fallback: TelegramParseMode
+  fallback: TelegramParseMode,
 ): TelegramParseMode {
   return value === "" || value === "HTML" || value === "Markdown" || value === "MarkdownV2"
     ? value
@@ -699,11 +699,11 @@ function normalizeHttpBase(value: unknown, fallback: string): string {
 function localizedTemplate(
   value: unknown,
   key: string,
-  fallback: string
+  fallback: string,
 ): string {
   const raw = typeof value === "string" && value.trim() ? value : fallback;
   const builtin = SUPPORTED_LOCALES.some(
-    (locale) => messageIn(locale, key) === raw
+    (locale) => messageIn(locale, key) === raw,
   );
   return builtin ? t(key) : raw;
 }
@@ -814,7 +814,7 @@ function normalizeTriageRule(value: unknown): TriageRule | null {
 /** Нормализует массив правил; undefined сохраняет встроенный набор. */
 function normalizeTriageRules(
   value: unknown,
-  fallback: TriageRule[] | undefined
+  fallback: TriageRule[] | undefined,
 ): TriageRule[] | undefined {
   if (value === undefined) return fallback?.map((rule) => ({ ...rule }));
   if (!Array.isArray(value)) return fallback?.map((rule) => ({ ...rule }));
@@ -827,7 +827,7 @@ function normalizeTriageRules(
 /** Нормализует настройки shadow-режима триажа. */
 function normalizeTriageShadow(
   value: unknown,
-  fallback: TriageShadowSettings
+  fallback: TriageShadowSettings,
 ): TriageShadowSettings {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return { ...fallback };
@@ -845,7 +845,7 @@ function normalizeTriageShadow(
 
 function normalizeDedupSettings(
   value: unknown,
-  fallback: NotificationDedupSettings
+  fallback: NotificationDedupSettings,
 ): NotificationDedupSettings {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return { ...fallback };
@@ -857,7 +857,7 @@ function normalizeDedupSettings(
       raw.windowMinutes,
       fallback.windowMinutes,
       1,
-      10_080
+      10_080,
     ),
     suppressDuplicates:
       typeof raw.suppressDuplicates === "boolean"
@@ -875,7 +875,7 @@ function normalizeDedupSettings(
 /** Нормализация настроек семантического дедупа (Спринт 31.1). */
 function normalizeEmbeddingSettings(
   value: unknown,
-  fallback: NotificationEmbeddingSettings
+  fallback: NotificationEmbeddingSettings,
 ): NotificationEmbeddingSettings {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return { ...fallback };
@@ -891,19 +891,19 @@ function normalizeEmbeddingSettings(
       raw.windowMinutes,
       fallback.windowMinutes,
       1,
-      10_080
+      10_080,
     ),
     threshold: normalizeFloatInRange(
       raw.threshold,
       fallback.threshold,
       0,
-      1
+      1,
     ),
     maxVectors: normalizeIntInRange(
       raw.maxVectors,
       fallback.maxVectors,
       100,
-      100_000
+      100_000,
     ),
   };
 }
@@ -911,7 +911,7 @@ function normalizeEmbeddingSettings(
 /** Нормализует настройки саммари уведомлений (Спринт 31.3). */
 function normalizeSummarySettings(
   value: unknown,
-  fallback: NotificationSummarySettings
+  fallback: NotificationSummarySettings,
 ): NotificationSummarySettings {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return { ...fallback };
@@ -924,7 +924,7 @@ function normalizeSummarySettings(
       raw.maxCharsPerLine,
       fallback.maxCharsPerLine,
       20,
-      500
+      500,
     ),
     timeoutMs: normalizeIntInRange(raw.timeoutMs, fallback.timeoutMs, 1000, 120_000),
   };
@@ -957,7 +957,7 @@ export function startShadow(shadow: TriageShadowSettings | undefined): TriageSha
  * получает текущий момент, выключенный — сбрасывает дату.
  */
 export function settleShadowOnSave(
-  shadow: TriageShadowSettings | undefined
+  shadow: TriageShadowSettings | undefined,
 ): TriageShadowSettings {
   if (!shadow) return startShadow(undefined);
   if (!shadow.enabled) return { ...shadow, startedAt: null };
@@ -972,7 +972,7 @@ export function settleShadowOnSave(
  */
 export function normalizeTriageSettings(
   value: unknown,
-  fallback: TriageSettings
+  fallback: TriageSettings,
 ): TriageSettings {
   const fallbackShadow =
     fallback.shadow ?? defaultNotifications().triage!.shadow!;
@@ -989,12 +989,12 @@ export function normalizeTriageSettings(
       raw?.timeoutMs,
       fallback.timeoutMs,
       1_000,
-      120_000
+      120_000,
     ),
     fallback: normalizeTriageFallback(raw?.fallback, fallback.fallback),
     confidenceThreshold: normalizeConfidence(
       raw?.confidenceThreshold,
-      fallback.confidenceThreshold
+      fallback.confidenceThreshold,
     ),
     ...(rules !== undefined ? { rules } : {}),
     shadow: normalizeTriageShadow(raw?.shadow, fallbackShadow),
@@ -1004,7 +1004,7 @@ export function normalizeTriageSettings(
 /** Приводит настройки уведомлений к безопасному виду. */
 function normalizeNotifications(
   value: unknown,
-  fallback: NotificationSettings
+  fallback: NotificationSettings,
 ): NotificationSettings {
   const fallbackWebhook = fallback.webhook ?? defaultNotifications().webhook!;
   const fallbackTemplates = fallback.templates ?? defaultNotifications().templates!;
@@ -1078,31 +1078,31 @@ function normalizeNotifications(
         rawWebhook?.timeoutMs,
         fallbackWebhook.timeoutMs,
         1_000,
-        120_000
+        120_000,
       ),
       retryCount: normalizeIntInRange(
         rawWebhook?.retryCount,
         fallbackWebhook.retryCount,
         0,
-        5
+        5,
       ),
       retryDelayMs: normalizeIntInRange(
         rawWebhook?.retryDelayMs,
         fallbackWebhook.retryDelayMs,
         100,
-        60_000
+        60_000,
       ),
     },
     templates: {
       success: localizedTemplate(
         rawTemplates?.success,
         "notify.task.success",
-        fallbackTemplates.success
+        fallbackTemplates.success,
       ),
       error: localizedTemplate(
         rawTemplates?.error,
         "notify.task.error",
-        fallbackTemplates.error
+        fallbackTemplates.error,
       ),
     },
     filters: {
@@ -1124,7 +1124,7 @@ function normalizeNotifications(
           : fallbackTelegram.chatId,
       parseMode: normalizeTelegramParseMode(
         rawTelegram?.parseMode,
-        fallbackTelegram.parseMode
+        fallbackTelegram.parseMode,
       ),
       disableNotification:
         typeof rawTelegram?.disableNotification === "boolean"
@@ -1181,7 +1181,7 @@ function normalizeNotifications(
         rawMatrix?.stuckAfterMinutes,
         fallbackMatrix.stuckAfterMinutes,
         0,
-        10_080
+        10_080,
       ),
     },
     digest: {
@@ -1196,15 +1196,15 @@ function normalizeNotifications(
     triage: normalizeTriageSettings(rawTriage, fallbackTriage),
     dedup: normalizeDedupSettings(
       raw.dedup,
-      fallback.dedup ?? defaultNotifications().dedup!
+      fallback.dedup ?? defaultNotifications().dedup!,
     ),
     embedding: normalizeEmbeddingSettings(
       raw.embedding,
-      fallback.embedding ?? defaultNotifications().embedding!
+      fallback.embedding ?? defaultNotifications().embedding!,
     ),
     summary: normalizeSummarySettings(
       raw.summary,
-      fallback.summary ?? defaultNotifications().summary!
+      fallback.summary ?? defaultNotifications().summary!,
     ),
   };
 }
@@ -1212,7 +1212,7 @@ function normalizeNotifications(
 /** Приводит настройки интеграций к безопасному виду. */
 function normalizeIntegrations(
   value: unknown,
-  fallback: IntegrationSettings
+  fallback: IntegrationSettings,
 ): IntegrationSettings {
   const fallbackHooks = fallback.hooks ?? defaultIntegrations().hooks;
   const raw = asRecord(value);
@@ -1239,13 +1239,13 @@ function normalizeIntegrations(
         rawHooks?.maxBodyBytes,
         fallbackHooks.maxBodyBytes,
         1_024,
-        MAX_HOOK_BODY_BYTES
+        MAX_HOOK_BODY_BYTES,
       ),
       timestampToleranceSeconds: normalizeIntInRange(
         rawHooks?.timestampToleranceSeconds,
         fallbackHooks.timestampToleranceSeconds,
         0,
-        86_400
+        86_400,
       ),
     },
   };
@@ -1264,27 +1264,27 @@ export async function loadSettings(): Promise<SchedulerSettings> {
     return {
       maxConcurrent: normalizeMaxConcurrent(
         parsed?.maxConcurrent,
-        DEFAULT_MAX_CONCURRENT
+        DEFAULT_MAX_CONCURRENT,
       ),
       locale: normalizeLocaleMode(parsed?.locale, DEFAULT_LOCALE),
       uiLocale: normalizeLocale(parsed?.uiLocale, DEFAULT_LOCALE),
       winterMode: normalizeWinterMode(
         parsed?.winterMode,
-        DEFAULT_WINTER_MODE
+        DEFAULT_WINTER_MODE,
       ),
       notifications: normalizeNotifications(
         parsed?.notifications,
-        fallbackNotifications
+        fallbackNotifications,
       ),
       history: normalizeHistorySettings(parsed?.history, fallbackHistory),
       integrations: normalizeIntegrations(
         parsed?.integrations,
-        fallbackIntegrations
+        fallbackIntegrations,
       ),
       audit: normalizeAuditSettings(parsed?.audit, fallbackAudit),
       permissions: normalizePermissionsSettings(
         parsed?.permissions,
-        fallbackPermissions
+        fallbackPermissions,
       ),
     };
   } catch {
@@ -1304,7 +1304,7 @@ export async function loadSettings(): Promise<SchedulerSettings> {
 
 /** Сохраняет настройки (частичное обновление поверх текущих). */
 export async function saveSettings(
-  patch: Partial<SchedulerSettings>
+  patch: Partial<SchedulerSettings>,
 ): Promise<SchedulerSettings> {
   const current = await loadSettings();
   const next: SchedulerSettings = {

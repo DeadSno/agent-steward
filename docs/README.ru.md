@@ -124,6 +124,7 @@ npm run build && npm run build:gui
 | `matrix_control` | `action`, `name?` | Результаты матрицы, отмена клонов, очистка осиротевших задач, предпросмотр |
 | `get_metrics` | — | Всего запусков, успехов и падений |
 | `get_analytics` | `days?`, `topLimit?` | Отчёт за период: запуски, успешность, длительность, токены, стоимость, топ задач |
+| `self_analysis` | `days?`, `topLimit?`, `includeAnomalies?` | Самодиагностика за период: оценка здоровья, аномалии, тренды и рекомендации по оптимизации |
 | `manage_settings` | `action`, `maxConcurrent?`, `winterMode?`, `notifications?`, `history?` | Чтение и изменение глобальных настроек (параллелизм, уведомления, retention) |
 | `manage_local_ai` | `action` (`get`/`update`/`test`), `mode?`, `baseUrl?`, `model?`, `timeoutMs?`, `fallback?`, `confidenceThreshold?`, `shadow?` | Настройки локального ассистента для триажа уведомлений и проверка модели одним запросом (см. [LOCAL-AI.md](LOCAL-AI.md)) |
 | `manage_templates` | `action`, поля шаблона | Список, сохранение и удаление шаблонов задач |
@@ -132,9 +133,27 @@ npm run build && npm run build:gui
 | `send_notification` | `action` (`test`/`digest`), `channel?` (`all`/`webhook`/`telegram`/`native`) | Проверка каналов уведомлений или отправка дайджеста |
 | `get_dashboard_info` | — | Порт/URL дашборда, платформа, заголовок, активный профиль |
 | `cleanup_history` | `retentionDays?`, `maxRecords?` | Удаление старой истории по возрасту и/или лимиту записей |
+| `manage_secrets` | `action`, `name?`, `value?` | Создание, список и удаление секретов AES-256-GCM для `env` задач |
+| `get_audit_log` | `action?`, `target?`, `actor?`, `since?`, `until?`, `limit?` | Журнал мутаций: кто, что и когда изменил и через какой интерфейс |
 | `emit_event` | `eventName`, `payload?` | Запуск задач, подписанных на MCP-событие |
 
 `schedule_task` принимает и полную конфигурацию матрицы (`workspaceIds`, `strategy`, `failureMode`, `aggregation`, `concurrency`, `overrides`, `createAggregator`).
+
+## Права и разрешения
+
+Задачи агента запускаются через `opencode run --auto`, поэтому их политика инструментов должна быть задана явно. Глобальная настройка `permissions.defaultPolicy` (GUI → Settings или `manage_settings`) задаёт базу:
+
+| Политика | Разрешено по умолчанию | Запрещено по умолчанию |
+|---|---|---|
+| `hybrid` (по умолчанию) | read, edit, glob, grep, subagent, skill, webfetch, websearch | shell, question |
+| `secure` | read, glob, grep, skill | edit, shell, question, webfetch, websearch, subagent |
+| `legacy` | все десять действий | — |
+
+`deniedTools` всегда важнее. Непустой `allowedTools` превращается в allowlist: всё, что не перечислено, запрещено, а разрешённое политикой действие можно явно вернуть (например, `shell`). `legacyShell: true` возвращает `shell` только при `hybrid` — для задач, перенесённых со старых версий.
+
+Заблокированные действия пишутся в аудит как `tool.blocked` с `reason: "default-policy"` и `hint`, а каждый запуск записывает действующую политику.
+
+Рекомендуемый приём: держите `git commit`/`push`, сборки и тесты вне агента — в `qualityGate` или `afterScript` (обёртка запускает их через `bash -c`), а агенту оставьте `read`/`edit`. Тогда большинству задач `shell` вообще не нужен.
 
 ## Скилл для агента
 
@@ -205,7 +224,7 @@ src/
 npm install
 npm run build        # tsc
 npm run build:gui    # vite
-npm test             # 58 сюит, 600+ проверок
+npm test             # 67 сюит, 600+ проверок
 npm run test:en      # те же сюиты с английской локалью
 ```
 

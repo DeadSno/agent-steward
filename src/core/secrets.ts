@@ -59,7 +59,7 @@ let keyCache: { stamp: string; key: Buffer } | null = null;
 function warn(message: string, err: unknown): void {
   try {
     console.warn(
-      `[secrets] ${message}: ${err instanceof Error ? err.message : String(err)}`
+      `[secrets] ${message}: ${err instanceof Error ? err.message : String(err)}`,
     );
   } catch {
     // console может быть недоступен — молча игнорируем.
@@ -71,7 +71,7 @@ export function validateSecretName(name: string): string {
   const value = String(name ?? "").trim();
   if (!SECRET_NAME_RE.test(value)) {
     throw new Error(
-      "Имя секрета: латиница, цифры, '_', '.', '-', от 1 до 64 символов."
+      "Имя секрета: латиница, цифры, '_', '.', '-', от 1 до 64 символов.",
     );
   }
   return value;
@@ -115,18 +115,18 @@ function restrictWindowsAcl(file: string): void {
     const result = spawnSync(
       "icacls",
       [file, "/inheritance:r", "/grant:r", `${currentWindowsUser()}:F`],
-      { windowsHide: true, stdio: "ignore" }
+      { windowsHide: true, stdio: "ignore" },
     );
     if (result.status === 0) return;
     throw new Error(
-      result.error?.message ?? `icacls завершился с кодом ${result.status}`
+      result.error?.message ?? `icacls завершился с кодом ${result.status}`,
     );
   } catch (err) {
     if (windowsAclWarned) return;
     windowsAclWarned = true;
     warn(
       "не удалось ограничить ACL файла секретов; ключ может быть доступен другим локальным пользователям",
-      err
+      err,
     );
   }
 }
@@ -197,8 +197,8 @@ function quarantineCorruptStore(err: unknown): boolean {
     corruptedStore = target;
     warn(
       `secrets.json повреждён, но его не удалось переместить в ${target}. ` +
-        `Запись новых секретов заблокирована, чтобы не потерять данные.`,
-      renameErr
+        "Запись новых секретов заблокирована, чтобы не потерять данные.",
+      renameErr,
     );
     return false;
   }
@@ -214,7 +214,7 @@ function readFileSafe(): SecretsFile {
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
       throw new Error("некорректный формат secrets.json");
     }
-    const rawSecrets = (parsed as any).secrets;
+    const rawSecrets = (parsed).secrets;
     const secrets: Record<string, StoredSecret> = {};
     if (rawSecrets && typeof rawSecrets === "object" && !Array.isArray(rawSecrets)) {
       for (const [name, entry] of Object.entries(rawSecrets)) {
@@ -285,7 +285,7 @@ function decryptValue(name: string, entry: StoredSecret, key: Buffer): string {
   const decipher = crypto.createDecipheriv(
     "aes-256-gcm",
     key,
-    Buffer.from(entry.iv, "base64")
+    Buffer.from(entry.iv, "base64"),
   );
   decipher.setAAD(Buffer.from(name, "utf8"));
   decipher.setAuthTag(Buffer.from(entry.tag, "base64"));
@@ -300,7 +300,7 @@ export function setSecret(name: string, value: string): SecretListItem {
   if (corruptedStore) {
     throw new Error(
       `Хранилище секретов повреждено (${corruptedStore}). ` +
-        "Устраните проблему с файлом перед записью новых секретов."
+        "Устраните проблему с файлом перед записью новых секретов.",
     );
   }
   const secretName = validateSecretName(name);
@@ -372,7 +372,7 @@ export function listSecrets(): SecretListItem[] {
 /** Подставляет все ссылки `${secret:NAME}` в строку. Если задан allowedSecretNames — заменяются только ссылки на имена из этого списка (scoped-инъекция), остальные оставляются без изменений. */
 export function expandSecretRefs(
   value: string,
-  allowedSecretNames?: string[]
+  allowedSecretNames?: string[],
 ): { value: string; missing: string[] } {
   const missing = new Set<string>();
   const allowed = allowedSecretNames ? new Set(allowedSecretNames) : null;
@@ -401,7 +401,7 @@ export function expandSecretRefs(
  */
 export function resolveSecretRefs(
   env: Record<string, string>,
-  allowedSecretNames?: string[]
+  allowedSecretNames?: string[],
 ): { env: Record<string, string>; missing: string[] } {
   const resolved: Record<string, string> = {};
   const missing = new Set<string>();
@@ -466,7 +466,7 @@ export function redactSecretsInText(text: unknown): string {
 
   result = result.replace(
     /\b([A-Za-z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|APIKEY|CREDENTIAL|AUTH)[A-Za-z0-9_]*)\b(\s*[=:]\s*)(["']?)([^\s"',;]+)\3/gi,
-    (_match: string, key: string, sep: string, quote: string) => `${key}${sep}${quote}***${quote}`
+    (_match: string, key: string, sep: string, quote: string) => `${key}${sep}${quote}***${quote}`,
   );
 
   // Восстанавливаем защищённые ссылки.

@@ -129,60 +129,108 @@ interface SchemaDb {
 }
 
 /**
+ * Текущая версия схемы БД (`PRAGMA user_version`).
+ *
+ * Версия пишется в заголовок SQLite-файла без отдельной таблицы, поэтому
+ * переживает пересоздание соединения и видна до применения каких-либо
+ * миграций. Увеличивайте при добавлении новой ступени в {@link MIGRATIONS}
+ * и добавляйте соответствующую запись в массив.
+ */
+export const SCHEMA_VERSION = 1;
+
+/** Возвращает сохранённую версию схемы (0 у legacy-БД без user_version). */
+export function getSchemaVersion(db: SchemaDb): number {
+  const rows = db.prepare("PRAGMA user_version").all() as { user_version?: number }[];
+  const value = rows[0]?.user_version;
+  return typeof value === "number" ? value : 0;
+}
+
+/**
+ * Ступени миграции: `to` — целевая версия, `migrate` — изменения.
+ *
+ * Каждая ступень идемпотентна (проверяет PRAGMA table_info), поэтому её
+ * безопасно повторно прогонять на legacy-БД, где user_version ещё равен 0,
+ * но колонки уже добавлены прошлыми запусками.
+ */
+const MIGRATIONS: { to: number; migrate: (db: SchemaDb) => void }[] = [
+  {
+    // Ступень 1 — состояние Спринта 25: колонки, добавленные ad-hoc ALTER'ами
+    // до появления версионирования (Спринты 12/15/21/25).
+    to: 1,
+    migrate(db) {
+      const columns = db.prepare("PRAGMA table_info(history)").all() as {
+        name?: string;
+      }[];
+      const columnNames = columns.map((c) => c.name).filter(Boolean);
+      if (!columnNames.includes("workspace_id")) {
+        db.exec("ALTER TABLE history ADD COLUMN workspace_id TEXT");
+      }
+      if (!columnNames.includes("allowed_tools")) {
+        db.exec("ALTER TABLE history ADD COLUMN allowed_tools TEXT");
+      }
+      if (!columnNames.includes("denied_tools")) {
+        db.exec("ALTER TABLE history ADD COLUMN denied_tools TEXT");
+      }
+
+      // Спринт 15: флаги matrix на tasks (клоны и родитель-шаблон).
+      const taskColumns = db.prepare("PRAGMA table_info(tasks)").all() as {
+        name?: string;
+      }[];
+      const taskColumnNames = taskColumns.map((c) => c.name).filter(Boolean);
+      if (!taskColumnNames.includes("matrix_parent_id")) {
+        db.exec("ALTER TABLE tasks ADD COLUMN matrix_parent_id TEXT");
+      }
+      if (!taskColumnNames.includes("is_matrix_parent")) {
+        db.exec("ALTER TABLE tasks ADD COLUMN is_matrix_parent INTEGER DEFAULT 0");
+      }
+
+      // Спринт 21: env-переменные на workspace (пары ключ-значение и .env-файл).
+      const workspaceColumns = db.prepare("PRAGMA table_info(workspaces)").all() as {
+        name?: string;
+      }[];
+      const workspaceColumnNames = workspaceColumns.map((c) => c.name).filter(Boolean);
+      if (!workspaceColumnNames.includes("env_json")) {
+        db.exec("ALTER TABLE workspaces ADD COLUMN env_json TEXT");
+      }
+      if (!workspaceColumnNames.includes("env_file")) {
+        db.exec("ALTER TABLE workspaces ADD COLUMN env_file TEXT");
+      }
+
+      // Спринт 25: partial вынесен из error, чтобы дашборд не смешивал
+      // частичные выполнения с ошибками и таймаутами.
+      const metricsColumns = db.prepare("PRAGMA table_info(metrics)").all() as {
+        name?: string;
+      }[];
+      const metricsColumnNames = metricsColumns.map((c) => c.name).filter(Boolean);
+      if (!metricsColumnNames.includes("partial")) {
+        db.exec("ALTER TABLE metrics ADD COLUMN partial INTEGER DEFAULT 0");
+      }
+    },
+  },
+];
+
+/**
  * Применяет схему к открытому соединению.
  *
  * CREATE TABLE IF NOT EXISTS не добавляет новые колонки в уже существующие
- * таблицы, поэтому history.workspace_id добавляется отдельным ALTER TABLE
+ * таблицы, поэтому структурные изменения идут отдельными ступенями миграции
  * после проверки PRAGMA table_info. Это безопасно и для старых БД Спринта 12.
+ *
+ * После успешных миграций версия фиксируется в `PRAGMA user_version`, чтобы
+ * будущие ступени могли выполняться инкрементально, а не перебирать колонки.
  */
 export function applySchema(db: SchemaDb): void {
   db.exec(SCHEMA_SQL);
 
-  const columns = db.prepare("PRAGMA table_info(history)").all() as Array<{
-    name?: string;
-  }>;
-  const columnNames = columns.map((c) => c.name).filter(Boolean);
-  if (!columnNames.includes("workspace_id")) {
-    db.exec("ALTER TABLE history ADD COLUMN workspace_id TEXT");
-  }
-  if (!columnNames.includes("allowed_tools")) {
-    db.exec("ALTER TABLE history ADD COLUMN allowed_tools TEXT");
-  }
-  if (!columnNames.includes("denied_tools")) {
-    db.exec("ALTER TABLE history ADD COLUMN denied_tools TEXT");
+  const fromVersion = getSchemaVersion(db);
+  for (const step of MIGRATIONS) {
+    if (fromVersion < step.to) {
+      step.migrate(db);
+    }
   }
 
-  // Спринт 15: флаги matrix на tasks (клоны и родитель-шаблон).
-  const taskColumns = db.prepare("PRAGMA table_info(tasks)").all() as Array<{
-    name?: string;
-  }>;
-  const taskColumnNames = taskColumns.map((c) => c.name).filter(Boolean);
-  if (!taskColumnNames.includes("matrix_parent_id")) {
-    db.exec("ALTER TABLE tasks ADD COLUMN matrix_parent_id TEXT");
-  }
-  if (!taskColumnNames.includes("is_matrix_parent")) {
-    db.exec("ALTER TABLE tasks ADD COLUMN is_matrix_parent INTEGER DEFAULT 0");
-  }
-
-  // Спринт 21: env-переменные на workspace (пары ключ-значение и .env-файл).
-  const workspaceColumns = db.prepare("PRAGMA table_info(workspaces)").all() as Array<{
-    name?: string;
-  }>;
-  const workspaceColumnNames = workspaceColumns.map((c) => c.name).filter(Boolean);
-  if (!workspaceColumnNames.includes("env_json")) {
-    db.exec("ALTER TABLE workspaces ADD COLUMN env_json TEXT");
-  }
-  if (!workspaceColumnNames.includes("env_file")) {
-    db.exec("ALTER TABLE workspaces ADD COLUMN env_file TEXT");
-  }
-
-  // Спринт 25: partial вынесен из error, чтобы дашборд не смешивал
-  // частичные выполнения с ошибками и таймаутами.
-  const metricsColumns = db.prepare("PRAGMA table_info(metrics)").all() as Array<{
-    name?: string;
-  }>;
-  const metricsColumnNames = metricsColumns.map((c) => c.name).filter(Boolean);
-  if (!metricsColumnNames.includes("partial")) {
-    db.exec("ALTER TABLE metrics ADD COLUMN partial INTEGER DEFAULT 0");
+  if (fromVersion !== SCHEMA_VERSION) {
+    // PRAGMA не принимает параметры — подставляем проверенное число.
+    db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
   }
 }

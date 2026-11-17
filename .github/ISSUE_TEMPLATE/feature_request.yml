@@ -1,0 +1,49 @@
+name: Feature request
+description: Предложить улучшение agent-steward
+title: "[feat] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Какую проблему решает
+      description: Опишите сценарий и текущее ограничение.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Предлагаемое решение
+      description: Как это должно выглядеть с точки зрения пользователя?
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Альтернативы
+      description: Какие обходные пути или другие варианты вы рассматривали?
+    validations:
+      required: false
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Платформа
+      multiple: true
+      options:
+        - Windows
+        - macOS
+        - Linux
+        - Все платформы
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Чек-лист
+      options:
+        - label: Я поискал похожие запросы в issues
+          required: true

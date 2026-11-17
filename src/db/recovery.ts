@@ -15,7 +15,7 @@ export function recoverInterruptedRuns(): number {
   const count = recoverInterrupted();
   if (count > 0) {
     console.log(
-      `[recovery] Восстановлено ${count} незавершённых записей истории — помечены как error.`
+      `[recovery] Восстановлено ${count} незавершённых записей истории — помечены как error.`,
     );
   }
   return count;
@@ -33,14 +33,14 @@ export function checkJsonBackups(): boolean {
       } catch {
         return false;
       }
-    }
+    },
   );
 
   if (backups.length === 0) return false;
   if (!isDatabaseEmpty()) return false;
 
   console.warn(
-    "[recovery] Обнаружены бэкапы JSON, БД пуста. Запустите миграцию заново."
+    "[recovery] Обнаружены бэкапы JSON, БД пуста. Запустите миграцию заново.",
   );
   return true;
 }

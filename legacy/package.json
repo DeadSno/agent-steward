@@ -23,11 +23,13 @@
   "type": "module",
   "exports": {
     ".": "./index.js",
-    "./tui": "./index.js",
-    "./gui-experimental": "./index.js"
+    "./tui": "./tui.js",
+    "./gui-experimental": "./gui-experimental.cjs"
   },
   "files": [
     "index.js",
+    "tui.js",
+    "gui-experimental.cjs",
     "README.md"
   ],
   "engines": {
@@ -37,6 +39,6 @@
     "access": "public"
   },
   "dependencies": {
-    "agent-steward": "^1.5.6"
+    "agent-steward": "^0.0.2"
   }
 }

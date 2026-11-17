@@ -72,11 +72,11 @@ export class LockManager {
             continue;
           }
           await fs.rm(stalePath, { recursive: true, force: true }).catch(() => {});
-          // eslint-disable-next-line no-console
+
           console.log(
-            `[windows-scheduler] Вытеснен зависший lock: ${file} (возраст ${Math.round(
-              age / 1000
-            )} с)`
+            `[agent-steward] Вытеснен зависший lock: ${file} (возраст ${Math.round(
+              age / 1000,
+            )} с)`,
           );
         }
       } catch {
@@ -142,13 +142,13 @@ export class LockManager {
 export async function withLock<T>(
   lockManager: LockManager,
   taskName: string,
-  fn: () => Promise<T>
+  fn: () => Promise<T>,
 ): Promise<T | null> {
   const acquired = await lockManager.acquire(taskName);
   if (!acquired) {
-    // eslint-disable-next-line no-console
+
     console.log(
-      `[windows-scheduler] Запуск задачи "${taskName}" пропущен: удерживается активная блокировка.`
+      `[agent-steward] Запуск задачи "${taskName}" пропущен: удерживается активная блокировка.`,
     );
     return null;
   }
@@ -171,7 +171,7 @@ export async function withLockWait<T>(
   lockManager: LockManager,
   taskName: string,
   fn: () => Promise<T>,
-  options: { timeoutMs?: number; retryDelayMs?: number; staleMs?: number } = {}
+  options: { timeoutMs?: number; retryDelayMs?: number; staleMs?: number } = {},
 ): Promise<T> {
   const timeoutMs = options.timeoutMs ?? 15000;
   const retryDelayMs = options.retryDelayMs ?? 50;
@@ -205,7 +205,7 @@ export async function withLockWait<T>(
 
     if (Date.now() >= deadline) {
       throw new Error(
-        `Не удалось получить блокировку "${taskName}" за ${timeoutMs} мс.`
+        `Не удалось получить блокировку "${taskName}" за ${timeoutMs} мс.`,
       );
     }
     await new Promise((resolve) => setTimeout(resolve, retryDelayMs));

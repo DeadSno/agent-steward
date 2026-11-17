@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { PLUGIN_DIR, sanitizeName } from "./types.js";
+import { PLUGIN_DIR, sanitizeName, TASK_FOLDER_NAME, LEGACY_TASK_FOLDER_NAME } from "./types.js";
 import type { ScheduledTaskInfo } from "./types.js";
 import {
   listTasks,
@@ -227,7 +227,8 @@ export interface TaskDefinition {
   createdAt?: string;
 }
 
-const PREFIX = "\\OpenCode\\windows-scheduler\\";
+const PREFIX = `\\OpenCode\\${TASK_FOLDER_NAME}\\`;
+const LEGACY_PREFIX = `\\OpenCode\\${LEGACY_TASK_FOLDER_NAME}\\`;
 
 /** Приоритет по умолчанию — «Обычный». */
 export const DEFAULT_PRIORITY = 5;
@@ -270,9 +271,11 @@ export async function removeTaskDefinition(name: string): Promise<void> {
   deleteTask(name);
 }
 
-/** Убирает префикс папки плагина из полного имени задачи. */
+/** Убирает префикс папки плагина из полного имени задачи (новый или старый). */
 export function stripTaskPrefix(fullName: string): string {
-  return fullName.startsWith(PREFIX) ? fullName.slice(PREFIX.length) : fullName;
+  if (fullName.startsWith(PREFIX)) return fullName.slice(PREFIX.length);
+  if (fullName.startsWith(LEGACY_PREFIX)) return fullName.slice(LEGACY_PREFIX.length);
+  return fullName;
 }
 
 /**
@@ -283,11 +286,11 @@ export function stripTaskPrefix(fullName: string): string {
  * Если расписания нет, оно останется пустым — импорт такую запись пропустит.
  */
 export async function buildExportJson(
-  tasks: ScheduledTaskInfo[]
+  tasks: ScheduledTaskInfo[],
 ): Promise<{ data: string; count: number }> {
   const definitions = await loadTaskDefinitions();
   const byName = new Map(
-    definitions.map((item) => [item.name.toLowerCase(), item])
+    definitions.map((item) => [item.name.toLowerCase(), item]),
   );
 
   const exported: TaskDefinition[] = [];
@@ -303,7 +306,7 @@ export async function buildExportJson(
         prompt = (
           await fs.readFile(
             path.join(PLUGIN_DIR, "prompts", `${sanitizeName(name)}.txt`),
-            "utf8"
+            "utf8",
           )
         ).replace(/^\uFEFF/, "");
       } catch {
@@ -351,9 +354,9 @@ export async function buildExportJson(
         : {}),
       ...(definition?.triggerType === "once"
         ? {
-            triggerType: "once" as const,
-            ...(definition.runAt ? { runAt: definition.runAt } : {}),
-          }
+          triggerType: "once" as const,
+          ...(definition.runAt ? { runAt: definition.runAt } : {}),
+        }
         : {}),
       // Спринт 24: сессии. sessionId экспортируется только для reuse; счётчик не экспортируем.
       ...(definition?.session
@@ -408,18 +411,17 @@ export async function buildExportJson(
       ...(definition?.matrixParentId
         ? { matrixParentId: definition.matrixParentId }
         : {}),
-      ...(definition?.mcpEvent &&
-      definition.mcpEvent.event &&
+      ...(definition?.mcpEvent?.event &&
       definition.mcpEvent.server
         ? {
-            mcpEvent: {
-              server: definition.mcpEvent.server,
-              event: definition.mcpEvent.event,
-              ...(definition.mcpEvent.filter
-                ? { filter: definition.mcpEvent.filter }
-                : {}),
-            },
-          }
+          mcpEvent: {
+            server: definition.mcpEvent.server,
+            event: definition.mcpEvent.event,
+            ...(definition.mcpEvent.filter
+              ? { filter: definition.mcpEvent.filter }
+              : {}),
+          },
+        }
         : {}),
     });
   }
@@ -448,7 +450,7 @@ export function parseImportJson(raw: string): ParsedImport {
     parsed = JSON.parse(raw);
   } catch (err: any) {
     throw new Error(
-      `Файл не является корректным JSON: ${err?.message ?? String(err)}`
+      `Файл не является корректным JSON: ${err?.message ?? String(err)}`,
     );
   }
 
@@ -482,12 +484,12 @@ export function parseImportJson(raw: string): ParsedImport {
       source.triggerType === "file"
         ? "file"
         : source.triggerType === "git"
-        ? "git"
-        : source.triggerType === "mcp-event"
-        ? "mcp-event"
-        : source.triggerType === "once"
-        ? "once"
-        : "cron";
+          ? "git"
+          : source.triggerType === "mcp-event"
+            ? "mcp-event"
+            : source.triggerType === "once"
+              ? "once"
+              : "cron";
     const watchPath =
       typeof source.watchPath === "string" ? source.watchPath.trim() : "";
     const rawRunAt =
@@ -504,15 +506,15 @@ export function parseImportJson(raw: string): ParsedImport {
       typeof rawMcpEvent.event === "string" &&
       rawMcpEvent.event.trim()
         ? {
-            server:
+          server:
               typeof rawMcpEvent.server === "string"
                 ? rawMcpEvent.server.trim()
                 : "",
-            event: rawMcpEvent.event.trim(),
-            ...(typeof rawMcpEvent.filter === "string" && rawMcpEvent.filter.trim()
-              ? { filter: rawMcpEvent.filter.trim() }
-              : {}),
-          }
+          event: rawMcpEvent.event.trim(),
+          ...(typeof rawMcpEvent.filter === "string" && rawMcpEvent.filter.trim()
+            ? { filter: rawMcpEvent.filter.trim() }
+            : {}),
+        }
         : undefined;
 
     // Для файлового/MCP-триггера расписание не нужно.
@@ -533,10 +535,10 @@ export function parseImportJson(raw: string): ParsedImport {
           (triggerType === "file"
             ? ", а также watchPath для файлового триггера."
             : triggerType === "mcp-event"
-            ? ", а также mcpEvent.event для MCP-триггера."
-            : triggerType === "once"
-            ? ", а также runAt или delaySeconds для one-shot."
-            : ", а также schedule.")
+              ? ", а также mcpEvent.event для MCP-триггера."
+              : triggerType === "once"
+                ? ", а также runAt или delaySeconds для one-shot."
+                : ", а также schedule."),
       );
       return;
     }
@@ -549,7 +551,7 @@ export function parseImportJson(raw: string): ParsedImport {
       });
       if (!normalized.ok) {
         errors.push(
-          `Запись ${position}${name ? ` (${name})` : ""}: ${normalized.error}`
+          `Запись ${position}${name ? ` (${name})` : ""}: ${normalized.error}`,
         );
         return;
       }
@@ -567,7 +569,7 @@ export function parseImportJson(raw: string): ParsedImport {
         session = source.session;
       } else {
         errors.push(
-          `Запись ${position}${name ? ` (${name})` : ""}: неизвестный session «${String(source.session)}» (ожидается new, reuse или last).`
+          `Запись ${position}${name ? ` (${name})` : ""}: неизвестный session «${String(source.session)}» (ожидается new, reuse или last).`,
         );
         return;
       }
@@ -578,7 +580,7 @@ export function parseImportJson(raw: string): ParsedImport {
         : undefined;
     if (sessionId && !isValidSessionId(sessionId)) {
       errors.push(
-        `Запись ${position}${name ? ` (${name})` : ""}: некорректный sessionId «${sessionId}».`
+        `Запись ${position}${name ? ` (${name})` : ""}: некорректный sessionId «${String(sessionId)}».`,
       );
       return;
     }
@@ -589,7 +591,7 @@ export function parseImportJson(raw: string): ParsedImport {
         sessionMaxRuns = Math.floor(raw);
       } else {
         errors.push(
-          `Запись ${position}${name ? ` (${name})` : ""}: sessionMaxRuns должен быть целым числом ≥ 0 (0 — без ограничения).`
+          `Запись ${position}${name ? ` (${name})` : ""}: sessionMaxRuns должен быть целым числом ≥ 0 (0 — без ограничения).`,
         );
         return;
       }
@@ -607,8 +609,8 @@ export function parseImportJson(raw: string): ParsedImport {
       typeof source.workingDirectory === "string" && source.workingDirectory.trim()
         ? source.workingDirectory.trim()
         : typeof source.workdir === "string" && source.workdir.trim()
-        ? source.workdir.trim()
-        : undefined;
+          ? source.workdir.trim()
+          : undefined;
 
     const retryCount =
       typeof source.retryCount === "number" &&
@@ -639,7 +641,7 @@ export function parseImportJson(raw: string): ParsedImport {
     // Спринт 27: git-триггер, glob-маски и временные окна.
     if (triggerType === "git" && !workspaceId && !workingDirectory) {
       errors.push(
-        `Запись ${position}${name ? ` (${name})` : ""}: для git-триггера нужна рабочая директория (workingDirectory или workspaceId).`
+        `Запись ${position}${name ? ` (${name})` : ""}: для git-триггера нужна рабочая директория (workingDirectory или workspaceId).`,
       );
       return;
     }
@@ -666,11 +668,11 @@ export function parseImportJson(raw: string): ParsedImport {
     if (rawDays) {
       const days = rawDays.filter(
         (value): value is number =>
-          typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 6
+          typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 6,
       );
       if (days.length !== rawDays.length) {
         errors.push(
-          `Запись ${position}${name ? ` (${name})` : ""}: activeDays должен содержать числа 0..6 (0 = воскресенье).`
+          `Запись ${position}${name ? ` (${name})` : ""}: activeDays должен содержать числа 0..6 (0 = воскресенье).`,
         );
         return;
       }
@@ -686,7 +688,7 @@ export function parseImportJson(raw: string): ParsedImport {
         windowPolicy = source.windowPolicy;
       } else {
         errors.push(
-          `Запись ${position}${name ? ` (${name})` : ""}: неизвестный windowPolicy «${String(source.windowPolicy)}» (ожидается skip, postpone или run).`
+          `Запись ${position}${name ? ` (${name})` : ""}: неизвестный windowPolicy «${String(source.windowPolicy)}» (ожидается skip, postpone или run).`,
         );
         return;
       }
@@ -697,7 +699,7 @@ export function parseImportJson(raw: string): ParsedImport {
     if (timezone && !isValidIanaTimeZone(timezone)) {
       errors.push(
         `Запись ${position}${name ? ` (${name})` : ""}: неизвестный часовой пояс ` +
-          `«${timezone}» (нужна IANA-зона, например Europe/Moscow).`
+          `«${timezone}» (нужна IANA-зона, например Europe/Moscow).`,
       );
     }
     const notBefore = readOptionalString(source.notBefore);
@@ -710,7 +712,7 @@ export function parseImportJson(raw: string): ParsedImport {
     if (pausedUntil && Number.isNaN(Date.parse(pausedUntil))) {
       errors.push(
         `Запись ${position}${name ? ` (${name})` : ""}: pausedUntil должен быть ` +
-          `датой в формате ISO (например 2026-12-01T09:00:00Z).`
+          "датой в формате ISO (например 2026-12-01T09:00:00Z).",
       );
     }
     // Спринт 27.5.8: бессрочная пауза импортируется вместе с задачей.
@@ -748,7 +750,7 @@ export function parseImportJson(raw: string): ParsedImport {
       if (allowedRaw === "empty") {
         errors.push(
           `Запись ${position}${name ? ` (${name})` : ""}: пустой allowedTools запрещён — ` +
-            `задайте список инструментов или уберите поле.`
+            "задайте список инструментов или уберите поле.",
         );
       } else {
         allowedTools = allowedRaw;
@@ -770,7 +772,7 @@ export function parseImportJson(raw: string): ParsedImport {
         const candidate = rawMatrix as Record<string, unknown>;
         if (workspaceId) {
           errors.push(
-            `${label}: нельзя одновременно workspaceId и matrix.workspaceIds.`
+            `${label}: нельзя одновременно workspaceId и matrix.workspaceIds.`,
           );
         } else {
           const idsRaw = candidate.workspaceIds;
@@ -805,7 +807,7 @@ export function parseImportJson(raw: string): ParsedImport {
                   candidate.concurrency < 1
                 ) {
                   errors.push(
-                    `${label}: matrix.concurrency должен быть числом не меньше 1.`
+                    `${label}: matrix.concurrency должен быть числом не меньше 1.`,
                   );
                 } else {
                   concurrency = Math.floor(candidate.concurrency);
@@ -821,19 +823,19 @@ export function parseImportJson(raw: string): ParsedImport {
                   const allowed = new Set(ids);
                   const parsedOverrides: Record<string, MatrixWorkspaceOverride> = {};
                   for (const [key, value] of Object.entries(
-                    rawOverrides as Record<string, unknown>
+                    rawOverrides as Record<string, unknown>,
                   )) {
                     const workspaceKey = key.trim();
                     if (!workspaceKey || !allowed.has(workspaceKey)) {
                       errors.push(
                         `${label}: matrix.overrides содержит workspace "${workspaceKey}", ` +
-                          `которого нет в workspaceIds.`
+                          "которого нет в workspaceIds.",
                       );
                       continue;
                     }
                     if (typeof value !== "object" || value === null || Array.isArray(value)) {
                       errors.push(
-                        `${label}: matrix.overrides["${workspaceKey}"] должен быть объектом.`
+                        `${label}: matrix.overrides["${workspaceKey}"] должен быть объектом.`,
                       );
                       continue;
                     }
@@ -876,7 +878,7 @@ export function parseImportJson(raw: string): ParsedImport {
       }
     }
     const matrixParentId = readOptionalString(
-      (source as { matrixParentId?: unknown }).matrixParentId
+      (source as { matrixParentId?: unknown }).matrixParentId,
     );
 
     // DAG-зависимости: массив непустых имён без дублей (сравнение без регистра).

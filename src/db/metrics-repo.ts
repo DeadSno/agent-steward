@@ -55,7 +55,7 @@ export function incrementMetricsUnsafe(
   taskName: string,
   status: TaskStatus,
   tokens = 0,
-  costUsd = 0
+  costUsd = 0,
 ): void {
   // error — только ошибки и таймауты; partial хранится отдельным счётчиком,
   // иначе дашборд показывал частичный запуск как обычную ошибку.
@@ -75,7 +75,7 @@ export function incrementMetricsUnsafe(
          error = error + excluded.error,
          partial = partial + excluded.partial,
          total_tokens = total_tokens + excluded.total_tokens,
-         total_cost = total_cost + excluded.total_cost`
+         total_cost = total_cost + excluded.total_cost`,
     )
     .run(taskName, success, error, partial, safeTokens, safeCost);
 }
@@ -85,7 +85,7 @@ export function incrementMetrics(
   taskName: string,
   status: TaskStatus,
   tokens?: number,
-  costUsd?: number
+  costUsd?: number,
 ): void {
   incrementMetricsUnsafe(taskName, status, tokens, costUsd);
 }
@@ -94,7 +94,7 @@ export function incrementMetrics(
 export function getMetrics(taskName: string): TaskMetricsRow {
   const row = getDb()
     .prepare("SELECT * FROM metrics WHERE lower(task_name) = lower(?) LIMIT 1")
-    .get(taskName) as any;
+    .get(taskName);
   if (!row) {
     return { taskName, total: 0, success: 0, error: 0, partial: 0, tokens: 0, costUsd: 0 };
   }
@@ -105,7 +105,7 @@ export function getMetrics(taskName: string): TaskMetricsRow {
 export function getAllMetrics(includeInternal = false): TaskMetricsRow[] {
   const rows = getDb()
     .prepare("SELECT * FROM metrics ORDER BY task_name COLLATE NOCASE ASC")
-    .all() as any[];
+    .all();
   return rows.map(rowToMetrics).filter((row) => includeInternal || !isInternal(row.taskName));
 }
 
@@ -120,9 +120,9 @@ export function getTotals(): MetricsTotals {
          COALESCE(SUM(partial), 0) AS partial,
          COALESCE(SUM(total_tokens), 0) AS tokens,
          COALESCE(SUM(total_cost), 0) AS cost_usd
-       FROM metrics`
+       FROM metrics`,
     )
-    .get() as any;
+    .get();
   return {
     total: Number(row?.total) || 0,
     success: Number(row?.success) || 0,
@@ -150,7 +150,7 @@ export function upsertMetricsRow(row: TaskMetricsRow): void {
          error = excluded.error,
          partial = excluded.partial,
          total_tokens = excluded.total_tokens,
-         total_cost = excluded.total_cost`
+         total_cost = excluded.total_cost`,
     )
     .run(
       row.taskName,
@@ -159,12 +159,12 @@ export function upsertMetricsRow(row: TaskMetricsRow): void {
       Math.max(0, Math.floor(row.error)),
       Math.max(0, Math.floor(row.partial)),
       Math.max(0, Math.floor(row.tokens)),
-      Math.max(0, row.costUsd)
+      Math.max(0, row.costUsd),
     );
 }
 
 /** Количество строк метрик. */
 export function countMetrics(): number {
-  const row = getDb().prepare("SELECT COUNT(*) AS count FROM metrics").get() as any;
+  const row = getDb().prepare("SELECT COUNT(*) AS count FROM metrics").get();
   return Number(row?.count) || 0;
 }

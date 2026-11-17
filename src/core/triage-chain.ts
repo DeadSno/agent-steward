@@ -33,7 +33,7 @@ const NOTIFY: TriageAction = "notify";
 function ruleDecision(
   input: TriageInput,
   settings: TriageSettings,
-  source: TriageSource
+  source: TriageSource,
 ): TriageDecision {
   const result = evaluateTriageRules(input, settings.rules);
   return {
@@ -62,7 +62,7 @@ function ruleDecision(
 export async function decideTriage(
   input: TriageInput,
   settings: TriageSettings | undefined,
-  options: TriageOptions = {}
+  options: TriageOptions = {},
 ): Promise<TriageDecision> {
   if (!settings || settings.mode === "off") {
     return { action: NOTIFY, source: "off", attempts: 0, latencyMs: 0 };
@@ -115,9 +115,9 @@ export async function decideTriage(
 export function recordShadow(
   input: TriageInput,
   decision: TriageDecision,
-  shadow: TriageSettings["shadow"] | undefined
+  shadow: TriageSettings["shadow"] | undefined,
 ): void {
-  if (!shadow || !shadow.enabled) return;
+  if (!shadow?.enabled) return;
   recordTriageOutcome(input, decision, {
     shadowActive: isShadowActive(shadow),
     suppressed: false,

@@ -53,7 +53,7 @@ function metric(
   name: string,
   type: "counter" | "gauge" | "histogram",
   help: string,
-  samples: Array<{ labels?: Record<string, string | number>; value: number }>
+  samples: { labels?: Record<string, string | number>; value: number }[],
 ): void {
   lines.push(`# HELP ${name} ${help}`);
   lines.push(`# TYPE ${name} ${type}`);
@@ -115,20 +115,20 @@ export function renderPrometheusMetrics(): string {
     "opencode_scheduler_queue_depth",
     "gauge",
     "Количество незавершённых запусков (глубина очереди).",
-    [{ value: queueDepth }]
+    [{ value: queueDepth }],
   );
   metric(
     lines,
     "opencode_scheduler_history_records",
     "gauge",
     "Количество записей в истории запусков.",
-    [{ value: historyRecords }]
+    [{ value: historyRecords }],
   );
 
-  const runSamples: Array<{ labels: Record<string, string | number>; value: number }> = [];
-  const errorSamples: Array<{ labels: Record<string, string | number>; value: number }> = [];
-  const tokenSamples: Array<{ labels: Record<string, string | number>; value: number }> = [];
-  const costSamples: Array<{ labels: Record<string, string | number>; value: number }> = [];
+  const runSamples: { labels: Record<string, string | number>; value: number }[] = [];
+  const errorSamples: { labels: Record<string, string | number>; value: number }[] = [];
+  const tokenSamples: { labels: Record<string, string | number>; value: number }[] = [];
+  const costSamples: { labels: Record<string, string | number>; value: number }[] = [];
   for (const row of metrics) {
     runSamples.push({
       labels: { task: row.taskName, status: "success" },
@@ -151,32 +151,32 @@ export function renderPrometheusMetrics(): string {
     "opencode_scheduler_runs_total",
     "counter",
     "Количество завершённых запусков по задачам и статусам.",
-    runSamples
+    runSamples,
   );
   metric(
     lines,
     "opencode_scheduler_errors_total",
     "counter",
     "Количество ошибок и таймаутов по задачам (partial не входит).",
-    errorSamples
+    errorSamples,
   );
   metric(
     lines,
     "opencode_scheduler_tokens_total",
     "counter",
     "Суммарное количество токенов по задачам.",
-    tokenSamples
+    tokenSamples,
   );
   metric(
     lines,
     "opencode_scheduler_cost_usd_total",
     "counter",
     "Суммарная стоимость запусков в USD по задачам.",
-    costSamples
+    costSamples,
   );
 
   lines.push(
-    "# HELP opencode_scheduler_run_duration_seconds Длительность запусков в секундах."
+    "# HELP opencode_scheduler_run_duration_seconds Длительность запусков в секундах.",
   );
   lines.push("# TYPE opencode_scheduler_run_duration_seconds histogram");
   const taskNames = Array.from(durations.keys()).sort((a, b) => a.localeCompare(b));
@@ -189,19 +189,19 @@ export function renderPrometheusMetrics(): string {
         `opencode_scheduler_run_duration_seconds_bucket${labels({
           task,
           le: DURATION_BUCKETS_SECONDS[i],
-        })} ${cumulative}`
+        })} ${cumulative}`,
       );
     }
     lines.push(
-      `opencode_scheduler_run_duration_seconds_bucket${labels({ task, le: "+Inf" })} ${stats.count}`
+      `opencode_scheduler_run_duration_seconds_bucket${labels({ task, le: "+Inf" })} ${stats.count}`,
     );
     lines.push(
       `opencode_scheduler_run_duration_seconds_sum${labels({ task })} ${formatNumber(
-        stats.sumSeconds
-      )}`
+        stats.sumSeconds,
+      )}`,
     );
     lines.push(
-      `opencode_scheduler_run_duration_seconds_count${labels({ task })} ${stats.count}`
+      `opencode_scheduler_run_duration_seconds_count${labels({ task })} ${stats.count}`,
     );
   }
   if (taskNames.length === 0) {

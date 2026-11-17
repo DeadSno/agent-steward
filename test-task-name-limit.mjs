@@ -1,6 +1,6 @@
 // T-04: лимит имени задачи считается динамически от TASK_FOLDER_NAME,
-// а не жёстко 209. Для default профиля префикс \OpenCode\windows-scheduler\
-// = 29 символов → максимум 237 - 29 = 208.
+// а не жёстко 213. Для default профиля префикс \OpenCode\agent-steward\
+// = 24 символа (1+8+1+14+1) → максимум 237 - 24 = 213.
 //
 // Запуск: node test-task-name-limit.mjs (после npm run build).
 import { strict as assert } from "node:assert";

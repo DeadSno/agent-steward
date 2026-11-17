@@ -1,10 +1,10 @@
-import { getSchedulerBackend } from "../core/scheduler/index.js"
-import { latestHistoryByTask, loadHistory, type HistoryRecord } from "../history.js"
+import { getSchedulerBackend } from "../core/scheduler/index.js";
+import { latestHistoryByTask, loadHistory, type HistoryRecord } from "../history.js";
 import {
   loadTaskDefinitions,
   type TaskDefinition,
-} from "../task-transfer.js"
-import type { ScheduledTaskInfo } from "../types.js"
+} from "../task-transfer.js";
+import type { ScheduledTaskInfo } from "../types.js";
 
 export type JobStatus = "running" | "success" | "error" | "partial" | "idle" | "unknown"
 
@@ -34,39 +34,39 @@ export interface JobDisplayRow {
  * чтобы задача не исчезла из панели.
  */
 export function groupJobsForDisplay(jobs: readonly JobView[]): JobDisplayRow[] {
-  const byName = new Map<string, JobView[]>()
+  const byName = new Map<string, JobView[]>();
   for (const job of jobs) {
-    const key = job.name.toLowerCase()
-    const list = byName.get(key) ?? []
-    list.push(job)
-    byName.set(key, list)
+    const key = job.name.toLowerCase();
+    const list = byName.get(key) ?? [];
+    list.push(job);
+    byName.set(key, list);
   }
 
-  const children = new Map<string, JobView[]>()
-  const roots: JobView[] = []
+  const children = new Map<string, JobView[]>();
+  const roots: JobView[] = [];
   for (const job of jobs) {
-    const parent = job.matrixParentId?.trim().toLowerCase()
+    const parent = job.matrixParentId?.trim().toLowerCase();
     if (parent && byName.has(parent) && parent !== job.name.toLowerCase()) {
-      const list = children.get(parent) ?? []
-      list.push(job)
-      children.set(parent, list)
+      const list = children.get(parent) ?? [];
+      list.push(job);
+      children.set(parent, list);
     } else {
-      roots.push(job)
+      roots.push(job);
     }
   }
 
-  const byNameAsc = (a: JobView, b: JobView) => a.name.localeCompare(b.name)
-  roots.sort(byNameAsc)
-  for (const list of children.values()) list.sort(byNameAsc)
+  const byNameAsc = (a: JobView, b: JobView) => a.name.localeCompare(b.name);
+  roots.sort(byNameAsc);
+  for (const list of children.values()) list.sort(byNameAsc);
 
-  const rows: JobDisplayRow[] = []
+  const rows: JobDisplayRow[] = [];
   for (const root of roots) {
-    rows.push({ job: root, depth: 0 })
+    rows.push({ job: root, depth: 0 });
     for (const child of children.get(root.name.toLowerCase()) ?? []) {
-      rows.push({ job: child, depth: 1 })
+      rows.push({ job: child, depth: 1 });
     }
   }
-  return rows
+  return rows;
 }
 
 /**
@@ -76,15 +76,15 @@ export function groupJobsForDisplay(jobs: readonly JobView[]): JobDisplayRow[] {
 export function nextJobSelection(
   rows: readonly JobDisplayRow[],
   currentName: string | undefined,
-  delta: number
+  delta: number,
 ): string | undefined {
-  if (rows.length === 0) return undefined
-  const current = currentName?.trim().toLowerCase()
-  let index = rows.findIndex((row) => row.job.name.toLowerCase() === current)
-  if (index === -1) index = delta > 0 ? -1 : 0
-  const step = delta === 0 ? 1 : delta
-  index = ((index + step) % rows.length + rows.length) % rows.length
-  return rows[index]?.job.name
+  if (rows.length === 0) return undefined;
+  const current = currentName?.trim().toLowerCase();
+  let index = rows.findIndex((row) => row.job.name.toLowerCase() === current);
+  if (index === -1) index = delta > 0 ? -1 : 0;
+  const step = delta === 0 ? 1 : delta;
+  index = ((index + step) % rows.length + rows.length) % rows.length;
+  return rows[index]?.job.name;
 }
 
 /**
@@ -94,13 +94,13 @@ export function nextJobSelection(
 export function formatJobLog(
   logs: string | undefined,
   error: string | undefined,
-  maxLines = 40
+  maxLines = 40,
 ): string {
-  const source = logs?.trim() ? logs : error?.trim()
-  if (!source) return "Лог пуст."
-  const limit = Math.max(1, Math.min(Math.floor(maxLines), 200))
-  const lines = source.replace(/\r\n/g, "\n").split("\n")
-  return lines.slice(-limit).join("\n")
+  const source = logs?.trim() ? logs : error?.trim();
+  if (!source) return "Лог пуст.";
+  const limit = Math.max(1, Math.min(Math.floor(maxLines), 200));
+  const lines = source.replace(/\r\n/g, "\n").split("\n");
+  return lines.slice(-limit).join("\n");
 }
 
 /**
@@ -110,26 +110,26 @@ export function formatJobLog(
 export function statusIcon(status: JobStatus): string {
   switch (status) {
     case "running":
-      return "●"
+      return "●";
     case "error":
-      return "✗"
+      return "✗";
     case "success":
-      return "✓"
+      return "✓";
     case "partial":
-      return "◐"
+      return "◐";
     case "idle":
       // Задача создана, но ещё ни разу не запускалась.
-      return "○"
+      return "○";
     default:
-      return "?"
+      return "?";
   }
 }
 
 /** Переводит запись истории в статус панели (timeout считаем ошибкой). */
 function historyStatus(record: HistoryRecord | undefined): JobStatus {
-  if (!record) return "idle"
-  if (record.status === "timeout") return "error"
-  return record.status
+  if (!record) return "idle";
+  if (record.status === "timeout") return "error";
+  return record.status;
 }
 
 /**
@@ -140,17 +140,17 @@ function historyStatus(record: HistoryRecord | undefined): JobStatus {
 export function buildJobsView(
   tasks: readonly ScheduledTaskInfo[],
   history: readonly HistoryRecord[],
-  definitions: readonly TaskDefinition[]
+  definitions: readonly TaskDefinition[],
 ): JobView[] {
-  const latest = latestHistoryByTask(history)
+  const latest = latestHistoryByTask(history);
   const defs = new Map(
-    definitions.map((definition) => [definition.name.toLowerCase(), definition])
-  )
+    definitions.map((definition) => [definition.name.toLowerCase(), definition]),
+  );
   return tasks.map((task) => {
-    const name = task.taskName
-    const record = latest.get(name.toLowerCase())
-    const definition = defs.get(name.toLowerCase())
-    const matrixParentId = definition?.matrixParentId?.trim()
+    const name = task.taskName;
+    const record = latest.get(name.toLowerCase());
+    const definition = defs.get(name.toLowerCase());
+    const matrixParentId = definition?.matrixParentId?.trim();
     return {
       name,
       status: historyStatus(record),
@@ -161,8 +161,8 @@ export function buildJobsView(
       ...(definition?.matrix || definition?.isMatrixParent
         ? { isMatrixParent: true }
         : {}),
-    }
-  })
+    };
+  });
 }
 
 /**
@@ -175,14 +175,14 @@ export function buildJobsView(
  */
 export async function getJobsView(_context: unknown): Promise<JobView[]> {
   try {
-    const backend = getSchedulerBackend()
+    const backend = getSchedulerBackend();
     const [tasks, history, definitions] = await Promise.all([
       backend.listTasks(),
       loadHistory(),
       loadTaskDefinitions(),
-    ])
-    return buildJobsView(tasks, history, definitions)
+    ]);
+    return buildJobsView(tasks, history, definitions);
   } catch {
-    return []
+    return [];
   }
 }

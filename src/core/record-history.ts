@@ -41,24 +41,24 @@ export interface UsageInfo {
   costUsd?: number;
 }
 
-const USAGE_PREFIX = '^\\s*(?:\\[.*?\\]\\s*)?';
+const USAGE_PREFIX = "^\\s*(?:\\[.*?\\]\\s*)?";
 const TOKEN_PATTERNS: RegExp[] = [
-  new RegExp(USAGE_PREFIX + '(?:tokens?|token\\s+usage|usage)\\s*[:=]\\s*([0-9][0-9.,]*)\\s*([kKmM])?\\b', 'i'),
-  new RegExp(USAGE_PREFIX + '(?:input|output|total)\\s+tokens?\\s*[:=]?\\s*([0-9][0-9.,]*)\\s*([kKmM])?\\b', 'i'),
+  new RegExp(USAGE_PREFIX + "(?:tokens?|token\\s+usage|usage)\\s*[:=]\\s*([0-9][0-9.,]*)\\s*([kKmM])?\\b", "i"),
+  new RegExp(USAGE_PREFIX + "(?:input|output|total)\\s+tokens?\\s*[:=]?\\s*([0-9][0-9.,]*)\\s*([kKmM])?\\b", "i"),
 ];
 const COST_PATTERNS: RegExp[] = [
-  new RegExp(USAGE_PREFIX + '(?:cost|total\\s+cost)\\s*[:=]?\\s*\\$\\s*([0-9]+(?:[.,][0-9]+)?)', 'i'),
-  new RegExp(USAGE_PREFIX + '(?:cost|total\\s+cost)\\s*[:=]\\s*([0-9]+(?:[.,][0-9]+)?)\\s*(?:usd|\\$)', 'i'),
+  new RegExp(USAGE_PREFIX + "(?:cost|total\\s+cost)\\s*[:=]?\\s*\\$\\s*([0-9]+(?:[.,][0-9]+)?)", "i"),
+  new RegExp(USAGE_PREFIX + "(?:cost|total\\s+cost)\\s*[:=]\\s*([0-9]+(?:[.,][0-9]+)?)\\s*(?:usd|\\$)", "i"),
 ];
 
 function parseUsageValue(raw: string, suffix?: string): number | undefined {
-  const value = parseFloat(raw.replace(',', '.'));
+  const value = parseFloat(raw.replace(",", "."));
   if (!Number.isFinite(value)) return undefined;
   let mult = 1;
   if (suffix) {
     const s = suffix.toLowerCase();
-    if (s === 'k') mult = 1000;
-    else if (s === 'm') mult = 1000000;
+    if (s === "k") mult = 1000;
+    else if (s === "m") mult = 1000000;
   }
   return Math.round(value * mult);
 }
@@ -94,7 +94,7 @@ export function parseUsageFromLog(logFile: string): UsageInfo {
       for (const pattern of COST_PATTERNS) {
         const m = text.match(pattern);
         if (m) {
-          result.costUsd = parseFloat(m[1].replace(',', '.'));
+          result.costUsd = parseFloat(m[1].replace(",", "."));
           break;
         }
       }
@@ -128,9 +128,9 @@ async function triggerTask(taskName: string): Promise<boolean> {
     return true;
   } catch (err: any) {
     console.error(
-      `[windows-scheduler] Не удалось запустить задачу цепочки "${taskName}": ${
+      `[agent-steward] Не удалось запустить задачу цепочки "${taskName}": ${
         err instanceof Error ? err.message : String(err)
-      }`
+      }`,
     );
     return false;
   }
@@ -177,7 +177,7 @@ async function scheduleRetry(taskName: string): Promise<boolean> {
 
     if (remaining <= 0) {
       await clearRetryState(taskName);
-      console.log(`[windows-scheduler] Повторы для "${taskName}" исчерпаны.`);
+      console.log(`[agent-steward] Повторы для "${taskName}" исчерпаны.`);
       return false;
     }
 
@@ -197,15 +197,15 @@ async function scheduleRetry(taskName: string): Promise<boolean> {
     child.unref();
 
     console.log(
-      `[windows-scheduler] Задача "${taskName}" будет повторена через ${delay} с ` +
-        `(осталось повторов: ${remaining - 1}).`
+      `[agent-steward] Задача "${taskName}" будет повторена через ${delay} с ` +
+        `(осталось повторов: ${remaining - 1}).`,
     );
     return true;
   } catch (err: any) {
     console.error(
-      `[windows-scheduler] Не удалось запланировать повтор "${taskName}": ${
+      `[agent-steward] Не удалось запланировать повтор "${taskName}": ${
         err instanceof Error ? err.message : String(err)
-      }`
+      }`,
     );
     return false;
   }
@@ -222,12 +222,12 @@ async function runRetry(taskName: string, delaySec: number): Promise<void> {
 
   try {
     await createSchedulerBackend().runTask(taskName);
-    console.log(`[windows-scheduler] Повторный запуск задачи "${taskName}".`);
+    console.log(`[agent-steward] Повторный запуск задачи "${taskName}".`);
   } catch (err: any) {
     console.error(
-      `[windows-scheduler] Повторный запуск "${taskName}" не удался: ${
+      `[agent-steward] Повторный запуск "${taskName}" не удался: ${
         err instanceof Error ? err.message : String(err)
-      }`
+      }`,
     );
   }
 }
@@ -245,7 +245,7 @@ async function runRetry(taskName: string, delaySec: number): Promise<void> {
 export function selectDependentsToTrigger(
   completedTask: string,
   definitions: TaskDefinition[],
-  history: HistoryRecord[]
+  history: HistoryRecord[],
 ): string[] {
   const key = (value: string) => value.trim().toLowerCase();
 
@@ -278,9 +278,9 @@ export function selectDependentsToTrigger(
       const depDefinition = defsByKey.get(key(dep));
       const clones = depDefinition?.matrix
         ? definitions.filter(
-            (item) =>
-              item.matrixParentId && key(item.matrixParentId) === key(dep)
-          )
+          (item) =>
+            item.matrixParentId && key(item.matrixParentId) === key(dep),
+        )
         : [];
       const requiredNames = clones.length > 0 ? clones.map((c) => c.name) : [dep];
 
@@ -318,7 +318,7 @@ export function selectDependentsToTrigger(
     priorityByTask.set(key(definition.name), Number(definition.priority) || 5);
   }
   return toTrigger.sort(
-    (a, b) => (priorityByTask.get(key(b)) ?? 5) - (priorityByTask.get(key(a)) ?? 5)
+    (a, b) => (priorityByTask.get(key(b)) ?? 5) - (priorityByTask.get(key(a)) ?? 5),
   );
 }
 
@@ -352,7 +352,7 @@ async function main() {
     return Number.isFinite(num) && num > 0 ? num : undefined;
   };
   const parseHookStatus = (
-    value?: string
+    value?: string,
   ): "success" | "error" | "skipped" | undefined => {
     if (!value || value === "-") return undefined;
     if (value === "success" || value === "error" || value === "skipped") return value;
@@ -375,7 +375,7 @@ async function main() {
       startedAt,
       definition?.workspaceId ?? null,
       definition?.allowedTools ?? null,
-      definition?.deniedTools ?? null
+      definition?.deniedTools ?? null,
     );
     console.log(String(runId));
     return;
@@ -433,11 +433,11 @@ async function main() {
       costResolved,
       model,
       preFlightStatus,
-      postFlightStatus
+      postFlightStatus,
     );
     if (!completed) {
       console.error(
-        `[windows-scheduler] record-history: запись #${runId} уже завершена или не найдена.`
+        `[agent-steward] record-history: запись #${runId} уже завершена или не найдена.`,
       );
       return;
     }
@@ -491,7 +491,7 @@ async function main() {
     new Date().toISOString(),
     definition?.workspaceId ?? null,
     definition?.allowedTools ?? null,
-    definition?.deniedTools ?? null
+    definition?.deniedTools ?? null,
   );
 
   await handleCompletion(taskName, st, chainTarget, error, durationMs, tokens, costUsd);
@@ -508,7 +508,7 @@ async function handleCompletion(
   error: string | null,
   durationMs: number,
   tokens?: number | null,
-  costUsd?: number | null
+  costUsd?: number | null,
 ): Promise<void> {
   // Уведомление о завершении (webhook). Ошибки отправки логируются внутри
   // и не влияют на историю, цепочки и повторы.
@@ -526,7 +526,7 @@ async function handleCompletion(
     console.log(
       `[matrix] ${taskName}: ошибка обработки матрицы: ${
         err instanceof Error ? err.message : String(err)
-      }`
+      }`,
     );
   }
 
@@ -536,7 +536,7 @@ async function handleCompletion(
     if (chainTarget) {
       const started = await triggerTask(chainTarget);
       if (started) {
-        console.log(`[windows-scheduler] Запущена следующая задача в цепочке: ${chainTarget}`);
+        console.log(`[agent-steward] Запущена следующая задача в цепочке: ${chainTarget}`);
       }
     }
 
@@ -551,15 +551,15 @@ async function handleCompletion(
         const started = await triggerTask(dependent);
         if (started) {
           console.log(
-            `[windows-scheduler] DAG: все зависимости выполнены, запущена задача "${dependent}".`
+            `[agent-steward] DAG: все зависимости выполнены, запущена задача "${dependent}".`,
           );
         }
       }
     } catch (err: any) {
       console.error(
-        `[windows-scheduler] DAG: не удалось запустить зависимые задачи: ${
+        `[agent-steward] DAG: не удалось запустить зависимые задачи: ${
           err instanceof Error ? err.message : String(err)
-        }`
+        }`,
       );
     }
   } else {
@@ -569,7 +569,7 @@ async function handleCompletion(
     if (!retryScheduled && chainTarget) {
       const started = await triggerTask(chainTarget);
       if (started) {
-        console.log(`[windows-scheduler] Запущена компенсирующая задача: ${chainTarget}`);
+        console.log(`[agent-steward] Запущена компенсирующая задача: ${chainTarget}`);
       }
     }
   }
@@ -580,9 +580,9 @@ async function handleCompletion(
     await rotateSessionIfNeeded(taskName);
   } catch (err: any) {
     console.warn(
-      `[windows-scheduler] Не удалось обновить состояние сессии "${taskName}": ${
+      `[agent-steward] Не удалось обновить состояние сессии "${taskName}": ${
         err instanceof Error ? err.message : String(err)
-      }`
+      }`,
     );
   }
 }
@@ -606,9 +606,9 @@ function isDirectInvocation(): boolean {
 if (isDirectInvocation()) {
   main().catch((err) => {
     console.error(
-      `[windows-scheduler] record-history: не удалось записать результат запуска: ${
+      `[agent-steward] record-history: не удалось записать результат запуска: ${
         err instanceof Error ? err.message : String(err)
-      }`
+      }`,
     );
     process.exit(1);
   });

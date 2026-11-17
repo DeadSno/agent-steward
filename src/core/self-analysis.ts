@@ -142,8 +142,8 @@ export function calculateHealthScore(report: AnalyticsReport): HealthScore {
   const successRateScore = totals.successRate;
   const errorRateScore = Math.max(0, 100 - (totals.error / Math.max(1, totals.total)) * 100);
   const avgDurationScore = Math.min(100, Math.max(0, 100 - (totals.avgDurationMs / 300000) * 100)); // 5 минут = 0 баллов
-  const timeoutRateScore = Math.min(100, Math.max(0, 100 - (errors.filter(e => e.message.includes('timeout')).length / Math.max(1, totals.total)) * 100));
-  const crashRecoveryRateScore = Math.min(100, Math.max(0, 100 - (errors.filter(e => e.message.includes('Прервано')).length / Math.max(1, totals.total)) * 100));
+  const timeoutRateScore = Math.min(100, Math.max(0, 100 - (errors.filter(e => e.message.includes("timeout")).length / Math.max(1, totals.total)) * 100));
+  const crashRecoveryRateScore = Math.min(100, Math.max(0, 100 - (errors.filter(e => e.message.includes("Прервано")).length / Math.max(1, totals.total)) * 100));
 
   // Взвешенная сумма
   const score = Math.round(
@@ -151,7 +151,7 @@ export function calculateHealthScore(report: AnalyticsReport): HealthScore {
     errorRateScore * 0.25 +
     avgDurationScore * 0.20 +
     timeoutRateScore * 0.10 +
-    crashRecoveryRateScore * 0.10
+    crashRecoveryRateScore * 0.10,
   );
 
   // Уровень здоровья
@@ -199,7 +199,7 @@ export function calculateHealthScore(report: AnalyticsReport): HealthScore {
 /** Обнаруживает аномалии в данных. */
 export function detectAnomalies(
   records: AnalyticsRecord[],
-  options: SelfAnalysisOptions = {}
+  options: SelfAnalysisOptions = {},
 ): Anomaly[] {
   const anomalies: Anomaly[] = [];
   const now = options.now ?? new Date();
@@ -251,8 +251,8 @@ function detectErrorSpike(records: AnalyticsRecord[], windowDays: number): Anoma
   const older = records.slice(half);
   const recent = records.slice(0, half);
 
-  const recentErrorRate = recent.filter(r => r.status === 'error').length / recent.length;
-  const olderErrorRate = older.filter(r => r.status === 'error').length / older.length;
+  const recentErrorRate = recent.filter(r => r.status === "error").length / recent.length;
+  const olderErrorRate = older.filter(r => r.status === "error").length / older.length;
 
   // Всплеск ошибок: недавний период значительно хуже старого
   if (olderErrorRate < 0.5 && recentErrorRate > olderErrorRate * 2 && recentErrorRate > 0.3) {
@@ -264,13 +264,13 @@ function detectErrorSpike(records: AnalyticsRecord[], windowDays: number): Anoma
       recommendations: [
         "Проверьте логи ошибок за последнее время",
         "Убедитесь, что Quality Gate настроен правильно",
-        "Рассмотрите добавление retryCount"
+        "Рассмотрите добавление retryCount",
       ],
       metadata: {
         recentErrorRate,
         olderErrorRate,
-        windowDays
-      }
+        windowDays,
+      },
     };
   }
   return null;
@@ -298,13 +298,13 @@ function detectDurationSpike(records: AnalyticsRecord[]): Anomaly | null {
       recommendations: [
         "Проверьте, не завис ли процесс",
         "Увеличьте timeoutSeconds если задача легитимно долгая",
-        "Рассмотрите разделение задачи на части"
+        "Рассмотрите разделение задачи на части",
       ],
       metadata: {
         recentDuration,
         medianDuration: median,
-        ratio: recentDuration / median
-      }
+        ratio: recentDuration / median,
+      },
     };
   }
   return null;
@@ -313,7 +313,7 @@ function detectDurationSpike(records: AnalyticsRecord[]): Anomaly | null {
 function detectTimeoutSpike(records: AnalyticsRecord[]): Anomaly | null {
   if (records.length < 5) return null;
 
-  const timeoutCount = records.filter(r => r.error?.includes('timeout')).length;
+  const timeoutCount = records.filter(r => r.error?.includes("timeout")).length;
   const timeoutRate = timeoutCount / records.length;
 
   if (timeoutRate > 0.2) {
@@ -325,13 +325,13 @@ function detectTimeoutSpike(records: AnalyticsRecord[]): Anomaly | null {
       recommendations: [
         "Увеличьте timeoutSeconds",
         "Упростите промпты задачи",
-        "Проверьте производительность модели"
+        "Проверьте производительность модели",
       ],
       metadata: {
         timeoutCount,
         totalRecords: records.length,
-        timeoutRate
-      }
+        timeoutRate,
+      },
     };
   }
   return null;
@@ -359,13 +359,13 @@ function detectCostSpike(records: AnalyticsRecord[]): Anomaly | null {
       recommendations: [
         "Проверьте, не используется ли более дорогая модель",
         "Оптимизируйте промпты для снижения токенов",
-        "Рассмотрите использование локальной модели"
+        "Рассмотрите использование локальной модели",
       ],
       metadata: {
         recentCost,
         medianCost: median,
-        ratio: recentCost / median
-      }
+        ratio: recentCost / median,
+      },
     };
   }
   return null;
@@ -376,8 +376,8 @@ function detectUnusualPattern(records: AnalyticsRecord[]): Anomaly | null {
 
   // Проверяем паттерн: все подряд ошибки или все подряд успехи
   const recent = records.slice(0, 5);
-  const allErrors = recent.every(r => r.status === 'error');
-  const allSuccess = recent.every(r => r.status === 'success');
+  const allErrors = recent.every(r => r.status === "error");
+  const allSuccess = recent.every(r => r.status === "success");
 
   if (allErrors) {
     return {
@@ -388,12 +388,12 @@ function detectUnusualPattern(records: AnalyticsRecord[]): Anomaly | null {
       recommendations: [
         "Проверьте, не сломалась ли зависимость",
         "Проверьте доступность внешних сервисов",
-        "Рассмотрите приостановку задачи до устранения проблемы"
+        "Рассмотрите приостановку задачи до устранения проблемы",
       ],
       metadata: {
         pattern: "consecutive_errors",
-        count: 5
-      }
+        count: 5,
+      },
     };
   }
 
@@ -401,7 +401,7 @@ function detectUnusualPattern(records: AnalyticsRecord[]): Anomaly | null {
 }
 
 function detectStalledRun(records: AnalyticsRecord[], now: Date): Anomaly | null {
-  const running = records.find(r => r.status === 'running');
+  const running = records.find(r => r.status === "running");
   if (!running) return null;
 
   const startedAt = new Date(running.startedAt);
@@ -416,13 +416,13 @@ function detectStalledRun(records: AnalyticsRecord[], now: Date): Anomaly | null
       recommendations: [
         "Проверьте, не завис ли процесс",
         "Рассмотрите принудительное завершение",
-        "Проверьте блокировки (lock file)"
+        "Проверьте блокировки (lock file)",
       ],
       metadata: {
         hoursRunning,
         startedAt: running.startedAt,
-        taskId: (running as any).id
-      }
+        taskId: (running as any).id,
+      },
     };
   }
   return null;
@@ -433,7 +433,7 @@ function detectStalledRun(records: AnalyticsRecord[], now: Date): Anomaly | null
 /** Анализирует тренды метрик. */
 export function analyzeTrends(
   records: AnalyticsRecord[],
-  options: SelfAnalysisOptions = {}
+  options: SelfAnalysisOptions = {},
 ): Trend[] {
   const trends: Trend[] = [];
   const windowDays = options.days ?? 14;
@@ -446,8 +446,8 @@ export function analyzeTrends(
   if (older.length < 3 || recent.length < 3) return trends;
 
   // 1. Тренд успешности
-  const olderSuccessRate = older.filter(r => r.status === 'success').length / older.length;
-  const recentSuccessRate = recent.filter(r => r.status === 'success').length / recent.length;
+  const olderSuccessRate = older.filter(r => r.status === "success").length / older.length;
+  const recentSuccessRate = recent.filter(r => r.status === "success").length / recent.length;
   const successChange = ((recentSuccessRate - olderSuccessRate) / Math.max(olderSuccessRate, 0.01)) * 100;
 
   trends.push({
@@ -457,8 +457,8 @@ export function analyzeTrends(
     description: `Успешность: ${Math.round(olderSuccessRate * 100)}% → ${Math.round(recentSuccessRate * 100)}%`,
     recommendations: successChange < -10 ? [
       "Проверьте, что изменилось в последнее время",
-      "Проверьте логи ошибок"
-    ] : []
+      "Проверьте логи ошибок",
+    ] : [],
   });
 
   // 2. Тренд длительности
@@ -477,8 +477,8 @@ export function analyzeTrends(
       description: `Средняя длительность: ${Math.round(olderAvgDuration / 1000)}с → ${Math.round(recentAvgDuration / 1000)}с`,
       recommendations: durationChange > 20 ? [
         "Оптимизируйте промпты",
-        "Проверьте, не увеличилась ли нагрузка"
-      ] : []
+        "Проверьте, не увеличилась ли нагрузка",
+      ] : [],
     });
   }
 
@@ -498,8 +498,8 @@ export function analyzeTrends(
       description: `Средняя стоимость: $${olderAvgCost.toFixed(4)} → $${recentAvgCost.toFixed(4)}`,
       recommendations: costChange > 20 ? [
         "Проверьте, не используется ли более дорогая модель",
-        "Оптимизируйте промпты для снижения токенов"
-      ] : []
+        "Оптимизируйте промпты для снижения токенов",
+      ] : [],
     });
   }
 
@@ -512,7 +512,7 @@ export function analyzeTrends(
 export function generateRecommendations(
   report: AnalyticsReport,
   anomalies: Anomaly[],
-  trends: Trend[]
+  trends: Trend[],
 ): Recommendation[] {
   const recommendations: Recommendation[] = [];
 
@@ -534,8 +534,8 @@ export function generateRecommendations(
         "Проверьте логи ошибок за последние 7 дней",
         "Убедитесь, что Quality Gate настроен правильно",
         "Добавьте retryCount для флакких задач",
-        "Проверьте доступность внешних сервисов"
-      ]
+        "Проверьте доступность внешних сервисов",
+      ],
     });
   }
 
@@ -544,12 +544,12 @@ export function generateRecommendations(
     if (anomaly.severity > 70) {
       recommendations.push({
         priority: Math.min(10, Math.round(anomaly.severity / 10)),
-        category: anomaly.type.includes('cost') ? "cost" : "performance",
+        category: anomaly.type.includes("cost") ? "cost" : "performance",
         title: `Устраните аномалию: ${anomaly.type}`,
         description: anomaly.description,
         expectedImpact: "Снизит нагрузку и улучшит стабильность",
         effort: "medium",
-        steps: anomaly.recommendations
+        steps: anomaly.recommendations,
       });
     }
   }
@@ -559,12 +559,12 @@ export function generateRecommendations(
     if (trend.direction === "degrading" && Math.abs(trend.changePercent) > 20) {
       recommendations.push({
         priority: 7,
-        category: trend.metric.includes('cost') ? "cost" : "performance",
+        category: trend.metric.includes("cost") ? "cost" : "performance",
         title: `Обратите внимание на тренд: ${trend.metric}`,
         description: trend.description,
         expectedImpact: "Предотвратит дальнейшее ухудшение",
         effort: "low",
-        steps: trend.recommendations
+        steps: trend.recommendations,
       });
     }
   }
@@ -582,8 +582,8 @@ export function generateRecommendations(
         "Проверьте, не используется ли более дорогая модель для простых задач",
         "Оптимизируйте промпты для снижения токенов",
         "Рассмотрите использование локальной модели для простых задач",
-        "Настройте лимиты на задачи с высокими затратами"
-      ]
+        "Настройте лимиты на задачи с высокими затратами",
+      ],
     });
   }
 
@@ -600,13 +600,13 @@ export function generateRecommendations(
         "Разбейте длинные задачи на более мелкие",
         "Упростите промпты",
         "Проверьте, не используются ли медленные модели",
-        "Увеличьте timeoutSeconds если задачи легитимно долгие"
-      ]
+        "Увеличьте timeoutSeconds если задачи легитимно долгие",
+      ],
     });
   }
 
   // Рекомендации на основе таймаутов
-  const timeoutErrors = report.errors.filter(e => e.message.includes('timeout'));
+  const timeoutErrors = report.errors.filter(e => e.message.includes("timeout"));
   if (timeoutErrors.length > 0) {
     recommendations.push({
       priority: 8,
@@ -619,13 +619,13 @@ export function generateRecommendations(
         "Увеличьте timeoutSeconds для затронутых задач",
         "Упростите промпты",
         "Проверьте производительность модели",
-        "Рассмотрите разделение сложных задач"
-      ]
+        "Рассмотрите разделение сложных задач",
+      ],
     });
   }
 
   // Рекомендации на основе крашей
-  const crashErrors = report.errors.filter(e => e.message.includes('Прервано'));
+  const crashErrors = report.errors.filter(e => e.message.includes("Прервано"));
   if (crashErrors.length > 0) {
     recommendations.push({
       priority: 7,
@@ -638,8 +638,8 @@ export function generateRecommendations(
         "Проверьте стабильность системы",
         "Проверьте, нет ли конфликтов между задачами",
         "Убедитесь, что задачи не превышают лимиты ресурсов",
-        "Рассмотрите настройку crash recovery"
-      ]
+        "Рассмотрите настройку crash recovery",
+      ],
     });
   }
 
@@ -652,7 +652,7 @@ export function generateRecommendations(
 /** Генерирует полный отчёт самоанализа. */
 export function generateSelfAnalysisReport(
   records: AnalyticsRecord[],
-  options: SelfAnalysisOptions = {}
+  options: SelfAnalysisOptions = {},
 ): SelfAnalysisReport {
   const windowDays = options.days ?? 14;
   const now = options.now ?? new Date();
@@ -662,7 +662,7 @@ export function generateSelfAnalysisReport(
     days: windowDays,
     now,
     topLimit: options.topLimit,
-    tasks: options.tasks
+    tasks: options.tasks,
   });
 
   // Health Score
@@ -691,8 +691,8 @@ export function generateSelfAnalysisReport(
     sources: {
       historyRecords: records.length,
       recordsInWindow: analyticsReport.sources.recordsInWindow,
-      tasksAnalyzed: analyticsReport.tasks.length
-    }
+      tasksAnalyzed: analyticsReport.tasks.length,
+    },
   };
 }
 
@@ -700,7 +700,7 @@ function generateSummary(
   health: HealthScore,
   anomalies: Anomaly[],
   trends: Trend[],
-  recommendations: Recommendation[]
+  recommendations: Recommendation[],
 ): string {
   const parts: string[] = [];
 
@@ -710,7 +710,7 @@ function generateSummary(
     good: "хорошее",
     fair: "удовлетворительное",
     poor: "плохое",
-    critical: "критическое"
+    critical: "критическое",
   };
   parts.push(`Здоровье системы: ${levelNames[health.level]} (${health.score}/100)`);
 
@@ -727,7 +727,7 @@ function generateSummary(
   }
 
   // Тренды
-  const degradingTrends = trends.filter(t => t.direction === 'degrading').length;
+  const degradingTrends = trends.filter(t => t.direction === "degrading").length;
   if (degradingTrends > 0) {
     parts.push(`${degradingTrends} метрик ухудшаются`);
   }

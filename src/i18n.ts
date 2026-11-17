@@ -104,7 +104,7 @@ export function isLocaleMode(value: unknown): value is LocaleMode {
  */
 export function mapAppLocale(
   value: unknown,
-  fallback: Locale = DEFAULT_LOCALE
+  fallback: Locale = DEFAULT_LOCALE,
 ): Locale {
   if (typeof value !== "string") return fallback;
   const base = value.trim().toLowerCase().split(/[-_]/)[0];
@@ -114,7 +114,7 @@ export function mapAppLocale(
 /** Приводит произвольное значение к поддерживаемой локали (с учётом BCP 47). */
 export function normalizeLocale(
   value: unknown,
-  fallback: Locale = DEFAULT_LOCALE
+  fallback: Locale = DEFAULT_LOCALE,
 ): Locale {
   return mapAppLocale(value, fallback);
 }
@@ -122,7 +122,7 @@ export function normalizeLocale(
 /** Приводит значение к режиму локали: `auto` или поддерживаемая локаль. */
 export function normalizeLocaleMode(
   value: unknown,
-  fallback: LocaleMode = DEFAULT_LOCALE
+  fallback: LocaleMode = DEFAULT_LOCALE,
 ): LocaleMode {
   if (value === LOCALE_AUTO) return LOCALE_AUTO;
   if (typeof value === "string") {
@@ -188,7 +188,7 @@ function readCatalog(locale: Locale): Record<string, string> {
       console.error(
         `[i18n] Не удалось прочитать ${file}: ${
           err instanceof Error ? err.message : String(err)
-        }`
+        }`,
       );
     }
   }
@@ -207,7 +207,7 @@ function readCatalog(locale: Locale): Record<string, string> {
  */
 export function registerCatalog(
   locale: Locale,
-  messages: Record<string, unknown>
+  messages: Record<string, unknown>,
 ): void {
   const parsed: Record<string, string> = {};
   for (const [key, value] of Object.entries(messages)) {
@@ -327,7 +327,7 @@ function renderTemplate(
   template: string,
   locale: Locale,
   params: Record<string, unknown>,
-  count?: number
+  count?: number,
 ): string {
   let out = "";
   let i = 0;
@@ -358,7 +358,7 @@ function renderTemplate(
 function renderExpression(
   body: string,
   locale: Locale,
-  params: Record<string, unknown>
+  params: Record<string, unknown>,
 ): string {
   const comma = topLevelCommaIndex(body);
   const name = (comma === -1 ? body : body.slice(0, comma)).trim();

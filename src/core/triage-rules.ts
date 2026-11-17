@@ -195,20 +195,20 @@ function conditionLabel(rule: TriageRule): string {
 /** Оценивает одно уведомление по правилам. Не бросает исключений. */
 export function evaluateTriageRules(
   input: TriageInput,
-  rules: readonly TriageRule[] | undefined = DEFAULT_TRIAGE_RULES
+  rules: readonly TriageRule[] | undefined = DEFAULT_TRIAGE_RULES,
 ): TriageRuleResult {
   const ordered = (rules ?? [])
     .map((rule, index) => ({ rule, index }))
     .sort(
       (a, b) =>
-        (b.rule.priority ?? 0) - (a.rule.priority ?? 0) || a.index - b.index
+        (b.rule.priority ?? 0) - (a.rule.priority ?? 0) || a.index - b.index,
     );
 
   for (const { rule } of ordered) {
     if (!matches(rule, input)) continue;
 
-    const category = (rule.category ?? "unknown") as TriageCategory;
-    const severity = (rule.severity ?? "medium") as TriageSeverity;
+    const category = (rule.category ?? "unknown");
+    const severity = (rule.severity ?? "medium");
     const confidence =
       typeof rule.confidence === "number" && Number.isFinite(rule.confidence)
         ? Math.min(1, Math.max(0, rule.confidence))

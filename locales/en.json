@@ -671,6 +671,7 @@
   "tool.error.matrixNoClones": "Matrix \"{name}\" has no clones.",
   "tool.error.matrixNotMatrix": "Task \"{name}\" is not a matrix.",
   "tool.error.matrixOverride": "Task \"{task}\": matrix.overrides contains workspace \"{workspace}\" that is not listed in workspaceIds.",
+  "tool.error.modelInvalid": "Invalid model \"{model}\": {error}",
   "tool.error.mcpEventRequired": "An MCP trigger requires an event name (mcpEvent.event).",
   "tool.error.onceFields": "runAt/delaySeconds are only allowed with triggerType=once.",
   "tool.error.onceMatrixSchema": "One-shot cannot be combined with matrix: a matrix is started manually only.",

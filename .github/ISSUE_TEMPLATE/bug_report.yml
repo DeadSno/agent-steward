@@ -1,0 +1,86 @@
+name: Bug report
+description: Сообщить об ошибке в agent-steward
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Спасибо за отчёт. Пожалуйста, заполните поля ниже — это ускорит диагностику.
+        Не вставляйте секреты, токены и приватные ключи.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: Что произошло
+      description: Опишите симптомы и ожидаемое поведение.
+      placeholder: "Например: дашборд показывает «RPC is unavailable: ...» при загрузке задач"
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Шаги воспроизведения
+      placeholder: |
+        1. Открыть ...
+        2. Нажать ...
+        3. Увидеть ...
+    validations:
+      required: true
+
+  - type: input
+    id: plugin-version
+    attributes:
+      label: Версия плагина
+      description: Из `package.json` или `opencode plugin list`
+      placeholder: "0.0.2"
+    validations:
+      required: true
+
+  - type: input
+    id: opencode-version
+    attributes:
+      label: Версия OpenCode
+      placeholder: "V2 2.3.0 / V1 1.19.5"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: ОС
+      options:
+        - Windows
+        - macOS
+        - Linux
+        - Другое
+    validations:
+      required: true
+
+  - type: input
+    id: node-version
+    attributes:
+      label: Версия Node.js
+      placeholder: "22.22.0 / 24.x"
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Логи и ошибки
+      description: Вывод консоли, stack trace, содержимое `history.json`/`scheduler.db` при необходимости.
+      render: shell
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Чек-лист
+      options:
+        - label: Я проверил, что использую актуальную версию плагина
+          required: true
+        - label: В отчёте нет секретов, токенов и персональных данных
+          required: true

@@ -42,7 +42,7 @@ model, the modules, the data model and the extension points.
 ```
 ┌─────────────────────────────┐
 │ OpenCode (plugin host)      │
-│  • agent tools (25)         │
+│  • agent tools (26)         │
 │  • sidebar GUI (gui.tsx)    │
 │  • RPC ↔ sidebar            │
 │  • dashboard HTTP server    │
@@ -169,7 +169,7 @@ last_10_runs`. Обучается на исходах гейта (CONCEPT §9 le
 
 | Path | Role |
 | --- | --- |
-| `src/index.ts` | Plugin lifecycle, 25 agent tools, RPC handlers, task CRUD, view assembly |
+| `src/index.ts` | Plugin lifecycle, 26 agent tools, RPC handlers, task CRUD, view assembly |
 | `src/rpc.ts` | JSON-schema contracts for every RPC method |
 | `src/gui.tsx` | OpenCode sidebar panel (SolidJS, built to `gui-experimental.cjs`) |
 | `src/server.ts` | Local web dashboard HTTP server and HTML rendering |
@@ -331,11 +331,11 @@ Everything lives under the plugin directory:
 
 | Platform | Path |
 | --- | --- |
-| Windows | `%APPDATA%\opencode\windows-scheduler` |
-| macOS/Linux | `$XDG_CONFIG_HOME/opencode/windows-scheduler` (default `~/.config/...`) |
+| Windows | `%APPDATA%\opencode\agent-steward` (legacy `windows-scheduler` переносится автоматически) |
+| macOS/Linux | `$XDG_CONFIG_HOME/opencode/agent-steward` (default `~/.config/...`) |
 
 ```
-scheduler.db      SQLite database (WAL)
+scheduler.db      SQLite database (WAL; схема версионируется через PRAGMA user_version)
 logs/             per-task run logs
 locks/            lock files
 wrappers/         generated .cmd / .sh wrappers

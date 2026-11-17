@@ -124,11 +124,11 @@ async function main(): Promise<number> {
 
   const days = daysArg
     ? normalizeActiveDays(
-        daysArg
-          .split(",")
-          .map((value) => Number(value.trim()))
-          .filter((value) => Number.isFinite(value))
-      )
+      daysArg
+        .split(",")
+        .map((value) => Number(value.trim()))
+        .filter((value) => Number.isFinite(value)),
+    )
     : undefined;
   const policy: "skip" | "postpone" | "run" =
     policyArg === "skip" || policyArg === "run" ? policyArg : "postpone";
@@ -164,7 +164,7 @@ async function main(): Promise<number> {
       console.error(
         `[schedule-gate] Невалидный cron «${cronExpr}»: ${
           err instanceof Error ? err.message : String(err)
-        } — пропускаем проверку cron.`
+        } — пропускаем проверку cron.`,
       );
     }
   }
@@ -191,7 +191,7 @@ async function main(): Promise<number> {
         // Окно закрыто, но время его открытия неизвестно (например, окно
         // выходит за горизонт поиска). Разрешать запуск в этом случае нельзя.
         console.error(
-          `[schedule-gate] ${state.reason ?? "вне окна"} — время открытия окна неизвестно, запуск пропущен.`
+          `[schedule-gate] ${state.reason ?? "вне окна"} — время открытия окна неизвестно, запуск пропущен.`,
         );
         return 3;
       }
@@ -199,7 +199,7 @@ async function main(): Promise<number> {
       if (wait <= 0) return 0;
       if (wait > MAX_POSTPONE_MS) {
         console.error(
-          `[schedule-gate] ${state.reason ?? "вне окна"} — до открытия больше 12 часов, тик пропущен.`
+          `[schedule-gate] ${state.reason ?? "вне окна"} — до открытия больше 12 часов, тик пропущен.`,
         );
         return 3;
       }
@@ -219,8 +219,8 @@ async function main(): Promise<number> {
 
       console.error(
         `[schedule-gate] ${state.reason ?? "Вне окна"} — запуск перенесён на ~${Math.round(
-          wait / 60000
-        )} мин.`
+          wait / 60000,
+        )} мин.`,
       );
       let remaining = wait;
       while (remaining > 0) {
@@ -246,8 +246,8 @@ main().then(
   (code) => process.exit(code),
   (err) => {
     console.error(
-      `[schedule-gate] Непредвиденная ошибка: ${err instanceof Error ? err.message : String(err)} — запускаем.`
+      `[schedule-gate] Непредвиденная ошибка: ${err instanceof Error ? err.message : String(err)} — запускаем.`,
     );
     process.exit(1);
-  }
+  },
 );

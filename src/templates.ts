@@ -56,7 +56,7 @@ export async function loadTemplates(): Promise<TaskTemplate[]> {
  * Если id не передан — генерируется новый. Возвращает сохранённый шаблон.
  */
 export async function saveTemplate(
-  template: Omit<TaskTemplate, "id"> & { id?: string }
+  template: Omit<TaskTemplate, "id"> & { id?: string },
 ): Promise<TaskTemplate> {
   return saveTemplateRow(template);
 }

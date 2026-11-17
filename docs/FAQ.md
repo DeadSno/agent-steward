@@ -20,8 +20,8 @@ destroy data.
 
 Recovery steps:
 
-1. Find the file in the plugin directory: `%APPDATA%\opencode\windows-scheduler\`
-   (Windows) or `~/.config/opencode/windows-scheduler/` (macOS/Linux, or
+1. Find the file in the plugin directory: `%APPDATA%\opencode\agent-steward\`
+   (Windows) or `~/.config/opencode/agent-steward/` (macOS/Linux, or
    `$XDG_CONFIG_HOME`).
 2. Open it in an editor: it is usually truncated JSON. Fix the syntax.
 3. Copy the fixed file back as `secrets.json` (keep the `.corrupt-*` copy as a

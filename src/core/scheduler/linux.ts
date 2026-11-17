@@ -2,10 +2,16 @@ import { execFile, spawn } from "node:child_process";
 import path from "node:path";
 import { promisify } from "node:util";
 import { buildAtTimestamp } from "../one-shot.js";
+import {
+  cancelAtFallback,
+  isAtMissingError,
+  isPidJobId,
+  scheduleAtFallback,
+} from "./at-fallback.js";
 import { needsPollMode } from "../schedule-v2.js";
 import { LockManager, withLockWait } from "../lock.js";
 import { getBasePluginDir, getProfileName } from "../../profiles.js";
-import { taskFolderNameForProfile } from "../../types.js";
+import { taskFolderNameForProfile, legacyTaskFolderNameForProfile } from "../../types.js";
 import { PosixSchedulerBase, shellQuote } from "./posix.js";
 import type { RegistryEntry } from "./registry.js";
 
@@ -24,18 +30,24 @@ const execFileAsync = promisify(execFile);
  */
 export class LinuxScheduler extends PosixSchedulerBase {
   readonly platform: NodeJS.Platform = "linux";
-  readonly title = "OpenCode Scheduler";
+  readonly title = "agent-steward by DeadSno";
 
   private readonly blockBegin: string;
   private readonly blockEnd: string;
+  private readonly legacyBlockBegin: string;
+  private readonly legacyBlockEnd: string;
   private readonly ownsLegacyBlock: boolean;
 
   constructor(profile: string = getProfileName()) {
     super("linux", profile);
     const folderName = taskFolderNameForProfile(profile);
+    const legacyFolderName = legacyTaskFolderNameForProfile(profile);
     this.blockBegin = `# >>> opencode-scheduler:${folderName} >>>`;
     this.blockEnd = `# <<< opencode-scheduler:${folderName} <<<`;
-    this.ownsLegacyBlock = folderName === "windows-scheduler";
+    this.legacyBlockBegin = `# >>> opencode-scheduler:${legacyFolderName} >>>`;
+    this.legacyBlockEnd = `# <<< opencode-scheduler:${legacyFolderName} <<<`;
+    // Древний бессуффиксный блок принадлежит только профилю default.
+    this.ownsLegacyBlock = profile === "default";
   }
 
   private cronLine(entry: RegistryEntry): string {
@@ -48,7 +60,11 @@ export class LinuxScheduler extends PosixSchedulerBase {
     // crontab понимает только 5-полевой cron. Расширенные выражения (L, #,
     // списки, @daily и т.п.) нельзя писать в crontab как есть — опрашиваем
     // каждую минуту, а решение о запуске принимает gate во враппере.
-    const schedule = needsPollMode(entry.schedule) ? "* * * * *" : entry.schedule;
+    // Задачи с чужой IANA-таймзоной (не системной) тоже уходят в poll-режим,
+    // иначе crontab сработает по системному времени, а не по таймзоне задачи.
+    const schedule = needsPollMode(entry.schedule, entry.timezone)
+      ? "* * * * *"
+      : entry.schedule;
     return `${schedule} ${cmd}`;
   }
 
@@ -91,9 +107,13 @@ export class LinuxScheduler extends PosixSchedulerBase {
     const legacyEnd = "# <<< opencode-scheduler <<<";
     const ownsLegacy = this.ownsLegacyBlock;
     const isBegin = (line: string) =>
-      line === this.blockBegin || (ownsLegacy && line === legacyBegin);
+      line === this.blockBegin ||
+      line === this.legacyBlockBegin ||
+      (ownsLegacy && line === legacyBegin);
     const isEnd = (line: string) =>
-      line === this.blockEnd || (ownsLegacy && line === legacyEnd);
+      line === this.blockEnd ||
+      line === this.legacyBlockEnd ||
+      (ownsLegacy && line === legacyEnd);
     const lines = content.split(/\r?\n/);
     const result: string[] = [];
     let inside = false;
@@ -135,7 +155,7 @@ export class LinuxScheduler extends PosixSchedulerBase {
     // друг друга. Кросс-процессный замок живёт в базовой директории плагина
     // (общей для всех профилей) и ждёт освобождения вместо пропуска.
     const crontabLock = new LockManager(
-      path.join(getBasePluginDir(), "locks")
+      path.join(getBasePluginDir(), "locks"),
     );
     await withLockWait(
       crontabLock,
@@ -153,7 +173,7 @@ export class LinuxScheduler extends PosixSchedulerBase {
         const next = [base, hasTasks ? block : ""].filter(Boolean).join("\n");
         await this.writeCrontab(next);
       },
-      { timeoutMs: 15000, staleMs: 60000 }
+      { timeoutMs: 15000, staleMs: 60000 },
     );
   }
 
@@ -185,24 +205,49 @@ export class LinuxScheduler extends PosixSchedulerBase {
         stderr += String(chunk);
       });
       child.on("error", (err) => {
+        // P1-7.T1.2: `at` может отсутствовать (минимальные образы, Alpine и
+        // т.п.). Не роняем задачу — планируем отвязанный bash-процесс.
+        if (isAtMissingError(err)) {
+          void scheduleAtFallback(entry, this.atCommand(entry))
+            .then((jobId) => {
+              console.warn(
+                `[agent-steward] at не найден — задача "${entry.name}" запланирована через fallback (${jobId}). ` +
+                  "Fallback не переживает перезагрузку; установите пакет at.",
+              );
+              resolve(jobId);
+            })
+            .catch((fallbackErr) => {
+              reject(
+                new Error(
+                  `Не удалось вызвать at и fallback-планировщик: ${
+                    fallbackErr instanceof Error
+                      ? fallbackErr.message
+                      : String(fallbackErr)
+                  }`,
+                ),
+              );
+            });
+          return;
+        }
         reject(
           new Error(
             `Не удалось вызвать at (установите пакет at): ${
               err instanceof Error ? err.message : String(err)
-            }`
-          )
+            }`,
+          ),
         );
       });
       child.on("close", (code) => {
         if (code !== 0) {
           reject(
             new Error(
-              `at завершился с кодом ${code}: ${stderr.trim() || stdout.trim()}`
-            )
+              `at завершился с кодом ${code}: ${stderr.trim() || stdout.trim()}`,
+            ),
           );
           return;
         }
-        const match = /job\s+(\d+)/i.exec(stdout);
+        // GNU at пишет «job N at …» в stderr, а не в stdout — ищем в обоих потоках.
+        const match = /job\s+(\d+)/i.exec(stdout + "\n" + stderr);
         if (!match) {
           reject(new Error(`at не вернул id задания: ${stdout.trim()}`));
           return;
@@ -216,6 +261,12 @@ export class LinuxScheduler extends PosixSchedulerBase {
   /** Отменяет задание at, если оно ещё существует. */
   private async cancelAt(entry: RegistryEntry): Promise<void> {
     if (!entry.atJobId) return;
+    if (isPidJobId(entry.atJobId)) {
+      // P1-7.T1.2: снимаем fallback-процесс, а не at-задание.
+      cancelAtFallback(entry.atJobId);
+      delete entry.atJobId;
+      return;
+    }
     try {
       await execFileAsync("atrm", [entry.atJobId]);
     } catch {

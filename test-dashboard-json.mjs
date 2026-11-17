@@ -137,8 +137,8 @@ scripts.forEach((code, index) => {
 
 const health = await readJsonResponse(await fetch(base + "/api/health"));
 assert(health.status === 200 && health.contentType.includes("application/json"), "GET /api/health -> 200 JSON");
-assert(health.body.ok === true && health.body.app === "opencode-windows-scheduler", "health подтверждает, что это дашборд плагина");
-assert(health.marker === "opencode-windows-scheduler", "ответ содержит маркер-заголовок x-plugin-dashboard");
+assert(health.body.ok === true && health.body.app === "agent-steward", "health подтверждает, что это дашборд плагина");
+assert(health.marker === "agent-steward", "ответ содержит маркер-заголовок x-plugin-dashboard");
 
 const tasksApi = await readJsonResponse(await fetch(base + "/api/tasks"));
 assert(tasksApi.status === 200 && Array.isArray(tasksApi.body.tasks), "GET /api/tasks -> JSON с tasks");

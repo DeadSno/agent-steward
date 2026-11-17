@@ -52,7 +52,7 @@ $appId = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\power
  */
 export function buildNativeNotificationCommand(
   platform: NodeJS.Platform,
-  message: NativeNotificationMessage
+  message: NativeNotificationMessage,
 ): NativeCommand {
   const title = (message.title ?? "OpenCode Scheduler").trim() || "OpenCode Scheduler";
   const body = String(message.body ?? "");
@@ -129,7 +129,7 @@ export interface NativeSendResult {
  */
 export async function sendNativeNotification(
   message: NativeNotificationMessage,
-  options: SendNativeOptions = {}
+  options: SendNativeOptions = {},
 ): Promise<NativeSendResult> {
   const platform = options.platform ?? process.platform;
   const command = buildNativeNotificationCommand(platform, message);

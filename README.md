@@ -49,7 +49,7 @@ Want to see it without installing OpenCode? `node scripts/demo-dashboard.mjs` st
 | Multi-repo | workspaces with path validation, per-workspace runs, matrix over one parent task |
 | Observability | SQLite history (success / error / timeout / partial / running), metrics (duration, tokens, cost), JSONL run logs with `/api/logs`, Prometheus `/metrics`, OTLP export, per-task logs, local web dashboard with 14-day analytics, history retention and CSV/JSON export |
 | Operations | dry-run preview, export/import JSON, templates, multi-channel notifications (webhook, Telegram, native OS toasts), quiet hours, digest, encrypted secrets (`${secret:NAME}`), audit log, settings |
-| Interfaces | OpenCode GUI panel, web dashboard, 25 agent tools, built-in agent skill |
+| Interfaces | OpenCode GUI panel, web dashboard, 26 agent tools, built-in agent skill |
 
 ### Language
 
@@ -141,6 +141,7 @@ The agent gets the full feature set — 26 tools covering scheduling, pipelines,
 | `matrix_control` | `action`, `name?` | Matrix results, cancel pending clones, clean up orphans, preview clones |
 | `get_metrics` | — | Aggregate runs, successes and failures |
 | `get_analytics` | `days?`, `topLimit?` | Period report: counts, success rate, duration, tokens, cost, top tasks |
+| `self_analysis` | `days?`, `topLimit?`, `includeAnomalies?` | Self-analysis report over a period: health score, anomaly detection, trends and optimisation recommendations |
 | `manage_settings` | `action`, `maxConcurrent?`, `winterMode?`, `notifications?`, `history?` | Read/update global settings (concurrency, notifications, retention) |
 | `manage_local_ai` | `action` (`get`/`update`/`test`), `mode?`, `baseUrl?`, `model?`, `timeoutMs?`, `fallback?`, `confidenceThreshold?`, `shadow?` | Read, update or test the local triage assistant; `test` sends one synthetic notification and reports latency and verdict |
 | `manage_templates` | `action`, template fields | List, save or delete reusable task templates |
@@ -238,7 +239,7 @@ Tasks are **interactive only** by default: Task Scheduler starts them only while
 npm install
 npm run build        # tsc
 npm run build:gui    # vite
-npm test             # 58 test suites, 600+ checks
+npm test             # 67 test suites, 600+ checks
 npm run test:en      # same suites with the English locale
 ```
 

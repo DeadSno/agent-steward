@@ -2,22 +2,32 @@ import path from "node:path";
 import { z } from "zod";
 import { getProfileDir, getProfileName } from "./profiles.js";
 
-/** Префикс всех задач плагина (историческое имя, сохраняется для совместимости). */
-export const TASK_PREFIX = "OpenCode\\windows-scheduler";
-
 /** Папка задач плагина в планировщике ОС (Windows). */
 export const TASK_FOLDER = "OpenCode";
 /**
  * Имя папки/блока задач. У нестандартного профиля своё пространство имён,
  * иначе профили делят одну папку Планировщика Windows и один блок crontab.
- * Для default сохраняем историческое имя (совместимость с уже созданными
- * задачами и обновлением плагина).
+ * Новое имя — agent-steward; историческое windows-scheduler поддерживается
+ * как legacy (см. legacyTaskFolderNameForProfile).
  */
 export function taskFolderNameForProfile(profile: string = getProfileName()): string {
+  return profile === "default" ? "agent-steward" : `agent-steward-${profile}`;
+}
+
+/** Историческое имя папки/блока задач — для чтения и удаления старых задач. */
+export function legacyTaskFolderNameForProfile(
+  profile: string = getProfileName(),
+): string {
   return profile === "default" ? "windows-scheduler" : `windows-scheduler-${profile}`;
 }
 
 export const TASK_FOLDER_NAME = taskFolderNameForProfile();
+export const LEGACY_TASK_FOLDER_NAME = legacyTaskFolderNameForProfile();
+
+/** Префикс всех задач плагина. */
+export const TASK_PREFIX = `OpenCode\\${TASK_FOLDER_NAME}`;
+/** Исторический префикс задач (до переименования). */
+export const LEGACY_TASK_PREFIX = `OpenCode\\${LEGACY_TASK_FOLDER_NAME}`;
 
 /**
  * Директория для хранения файлов плагина (обёртки, логи, блокировки, история).
@@ -65,6 +75,29 @@ export function sanitizeName(name: string): string {
 }
 
 /**
+ * Проверяет идентификатор LLM-модели перед подстановкой в командную строку.
+ *
+ * Формат: `provider/model` (вариант — `provider/model#variant`).
+ * Разрешены только латиница, цифры и символы `. _ : / -` (плюс `#` для
+ * варианта). Это исключает PowerShell-subexpression (`$(...)`, backtick)
+ * и прочие спецсимволы. Пустая строка — «модель не задана», это допустимо.
+ *
+ * @returns текст ошибки или null, если значение допустимо.
+ */
+export function validateModelId(raw: string): string | null {
+  const model = raw.trim();
+  if (!model) return null;
+  if (!/^[A-Za-z0-9._:/-]+(?:#[A-Za-z0-9._-]+)?$/.test(model)) {
+    return (
+      `Недопустимый идентификатор модели «${raw}». ` +
+      "Разрешены латиница, цифры и символы «.», «_», «:», «/», «-» " +
+      "(вариант — через «#»)."
+    );
+  }
+  return null;
+}
+
+/**
  * Проверяет имя задачи до создания файлов и записи в БД.
  *
  * Разрешены буквы (включая кириллицу), цифры, пробел, «_», «-» и «.».
@@ -82,7 +115,7 @@ export function validateTaskName(raw: string): string | null {
   if (/[\u0000-\u001f\u007f]/.test(name)) {
     return "Имя задачи не должно содержать управляющие символы.";
   }
-  const invalid = name.match(/[^\p{L}\p{N}_\-. ]/u);
+  const invalid = /[^\p{L}\p{N}_\-. ]/u.exec(name);
   if (invalid) {
     return (
       `Имя задачи содержит недопустимый символ «${invalid[0]}». ` +
@@ -92,14 +125,14 @@ export function validateTaskName(raw: string): string | null {
   // schtasks ограничивает /tn в 237 символов вместе с полным путём задачи.
   // Полный путь: \OpenCode\<TASK_FOLDER_NAME>\<taskName>
   // leading \ + TASK_FOLDER + \ + TASK_FOLDER_NAME + \ — префикс перед именем задачи.
-  // Для default: \OpenCode\windows-scheduler\ = 30 символов → 207 на имя.
-  // Для не-default профиля: \OpenCode\windows-scheduler-<profile>\ →чем длиннее профиль, тем меньше места.
+  // Для default: \OpenCode\agent-steward\ = 24 символа → 213 на имя.
+  // Для не-default профиля: \OpenCode\agent-steward-<profile>\ → чем длиннее профиль, тем меньше места.
   const prefixLength = 1 + TASK_FOLDER.length + 1 + TASK_FOLDER_NAME.length + 1;
   const MAX_TASK_NAME_LENGTH = 237 - prefixLength;
   if (name.length > MAX_TASK_NAME_LENGTH) {
     return (
       `Имя задачи "${name}" слишком длинное (${name.length} символов, максимум ${MAX_TASK_NAME_LENGTH} ` +
-      `с учётом папки планировщика). Сократите имя или имя workspace (для клонов матрицы).`
+      "с учётом папки планировщика). Сократите имя или имя workspace (для клонов матрицы)."
     );
   }
   return null;
@@ -119,7 +152,9 @@ export const ScheduleJobArgs = z.object({
         ctx.addIssue({ code: z.ZodIssueCode.custom, message: error });
       }
     })
-    .describe("Имя задачи (уникально в рамках префикса OpenCode\\windows-scheduler)"),
+    .describe(
+      "Имя задачи (уникально в рамках префикса OpenCode\\agent-steward; legacy OpenCode\\windows-scheduler поддерживается)",
+    ),
   schedule: z
     .string()
     .min(1)

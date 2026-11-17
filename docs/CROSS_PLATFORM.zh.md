@@ -49,23 +49,25 @@ interface SchedulerBackend {
 ## 各操作系统的运行方式
 
 ### Windows（行为未变）
-- 任务通过 `schtasks` 注册到 Windows 任务计划程序的 `\OpenCode\windows-scheduler\` 文件夹。
-- 包装脚本：`run-task.ps1` 加每个任务专属的 `run-<name>.cmd`，位于 `%APPDATA%\opencode\windows-scheduler\wrapper`。
-- 日志：`%APPDATA%\opencode\windows-scheduler\logs\<name>.log`。
+- 任务通过 `schtasks` 注册到 Windows 任务计划程序的 `\OpenCode\agent-steward\` 文件夹（配置文件使用 `\OpenCode\agent-steward-<profile>\`）。旧的 `\OpenCode\windows-scheduler\` 文件夹仍会被读取、重命名和按需删除。
+- 包装脚本：`run-task.ps1` 加每个任务专属的 `run-<name>.cmd`，位于 `%APPDATA%\opencode\agent-steward\wrapper`。旧的 `%APPDATA%\opencode\windows-scheduler` 目录会在首次启动时迁移。
+- 日志：`%APPDATA%\opencode\agent-steward\logs\<name>.log`。
 - cron 会转换成 schtasks（`convertCronToSchTasks`）——支持与之前相同的模板集合。
 
 ### Linux
 - 任务保存在受管 `crontab` 块中：
   ```
-  # >>> opencode-scheduler >>>
+  # >>> opencode-scheduler:agent-steward >>>
   # task: my-task
   */5 * * * * /bin/bash '/…/wrapper/run-my-task.sh' >> '/…/logs/my-task.log' 2>&1
-  # <<< opencode-scheduler <<<
+  # <<< opencode-scheduler:agent-steward <<<
   ```
+  不带 `:<folder>` 后缀的旧块仍会被读取和删除。
 - 暂停 = 带 `# PAUSED: ` 前缀的行（块会从注册表重建）。
 - `file` 触发器的任务不会进入 crontab——由插件的 FileWatchManager 启动。
-- 包装脚本：`~/.config/opencode/windows-scheduler/wrapper/run-<name>.sh`（chmod 0755）。
+- 包装脚本：`~/.config/opencode/agent-steward/wrapper/run-<name>.sh`（chmod 0755）。
 - 支持完整 cron 语法（与 Windows 不同），因为 crontab 原生支持。
+- 一次性任务（`once`）：使用 `at -t`；如果未安装 `at`，插件会退回到分离的 `sleep && 命令` 进程（注册表中为 `pid:<pid>`）。回退方案无法在重启后保留，建议安装 `at` 包。
 - 删除/重建只触及自己的块，`crontab` 的其他行不受影响。
 
 ### macOS
@@ -74,7 +76,7 @@ interface SchedulerBackend {
   使用 `StartCalendarInterval`。
 - 暂停 = `launchctl unload -w`，恢复 = `launchctl load -w`。
 - 包装脚本与 Linux 相同的 `.sh`；配置路径：
-  `~/.config/opencode/windows-scheduler/`（或 `$XDG_CONFIG_HOME`）。
+  `~/.config/opencode/agent-steward/`（或 `$XDG_CONFIG_HOME`）。
 
 ### 共享 POSIX 包装脚本（`.sh`）
 - `cd` 到工作目录，用文件中的提示词执行 `opencode run`。
@@ -97,7 +99,7 @@ interface SchedulerBackend {
 | 暂停 / 恢复 | `schtasks /change /disable` / `/enable` | 托管块中的 `# PAUSED:` 行 | `launchctl unload -w` / `load -w` |
 | 文件触发器 | 进程内 `FileWatchManager` | 相同 | 相同 |
 | 任务包装脚本 | `.cmd` + `.ps1` | `.sh` | `.sh` |
-| 日志 | `%APPDATA%\opencode\windows-scheduler\logs` | `~/.config/opencode/windows-scheduler/logs` | 与 Linux 相同 |
+| 日志 | `%APPDATA%\opencode\agent-steward\logs` | `~/.config/opencode/agent-steward/logs` | 与 Linux 相同 |
 | `secrets.key` 保护 | `icacls`（仅所有者）+ `chmod` 回退 | `chmod 0600` | `chmod 0600` |
 | 仪表盘 | `127.0.0.1`，动态标题 | 相同 | 相同 |
 | DAG / matrix / quality gates / 通知 | 插件内，与操作系统无关 | 相同 | 相同 |
@@ -141,6 +143,6 @@ interface SchedulerBackend {
 2. cron → launchd 支持与 Windows 相同的有限模板集合
    （`* * * * *`、`*/N * * * *`、`M * * * *`、`M H * * *`、`M H * * D`）。
    Linux 上支持完整 cron。
-3. Windows 任务前缀（`\OpenCode\windows-scheduler\`）和插件 id 为向后兼容而保留。
+3. Windows 任务前缀现为 `\OpenCode\agent-steward\`（旧的 `\OpenCode\windows-scheduler\` 仍会被识别）；插件 id 为向后兼容而保留。
 4. `src/schtasks.ts` 保留为旧脚本（`test-create.cjs`、`test-run.cjs`）的薄垫片；
    所有逻辑现在都在 `core/scheduler/windows.ts`。

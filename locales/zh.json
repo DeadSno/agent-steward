@@ -671,6 +671,7 @@
   "tool.error.matrixNoClones": "矩阵 “{name}” 没有克隆。",
   "tool.error.matrixNotMatrix": "任务 “{name}” 不是矩阵。",
   "tool.error.matrixOverride": "任务 “{task}”：matrix.overrides 包含未在 workspaceIds 中列出的工作区 “{workspace}”。",
+  "tool.error.modelInvalid": "无效的模型 “{model}”：{error}",
   "tool.error.mcpEventRequired": "MCP 触发器需要事件名称（mcpEvent.event）。",
   "tool.error.onceFields": "runAt/delaySeconds 仅在 triggerType=once 时允许。",
   "tool.error.onceMatrixSchema": "One-shot 不能与矩阵组合：矩阵仅可手动启动。",

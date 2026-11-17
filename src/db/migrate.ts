@@ -55,7 +55,7 @@ async function loadJsonFile(file: string): Promise<LoadedFile> {
       throw new Error(
         `Некорректный JSON в ${path.basename(file)}: ${
           err instanceof Error ? err.message : String(err)
-        }`
+        }`,
       );
     }
   } catch (err: any) {
@@ -113,12 +113,12 @@ function normalizeHistoryRow(raw: any): any | null {
  * migrated: false и нули.
  */
 export async function migrateJsonToDb(
-  pluginDir: string = PLUGIN_DIR
+  pluginDir: string = PLUGIN_DIR,
 ): Promise<MigrationResult> {
   if (!isDatabaseEmpty()) return { ...EMPTY_RESULT };
 
   const files = await Promise.all(
-    JSON_FILES.map((name) => loadJsonFile(path.join(pluginDir, name)))
+    JSON_FILES.map((name) => loadJsonFile(path.join(pluginDir, name))),
   );
   if (!files.some((file) => file.exists)) return { ...EMPTY_RESULT };
 
@@ -147,7 +147,7 @@ export async function migrateJsonToDb(
 
     // --- tasks ---
     const insertTask = db.prepare(
-      "INSERT INTO tasks (name, definition_json, created_at, updated_at) VALUES (?, ?, ?, ?)"
+      "INSERT INTO tasks (name, definition_json, created_at, updated_at) VALUES (?, ?, ?, ?)",
     );
     const seenTasks = new Set<string>();
     for (const item of taskItems) {
@@ -182,7 +182,7 @@ export async function migrateJsonToDb(
       `INSERT INTO history (
          task_name, status, started_at, finished_at, duration_ms, error,
          tokens, cost_usd, model, pre_flight_status, post_flight_status, next_task
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     for (const row of historyItems) {
       insertHistory.run(
@@ -197,14 +197,14 @@ export async function migrateJsonToDb(
         row.model,
         row.preFlightStatus,
         row.postFlightStatus,
-        row.nextTask
+        row.nextTask,
       );
       insertedHistory += 1;
     }
 
     // --- templates ---
     const insertTemplate = db.prepare(
-      "INSERT INTO templates (id, name, definition_json) VALUES (?, ?, ?)"
+      "INSERT INTO templates (id, name, definition_json) VALUES (?, ?, ?)",
     );
     const seenTemplates = new Set<string>();
     for (const item of templateItems) {
@@ -259,7 +259,7 @@ export async function migrateJsonToDb(
           tokens: acc.tokens + row.tokens,
           costUsd: acc.costUsd + row.costUsd,
         }),
-        { total: 0, success: 0, error: 0, partial: 0, tokens: 0, costUsd: 0 }
+        { total: 0, success: 0, error: 0, partial: 0, tokens: 0, costUsd: 0 },
       );
 
       const extra = {
@@ -308,13 +308,13 @@ export async function migrateJsonToDb(
       console.error(
         `[migrate] Не удалось переименовать ${path.basename(file.path)} в .bak: ${
           err instanceof Error ? err.message : String(err)
-        }`
+        }`,
       );
     }
   }
 
   console.log(
-    `[migrate] Перемещено ${insertedTasks} задач, ${insertedHistory} записей истории, ${insertedTemplates} шаблонов.`
+    `[migrate] Перемещено ${insertedTasks} задач, ${insertedHistory} записей истории, ${insertedTemplates} шаблонов.`,
   );
 
   return {

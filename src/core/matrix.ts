@@ -56,7 +56,7 @@ export function expandMatrixTask(task: TaskDefinition): TaskDefinition[] {
   const matrix = task.matrix;
   if (!matrix || !Array.isArray(matrix.workspaceIds) || matrix.workspaceIds.length === 0) {
     throw new Error(
-      t("matrix.error.workspaceIdsEmpty", { task: task.name })
+      t("matrix.error.workspaceIdsEmpty", { task: task.name }),
     );
   }
 
@@ -70,13 +70,13 @@ export function expandMatrixTask(task: TaskDefinition): TaskDefinition[] {
         t("matrix.error.workspaceMissing", {
           task: task.name,
           workspace: workspaceId,
-        })
+        }),
       );
     }
     const name = matrixCloneName(task.name, workspace.name);
     if (usedNames.has(name.toLowerCase())) {
       throw new Error(
-        t("matrix.error.duplicateCloneName", { task: task.name, name })
+        t("matrix.error.duplicateCloneName", { task: task.name, name }),
       );
     }
     usedNames.add(name.toLowerCase());
@@ -123,7 +123,7 @@ export function expandMatrixTask(task: TaskDefinition): TaskDefinition[] {
 
   if (clones.length === 0) {
     throw new Error(
-      t("matrix.error.cloneCreation", { task: task.name })
+      t("matrix.error.cloneCreation", { task: task.name }),
     );
   }
   return clones;
@@ -189,7 +189,7 @@ export function aggregateMatrixResults(parentId: string): MatrixAggregate {
   const successCount = results.filter((r) => r.status === "success").length;
   const errorCount = results.filter((r) => r.status === "error").length;
   const pendingCount = results.filter(
-    (r) => r.status !== "success" && r.status !== "error" && r.status !== "partial"
+    (r) => r.status !== "success" && r.status !== "error" && r.status !== "partial",
   ).length;
 
   let status: MatrixAggregate["status"];
@@ -217,9 +217,9 @@ export function aggregateMatrixResults(parentId: string): MatrixAggregate {
       }) +
       (firstError?.error
         ? t("matrix.aggregate.stoppedFirst", {
-            name: firstError.name,
-            error: firstError.error,
-          })
+          name: firstError.name,
+          error: firstError.error,
+        })
         : "");
   } else {
     status = "partial";
@@ -256,7 +256,7 @@ export interface MatrixRunResult {
 /** Эффективный лимит одновременных клонов матрицы (Спринт 17). */
 export function resolveMatrixConcurrency(
   matrix: MatrixConfig | undefined,
-  totalClones: number
+  totalClones: number,
 ): number {
   const total = Math.max(1, totalClones);
   if (!matrix) return total;
@@ -336,14 +336,14 @@ export async function runMatrix(task: TaskDefinition): Promise<MatrixRunResult> 
     console.log(
       `[matrix] ${task.name}: не удалось сохранить очередь: ${
         err instanceof Error ? err.message : String(err)
-      }`
+      }`,
     );
   }
 
   console.log(
     `[matrix] ${task.name}: strategy=${strategy}, failureMode=${failureMode}, ` +
       `concurrency=${concurrency}, started=${started.length}, skipped=${skipped.length}, ` +
-      `queued=${queueToSave.length}, errors=${errors.length}`
+      `queued=${queueToSave.length}, errors=${errors.length}`,
   );
 
   return {
@@ -363,7 +363,7 @@ export async function runMatrix(task: TaskDefinition): Promise<MatrixRunResult> 
  * Возвращает имя запущенного клона или undefined.
  */
 export async function advanceSequentialMatrix(
-  cloneName: string
+  cloneName: string,
 ): Promise<string | undefined> {
   const clone = getTask(cloneName);
   if (!clone?.matrixParentId) return undefined;
@@ -415,7 +415,7 @@ export async function advanceSequentialMatrix(
  * Возвращает имена запущенных клонов.
  */
 export async function advanceMatrixAfterClone(
-  cloneName: string
+  cloneName: string,
 ): Promise<string[]> {
   const sequentialNext = await advanceSequentialMatrix(cloneName);
   if (sequentialNext) return [sequentialNext];
@@ -433,7 +433,7 @@ export async function advanceMatrixAfterClone(
   const clones = listMatrixClones(parent.name);
   const concurrency = resolveMatrixConcurrency(parent.matrix, clones.length);
   const running = clones.filter(
-    (item) => latestCloneStatus(item.name).status === "running"
+    (item) => latestCloneStatus(item.name).status === "running",
   ).length;
   let slots = Math.max(0, concurrency - running);
   if (slots === 0) return [];
@@ -453,7 +453,7 @@ export async function advanceMatrixAfterClone(
     } catch (err: any) {
       const message = err instanceof Error ? err.message : String(err);
       console.log(
-        `[matrix] ${parent.name}: не удалось запустить из очереди ${nextName}: ${message}`
+        `[matrix] ${parent.name}: не удалось запустить из очереди ${nextName}: ${message}`,
       );
       // Попытка запуска «съедает» слот: иначе при недоступном бэкенде
       // цикл уйдёт по всей очереди, проигнорировав лимит.
@@ -471,7 +471,7 @@ export async function advanceMatrixAfterClone(
     console.log(
       `[matrix] ${parent.name}: не удалось сохранить очередь: ${
         err instanceof Error ? err.message : String(err)
-      }`
+      }`,
     );
   }
 
@@ -578,7 +578,7 @@ export function planMatrixSync(parent: TaskDefinition): MatrixSyncPlan {
   const desired = expandMatrixTask(parent);
   const existing = listMatrixClones(parent.name);
   const byName = new Map(
-    existing.map((definition) => [definition.name.toLowerCase(), definition])
+    existing.map((definition) => [definition.name.toLowerCase(), definition]),
   );
   const desiredNames = new Set(desired.map((definition) => definition.name.toLowerCase()));
 
@@ -601,7 +601,7 @@ export function planMatrixSync(parent: TaskDefinition): MatrixSyncPlan {
       running.push(current.name);
       if (cloneSignature(current) !== cloneSignature(wanted)) {
         warnings.push(
-          t("matrix.clone.runningChanges", { name: current.name })
+          t("matrix.clone.runningChanges", { name: current.name }),
         );
       }
       continue;
@@ -617,7 +617,7 @@ export function planMatrixSync(parent: TaskDefinition): MatrixSyncPlan {
     if (latest.status === "running") {
       running.push(current.name);
       warnings.push(
-        t("matrix.clone.runningDeletion", { name: current.name })
+        t("matrix.clone.runningDeletion", { name: current.name }),
       );
       continue;
     }
@@ -652,7 +652,7 @@ export interface MatrixSyncResult {
  */
 export async function syncMatrixFamily(
   parent: TaskDefinition,
-  hooks: MatrixSyncHooks = {}
+  hooks: MatrixSyncHooks = {},
 ): Promise<MatrixSyncResult> {
   const plan = planMatrixSync(parent);
 
@@ -680,7 +680,7 @@ export async function syncMatrixFamily(
 
 /** Имя родителя по имени агрегатора (`<parent>-matrix-complete`). */
 export function matrixParentOfCompleteTask(
-  taskName: string
+  taskName: string,
 ): string | undefined {
   const trimmed = taskName.trim();
   if (!isMatrixCompleteName(trimmed)) return undefined;
@@ -698,7 +698,7 @@ export interface MatrixFamilyPlan {
 }
 
 export function planMatrixFamilyDelete(
-  taskName: string
+  taskName: string,
 ): MatrixFamilyPlan | undefined {
   const definition = getTask(taskName);
   if (!definition?.matrix) return undefined;
@@ -715,7 +715,7 @@ export function planMatrixFamilyDelete(
  * Возвращает текст ошибки или undefined, если удаление разрешено.
  */
 export function getMatrixDeletionGuard(
-  taskName: string
+  taskName: string,
 ): string | undefined {
   const definition = getTask(taskName);
   const parentId = definition?.matrixParentId?.trim();
@@ -773,7 +773,7 @@ export interface MatrixCancelResult {
  */
 export async function cancelPendingMatrixClones(
   parentName: string,
-  reason = t("matrix.cancel.defaultReason")
+  reason = t("matrix.cancel.defaultReason"),
 ): Promise<MatrixCancelResult> {
   const parent = getTask(parentName);
   if (!parent?.matrix) {
@@ -793,7 +793,7 @@ export async function cancelPendingMatrixClones(
       console.log(
         `[matrix] ${parent.name}: не удалось очистить очередь: ${
           err instanceof Error ? err.message : String(err)
-        }`
+        }`,
       );
     }
   }
@@ -824,14 +824,14 @@ export async function cancelPendingMatrixClones(
         undefined,
         clone.model ?? undefined,
         "skipped",
-        "skipped"
+        "skipped",
       );
       cancelled.push(clone.name);
     } catch (err: any) {
       console.log(
         `[matrix] ${parent.name}: не удалось записать отмену клона ${clone.name}: ${
           err instanceof Error ? err.message : String(err)
-        }`
+        }`,
       );
     }
   }
@@ -860,7 +860,7 @@ export function cloneFileKey(cloneName: string): string {
  * success/error/partial) и запускает matrix-complete, если он создан.
  */
 export async function finalizeMatrixIfComplete(
-  cloneName: string
+  cloneName: string,
 ): Promise<MatrixAggregate | undefined> {
   const clone = getTask(cloneName);
   const parentId = clone?.matrixParentId?.trim();
@@ -908,7 +908,7 @@ export async function finalizeMatrixIfComplete(
       undefined,
       parent.model ?? undefined,
       "skipped",
-      "skipped"
+      "skipped",
     );
     // Спринт 20: уведомление о завершении матрицы (partial / все упали / успех).
     void notifyMatrixCompletion({
@@ -923,7 +923,7 @@ export async function finalizeMatrixIfComplete(
     console.log(
       `[matrix] ${parent.name}: не удалось записать агрегат: ${
         err instanceof Error ? err.message : String(err)
-      }`
+      }`,
     );
   }
 
@@ -937,7 +937,7 @@ export async function finalizeMatrixIfComplete(
         console.log(
           `[matrix] ${parent.name}: не удалось запустить агрегатор: ${
             err instanceof Error ? err.message : String(err)
-          }`
+          }`,
         );
       }
     }

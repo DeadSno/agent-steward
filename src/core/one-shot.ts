@@ -52,7 +52,7 @@ function asDelaySeconds(value: unknown): number | undefined | "invalid" {
  */
 export function normalizeOneShotRunAt(
   input: OneShotInput,
-  nowMs: number = Date.now()
+  nowMs: number = Date.now(),
 ): OneShotNormalization {
   const rawRunAt =
     typeof input.runAt === "string" ? input.runAt.trim() : undefined;
@@ -73,7 +73,7 @@ export function normalizeOneShotRunAt(
       return {
         ok: false,
         error:
-          `runAt должен быть датой в формате ISO-8601, например ` +
+          "runAt должен быть датой в формате ISO-8601, например " +
           `2026-12-01T09:00:00Z (получено «${rawRunAt}»).`,
       };
     }
@@ -82,7 +82,7 @@ export function normalizeOneShotRunAt(
         ok: false,
         error:
           `runAt должен быть в будущем (получено «${rawRunAt}»). ` +
-          `Для запуска сразу используйте run_task_now.`,
+          "Для запуска сразу используйте run_task_now.",
       };
     }
     return {
@@ -114,22 +114,46 @@ function pad(value: number): string {
 /**
  * Формат даты/времени для schtasks /sd и /st.
  *
- * Windows Task Scheduler ожидает дату в формате текущей локали. Плагин уже
- * использует DD.MM.YYYY для ONCE-заглушки, поэтому сохраняем этот формат
- * для совместимости с русской локалью (основной сценарий проекта).
+ * Windows Task Scheduler ожидает дату в формате текущей локали. На русской
+ * Windows — DD.MM.YYYY, на английской — M/d/yyyy и т.д. Жёсткий DD.MM.YYYY
+ * ломает создание one-shot и file/git/mcp-задач на не-RU Windows (P1-8).
+ * Вызывающий код (windows.ts) передаёт `dateFormat`, полученный из системной
+ * локали через PowerShell `(Get-Culture).DateTimeFormat.ShortDatePattern`.
+ *
+ * @param runAt — ISO-8601 время запуска.
+ * @param dateFormat — шаблон даты локали (например, "dd.MM.yyyy" или "M/d/yyyy").
+ *                     Если не задан — используется DD.MM.YYYY (по умолчанию RU).
  */
 export function buildWindowsOneShotFlags(
-  runAt: string
+  runAt: string,
+  dateFormat?: string,
 ): ["/sc", "ONCE", "/sd", string, "/st", string] {
   const date = new Date(runAt);
+  const sd = dateFormat ? formatDateByLocalePattern(date, dateFormat) : `${pad(date.getDate())}.${pad(date.getMonth() + 1)}.${date.getFullYear()}`;
   return [
     "/sc",
     "ONCE",
     "/sd",
-    `${pad(date.getDate())}.${pad(date.getMonth() + 1)}.${date.getFullYear()}`,
+    sd,
     "/st",
     `${pad(date.getHours())}:${pad(date.getMinutes())}`,
   ];
+}
+
+/**
+ * Форматирует Date по шаблону локали Windows (.NET-формат, как возвращает
+ * (Get-Culture).DateTimeFormat.ShortDatePattern). Поддерживает d/dd, M/MM,
+ * y/yy/yyyy. Неизвестные символы копируются как есть.
+ */
+export function formatDateByLocalePattern(date: Date, pattern: string): string {
+  const pad2 = (v: number) => String(v).padStart(2, "0");
+  return pattern
+    .replace(/yyyy/g, String(date.getFullYear()))
+    .replace(/yy/g, String(date.getFullYear()).slice(-2))
+    .replace(/MM/g, pad2(date.getMonth() + 1))
+    .replace(/M/g, String(date.getMonth() + 1))
+    .replace(/dd/g, pad2(date.getDate()))
+    .replace(/d/g, String(date.getDate()));
 }
 
 /** Формат `at -t`: YYYYMMDDHHMM в локальном времени системы. */
@@ -145,8 +169,34 @@ export function buildAtTimestamp(runAt: string): string {
 }
 
 /**
+ * Bash-команда для one-shot в launchd.
+ *
+ * StartCalendarInterval не поддерживает год: без защиты задача с runAt
+ * дальше чем через год сработала бы в ближайшую годовщину, а после
+ * выполнения — повторно через год. Гейт сравнивает now с runAt и ставит
+ * маркер, привязанный ко времени запуска.
+ */
+export function buildOneShotGuardCommand(
+  command: string,
+  runAt: string,
+  stampPath: string,
+): string {
+  const epoch = Math.floor(new Date(runAt).getTime() / 1000);
+  const quote = (value: string) => `'${value.replace(/'/g, "'\\''")}'`;
+  return [
+    `stamp=${quote(stampPath)}`,
+    "[ -f \"$stamp\" ] && exit 0",
+    `[ "$(date +%s)" -lt ${epoch} ] && exit 0`,
+    "mkdir -p \"$(dirname \"$stamp\")\" 2>/dev/null || true",
+    ": > \"$stamp\" 2>/dev/null || true",
+    command,
+  ].join("; ");
+}
+
+/**
  * StartCalendarInterval для launchd. launchd не поддерживает год, поэтому
- * плагин дополнительно выгружает plist после первого запуска (см. обёртку).
+ * обёртка дополнительно проверяет runAt и ставит маркер выполнения
+ * (см. buildOneShotGuardCommand).
  */
 export function buildLaunchdCalendar(runAt: string): {
   Month: number;
@@ -166,13 +216,13 @@ export function buildLaunchdCalendar(runAt: string): {
 /** Команда самоочистки launchd-агента после единственного запуска. */
 export function buildLaunchdOneShotCleanup(
   sanitizedName: string,
-  profile: string = "default"
+  profile = "default",
 ): string {
   const label = launchdLabel(sanitizedName, profile);
   return (
-    `launchctl bootout "gui/$(id -u)" ` +
+    "launchctl bootout \"gui/$(id -u)\" " +
     `"$HOME/Library/LaunchAgents/${label}.plist" ` +
-    `>/dev/null 2>&1 || true`
+    ">/dev/null 2>&1 || true"
   );
 }
 
@@ -181,7 +231,7 @@ export function buildLaunchdOneShotCleanup(
  * `com.opencode.scheduler.<name>`; у не-default профиля свой префикс, чтобы
  * одноимённые задачи разных профилей не затирали plist друг друга.
  */
-export function launchdLabel(sanitizedName: string, profile: string = "default"): string {
+export function launchdLabel(sanitizedName: string, profile = "default"): string {
   const base = `com.opencode.scheduler.${sanitizedName}`;
   if (profile === "default") return base;
   const scope = profile.replace(/[^A-Za-z0-9_.-]/g, "-");

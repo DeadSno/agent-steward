@@ -20,8 +20,8 @@ Translations: [English](FAQ.md) · [中文](FAQ.zh.md)
 
 Порядок восстановления:
 
-1. Найдите файл в каталоге плагина: `%APPDATA%\opencode\windows-scheduler\`
-   (Windows) или `~/.config/opencode/windows-scheduler/` (macOS/Linux,
+1. Найдите файл в каталоге плагина: `%APPDATA%\opencode\agent-steward\`
+   (Windows) или `~/.config/opencode/agent-steward/` (macOS/Linux,
    либо `$XDG_CONFIG_HOME`).
 2. Откройте его в редакторе: обычно это обрезанный JSON. Исправьте синтаксис.
 3. Верните исправленный файл под именем `secrets.json` (копию `.corrupt-*`

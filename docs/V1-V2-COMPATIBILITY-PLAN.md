@@ -71,7 +71,7 @@
 
 ### Задача З1.3. Инварианты состояния
 - П1.3.1 — `plugin id` остаётся `opencode-windows-scheduler` до rename. ✅
-- П1.3.2 — пути `%APPDATA%/opencode/windows-scheduler`, SQLite и логов не меняются. ✅
+- П1.3.2 — пути `%APPDATA%\opencode\agent-steward`, SQLite и логов не меняются. ✅
 - П1.3.3 — префикс задач планировщика не меняется. ✅
 
 ---
@@ -292,7 +292,7 @@
 | П1.2.2 | В матрице GUI и RPC помечены «**нет**» для V1 (subpath `/gui` и `/rpc` в V1-пакете отсутствуют), TUI — «**обе линии**»: V2 регистрирует панель через `setup(ctx)`, V1 — через отдельный `src/tui-v1.tsx` (З3.4). Под таблицей добавлен явный абзац «GUI и RPC — только V2»; пакет не обещает их в V1 и не подменяет TUI заглушкой. |
 | П1.2.3 | README (en/ru/zh) обновлены: tagline и раздел Install больше не требуют «OpenCode v2», теперь «V1 ≥ 1.18.29 или V2» + ссылка на `docs/COMPATIBILITY.md` (GUI/RPC — только V2, TUI — обе линии). Переводы `docs/README.ru.md` и `docs/README.zh.md` поправлены в том же коммите. |
 | П1.3.1 | `plugin id` остаётся `opencode-windows-scheduler` (`src/index.ts`, `Plugin.define({ id })`). Зафиксировано в разделе «Инварианты состояния»; `test-docs` сверяет значение в коде и документе. |
-| П1.3.2 | Пути состояния сведены в таблицу: Windows `%APPDATA%\opencode\windows-scheduler`, macOS/Linux `$XDG_CONFIG_HOME/opencode/windows-scheduler` или `~/.config/opencode/windows-scheduler`; профили — `<base>/profiles/<name>`; SQLite — `<PLUGIN_DIR>/scheduler.db` (`OPENCODE_SCHEDULER_DB` только для тестов); логи/обёртки/locks/prompts/env и `secrets.json`/`secrets.key` — под `<PLUGIN_DIR>`. `test-docs` сверяет `profiles.ts`, `db/index.ts`, `types.ts`. |
+| П1.3.2 | Пути состояния сведены в таблицу: Windows `%APPDATA%\opencode\agent-steward`, macOS/Linux `$XDG_CONFIG_HOME/opencode/agent-steward` или `~/.config/opencode/agent-steward`; профили — `<base>/profiles/<name>`; SQLite — `<PLUGIN_DIR>/scheduler.db` (`OPENCODE_SCHEDULER_DB` только для тестов); логи/обёртки/locks/prompts/env и `secrets.json`/`secrets.key` — под `<PLUGIN_DIR>`. `test-docs` сверяет `profiles.ts`, `db/index.ts`, `types.ts`. |
 | П1.3.3 | Префикс задач не меняется: Windows default — `\OpenCode\windows-scheduler\`, профиль — `\OpenCode\windows-scheduler-<profile>\` (`windows.ts`); crontab-блок — `opencode-scheduler:<folder>` (legacy без суффикса читается); launchd label — `com.opencode.scheduler.<name>`. В таблице инвариантов указано, что rename (Д7) меняет только npm-имя. Итог: `test-docs` 50 → 60/60. |
 
 ### Д2. Извлечение общего ядра — ✅ 17.11.2026 (П2.1.3, П2.2.3, П2.4.2 закрыты в З3.1)

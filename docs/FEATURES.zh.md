@@ -524,8 +524,8 @@ GUI 面板）支持 `list`、`set` 和 `delete`。密钥名匹配
 自动重写能够破坏数据：
 
 1. 在插件目录中找到被隔离的文件：`secrets.json.corrupt-*`
-   （Windows：`%APPDATA%\opencode\windows-scheduler\`，macOS/Linux：
-   `~/.config/opencode/windows-scheduler/` 或 `$XDG_CONFIG_HOME`）。
+   （Windows：`%APPDATA%\opencode\agent-steward\`，macOS/Linux：
+   `~/.config/opencode/agent-steward/` 或 `$XDG_CONFIG_HOME`）。
 2. 检查它：损坏通常是被截断的 JSON（写入中断）或
    手工编辑。在文本编辑器中修正 JSON 语法。
 3. 把修好的文件复制回 `secrets.json`（保留 `.corrupt-*` 副本作为
@@ -566,10 +566,11 @@ GUI 面板）支持 `list`、`set` 和 `delete`。密钥名匹配
 
 ## Agent 接口
 
-二十五个工具：`schedule_task`、`list_tasks`、`update_task`、`delete_task`、
+二十六个工具：`schedule_task`、`list_tasks`、`update_task`、`delete_task`、
 `run_task_now`、`pause_task`、`resume_task`、`get_history`、`get_task_logs`、`dry_run`、
 `manage_workspaces`、`matrix_control`（results/cancel/cleanup/preview）、`get_metrics`、
-`get_analytics`、`manage_settings`、`manage_local_ai`、`manage_templates`、`manage_profiles`、
+`get_analytics`、`self_analysis`（健康评分、异常、趋势）、`manage_settings`、
+`manage_local_ai`、`manage_templates`、`manage_profiles`、
 `transfer_tasks`、`send_notification`、`get_dashboard_info`、`cleanup_history`、
 `manage_secrets`、`get_audit_log`、
 `emit_event`。
