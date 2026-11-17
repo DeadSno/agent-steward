@@ -1,6 +1,6 @@
 {
   "name": "opencode-windows-scheduler",
-  "version": "1.5.6",
+  "version": "1.5.7",
   "description": "Deprecated. Use `agent-steward` instead. This package is a thin re-export of `agent-steward` for backward compatibility.",
   "license": "MIT",
   "author": "agent-steward contributors",
