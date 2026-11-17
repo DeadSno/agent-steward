@@ -3,13 +3,16 @@
 // Проверяет:
 //  1. default export содержит и V2-поля (id, setup), и V1-поле (server).
 //  2. V1-адаптер экспортирован и возвращает Hooks с tool/dispose.
-//  3. Конвертация результата V2 → V1 сохраняет текст и metadata.
+//  3. Все 26 инструментов замаплены в V1, схемы — raw shape, читаемые zod V1.
+//  4. Конвертация результата V2 → V1 сохраняет текст и metadata.
 //
 // Запуск: node test-dual-entry.mjs (после npm run build).
 import { strict as assert } from "node:assert";
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 // Полная изоляция: OPENCODE_SCHEDULER_HOME задаёт и PLUGIN_DIR (логи, locks, wrappers), и БД.
 process.env.OPENCODE_SCHEDULER_HOME = mkdtempSync(
@@ -39,6 +42,45 @@ const sample = hooks.tool.schedule_task;
 assert.equal(typeof sample.description, "string", "у инструмента есть описание");
 assert.equal(typeof sample.args, "object", "у инструмента есть args-shape");
 assert.equal(typeof sample.execute, "function", "у инструмента есть execute");
+
+// 2.1. Все инструменты V2 попали в V1 и схемы отданы как raw shape, а не как ZodObject.
+const toolNames = Object.keys(hooks.tool).sort();
+assert.equal(toolNames.length, 26, "V1 получает все 26 инструментов");
+for (const name of toolNames) {
+  const item = hooks.tool[name];
+  assert.equal(typeof item.description, "string", `${name}: описание — строка`);
+  assert.ok(item.description.trim().length > 0, `${name}: описание не пустое`);
+  assert.equal(typeof item.execute, "function", `${name}: execute — функция`);
+  assert.ok(
+    item.args && typeof item.args === "object" && !Array.isArray(item.args),
+    `${name}: args — объект`
+  );
+  assert.ok(!("_def" in item.args), `${name}: args — raw shape, не ZodObject`);
+  assert.ok(!("parse" in item.args), `${name}: args без метода parse`);
+}
+assert.ok("name" in sample.args, "schedule_task: args содержит name");
+assert.ok("schedule" in sample.args, "schedule_task: args содержит schedule");
+
+// 2.2. Схемы из корневого zod (4.6.7) читаются zod-копией V1 SDK (4.1.8).
+const v1ZodPath = fileURLToPath(
+  new URL(
+    "./node_modules/@opencode-ai/plugin/node_modules/zod/index.cjs",
+    import.meta.url
+  )
+);
+assert.ok(existsSync(v1ZodPath), "найдена zod-копия V1 SDK");
+const v1Zod = createRequire(import.meta.url)(v1ZodPath);
+const v1ScheduleArgs = v1Zod.object(sample.args);
+assert.equal(
+  v1ScheduleArgs.safeParse({ name: "demo", prompt: "ping" }).success,
+  true,
+  "V1 zod принимает валидные args"
+);
+assert.equal(
+  v1ScheduleArgs.safeParse({}).success,
+  false,
+  "V1 zod применяет обязательность полей"
+);
 await hooks.dispose();
 
 // 3. Результат V2 приводится к V1 без потери текста и metadata.

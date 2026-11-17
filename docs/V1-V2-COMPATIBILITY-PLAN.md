@@ -26,7 +26,7 @@
 
 | Возможность | V1 (>=1.18.29) | V2 |
 |---|---|---|
-| 25 инструментов агента | да, через `tool()` | да, `ctx.tool.transform` |
+| 26 инструментов агента | да, через `tool()` | да, `ctx.tool.transform` |
 | Хуки (tool/session/event/config) | да, строковые ключи | да, типизированные домены |
 | TUI-панель | да, отдельный `tui` entrypoint | да, текущий `tui.tsx` |
 | GUI-панель | нет | да |
@@ -123,18 +123,23 @@
   реальная загрузка обеими линиями — в Д4)
 
 ### Задача З3.2. Инструменты V1
-- П3.2.1 — замапить 25 инструментов в `tool({ description, args, execute })`.
-- П3.2.2 — привести args-схемы к формату V1.
+- П3.2.1 — замапить 26 инструментов в `tool({ description, args, execute })`. ✅
+  (`createV1Tools(runtime)`; тот же `createToolSpecs` и `withAudit`)
+- П3.2.2 — привести args-схемы к формату V1. ✅
+  (`toV1ToolArgs(spec)` → `z.object(...).shape`, иначе явная ошибка; схемы
+  4.6.7 читаются zod 4.1.8 из V1 SDK — проверено в `test-dual-entry.mjs`)
 - П3.2.3 — сохранить `codemode`-семантику, если V1 её поддерживает; иначе
-  задокументировать отличие.
+  задокументировать отличие. ✅
+  (у V1 `tool()` нет `options`; `codemode` не передаётся, отличие описано в
+  `docs/COMPATIBILITY.md`; поведение определяют общие handlers)
 
 ### Задача З3.3. Хуки V1
 - П3.3.1 — не требуется: аудит — общая обёртка `withAudit`, permissions — env
-  фонового запуска (см. П2.3.1).
+  фонового запуска (см. П2.3.1). ✅
 - П3.3.2 — не требуется: события — `emit_event`, file-watcher и git-trigger в
-  `createRuntime`.
+  `createRuntime`. ✅
 - П3.3.3 — не требуется: настройки читаются из `settings.json` пакета, а не из
-  `Hooks.config`.
+  `Hooks.config`. ✅
 
 ### Задача З3.4. TUI V1
 - П3.4.1 — отдельный entrypoint `src/tui-v1.tsx` с `TuiPluginModule`.
@@ -151,7 +156,7 @@
 ## Деталь Д4. Регрессия V2
 
 ### Задача З4.1. Entrypoint
-- П4.1.1 — V2 по-прежнему загружает `setup` и 25 инструментов.
+- П4.1.1 — V2 по-прежнему загружает `setup` и 26 инструментов.
 - П4.1.2 — GUI и RPC не затронуты.
 
 ### Задача З4.2. Поведение
@@ -232,7 +237,7 @@
 | Д0 | ✅ 17.11.2026 |
 | Д1 | ✅ 17.11.2026 |
 | Д2 | ✅ 17.11.2026 |
-| Д3 | в работе (З3.1 закрыта, З3.2–З3.4 впереди) |
+| Д3 | в работе (З3.1–З3.3 ✅, осталась З3.4 TUI) |
 | Д4 | не начата |
 | Д5 | не начата |
 | Д6 | не начата |
@@ -284,7 +289,7 @@
 | П2.4.1 | В `src/index.ts` добавлен `createShutdownHandler(runtime, registrations, { waitMs })`: `shutdownGate.begin()` → последовательный `dispose()` регистраций (ошибка одной логируется и не мешает остальным) → `runtime.dispose()` → `closeDashboardServer()` → `waitForIdle(15_000)` → `closeDb()`. `setup` V2 теперь возвращает этот обработчик с `rpcRegistration`, `registration` и (если есть) `skillRegistration`; ручной cleanup удалён, `shutdownGate.begin()` встречается в коде один раз. В `docs/COMPATIBILITY.md` добавлен абзац «Единая выгрузка». `test-docs` расширен двумя проверками (порядок шагов, использование обработчика) → 68/68. |
 | П2.4.2 | Закрыто в З3.1: V2 отдаёт `createShutdownHandler(runtime, [rpc, tools, skill])` из `setup()`, V1 — `createShutdownHandler(runtime)` из `dispose` в `Hooks`. Порядок шагов и таймаут общие. |
 
-### Д3. V1-адаптер — в работе
+### Д3. V1-адаптер — в работе (З3.1–З3.3 ✅, осталась З3.4 TUI)
 
 | Подзадача | Результат |
 |---|---|
@@ -292,5 +297,8 @@
 | П3.1.2 | Добавлены: `toV1ToolResult(result)` — конвертация V2 `Tool.Result` в V1 `ToolResult` (строка как есть; `content`-строка/массив text → `{ output, metadata }`; иначе JSON.stringify); `createV1Hooks(input, options)` — `createRuntime({ location: { directory } })`, цикл по тем же `createToolSpecs` c `withAudit`, инструменты через `v1Tool({ description, args: spec.input.shape, execute })`, dashboard при `startDashboard !== false`, возврат `{ tool, dispose: createShutdownHandler(runtime) }`; `v1Plugin: V1PluginModule = { id, server }`, где `server()` вызывает `createV1Hooks({ directory: input.directory })`. Типы V1 — из запиненного `@opencode-ai/plugin@1.19.5`. |
 | П3.1.3 | Итоговый экспорт — `export default { ...v2Plugin, ...v1Plugin }` (V2 читает `setup`, V1 — `server`, каждая линия игнорирует чужие поля). В `docs/COMPATIBILITY.md` добавлен раздел «Двойной экспорт» со схемой entrypoint'ов и перечнем общего ядра; отдельно зафиксировано, что GUI, RPC и скиллы в V1 не регистрируются. |
 | П3.1.4 | Создан `test-dual-entry.mjs`: изолирует `OPENCODE_SCHEDULER_HOME` во временный каталог до динамического импорта `dist/index.js` (нет побочных эффектов на рабочую БД); проверяет форму экспорта (`id`, `setup`, `server`, арность), `createV1Hooks({ startDashboard: false })` — наличие `tool.schedule_task` (description/args/execute) и `dispose`, все ветки `toV1ToolResult`. Все проверки пройдены; тест подключён в `npm test`. Модульная проверка формы — здесь; реальная загрузка обеими линиями OpenCode — в Д4. `test-docs` расширен четырьмя проверками (константа V2, общее ядро в V1-entrypoint, spread-экспорт, подключение теста) → **72/72**. |
+| П3.2.1 | Маппинг вынесен в экспортируемый `createV1Tools(runtime)`: цикл по тем же `createToolSpecs` (фактически **26** инструментов — в плане и матрице было ошибочно «25»), `withAudit` для правил журнала, `v1Tool({ description, args, execute })`. `createV1Hooks` теперь вызывает `createV1Tools(runtime)`, а не собирает реестр инлайн. Комментарий у `createToolSpecs` обновлён: V1-адаптер уже существует. |
+| П3.2.2 | Добавлен `toV1ToolArgs(spec)`: возвращает `spec.input.shape` (V1 `tool()` ждёт `z.ZodRawShape`, а не `ZodObject`) и бросает явную ошибку, если схема не `z.object(...)`. Схемы собраны корневым `zod@4.6.7`, V1 SDK валидирует их своей копией `zod@4.1.8` — совместимость проверена в `test-dual-entry.mjs` (`z1.object(shape).safeParse`): валидные args проходят, отсутствие обязательного `prompt` отбивается. `test-dual-entry` дополнительно проверяет все 26 инструментов: непустое описание, `execute`-функцию, args — plain-объект без `_def`/`parse`. |
+| П3.2.3 | У V1 `tool()` нет параметра `options` (тип `{ description, args, execute }`), поэтому `codemode: true` в V1 не передаётся: инструменты вызываются обычным способом. Отличие зафиксировано в `docs/COMPATIBILITY.md` (раздел «Инструменты в V1» и строка матрицы), поведение не меняется — обработчики, аудит и результаты общие. `test-docs` расширен двумя проверками: `createV1Tools` использует `createToolSpecs`/`v1Tool`/`toV1ToolArgs` и не передаёт `options`; `toV1ToolArgs` читает `.shape` и падает на другой схеме → **74/74**. |
 
 

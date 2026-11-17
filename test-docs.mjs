@@ -212,12 +212,31 @@ const v1HooksBlock = indexSrc.match(
 );
 const v1HooksSrc = v1HooksBlock ? v1HooksBlock[0] : "";
 check(
-  "src/index.ts: V1-entrypoint использует общие createRuntime/createToolSpecs/createShutdownHandler",
+  "src/index.ts: V1-entrypoint использует общие createRuntime/createV1Tools/createShutdownHandler",
   v1HooksSrc.length > 0 &&
     /createRuntime\(/.test(v1HooksSrc) &&
-    /createToolSpecs\(runtime\)/.test(v1HooksSrc) &&
-    /createShutdownHandler\(runtime\)/.test(v1HooksSrc) &&
-    /v1Tool\(\{/.test(v1HooksSrc)
+    /createV1Tools\(runtime\)/.test(v1HooksSrc) &&
+    /createShutdownHandler\(runtime\)/.test(v1HooksSrc)
+);
+const v1ToolsBlock = indexSrc.match(
+  /export function createV1Tools\([\s\S]*?\n\}/
+);
+const v1ToolsSrc = v1ToolsBlock ? v1ToolsBlock[0] : "";
+const v1ArgsBlock = indexSrc.match(
+  /export function toV1ToolArgs\([\s\S]*?\n\}/
+);
+const v1ArgsSrc = v1ArgsBlock ? v1ArgsBlock[0] : "";
+check(
+  "src/index.ts: V1-инструменты идут через createToolSpecs и raw shape",
+  v1ToolsSrc.length > 0 &&
+    /createToolSpecs\(runtime\)/.test(v1ToolsSrc) &&
+    /v1Tool\(\{/.test(v1ToolsSrc) &&
+    /toV1ToolArgs\(spec\)/.test(v1ToolsSrc) &&
+    !/options\s*:/.test(v1ToolsSrc)
+);
+check(
+  "src/index.ts: toV1ToolArgs берёт z.object(...).shape и падает на другой схеме",
+  /\.shape/.test(v1ArgsSrc) && /throw new Error/.test(v1ArgsSrc)
 );
 check(
   "src/index.ts: default export объединяет V2 и V1",

@@ -3761,7 +3761,7 @@ export interface ToolSpec {
 /**
  * Собирает полный список инструментов для конкретного ядра.
  *
- * V2-адаптер (`ctx.tool.transform`) и будущий V1-адаптер (`tool()`) получают
+ * V2-адаптер (`ctx.tool.transform`) и V1-адаптер (`createV1Tools`) получают
  * одинаковые имена, схемы, описания и обработчики. Аудит навешивается здесь
  * один раз, чтобы обе линии вели журнал одинаково.
  */
@@ -5212,6 +5212,41 @@ export function toV1ToolResult(result: any): any {
 }
 
 /**
+ * V1 `tool()` принимает `z.ZodRawShape`, а спецификации хранят `z.object(...)`.
+ * Возвращаем именно shape, чтобы V1 не получил готовый объект схемы.
+ */
+export function toV1ToolArgs(spec: ToolSpec): Record<string, any> {
+  const shape = (spec.input as { shape?: unknown } | undefined)?.shape;
+  if (!shape || typeof shape !== "object") {
+    throw new Error(
+      `V1-адаптер: схема инструмента "${spec.name}" должна быть z.object(...)`
+    );
+  }
+  return shape as Record<string, any>;
+}
+
+/**
+ * V1-реестр инструментов: те же имена, описания, схемы и обработчики, что в
+ * V2, плюс тот же аудит. Отличие одно — у V1 `tool()` нет `codemode`, поэтому
+ * флаг не передаётся (см. docs/COMPATIBILITY.md).
+ */
+export function createV1Tools(runtime: SchedulerRuntime): Record<string, any> {
+  const tools: Record<string, any> = {};
+  for (const spec of createToolSpecs(runtime)) {
+    const execute = spec.audit
+      ? withAudit(spec.name, spec.audit, spec.execute)
+      : spec.execute;
+    tools[spec.name] = v1Tool({
+      description: spec.description,
+      args: toV1ToolArgs(spec) as any,
+      execute: (async (args: any, context: any) =>
+        toV1ToolResult(await execute(args, context))) as any,
+    });
+  }
+  return tools;
+}
+
+/**
  * V1-entrypoint (OpenCode 1.x): module contract `{ id?, server }`.
  *
  * Возвращает те же инструменты, что V2-setup, но через `tool()` и строковые
@@ -5223,19 +5258,7 @@ export async function createV1Hooks(
   options: { startDashboard?: boolean } = {}
 ): Promise<V1Hooks> {
   const runtime = await createRuntime({ location: { directory: input.directory } });
-  const tools: Record<string, any> = {};
-  for (const spec of createToolSpecs(runtime)) {
-    const execute = spec.audit
-      ? withAudit(spec.name, spec.audit, spec.execute)
-      : spec.execute;
-    tools[spec.name] = v1Tool({
-      description: spec.description,
-      // spec.input — ZodObject; V1 tool() ждёт raw shape.
-      args: (spec.input?.shape ?? {}) as any,
-      execute: (async (args: any, context: any) =>
-        toV1ToolResult(await execute(args, context))) as any,
-    });
-  }
+  const tools = createV1Tools(runtime);
   if (options.startDashboard !== false) {
     await startSchedulerDashboard();
   }
