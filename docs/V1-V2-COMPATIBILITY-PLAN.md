@@ -2,7 +2,7 @@
 
 Статус: план утверждён по структуре, выполнение — по одной подзадаче.
 Версия работ: `opencode-windows-scheduler@1.5.6`.
-Переименование: milestone `2.0.0`, пакет `agent-steward` начинается с `0.0.2`
+Переименование: milestone Д7, пакет `agent-steward` начинается с `0.0.2`
 (версия `0.0.1` занята placeholder-резервом).
 
 ## Принятые решения
@@ -222,7 +222,7 @@
 
 ---
 
-## Деталь Д7. Rename 2.0.0 → `agent-steward` 0.0.2
+## Деталь Д7. Rename → `agent-steward` 0.0.2
 
 - П7.1 — rename-only релиз без фич.
 - П7.2 — сменить `name` пакета, сохранить `plugin id` и пути состояния.
@@ -293,7 +293,7 @@
 | П1.2.3 | README (en/ru/zh) обновлены: tagline и раздел Install больше не требуют «OpenCode v2», теперь «V1 ≥ 1.18.29 или V2» + ссылка на `docs/COMPATIBILITY.md` (GUI/RPC — только V2, TUI — обе линии). Переводы `docs/README.ru.md` и `docs/README.zh.md` поправлены в том же коммите. |
 | П1.3.1 | `plugin id` остаётся `opencode-windows-scheduler` (`src/index.ts`, `Plugin.define({ id })`). Зафиксировано в разделе «Инварианты состояния»; `test-docs` сверяет значение в коде и документе. |
 | П1.3.2 | Пути состояния сведены в таблицу: Windows `%APPDATA%\opencode\windows-scheduler`, macOS/Linux `$XDG_CONFIG_HOME/opencode/windows-scheduler` или `~/.config/opencode/windows-scheduler`; профили — `<base>/profiles/<name>`; SQLite — `<PLUGIN_DIR>/scheduler.db` (`OPENCODE_SCHEDULER_DB` только для тестов); логи/обёртки/locks/prompts/env и `secrets.json`/`secrets.key` — под `<PLUGIN_DIR>`. `test-docs` сверяет `profiles.ts`, `db/index.ts`, `types.ts`. |
-| П1.3.3 | Префикс задач не меняется: Windows default — `\OpenCode\windows-scheduler\`, профиль — `\OpenCode\windows-scheduler-<profile>\` (`windows.ts`); crontab-блок — `opencode-scheduler:<folder>` (legacy без суффикса читается); launchd label — `com.opencode.scheduler.<name>`. В таблице инвариантов указано, что rename 2.0.0 меняет только npm-имя. Итог: `test-docs` 50 → 60/60. |
+| П1.3.3 | Префикс задач не меняется: Windows default — `\OpenCode\windows-scheduler\`, профиль — `\OpenCode\windows-scheduler-<profile>\` (`windows.ts`); crontab-блок — `opencode-scheduler:<folder>` (legacy без суффикса читается); launchd label — `com.opencode.scheduler.<name>`. В таблице инвариантов указано, что rename (Д7) меняет только npm-имя. Итог: `test-docs` 50 → 60/60. |
 
 ### Д2. Извлечение общего ядра — ✅ 17.11.2026 (П2.1.3, П2.2.3, П2.4.2 закрыты в З3.1)
 

@@ -243,7 +243,7 @@ For every migrated job:
 ## From `opencode-windows-scheduler` to `agent-steward` (package rename)
 
 The npm package `opencode-windows-scheduler` was renamed to `agent-steward` at milestone
-**2.0.0**. This section covers the rename migration only — task definitions, schedules,
+**Д7** (release `agent-steward@0.0.2`). This section covers the rename migration only — task definitions, schedules,
 history and settings are **unchanged**.
 
 ### What changes

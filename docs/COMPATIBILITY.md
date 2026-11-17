@@ -206,7 +206,7 @@ Zod-объекта. `@opencode-ai/plugin@1.19.5` зависит от `zod@4.1.8`
 ## Инварианты состояния
 
 Эти значения не меняются ни при переходе на dual-support в `1.5.6`, ни при
-rename в `agent-steward` (`2.0.0`): иначе пользователи теряют историю, задачи,
+rename в `agent-steward` (Д7): иначе пользователи теряют историю, задачи,
 настройки и уже созданные записи в планировщике ОС. Значения проверяются
 `test-docs` по исходникам.
 
@@ -223,7 +223,7 @@ rename в `agent-steward` (`2.0.0`): иначе пользователи тер�
 | Блок crontab | `# >>> opencode-scheduler:<folder> >>>` … `# <<< opencode-scheduler:<folder> <<<` (legacy-блок без суффикса читается) | `src/core/scheduler/linux.ts` |
 | launchd label | `com.opencode.scheduler.<name>` | `src/core/scheduler/mac.ts` |
 
-Rename `2.0.0` меняет только npm-имя пакета (`agent-steward@0.0.2`): `plugin id`,
+Rename (Д7) меняет только npm-имя пакета (`agent-steward@0.0.2`): `plugin id`,
 пути, имена файлов БД/логов и префиксы задач остаются прежними (П7.2).
 
 ## Связанные документы
