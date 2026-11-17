@@ -91,9 +91,15 @@
 - П2.2.3 — V1-обёртка `tool()` использует те же handlers.
 
 ### Задача З2.3. Общие хуки
-- П2.3.1 — вынести обработчики аудита/permissions/событий в runtime.
-- П2.3.2 — V2 подписывает домены `ctx.tool.hook`, `ctx.event.subscribe`.
-- П2.3.3 — V1 подписывает строковые ключи.
+- П2.3.1 — проверить и зафиксировать: аудит/permissions/события уже живут в
+  общем ядре (`withAudit` в `createToolSpecs`, `core/permissions.ts`, общие
+  handlers и триггеры в `createRuntime`). ✅
+- П2.3.2 — V2-домены `ctx.tool.hook`, `ctx.permission.hook`,
+  `ctx.event.subscribe` **не используются**: для аудита, permissions и событий
+  hook-API не нужен. ✅ (не требуется)
+- П2.3.3 — V1-хуки `Hooks.tool.execute.*`, `Hooks.event`,
+  `Hooks.permission.ask` **не используются**; паритет линий достигается общими
+  handlers, а не строковыми ключами. ✅ (не требуется)
 
 ### Задача З2.4. Единый shutdown
 - П2.4.1 — `shutdownGate` и `dispose` доступны обоим entrypoint.
@@ -116,9 +122,12 @@
   задокументировать отличие.
 
 ### Задача З3.3. Хуки V1
-- П3.3.1 — `tool.execute.before/after` для аудита и permissions.
-- П3.3.2 — `event` для git/file/queue-событий.
-- П3.3.3 — `config` для чтения настроек плагина.
+- П3.3.1 — не требуется: аудит — общая обёртка `withAudit`, permissions — env
+  фонового запуска (см. П2.3.1).
+- П3.3.2 — не требуется: события — `emit_event`, file-watcher и git-trigger в
+  `createRuntime`.
+- П3.3.3 — не требуется: настройки читаются из `settings.json` пакета, а не из
+  `Hooks.config`.
 
 ### Задача З3.4. TUI V1
 - П3.4.1 — отдельный entrypoint `src/tui-v1.tsx` с `TuiPluginModule`.
@@ -215,7 +224,7 @@
 |---|---|
 | Д0 | ✅ 17.11.2026 |
 | Д1 | ✅ 17.11.2026 |
-| Д2 | в работе (П2.1.1–П2.2.2) |
+| Д2 | в работе (П2.1.1–П2.3.3; П2.1.3 и П2.2.3 — вместе с Д3, осталось П2.4) |
 | Д3 | не начата |
 | Д4 | не начата |
 | Д5 | не начата |
@@ -262,5 +271,8 @@
 | П2.1.3 | Отложено до появления V1-entrypoint (`server()` в З3.1): `createRuntime` уже экспортирован и не зависит от V2-контекста. |
 | П2.2.1 | Добавлены экспортируемые `ToolHandlers` и `createToolHandlers(runtime)` — реестр из 26 фактических инструментов (ключ = имя инструмента). Все 26 `execute` в `setup` переведены с прямых имён `*Execute` на `handlers.<name>`; сами обработчики пока остаются модульными, `runtime` зарезервирован под перенос состояния. `test-docs` получил две статические проверки: набор ключей `ToolHandlers` совпадает с именами инструментов, в регистрации не осталось прямых `*Execute` → 63/63. `npm run build`, `test-agent-tools` (23/23), `test-audit` (33/33) — OK. |
 | П2.2.2 | Метаданные всех 26 инструментов вынесены в декларативный `createToolSpecs(runtime)`: `ToolSpec { name, input, description, execute, audit? }`. `setup` теперь содержит один цикл `for (const spec of createToolSpecs(runtime))` и общий `editor.add` с `options: { codemode: true }`; аудит навешивается в цикле через `withAudit`, поэтому правила журнала заданы один раз в спецификации. В `setup` осталось два `editor.add` — цикл инструментов и регистрация скилла. `test-docs` расширен проверкой тонкой обёртки → 64/64; `npm run build`, `test-agent-tools` 23/23, `test-audit` 33/33 — OK. |
+| П2.3.1 | Проверено по исходникам: hook-домены (`ctx.tool.hook`, `ctx.permission.hook`, `ctx.event.subscribe`) в коде отсутствуют. Аудит уже общий — `withAudit` навешивается в `createToolSpecs`; permissions — `resolvePermissions`/`buildOpencodeConfig` в env фонового запуска (`src/core/permissions.ts`); события — `emit_event`, `FileWatchManager` и `GitTriggerManager` из `createRuntime`. В `docs/COMPATIBILITY.md` строка матрицы уточнена («API есть, но плагин его не использует») и добавлен абзац «Хуки не используются осознанно» с причинами и следствием для Д3. `test-docs` расширен двумя защитными проверками (общий код не ссылается на V2-домены; документ фиксирует отказ) → 66/66. |
+| П2.3.2 | Не требуется: V2 hook-домены не используются, отдельный hook-адаптер не нужен. ✅ |
+| П2.3.3 | Не требуется: V1-хуки не используются; паритет линий достигается общими handlers и `createRuntime`, а не строковыми ключами. ✅ |
 
 

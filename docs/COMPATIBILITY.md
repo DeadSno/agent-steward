@@ -16,7 +16,7 @@
 | Возможность | V1 (`>=1.18.29`) | V2 (`>=2.2.7`) | Комментарий |
 |---|---|---|---|
 | 25 инструментов агента | да, `tool()` | да, `ctx.tool.transform` | имена и схемы совпадают |
-| Хуки (tool / session / event / config) | да, строковые ключи в `Hooks` | да, типизированные домены `ctx.*` | аудит, permissions, события |
+| Хуки (tool / session / event / config) | да, строковые ключи в `Hooks` | да, типизированные домены `ctx.*` | API есть, но плагин его **не использует** — см. ниже |
 | TUI-панель «Планировщик» | да, отдельный entrypoint `@opencode-ai/plugin/tui` | да, `src/tui.tsx` | **обе линии** |
 | GUI-панель | **нет** | да | subpath `@opencode/plugin/gui` в V1 отсутствует |
 | RPC-методы (`get_platform` и др.) | **нет** | да | subpath `@opencode/plugin/rpc` в V1 отсутствует |
@@ -28,6 +28,21 @@
 **Явно:** GUI и RPC — только V2. TUI — обе линии: V2 регистрирует панель
 через `setup(ctx)`, V1 — через отдельный `src/tui-v1.tsx` (задача З3.4).
 Пакет не обещает GUI/RPC в V1 и не подменяет TUI-панель заглушкой.
+
+**Хуки не используются осознанно.** Плагин не подписывается ни на
+`ctx.tool.hook`, `ctx.permission.hook` и `ctx.event.subscribe` в V2, ни на
+`Hooks.tool.execute.before/after`, `Hooks.event`, `Hooks.permission.ask` в V1:
+
+- аудит — обёртка `withAudit` вокруг каждого инструмента в `createToolSpecs`,
+  поэтому правила журнала одинаковы в обеих линиях и не зависят от hook-API;
+- permissions — `resolvePermissions`/`buildOpencodeConfig` из
+  `src/core/permissions.ts` в env фонового запуска, а не перехват вызовов;
+- события — инструмент `emit_event`, file-watcher и git-trigger, поднятые в
+  `createRuntime`.
+
+Следствие для Д3: V1-адаптеру не нужны хуки — достаточно общих handlers и
+`createRuntime`. `test-docs` следит, чтобы общий код не начал ссылаться на
+V2-only домены без обновления этого раздела.
 
 ## Где зафиксированы версии
 
@@ -117,7 +132,7 @@ entrypoint (задача З3.4).
 | GUI-панель | нет subpath `@opencode-ai/plugin/gui` |
 | RPC-методы | нет subpath `@opencode-ai/plugin/rpc` |
 | `ctx.storage` | контекст V1 не предоставляет storage; состояние — SQLite пакета |
-| Типизированные домены (`ctx.tool.hook`, `ctx.event.subscribe`) | в V1 хуки — строковые ключи в объекте `Hooks` |
+| Типизированные домены (`ctx.tool.hook`, `ctx.event.subscribe`) | в V1 хуки — строковые ключи в объекте `Hooks`; плагин не использует ни те, ни другие |
 
 ## Инварианты состояния
 

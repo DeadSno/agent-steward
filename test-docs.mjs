@@ -165,6 +165,19 @@ check(
   /for \(const spec of createToolSpecs\(runtime\)\) \{/.test(indexSrc) &&
     (indexSrc.match(/editor\.add\(\{/g) || []).length === 2
 );
+// П2.3.1: hook-домены V2 не используются. Аудит — withAudit в specs,
+// permissions — env фонового запуска, события — emit_event и триггеры runtime.
+const hookDomains = ["ctx.tool.hook", "ctx.permission.hook", "ctx.event.subscribe"];
+check(
+  "src/index.ts: общее ядро не зависит от V2 hook-доменов",
+  hookDomains.every((domain) => !indexSrc.includes(domain))
+);
+check(
+  "COMPATIBILITY: зафиксирован отказ от hook-доменов",
+  compatText.includes("Хуки не используются осознанно") &&
+    compatText.includes("withAudit") &&
+    compatText.includes("emit_event")
+);
 const typesSrc = fs.readFileSync(path.join(root, "src", "types.ts"), "utf8");
 check(
   'src/types.ts: TASK_FOLDER остаётся "OpenCode"',
