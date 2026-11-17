@@ -9,6 +9,19 @@ All notable changes to this project are documented here. Format follows [Keep a 
 - **Интерфейс на китайском (`locales/zh.json`):** полный перевод всех 772 ключей интерфейса (`gui.*`, `matrix.*`, `shadow.*`, `schedule.*`, `notify.*`, `tool.*`, `localAi.*`, `server.*`, `gitTrigger.*`, `dryRun.*`, `app.*`, `common.*`) с паритетом ключей и плейсхолдеров к `en.json`/`ru.json`; вместе с 5 ключами селектора языка — 777. Поддерживается через `locale: "zh"` в `manage_settings` и переключатель в шапке панели. GUI-бандл регистрирует каталог через `registerCatalog("zh", ...)`.
 - **Режим языка `auto` (T7):** `locale: "auto"` следует за языком интерфейса OpenCode. GUI читает `ctx.locale.locale()`, маппит BCP 47 (`zh-CN`/`zh-Hans` → `zh`, `en-GB` → `en`, `ru-RU` → `ru`) и переключает панель без перезапуска; селектор языка (🌐 Авто / Русский / English / 中文) появился в шапке панели. Серверный процесс языка окна не видит, поэтому GUI присылает разрешённую локаль в новом поле `uiLocale` — уведомления, дайджест, результаты инструментов и дашборд используют её. Старые настройки `ru`/`en` читаются без миграции.
 
+### Fixed
+
+- **Ротация reuse-сессий (session.ts):** после `session delete` больше не сбрасывается `sessionId` в `undefined`. Генерируется новый `sessionId`, сохраняется в БД и в sidecar-файл `<task>.session` рядом с оболочкой; bash- и PowerShell-обёртки читают актуальный ID из sidecar перед запуском `opencode run --session`.
+- **`get_history` RPC и агент:** фильтрация по задаче и статусу перенесена из JS в SQLite через `getHistory(taskName, limit, status)`. История конкретной задачи больше не обрезается последними 200 глобальными запусками (`loadHistory` принимает `taskName`/`limit`/`status`, жёсткий лимит 200 убран из логики фильтрации).
+- **`schedule-gate`:** при `active === false` и `nextOpenAt === null` возвращается `3` (skip) вместо `0` (разрешить). Задача вне окна без вычисленного времени открытия больше не запускается ошибочно.
+- **`candidatesOnDay` (schedule-v2.ts):** `notBefore` проверяется независимо от `notAfter` (ранее применялся только если заданы оба).
+- **`sessionMaxRuns`:** явный `0` теперь снимает лимит (Zod `.min(0)`, проверка `< 0` вместо `< 1`), соответствует документации «Unset/0 — no limit».
+- **Telegram:** при HTTP 400 «can't parse entities» добавлен `console.warn` с очищенным описанием ошибки перед откатом на plain text.
+- **normalizeTriageRule:** регулярные выражения компилируются с флагом `iu` (unicode) вместо `i`.
+- **Matrix:** при коллизии имён клонов выбрасывается ошибка `matrix.error.duplicateCloneName` вместо молчаливого пропуска; ключ добавлен в `locales/ru.json`, `locales/en.json`, `locales/zh.json`.
+- **ScheduleJobArgs:** латинский regex имени заменён на `superRefine` с общим `validateTaskName` — кириллица разрешена, схема и фактическая валидация приведены к одному правилу.
+- **update_task:** при смене регистра имени задачи ссылки в `dependsOn`/`nextTaskOnSuccess`/`nextTaskOnError` других задач обновляются на новое имя (case-insensitive поиск и замена).
+
 ## [1.5.5] - 2026-11-16
 
 ### Security
