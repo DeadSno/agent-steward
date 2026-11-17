@@ -62,24 +62,24 @@ check(
   fs.existsSync(path.join(root, "scripts", "test-locale.mjs"))
 );
 
-// Спринт 28, задача 28.6: заглушка резервного имени npm.
-const placeholderDir = path.join(root, "packages", "opencode-pipeline");
-const placeholderPkgPath = path.join(placeholderDir, "package.json");
-check("packages/opencode-pipeline/package.json существует", fs.existsSync(placeholderPkgPath));
-const placeholderPkg = fs.existsSync(placeholderPkgPath)
-  ? JSON.parse(fs.readFileSync(placeholderPkgPath, "utf8"))
-  : {};
-check("заглушка: имя opencode-pipeline", placeholderPkg.name === "opencode-pipeline");
-check("заглушка: версия 0.0.x", /^0\.0\.\d+$/.test(String(placeholderPkg.version)));
-const placeholderReadme = path.join(placeholderDir, "README.md");
+// Спринт 28, задача 28.6 отменена в 1.5.6: заглушка `opencode-pipeline`
+// удалена из репозитория, сам пакет депрекейчен, резерв имени переехал
+// в `agent-steward`. Проверяем, что локальные пакеты не вернулись и что
+// workflow публикации заглушки вместе с ними не восстановили.
+const packagesDir = path.join(root, "packages");
+const strayPackages = fs.existsSync(packagesDir)
+  ? fs
+      .readdirSync(packagesDir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+  : [];
 check(
-  "заглушка: README ссылается на основной пакет",
-  fs.existsSync(placeholderReadme) &&
-    fs.readFileSync(placeholderReadme, "utf8").includes("npmjs.com/package/opencode-windows-scheduler")
+  `packages/: нет локальных пакетов (${strayPackages.join(", ") || "пусто"})`,
+  strayPackages.length === 0
 );
 check(
-  "заглушка: workflow публикации существует",
-  fs.existsSync(path.join(root, ".github", "workflows", "publish-placeholder.yml"))
+  "workflow публикации заглушки удалён",
+  !fs.existsSync(path.join(root, ".github", "workflows", "publish-placeholder.yml"))
 );
 
 // Спринт 28: каталоги локалей обязаны совпадать по набору ключей.

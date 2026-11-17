@@ -78,7 +78,7 @@ Enforced `allowedTools` / `deniedTools` вместо advisory, scoped-инъек
 
 ### 10. Rename-only + daemon + config v2 (P2) — 1.5.10
 
-Переименование в `opencode-pipeline` отдельным релизом без фич (старый пакет живой), `scheduler.backend: native|daemon|off|auto`, автомиграция конфига.
+Переименование в `agent-steward` отдельным релизом без фич (старый пакет живой, тонкий re-export), `scheduler.backend: native|daemon|off|auto`, автомиграция конфига.
 
 ### 11. Approvals, окружения, артефакты (MAJOR) — 1.6.0
 
