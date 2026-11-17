@@ -142,10 +142,12 @@
   `Hooks.config`. ✅
 
 ### Задача З3.4. TUI V1
-- П3.4.1 — отдельный entrypoint `src/tui-v1.tsx` с `TuiPluginModule`.
-- П3.4.2 — использовать `api.slots.register`, `api.route.register`, `api.kv`.
-- П3.4.3 — сохранить текущую панель «Планировщик» и действия run/pause/resume/log.
-- П3.4.4 — проверить загрузку TUI в V1 >=1.18.29.
+- П3.4.1 — отдельный entrypoint `src/tui-v1.tsx` с `TuiPluginModule`. ✅
+- П3.4.2 — использовать `api.slots.register`, `api.route.register`, `api.kv`. ✅
+- П3.4.3 — сохранить текущую панель «Планировщик» и действия run/pause/resume/log. ✅
+- П3.4.4 — проверить загрузку TUI в V1 >=1.18.29. ✅ статически (типы
+  `TuiPluginModule`, `exports["./tui"]`, `tsc` по TUI-файлам); реальная загрузка
+  установленным V1 — в Д4.
 
 ### Задача З3.5. Конфигурация
 - П3.5.1 — V1 читает `plugin`, V2 — `plugins`; код не должен падать на чужом поле.
@@ -237,7 +239,7 @@
 | Д0 | ✅ 17.11.2026 |
 | Д1 | ✅ 17.11.2026 |
 | Д2 | ✅ 17.11.2026 |
-| Д3 | в работе (З3.1–З3.3 ✅, осталась З3.4 TUI) |
+| Д3 | в работе (З3.1–З3.4 ✅, осталась З3.5) |
 | Д4 | не начата |
 | Д5 | не начата |
 | Д6 | не начата |
@@ -289,7 +291,7 @@
 | П2.4.1 | В `src/index.ts` добавлен `createShutdownHandler(runtime, registrations, { waitMs })`: `shutdownGate.begin()` → последовательный `dispose()` регистраций (ошибка одной логируется и не мешает остальным) → `runtime.dispose()` → `closeDashboardServer()` → `waitForIdle(15_000)` → `closeDb()`. `setup` V2 теперь возвращает этот обработчик с `rpcRegistration`, `registration` и (если есть) `skillRegistration`; ручной cleanup удалён, `shutdownGate.begin()` встречается в коде один раз. В `docs/COMPATIBILITY.md` добавлен абзац «Единая выгрузка». `test-docs` расширен двумя проверками (порядок шагов, использование обработчика) → 68/68. |
 | П2.4.2 | Закрыто в З3.1: V2 отдаёт `createShutdownHandler(runtime, [rpc, tools, skill])` из `setup()`, V1 — `createShutdownHandler(runtime)` из `dispose` в `Hooks`. Порядок шагов и таймаут общие. |
 
-### Д3. V1-адаптер — в работе (З3.1–З3.3 ✅, осталась З3.4 TUI)
+### Д3. V1-адаптер — в работе (З3.1–З3.4 ✅, осталась З3.5)
 
 | Подзадача | Результат |
 |---|---|
@@ -300,5 +302,9 @@
 | П3.2.1 | Маппинг вынесен в экспортируемый `createV1Tools(runtime)`: цикл по тем же `createToolSpecs` (фактически **26** инструментов — в плане и матрице было ошибочно «25»), `withAudit` для правил журнала, `v1Tool({ description, args, execute })`. `createV1Hooks` теперь вызывает `createV1Tools(runtime)`, а не собирает реестр инлайн. Комментарий у `createToolSpecs` обновлён: V1-адаптер уже существует. |
 | П3.2.2 | Добавлен `toV1ToolArgs(spec)`: возвращает `spec.input.shape` (V1 `tool()` ждёт `z.ZodRawShape`, а не `ZodObject`) и бросает явную ошибку, если схема не `z.object(...)`. Схемы собраны корневым `zod@4.6.7`, V1 SDK валидирует их своей копией `zod@4.1.8` — совместимость проверена в `test-dual-entry.mjs` (`z1.object(shape).safeParse`): валидные args проходят, отсутствие обязательного `prompt` отбивается. `test-dual-entry` дополнительно проверяет все 26 инструментов: непустое описание, `execute`-функцию, args — plain-объект без `_def`/`parse`. |
 | П3.2.3 | У V1 `tool()` нет параметра `options` (тип `{ description, args, execute }`), поэтому `codemode: true` в V1 не передаётся: инструменты вызываются обычным способом. Отличие зафиксировано в `docs/COMPATIBILITY.md` (раздел «Инструменты в V1» и строка матрицы), поведение не меняется — обработчики, аудит и результаты общие. `test-docs` расширен двумя проверками: `createV1Tools` использует `createToolSpecs`/`v1Tool`/`toV1ToolArgs` и не передаёт `options`; `toV1ToolArgs` читает `.shape` и падает на другой схеме → **74/74**. |
+| П3.4.1 | Создан `src/tui-v1.tsx` (~330 строк): `tuiV1: TuiPlugin` регистрирует маршрут `scheduler`, слот `sidebar_content`, legacy-команды `api.command.register` и таймер обновления 5 с; данные — те же `getJobsView`/`groupJobsForDisplay`/`nextJobSelection`/`statusIcon`/`formatJobLog` из `src/shared/jobs-view.ts`, действия — через `getSchedulerBackend()` и `getTaskLogs()`. Выбор задачи сохраняется в `api.kv`; выгрузка — `api.lifecycle.onDispose` (clearInterval, unregister маршрута и команд). |
+| П3.4.2 | `src/tui.tsx` теперь экспортирует `v2Tui` и `export default { ...v2Tui, tui: tuiV1 }`: один модуль на обе линии (V2 читает `setup`, V1 — `tui`). В `package.json` добавлен `exports["./tui"] = "./src/tui.tsx"` (по документации OpenCode; раньше subpath отсутствовал, из-за чего V2 TUI не загружался). `src/tui-v1.tsx` исключён из `tsconfig.json`, потому что JSX-типы V1-линии компилируются Bun/OpenCode, а не `tsc`; отдельная проверка `tsc` с `moduleResolution: Bundler` проходила без ошибок. |
+| П3.4.3 | Панель V1 повторяет V2 по смыслу: заголовок, дерево матрицы с отступами, `statusIcon`, пауза, следующий запуск, выбранная строка `›`, клик по строке; диалоги действий и лога — через `api.ui.dialog.replace` (`Dialog` + `DialogSelect`/`DialogAlert`); ошибки действий — toast. Слот V1 не даёт unregister, поэтому это статический снимок на старте (ограничение V1 API); маршрут перерисовывается перерегистрацией после `refresh()`. |
+| П3.4.4 | Статическая проверка: `npm run build` OK, `node test-docs.mjs` — **78/78** (четыре новые проверки: экспорт `v2Tui`, двойной модуль, использование `api.slots`/`api.route`/`api.kv`/`api.lifecycle`, `exports["./tui"]`), `test-dual-entry` — все проверки, `test-jobs-view` — 25/25. Реальная загрузка TUI в OpenCode V1 и V2 — в Д4. |
 
 

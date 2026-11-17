@@ -17,7 +17,7 @@
 |---|---|---|---|
 | 26 инструментов агента | да, `tool()`; без `options.codemode` | да, `ctx.tool.transform`; `options: { codemode: true }` | имена, схемы и обработчики совпадают |
 | Хуки (tool / session / event / config) | да, строковые ключи в `Hooks` | да, типизированные домены `ctx.*` | API есть, но плагин его **не использует** — см. ниже |
-| TUI-панель «Планировщик» | да, отдельный entrypoint `@opencode-ai/plugin/tui` | да, `src/tui.tsx` | **обе линии** |
+| TUI-панель «Планировщик» | да, `src/tui-v1.tsx`; маршрут `/scheduler` + снимок в сайдбаре | да, `src/tui.tsx`; reactive store | **обе линии**, один модуль `./tui` |
 | GUI-панель | **нет** | да | subpath `@opencode/plugin/gui` в V1 отсутствует |
 | RPC-методы (`get_platform` и др.) | **нет** | да | subpath `@opencode/plugin/rpc` в V1 отсутствует |
 | HTTP-dashboard | да | да | не зависит от plugin API |
@@ -25,9 +25,28 @@
 | SQLite-состояние | да | да | `<PLUGIN_DIR>/scheduler.db` |
 | Ключ конфига | `plugin` | `plugins` | dual-поддержка полей — задача З3.5 |
 
-**Явно:** GUI и RPC — только V2. TUI — обе линии: V2 регистрирует панель
-через `setup(ctx)`, V1 — через отдельный `src/tui-v1.tsx` (задача З3.4).
-Пакет не обещает GUI/RPC в V1 и не подменяет TUI-панель заглушкой.
+**Явно:** GUI и RPC — только V2. TUI — обе линии: `package.json` объявляет
+`exports["./tui"] = "./src/tui.tsx"` (как в документации OpenCode для
+пакетов-плагинов), а сам модуль отдаёт `{ ...v2Tui, tui: tuiV1 }`: V2 читает
+`setup`, V1 — `tui`. Пакет не обещает GUI/RPC в V1 и не подменяет TUI-панель
+заглушкой.
+
+**TUI в V1.** `src/tui-v1.tsx` реализует `TuiPluginModule` и живёт на тех же
+данных, что V2: `getJobsView`, `groupJobsForDisplay`, `statusIcon`,
+`formatJobLog`. Возможности V1 TUI:
+
+- маршрут `/scheduler` — полный список задач, выбор и действия
+  run / pause / resume / log; после каждого обновления маршрут
+  перерегистрируется, поэтому данные свежие;
+- слот `sidebar_content` — снимок списка на момент регистрации: V1 API не
+  возвращает функцию отписки от слота, поэтому перерисовать его нельзя;
+- команды палитры — действия, открытие панели, refresh, переход по списку
+  (`Ctrl+Shift+J`, `Ctrl+Shift+↑/↓`, `Ctrl+Shift+Enter`);
+- выбранная задача хранится в `api.kv` (`opencode-windows-scheduler.selected`);
+- таймер 5 секунд и отписки снимаются в `api.lifecycle.onDispose`.
+
+Ограничение слота — не регрессия, а свойство V1 API; в V2 панель обновляется
+через reactive store `ctx.storage`.
 
 **Хуки не используются осознанно.** Плагин не подписывается ни на
 `ctx.tool.hook`, `ctx.permission.hook` и `ctx.event.subscribe` в V2, ни на
@@ -151,8 +170,9 @@ Zod-объекта. `@opencode-ai/plugin@1.19.5` зависит от `zod@4.1.8`
 получает `(args, context)` и возвращает `string` либо `{ title, output, metadata, attachments }`.
 
 **TUI:** отдельный subpath `@opencode-ai/plugin/tui`; модуль TUI регистрируется
-не через `setup(ctx)`, а через TUI-API V1 — поэтому в `1.5.6` нужен отдельный
-entrypoint (задача З3.4).
+не через `setup(ctx)`, а через TUI-API V1 (`api.slots`, `api.route`, `api.kv`,
+`api.command`). В `1.5.6` это `src/tui-v1.tsx`, который отдаётся из того же
+`exports["./tui"]`, что и V2-модуль.
 
 ## Чего в V1 нет
 

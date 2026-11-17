@@ -2,6 +2,7 @@
 import { Plugin } from "@opencode/plugin/tui"
 import { getSchedulerBackend } from "./core/scheduler/index"
 import { getTaskLogs } from "./core/scheduler/logs"
+import { tuiV1 } from "./tui-v1"
 import {
   formatJobLog,
   getJobsView,
@@ -22,7 +23,7 @@ type JobAction = "run" | "pause" | "resume" | "log"
  * reactive store контекста и обновляется раз в 5 секунд, поэтому панель
  * не остаётся статическим снимком первого рендера.
  */
-export default Plugin.define({
+export const v2Tui = Plugin.define({
   id: "opencode-windows-scheduler.tui",
   async setup(ctx) {
     // Первый снимок загружаем до регистрации слота, чтобы не показывать
@@ -320,3 +321,9 @@ export default Plugin.define({
     }
   },
 })
+
+/**
+ * Один и тот же TUI-модуль обслуживает обе линии: V2 читает `setup`,
+ * V1 — `tui`. Лишнее поле каждая линия игнорирует.
+ */
+export default { ...v2Tui, tui: tuiV1 }

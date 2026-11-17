@@ -39,6 +39,7 @@
   "type": "module",
   "exports": {
     ".": "./dist/index.js",
+    "./tui": "./src/tui.tsx",
     "./gui-experimental": "./gui-experimental.cjs"
   },
   "files": [

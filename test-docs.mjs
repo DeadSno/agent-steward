@@ -249,6 +249,40 @@ check(
     "node test-dual-entry.mjs"
   ) && fs.existsSync(path.join(root, "test-dual-entry.mjs"))
 );
+const tuiSrc = fs.readFileSync(path.join(root, "src", "tui.tsx"), "utf8");
+const tuiV1Path = path.join(root, "src", "tui-v1.tsx");
+check(
+  "src/tui.tsx: один модуль отдаёт V2 setup и V1 tui",
+  /export const v2Tui = Plugin\.define\(\{/.test(tuiSrc) &&
+    /export default \{ \.\.\.v2Tui, tui: tuiV1 \}/.test(tuiSrc) &&
+    fs.existsSync(tuiV1Path)
+);
+const tuiV1Src = fs.existsSync(tuiV1Path) ? fs.readFileSync(tuiV1Path, "utf8") : "";
+check(
+  "src/tui-v1.tsx: TuiPluginModule, слот sidebar_content и маршрут",
+  /const moduleDefinition: TuiPluginModule = \{ id: PLUGIN_ID, tui: tuiV1 \}/.test(
+    tuiV1Src
+  ) &&
+    /api\.slots\.register\(\{/.test(tuiV1Src) &&
+    /sidebar_content:/.test(tuiV1Src) &&
+    /api\.route\.register\(\[/.test(tuiV1Src)
+);
+check(
+  "src/tui-v1.tsx: kv, lifecycle и действия run/pause/resume/log",
+  /api\.kv\.get<string>/.test(tuiV1Src) &&
+    /api\.kv\.set\(/.test(tuiV1Src) &&
+    /api\.lifecycle\.onDispose\(/.test(tuiV1Src) &&
+    /backend\.runTask\(/.test(tuiV1Src) &&
+    /backend\.pauseTask\(/.test(tuiV1Src) &&
+    /backend\.resumeTask\(/.test(tuiV1Src) &&
+    /getTaskLogs\(/.test(tuiV1Src)
+);
+check(
+  'package.json: TUI-часть опубликована как "./tui"',
+  JSON.parse(
+    fs.readFileSync(path.join(root, "package.json"), "utf8")
+  ).exports?.["./tui"] === "./src/tui.tsx"
+);
 const typesSrc = fs.readFileSync(path.join(root, "src", "types.ts"), "utf8");
 check(
   'src/types.ts: TASK_FOLDER остаётся "OpenCode"',
