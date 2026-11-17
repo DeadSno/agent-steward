@@ -3,9 +3,9 @@
 This package is deprecated. Use [`agent-steward`](https://www.npmjs.com/package/agent-steward) instead.
 
 This package is a thin re-export of `agent-steward` and exists only for backward
-compatibility during the rename milestone (Д7). It receives only critical patches
-and will be deprecated on npm after download parity with `agent-steward` is reached
-(planned for `>= 2.1`, per the project roadmap).
+compatibility during the rename milestone (Д7). **Since 1.5.8 it is deprecated on
+npm** and receives only critical patches; new installs should use `agent-steward`
+directly (it is pulled in automatically as a dependency).
 
 ## Migration
 

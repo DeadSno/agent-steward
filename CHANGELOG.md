@@ -2,12 +2,29 @@
 
 All notable changes to this project are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.0.3] - 2026-11-17
 
 ### Added
 
+- **Durable run state (Sprint 36.1):** таблицы `runs` и `run_steps` хранят запуск и каждый шаг DAG (`status`, `attempt`, `idempotency_key`, timestamps, `output_json`), переживают перезапуск и падение процесса. `run_steps` каскадно удаляются вместе с запуском; недопустимые переходы отсекаются `InvalidTransitionError`. Схема поднимается до `SCHEMA_VERSION = 3` автоматически, включая старые БД (`PRAGMA user_version`).
+- **Журналирование переходов (36.1.b):** `src/db/run-journal.ts` коммитит `running` до выполнения тела шага и `passed`/`failed` после; при `kill -9` в БД остаётся `running` с номером попытки, а `recoverInterruptedSteps()` помечает его `failed`, сохраняя `attempt`. SQLite работает в WAL с `synchronous = NORMAL`.
+- **Resume с середины (36.2):** `src/db/run-resume.ts` продолжает цепочку с первого незавершённого шага (`findResumeStep`), пропускает уже пройденные шаги без вызова обработчиков, проверяет наличие всех обработчиков до побочных эффектов и переоткрывает упавший запуск (`reopenRun`). Колонка `run_steps.position` фиксирует порядок шагов (миграция v3 бэкфиллит её из `rowid`).
+
+### Changed
+
+- **Шим `opencode-windows-scheduler@1.5.8`:** тонкий реэкспорт `agent-steward`; зависимость ослаблена до `>=0.0.2`, чтобы шим ставился с любой актуальной версией ядра.
+
+### Deprecated
+
+- **`opencode-windows-scheduler@1.5.7`:** помечен через `npm deprecate` — используйте `agent-steward@>=0.0.2`.
+
+## [0.0.2] - 2026-11-17
+
+### Changed
+
 - **Переименование пакета (`Д7`):** npm-пакет `opencode-windows-scheduler` переименован в `agent-steward` (релиз `agent-steward@0.0.2`, milestone Д7). GitHub-репозиторий `DeadSno/opencode-windows-scheduler` → `DeadSno/agent-steward` с редиректами на старые URL. Старый пакет `opencode-windows-scheduler` остаётся как thin re-export (`legacy/`) для обратной совместимости на один major.
 - **`plugin id` не меняется:** остаётся `opencode-windows-scheduler` — конфиг OpenCode (`plugin` для V1, `plugins` для V2), пути состояния, префиксы задач, маркер дашборда и action ID в TUI без изменений. Миграция не требуется.
+- **Шим:** диапазон `agent-steward` в `legacy/package.json` исправлен с `^1.5.6` на `^0.0.2` (опубликованы только `0.0.x`).
 
 ### Fixed
 
@@ -36,7 +53,7 @@ All notable changes to this project are documented here. Format follows [Keep a 
 - **Matrix:** при коллизии имён клонов выбрасывается ошибка `matrix.error.duplicateCloneName` вместо молчаливого пропуска; ключ добавлен в `locales/ru.json`, `locales/en.json`, `locales/zh.json`.
 - **ScheduleJobArgs:** латинский regex имени заменён на `superRefine` с общим `validateTaskName` — кириллица разрешена, схема и фактическая валидация приведены к одному правилу.
 - **update_task:** при смене регистра имени задачи ссылки в `dependsOn`/`nextTaskOnSuccess`/`nextTaskOnError` других задач обновляются на новое имя (case-insensitive поиск и замена).
-- **Шим `opencode-windows-scheduler@1.5.7`:** задепрекейчен (`npm deprecate`) — требует `agent-steward: ^1.5.6`, что неудовлетворимо (опубликованы только `0.0.x`, см. P0-1). Диапазон в `legacy/package.json` обновлён на `^0.0.2`; шим остаётся thin re-export для обратной совместимости на один major.
+- **Шим `opencode-windows-scheduler@1.5.7`:** требует `agent-steward: ^1.5.6`, что неудовлетворимо (опубликованы только `0.0.x`, см. P0-1). Диапазон в `legacy/package.json` обновлён на `^0.0.2`; сам шим остаётся thin re-export для обратной совместимости на один major и будет задепрекейчен в `0.0.3`.
 
 ## [1.5.5] - 2026-11-16
 
