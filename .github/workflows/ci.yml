@@ -131,12 +131,31 @@ jobs:
           node-version: "22.22.0"
           cache: npm
 
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Pack plugin and shim
+        run: |
+          npm pack --ignore-scripts
+          (cd legacy && npm pack --ignore-scripts)
+
       - name: Install shim in clean directory
         run: |
           mkdir -p /tmp/shim-smoke
           cd /tmp/shim-smoke
           npm init -y >/dev/null 2>&1 || true
-          npm install opencode-windows-scheduler@1.5.7
+          npm install "$GITHUB_WORKSPACE"/agent-steward-*.tgz
+          npm install "$GITHUB_WORKSPACE"/legacy/opencode-windows-scheduler-*.tgz
+          node -e "
+          const fs = require('fs');
+          const exists = (p) => fs.existsSync(p);
+          const pick = (dep) => exists('node_modules/' + dep) ? 'node_modules/' + dep : 'node_modules/agent-steward/node_modules/' + dep;
+          for (const dep of ['@opencode/plugin', '@opencode/schema', 'chokidar', 'zod']) {
+            if (!exists(pick(dep))) throw new Error('missing dependency: ' + dep);
+          }
+          const core = JSON.parse(fs.readFileSync('node_modules/agent-steward/package.json', 'utf8'));
+          console.log('shim ok: ' + core.name + '@' + core.version);
+          "
 
   # P3-1: дрейф lock-файла на свежем npm. Ловит плавающие диапазоны (">=") и
   # lock, который перестал соответствовать package.json, до того как это
@@ -158,8 +177,8 @@ jobs:
         run: npm install -g npm@latest
 
       - name: Check lock matches package.json
-        run: npm ci --dry-run
+        run: npm ci --dry-run --ignore-scripts
 
       - name: Check publish payload
-        run: npm pack --dry-run
+        run: npm pack --dry-run --ignore-scripts
 
