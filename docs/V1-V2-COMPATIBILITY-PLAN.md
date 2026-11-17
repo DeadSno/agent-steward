@@ -261,7 +261,7 @@
 | Д3 | ✅ 17.11.2026 |
 | Д4 | ✅ 17.11.2026 (регрессия; реальная загрузка — З5.2/З5.3) |
 | Д5 | ✅ 17.11.2026 |
-| Д6 | не начата |
+| Д6 | в работе (подготовка ✅, публикация ждёт разрешения) |
 | Д7 | отложена |
 | Д8 | отложена |
 
@@ -351,5 +351,16 @@
 | П5.3.2 | GUI/RPC не менялись; `npm run build:gui` собирает `gui-experimental.cjs` (374.51 kB). `test-docs` продолжает сверять entrypoint'ы. |
 | П5.4.1 | В `.github/workflows/ci.yml` добавлены отдельные job `compat-v1` (V1 SDK 1.19.x: `test-dual-entry`, `test-v1-integration`, `test-docs`) и `compat-v2` (устанавливает `@opencode/plugin@2.3.0` и `@opencode/schema@2.3.0`, гоняет `test-dual-entry`, `test-agent-tools`, `test-audit`). |
 | П5.4.2 | Оба job — `ubuntu-latest`, вне матрицы трёх ОС и без `needs` от неё, поэтому недоступность V1-стенда не блокирует Windows/macOS/Linux. `test-docs` расширен четырьмя проверками (подключение `test-v1-integration`, изолированный порт, сверка имён V1/V2, наличие job'ов) → **84/84**. |
+
+### Д6. Релиз 1.5.6 — в работе (подготовка ✅, публикация ждёт разрешения)
+
+| Подзадача | Результат |
+|---|---|
+| П6.1.1 | `package.json` → `1.5.6`; `package-lock.json` версии `:3` и `:9` → `1.5.6`. |
+| П6.1.2 | `CHANGELOG.md`: `## [Unreleased]` → `## [1.5.6] - 2026-11-17`, новый пустой `## [Unreleased]` сверху, `### Added` расширен на 5 пунктов (dual V1/V2, 26 инструментов V1, TUI на обеих линиях + исправленный `exports["./tui"]`, `test-dual-entry`/`test-v1-integration`, CI jobs `compat-v1`/`compat-v2`). |
+| П6.1.3 | `CONTRIBUTING.md:73` — пример тега `v1.5.5` → `v1.5.6`; `docs/CONCEPT.md:223` — «V1 и V2 (текущий): один пакет, dual export, общее ядро»; `docs/COMPATIBILITY.md:12` — «2.3.0 (CI job `compat-v2`)»; README Install уже описывает обе линии (`plugin`/`plugins`). |
+| П6.2.1 | Полный прогон: `npm run build` — OK; `npm run test:parallel` — **63/63**; `npm run test:en` — **63/63**; `npm run test:zh` — **63/63**; `test-docs` — **84/84**. |
+| П6.2.2 | Тег `v1.5.6`, release workflow — не выполняются: ожидают отдельного разрешения на publikation в `main`. |
+| П6.2.3 | Проверка npm и GitHub Release — не выполняется по той же причине. |
 
 

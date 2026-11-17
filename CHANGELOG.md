@@ -4,10 +4,16 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ## [Unreleased]
 
+## [1.5.6] - 2026-11-17
+
 ### Added
 
 - **Интерфейс на китайском (`locales/zh.json`):** полный перевод всех 772 ключей интерфейса (`gui.*`, `matrix.*`, `shadow.*`, `schedule.*`, `notify.*`, `tool.*`, `localAi.*`, `server.*`, `gitTrigger.*`, `dryRun.*`, `app.*`, `common.*`) с паритетом ключей и плейсхолдеров к `en.json`/`ru.json`; вместе с 5 ключами селектора языка — 777. Поддерживается через `locale: "zh"` в `manage_settings` и переключатель в шапке панели. GUI-бандл регистрирует каталог через `registerCatalog("zh", ...)`.
 - **Режим языка `auto` (T7):** `locale: "auto"` следует за языком интерфейса OpenCode. GUI читает `ctx.locale.locale()`, маппит BCP 47 (`zh-CN`/`zh-Hans` → `zh`, `en-GB` → `en`, `ru-RU` → `ru`) и переключает панель без перезапуска; селектор языка (🌐 Авто / Русский / English / 中文) появился в шапке панели. Серверный процесс языка окна не видит, поэтому GUI присылает разрешённую локаль в новом поле `uiLocale` — уведомления, дайджест, результаты инструментов и дашборд используют её. Старые настройки `ru`/`en` читаются без миграции.
+- **OpenCode V1 и V2 в одном пакете:** default export объединяет V2 `setup()` и V1 `server()`, поэтому один и тот же пакет работает на V1 ≥ 1.18.29 и V2 ≥ 2.2.7. Обе линии поднимают общее ядро `createRuntime` (SQLite, recovery, watchers, триггеры) и используют один сценарий выгрузки `createShutdownHandler`. Границы и матрица поверхностей — в `docs/COMPATIBILITY.md`; ключ конфига зависит от линии (`plugin` для V1, `plugins` для V2).
+- **26 инструментов агента в V1:** `createV1Tools` собирает их из тех же декларативных `createToolSpecs`, что и V2, с общим аудитом `withAudit` и конвертацией результата `Tool.Result` → V1 `ToolResult`. У V1 нет `options.codemode`, поэтому инструменты вызываются обычным способом; GUI-панель и RPC-методы в V1 недоступны, потому что этих subpath в V1 SDK нет.
+- **TUI-панель на обеих линиях:** добавлен `src/tui-v1.tsx` — маршрут `/scheduler`, снимок в `sidebar_content`, команды палитры и клавиши, выбор задачи в `api.kv`, обновление раз в 5 секунд. `src/tui.tsx` теперь отдаёт `{ ...v2Tui, tui: tuiV1 }`, а `exports["./tui"]` наконец объявлен в `package.json` — до этого V2 TUI из пакета не загружался вовсе.
+- **Тесты совместимости:** `test-dual-entry.mjs` сверяет форму export, наборы имён V1/V2 и кросс-версию zod; `test-v1-integration.mjs` вызывает реальный `server()` с изолированными HOME и портом дашборда; в CI появились отдельные jobs `compat-v1` (V1 SDK 1.19.x) и `compat-v2` (V2 SDK 2.3.0).
 
 ### Fixed
 
