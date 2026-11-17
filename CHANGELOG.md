@@ -13,6 +13,7 @@ All notable changes to this project are documented here. Format follows [Keep a 
 ### Changed
 
 - **Шим `opencode-windows-scheduler@1.5.8`:** тонкий реэкспорт `agent-steward`; зависимость ослаблена до `>=0.0.2`, чтобы шим ставился с любой актуальной версией ядра.
+- **Release-workflow:** матрица `verify` сокращена до windows/ubuntu. macOS по-прежнему проверяется обычным CI на каждом push; в релизе он не дублируется, потому что очередь macOS-раннеров блокировала `publish`.
 
 ### Deprecated
 

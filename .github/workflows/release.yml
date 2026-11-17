@@ -12,8 +12,9 @@ permissions:
 
 jobs:
   # P3-5: тег не проходит через обычный CI (он слушает только ветки и PR),
-  # поэтому релиз обязан сам прогнать тесты на всех трёх ОС. Публикация
-  # начинается только после зелёного verify (needs ниже).
+  # поэтому релиз сам прогоняет тесты. macOS покрыт обычным CI на каждом push
+  # (ci.yml, matrix windows/ubuntu/macos), в релизе не дублируется: очередь
+  # macOS-раннеров блокировала publish. Публикация стартует после зелёного verify.
   verify:
     name: Verify ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
@@ -21,7 +22,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest]
+        os: [windows-latest, ubuntu-latest]
 
     steps:
       - name: Checkout
