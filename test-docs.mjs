@@ -178,6 +178,30 @@ check(
     compatText.includes("withAudit") &&
     compatText.includes("emit_event")
 );
+// П2.4.1: единый сценарий выгрузки для обоих entrypoint.
+const shutdownBlock = indexSrc.match(
+  /export function createShutdownHandler\([\s\S]*?\n\}/
+);
+const shutdownSrc = shutdownBlock ? shutdownBlock[0] : "";
+const shutdownOrder = [
+  "shutdownGate.begin()",
+  "registration.dispose()",
+  "runtime.dispose()",
+  "closeDashboardServer()",
+  "shutdownGate.waitForIdle(",
+  "closeDb()",
+].map((step) => shutdownSrc.indexOf(step));
+check(
+  "src/index.ts: createShutdownHandler сохраняет порядок выгрузки",
+  shutdownSrc.length > 0 &&
+    shutdownOrder.every((pos) => pos >= 0) &&
+    shutdownOrder.every((pos, i) => i === 0 || pos > shutdownOrder[i - 1])
+);
+check(
+  "src/index.ts: setup V2 отдаёт общий shutdown-обработчик",
+  /return createShutdownHandler\(runtime, \[/.test(indexSrc) &&
+    (indexSrc.match(/shutdownGate\.begin\(\)/g) || []).length === 1
+);
 const typesSrc = fs.readFileSync(path.join(root, "src", "types.ts"), "utf8");
 check(
   'src/types.ts: TASK_FOLDER остаётся "OpenCode"',

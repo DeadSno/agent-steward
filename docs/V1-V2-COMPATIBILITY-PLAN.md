@@ -102,8 +102,11 @@
   handlers, а не строковыми ключами. ✅ (не требуется)
 
 ### Задача З2.4. Единый shutdown
-- П2.4.1 — `shutdownGate` и `dispose` доступны обоим entrypoint.
-- П2.4.2 — V1 cleanup возвращается из `server()`; V2 — из `setup()`.
+- П2.4.1 — `createShutdownHandler(runtime, registrations)` — общий сценарий
+  выгрузки: `shutdownGate.begin()` → dispose регистраций → `runtime.dispose()`
+  → dashboard → `waitForIdle(15_000)` → `closeDb()`. ✅
+- П2.4.2 — V2 возвращает cleanup из `setup()`, V1 — из `server()` (ждёт
+  V1-entrypoint из З3.1).
 
 ---
 
@@ -224,7 +227,7 @@
 |---|---|
 | Д0 | ✅ 17.11.2026 |
 | Д1 | ✅ 17.11.2026 |
-| Д2 | в работе (П2.1.1–П2.3.3; П2.1.3 и П2.2.3 — вместе с Д3, осталось П2.4) |
+| Д2 | в работе (П2.1.1–П2.4.1; П2.1.3, П2.2.3 и П2.4.2 — вместе с Д3) |
 | Д3 | не начата |
 | Д4 | не начата |
 | Д5 | не начата |
@@ -274,5 +277,7 @@
 | П2.3.1 | Проверено по исходникам: hook-домены (`ctx.tool.hook`, `ctx.permission.hook`, `ctx.event.subscribe`) в коде отсутствуют. Аудит уже общий — `withAudit` навешивается в `createToolSpecs`; permissions — `resolvePermissions`/`buildOpencodeConfig` в env фонового запуска (`src/core/permissions.ts`); события — `emit_event`, `FileWatchManager` и `GitTriggerManager` из `createRuntime`. В `docs/COMPATIBILITY.md` строка матрицы уточнена («API есть, но плагин его не использует») и добавлен абзац «Хуки не используются осознанно» с причинами и следствием для Д3. `test-docs` расширен двумя защитными проверками (общий код не ссылается на V2-домены; документ фиксирует отказ) → 66/66. |
 | П2.3.2 | Не требуется: V2 hook-домены не используются, отдельный hook-адаптер не нужен. ✅ |
 | П2.3.3 | Не требуется: V1-хуки не используются; паритет линий достигается общими handlers и `createRuntime`, а не строковыми ключами. ✅ |
+| П2.4.1 | В `src/index.ts` добавлен `createShutdownHandler(runtime, registrations, { waitMs })`: `shutdownGate.begin()` → последовательный `dispose()` регистраций (ошибка одной логируется и не мешает остальным) → `runtime.dispose()` → `closeDashboardServer()` → `waitForIdle(15_000)` → `closeDb()`. `setup` V2 теперь возвращает этот обработчик с `rpcRegistration`, `registration` и (если есть) `skillRegistration`; ручной cleanup удалён, `shutdownGate.begin()` встречается в коде один раз. В `docs/COMPATIBILITY.md` добавлен абзац «Единая выгрузка». `test-docs` расширен двумя проверками (порядок шагов, использование обработчика) → 68/68. |
+| П2.4.2 | Отложено до V1-entrypoint (З3.1): V2 уже отдаёт cleanup из `setup()`; V1 вернёт тот же `createShutdownHandler` из `server()`. |
 
 

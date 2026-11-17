@@ -44,6 +44,12 @@
 `createRuntime`. `test-docs` следит, чтобы общий код не начал ссылаться на
 V2-only домены без обновления этого раздела.
 
+**Единая выгрузка.** Обе линии используют один `createShutdownHandler(runtime,
+registrations)`: `shutdownGate.begin()` → освобождение регистраций →
+`runtime.dispose()` → закрытие dashboard → ожидание активных in-process
+операций → `closeDb()`. V2 отдаёт этот cleanup из `setup(ctx)`, V1 — из
+`server()` (З3.1); порядок и таймаут `15_000` мс общие.
+
 ## Где зафиксированы версии
 
 | Что | Где | Значение |

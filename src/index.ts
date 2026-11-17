@@ -3690,6 +3690,56 @@ export function createToolHandlers(_runtime: SchedulerRuntime): ToolHandlers {
 }
 
 /**
+ * П2.4.1: единый сценарий выгрузки для V1 и V2.
+ *
+ * Порядок важен: сначала закрываем приём новых запусков, освобождаем
+ * регистрации и runtime, затем гасим dashboard и только после ожидания
+ * активных in-process операций закрываем SQLite. Ошибка отдельной
+ * регистрации не должна мешать закрыть БД, поэтому шаги изолированы.
+ */
+export interface ShutdownResource {
+  dispose: () => void | Promise<void>;
+}
+
+export function createShutdownHandler(
+  runtime: SchedulerRuntime,
+  registrations: ShutdownResource[] = [],
+  options: { waitMs?: number } = {}
+): () => Promise<void> {
+  const waitMs = options.waitMs ?? SHUTDOWN_WAIT_MS;
+
+  return async () => {
+    shutdownGate.begin();
+
+    for (const registration of registrations) {
+      try {
+        await registration.dispose();
+      } catch (err) {
+        console.warn(
+          `[windows-scheduler] Выгрузка: ошибка освобождения регистрации — ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        );
+      }
+    }
+
+    runtime.dispose();
+
+    // Сначала перестаём принимать новые запросы, затем ждём уже начатые
+    // in-process операции, чтобы не закрыть SQLite под активной записью.
+    await closeDashboardServer();
+    const wait = await shutdownGate.waitForIdle(waitMs);
+    if (wait.timedOut) {
+      console.warn(
+        `[windows-scheduler] Выгрузка: ${wait.remaining} запуск(ов) не завершились за ${waitMs} мс — закрываем БД.`
+      );
+    }
+    // Чекпойнт WAL выполняется в closeDb.
+    closeDb();
+  };
+}
+
+/**
  * Декларативное описание инструмента: всё, что нужно любому entrypoint'у,
  * чтобы зарегистрировать его в своей версии API.
  */
@@ -5120,25 +5170,11 @@ export default Plugin.define({
       );
     }
 
-    return async () => {
-      shutdownGate.begin();
-      rpcRegistration.dispose();
-      registration.dispose();
-      void skillRegistration?.dispose();
-      runtime.dispose();
-
-      // Сначала перестаём принимать новые запросы, затем ждём уже начатые
-      // in-process операции, чтобы не закрыть SQLite под активной записью.
-      await closeDashboardServer();
-      const wait = await shutdownGate.waitForIdle(SHUTDOWN_WAIT_MS);
-      if (wait.timedOut) {
-        console.warn(
-          `[windows-scheduler] Выгрузка: ${wait.remaining} запуск(ов) не завершились за ${SHUTDOWN_WAIT_MS} мс — закрываем БД.`
-        );
-      }
-      // Чекпойнт WAL выполняется в closeDb.
-      closeDb();
-    };
+    return createShutdownHandler(runtime, [
+      rpcRegistration,
+      registration,
+      ...(skillRegistration ? [skillRegistration] : []),
+    ]);
   },
 });
 
