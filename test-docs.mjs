@@ -156,9 +156,14 @@ check(
     registeredTools.every((name) => handlerKeys.includes(name))
 );
 check(
-  "src/index.ts: setup регистрирует инструменты через handlers.*",
+  "src/index.ts: ToolSpec использует общие handlers.*",
   !/execute: [a-zA-Z]+Execute as any/.test(indexSrc) &&
     (indexSrc.match(/handlers\.[a-z_]+ as any/g) || []).length === registeredTools.length
+);
+check(
+  "src/index.ts: V2-обёртка editor.add тонкая (createToolSpecs)",
+  /for \(const spec of createToolSpecs\(runtime\)\) \{/.test(indexSrc) &&
+    (indexSrc.match(/editor\.add\(\{/g) || []).length === 2
 );
 const typesSrc = fs.readFileSync(path.join(root, "src", "types.ts"), "utf8");
 check(

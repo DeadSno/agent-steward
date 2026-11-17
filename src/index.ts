@@ -3689,366 +3689,307 @@ export function createToolHandlers(_runtime: SchedulerRuntime): ToolHandlers {
   };
 }
 
+/**
+ * Декларативное описание инструмента: всё, что нужно любому entrypoint'у,
+ * чтобы зарегистрировать его в своей версии API.
+ */
+export interface ToolSpec {
+  name: string;
+  input: any;
+  description: string;
+  execute: (args: any, context: Tool.Context) => Promise<Tool.Result>;
+  /** Правила аудита; null/undefined — операция не пишется в журнал. */
+  audit?: (args: any) => Omit<AuditEntryInput, "actor"> | null;
+}
+
+/**
+ * Собирает полный список инструментов для конкретного ядра.
+ *
+ * V2-адаптер (`ctx.tool.transform`) и будущий V1-адаптер (`tool()`) получают
+ * одинаковые имена, схемы, описания и обработчики. Аудит навешивается здесь
+ * один раз, чтобы обе линии вели журнал одинаково.
+ */
+export function createToolSpecs(runtime: SchedulerRuntime): ToolSpec[] {
+  const handlers = createToolHandlers(runtime);
+  return [
+    {
+      name: "schedule_task",
+      input: scheduleTaskSchema,
+      description:
+        `Creates a task in the OS scheduler (${scheduler.title}) with a cron schedule, optional Quality Gate, DAG dependencies, retry policy and matrix fan-out. ` +
+        "Every run goes through a timeout + lock-file wrapper, so overlapping runs are skipped. " +
+        "Without workingDirectory the task runs in the current project folder, where opencode run picks up the project's opencode.json and MCP servers.",
+      audit: (args: ScheduleArgs) => ({ action: "task.create", targetType: "task", target: args.name }),
+      execute: handlers.schedule_task as any,
+    },
+    {
+      name: "list_tasks",
+      input: listTasksSchema,
+      description:
+        `Lists plugin tasks from the scheduler (${scheduler.title}) with schedule, status, next chained task and working directory. ` +
+        "Matrix parents include a per-clone summary.",
+      execute: handlers.list_tasks as any,
+    },
+    {
+      name: "update_task",
+      input: updateTaskSchema,
+      description:
+        "Partially updates an existing task: omitted fields keep their current values, empty strings/arrays clear them. " +
+        "Matrix changes are synced (clones are diffed, running clones are never touched); pass matrix: null to remove the matrix and its clones.",
+      audit: (args: UpdateArgs) => ({ action: "task.update", targetType: "task", target: args.name }),
+      execute: handlers.update_task as any,
+    },
+    {
+      name: "delete_task",
+      input: deleteTaskSchema,
+      description:
+        `Deletes a task from the scheduler (${scheduler.title}) by name. ` +
+        "Deleting a matrix parent also deletes its clones and aggregator; deleting a single clone is refused (delete the whole matrix instead).",
+      audit: (args: DeleteArgs) => ({ action: "task.delete", targetType: "task", target: args.name }),
+      execute: handlers.delete_task as any,
+    },
+    {
+      name: "run_task_now",
+      input: runTaskNowSchema,
+      description:
+        `Runs a task immediately in the scheduler (${scheduler.title}) for testing. ` +
+        "Runs through the timeout + lock wrapper. For a matrix parent this starts the fan-out instead of the parent itself.",
+      audit: (args: RunNowArgs) => ({ action: "task.run", targetType: "task", target: args.name }),
+      execute: handlers.run_task_now as any,
+    },
+    {
+      name: "pause_task",
+      input: pauseTaskSchema,
+      description:
+        "Pauses a task in the OS scheduler. For a matrix parent every clone is paused (the parent itself never runs).",
+      audit: (args: PauseArgs) => ({ action: "task.pause", targetType: "task", target: args.name }),
+      execute: handlers.pause_task as any,
+    },
+    {
+      name: "resume_task",
+      input: resumeTaskSchema,
+      description:
+        "Resumes a previously paused task. For a matrix parent every clone is resumed.",
+      audit: (args: ResumeArgs) => ({ action: "task.resume", targetType: "task", target: args.name }),
+      execute: handlers.resume_task as any,
+    },
+    {
+      name: "get_history",
+      input: getHistorySchema,
+      description:
+        "Returns recent run history (status, duration, tokens, cost, model, Quality Gate and pre/post-flight results). " +
+        "Filter by taskName and/or status; newest first.",
+      execute: handlers.get_history as any,
+    },
+    {
+      name: "get_task_logs",
+      input: getTaskLogsSchema,
+      description:
+        "Returns the tail of a task's log file written by the run wrapper. Use it to diagnose failed runs.",
+      execute: handlers.get_task_logs as any,
+    },
+    {
+      name: "dry_run",
+      input: dryRunSchema,
+      description:
+        "Simulates a task pipeline (or every task when name is omitted): execution order, DAG dependencies, matrix fan-out, estimated duration/cost and warnings. Nothing is executed.",
+      execute: handlers.dry_run as any,
+    },
+    {
+      name: "manage_workspaces",
+      input: manageWorkspacesSchema,
+      description:
+        "Manages multi-repo workspaces: list, add, update or delete. Tasks can target a workspace by id (cwd = workspace path) or fan out to several with matrix.workspaceIds.",
+      audit: (args: WorkspacesArgs) =>
+        args.action === "list"
+          ? null
+          : {
+              action: `workspace.${args.action}`,
+              targetType: "workspace",
+              target: args.id || args.name || "",
+            },
+      execute: handlers.manage_workspaces as any,
+    },
+    {
+      name: "matrix_control",
+      input: matrixControlSchema,
+      description:
+        "Matrix lifecycle: results (aggregate status/counters of a matrix), cancel (cancel pending clones, stop running ones), cleanup (delete orphaned clones and aggregators whose parent is gone) or preview (expand a matrix config into clone names without creating anything).",
+      audit: (args: MatrixControlArgs) =>
+        args.action === "cancel" || args.action === "cleanup"
+          ? {
+              action: `matrix.${args.action}`,
+              targetType: "matrix",
+              target: args.name || "",
+            }
+          : null,
+      execute: handlers.matrix_control as any,
+    },
+    {
+      name: "get_metrics",
+      input: getMetricsSchema,
+      description:
+        "Returns aggregate run metrics: total runs, successes and failures across all tasks.",
+      execute: handlers.get_metrics as any,
+    },
+    {
+      name: "get_analytics",
+      input: getAnalyticsSchema,
+      description:
+        "Returns an analytics report for a period: run counts, success rate, duration, tokens and cost, plus top tasks.",
+      execute: handlers.get_analytics as any,
+    },
+    {
+      name: "self_analysis",
+      input: selfAnalysisSchema,
+      description:
+        "Generates a self-analysis report: system health score, anomaly detection, trend analysis and optimization recommendations. " +
+        "Helps identify performance issues, cost spikes and reliability problems.",
+      execute: handlers.self_analysis as any,
+    },
+    {
+      name: "manage_settings",
+      input: manageSettingsSchema,
+      description:
+        "Reads or updates global scheduler settings: maxConcurrent, winterMode, notifications (webhook, Telegram, native OS notifications, quiet hours, filters, matrix alerts, digest) and history retention. Updates are merged into the current settings.",
+      audit: (args: SettingsArgs) =>
+        args.action === "update"
+          ? { action: "settings.update", targetType: "settings", target: "global" }
+          : null,
+      execute: handlers.manage_settings as any,
+    },
+    {
+      name: "manage_local_ai",
+      input: manageLocalAiSchema,
+      description:
+        "Reads, updates or tests the local assistant for notification triage: mode (off, rules, llm, auto), Ollama/OpenAI baseUrl, model, timeout, fallback, confidence threshold and shadow mode. " +
+        "action=test sends one synthetic notification to the model and reports latency, protocol and verdict without saving anything. " +
+        "Without a model the scheduler keeps working through rules: notifications are never blocked by a missing model.",
+      audit: (args: LocalAiArgs) =>
+        args.action === "update"
+          ? { action: "localAi.update", targetType: "settings", target: "triage" }
+          : null,
+      execute: handlers.manage_local_ai as any,
+    },
+    {
+      name: "manage_templates",
+      input: manageTemplatesSchema,
+      description:
+        "Lists, saves or deletes reusable task templates (prompt, schedule, retries, Quality Gate, chains, triggers, tool restrictions).",
+      audit: (args: TemplatesArgs) =>
+        args.action === "list"
+          ? null
+          : {
+              action: `template.${args.action}`,
+              targetType: "template",
+              target: args.id || args.name || "",
+            },
+      execute: handlers.manage_templates as any,
+    },
+    {
+      name: "manage_profiles",
+      input: manageProfilesSchema,
+      description:
+        "Lists, creates, switches or deletes isolated scheduler profiles (separate database, settings and dashboard port). Switching requires an OpenCode restart.",
+      audit: (args: ProfilesArgs) =>
+        args.action === "list"
+          ? null
+          : {
+              action: `profile.${args.action}`,
+              targetType: "profile",
+              target: args.name || "",
+            },
+      execute: handlers.manage_profiles as any,
+    },
+    {
+      name: "transfer_tasks",
+      input: transferTasksSchema,
+      description:
+        "Exports all tasks as a portable JSON snapshot or imports tasks from such a snapshot, recreating them in the OS scheduler.",
+      audit: (args: TransferArgs) =>
+        args.action === "import"
+          ? { action: "tasks.import", targetType: "tasks", target: "snapshot" }
+          : null,
+      execute: handlers.transfer_tasks as any,
+    },
+    {
+      name: "send_notification",
+      input: sendNotificationSchema,
+      description:
+        "Sends a test notification through the configured channel or sends the digest immediately.",
+      execute: handlers.send_notification as any,
+    },
+    {
+      name: "get_dashboard_info",
+      input: getDashboardInfoSchema,
+      description:
+        "Returns dashboard port and URL, OS platform, scheduler title and the active profile.",
+      execute: handlers.get_dashboard_info as any,
+    },
+    {
+      name: "cleanup_history",
+      input: cleanupHistorySchema,
+      description:
+        "Deletes old run history by age and/or record cap, using the stored retention policy unless overridden.",
+      audit: () => ({ action: "history.cleanup", targetType: "history", target: "runs" }),
+      execute: handlers.cleanup_history as any,
+    },
+    {
+      name: "manage_secrets",
+      input: manageSecretsSchema,
+      description:
+        "Manages the encrypted secret store: list (names and masked previews), set (create or replace) or delete. " +
+        "Secrets are encrypted with AES-256-GCM at rest and referenced from workspace env as ${secret:NAME}; " +
+        "values are never returned by list and are redacted from logs and audit details.",
+      audit: (args: SecretsArgs) =>
+        args.action === "list"
+          ? null
+          : {
+              action: `secret.${args.action}`,
+              targetType: "secret",
+              target: (args.name ?? "").trim(),
+            },
+      execute: handlers.manage_secrets as any,
+    },
+    {
+      name: "get_audit_log",
+      input: getAuditLogSchema,
+      description:
+        "Returns the audit journal of task and settings mutations: who changed what, when and through which interface (mcp, gui, http). " +
+        "Filter by action, target, actor, time range and limit. Secret values are redacted.",
+      execute: handlers.get_audit_log as any,
+    },
+    {
+      name: "emit_event",
+      input: emitEventSchema,
+      description:
+        "Emits an MCP event: every task with triggerType 'mcp-event' matching the event name (and filter) is started in priority order.",
+      execute: handlers.emit_event as any,
+    },
+  ];
+}
+
 export default Plugin.define({
   id: "opencode-windows-scheduler",
   setup: async (ctx) => {
     const runtime = await createRuntime(ctx);
-    const handlers = createToolHandlers(runtime);
-
     const registration = await ctx.tool.transform((editor) => {
       // editor.add регистрирует новые инструменты плагина с codemode: true,
       // чтобы они были видны в Code Mode. Встроенные schedule_* отключены
       // через "experimental": { "schedules": false } в opencode.jsonc.
-      editor.add({
-        name: "schedule_task",
-        input: scheduleTaskSchema,
-        description:
-          `Creates a task in the OS scheduler (${scheduler.title}) with a cron schedule, optional Quality Gate, DAG dependencies, retry policy and matrix fan-out. ` +
-          "Every run goes through a timeout + lock-file wrapper, so overlapping runs are skipped. " +
-          "Without workingDirectory the task runs in the current project folder, where opencode run picks up the project's opencode.json and MCP servers.",
-        options: { codemode: true },
-        execute: withAudit<ScheduleArgs>(
-          "schedule_task",
-          (args) => ({ action: "task.create", targetType: "task", target: args.name }),
-          handlers.schedule_task as any
-        ) as any,
-      });
-
-      editor.add({
-        name: "list_tasks",
-        input: listTasksSchema,
-        description:
-          `Lists plugin tasks from the scheduler (${scheduler.title}) with schedule, status, next chained task and working directory. ` +
-          "Matrix parents include a per-clone summary.",
-        options: { codemode: true },
-        execute: handlers.list_tasks as any,
-      });
-
-      editor.add({
-        name: "update_task",
-        input: updateTaskSchema,
-        description:
-          "Partially updates an existing task: omitted fields keep their current values, empty strings/arrays clear them. " +
-          "Matrix changes are synced (clones are diffed, running clones are never touched); pass matrix: null to remove the matrix and its clones.",
-        options: { codemode: true },
-        execute: withAudit<UpdateArgs>(
-          "update_task",
-          (args) => ({ action: "task.update", targetType: "task", target: args.name }),
-          handlers.update_task as any
-        ) as any,
-      });
-
-      editor.add({
-        name: "delete_task",
-        input: deleteTaskSchema,
-        description:
-          `Deletes a task from the scheduler (${scheduler.title}) by name. ` +
-          "Deleting a matrix parent also deletes its clones and aggregator; deleting a single clone is refused (delete the whole matrix instead).",
-        options: { codemode: true },
-        execute: withAudit<DeleteArgs>(
-          "delete_task",
-          (args) => ({ action: "task.delete", targetType: "task", target: args.name }),
-          handlers.delete_task as any
-        ) as any,
-      });
-
-      editor.add({
-        name: "run_task_now",
-        input: runTaskNowSchema,
-        description:
-          `Runs a task immediately in the scheduler (${scheduler.title}) for testing. ` +
-          "Runs through the timeout + lock wrapper. For a matrix parent this starts the fan-out instead of the parent itself.",
-        options: { codemode: true },
-        execute: withAudit<RunNowArgs>(
-          "run_task_now",
-          (args) => ({ action: "task.run", targetType: "task", target: args.name }),
-          handlers.run_task_now as any
-        ) as any,
-      });
-
-      editor.add({
-        name: "pause_task",
-        input: pauseTaskSchema,
-        description:
-          "Pauses a task in the OS scheduler. For a matrix parent every clone is paused (the parent itself never runs).",
-        options: { codemode: true },
-        execute: withAudit<PauseArgs>(
-          "pause_task",
-          (args) => ({ action: "task.pause", targetType: "task", target: args.name }),
-          handlers.pause_task as any
-        ) as any,
-      });
-
-      editor.add({
-        name: "resume_task",
-        input: resumeTaskSchema,
-        description:
-          "Resumes a previously paused task. For a matrix parent every clone is resumed.",
-        options: { codemode: true },
-        execute: withAudit<ResumeArgs>(
-          "resume_task",
-          (args) => ({ action: "task.resume", targetType: "task", target: args.name }),
-          handlers.resume_task as any
-        ) as any,
-      });
-
-      editor.add({
-        name: "get_history",
-        input: getHistorySchema,
-        description:
-          "Returns recent run history (status, duration, tokens, cost, model, Quality Gate and pre/post-flight results). " +
-          "Filter by taskName and/or status; newest first.",
-        options: { codemode: true },
-        execute: handlers.get_history as any,
-      });
-
-      editor.add({
-        name: "get_task_logs",
-        input: getTaskLogsSchema,
-        description:
-          "Returns the tail of a task's log file written by the run wrapper. Use it to diagnose failed runs.",
-        options: { codemode: true },
-        execute: handlers.get_task_logs as any,
-      });
-
-      editor.add({
-        name: "dry_run",
-        input: dryRunSchema,
-        description:
-          "Simulates a task pipeline (or every task when name is omitted): execution order, DAG dependencies, matrix fan-out, estimated duration/cost and warnings. Nothing is executed.",
-        options: { codemode: true },
-        execute: handlers.dry_run as any,
-      });
-
-      editor.add({
-        name: "manage_workspaces",
-        input: manageWorkspacesSchema,
-        description:
-          "Manages multi-repo workspaces: list, add, update or delete. Tasks can target a workspace by id (cwd = workspace path) or fan out to several with matrix.workspaceIds.",
-        options: { codemode: true },
-        execute: withAudit<WorkspacesArgs>(
-          "manage_workspaces",
-          (args) =>
-            args.action === "list"
-              ? null
-              : {
-                  action: `workspace.${args.action}`,
-                  targetType: "workspace",
-                  target: args.id || args.name || "",
-                },
-          handlers.manage_workspaces as any
-        ) as any,
-      });
-
-      editor.add({
-        name: "matrix_control",
-        input: matrixControlSchema,
-        description:
-          "Matrix lifecycle: results (aggregate status/counters of a matrix), cancel (cancel pending clones, stop running ones), cleanup (delete orphaned clones and aggregators whose parent is gone) or preview (expand a matrix config into clone names without creating anything).",
-        options: { codemode: true },
-        execute: withAudit<MatrixControlArgs>(
-          "matrix_control",
-          (args) =>
-            args.action === "cancel" || args.action === "cleanup"
-              ? {
-                  action: `matrix.${args.action}`,
-                  targetType: "matrix",
-                  target: args.name || "",
-                }
-              : null,
-          handlers.matrix_control as any
-        ) as any,
-      });
-
-      editor.add({
-        name: "get_metrics",
-        input: getMetricsSchema,
-        description:
-          "Returns aggregate run metrics: total runs, successes and failures across all tasks.",
-        options: { codemode: true },
-        execute: handlers.get_metrics as any,
-      });
-
-      editor.add({
-        name: "get_analytics",
-        input: getAnalyticsSchema,
-        description:
-          "Returns an analytics report for a period: run counts, success rate, duration, tokens and cost, plus top tasks.",
-        options: { codemode: true },
-        execute: handlers.get_analytics as any,
-      });
-
-      editor.add({
-        name: "self_analysis",
-        input: selfAnalysisSchema,
-        description:
-          "Generates a self-analysis report: system health score, anomaly detection, trend analysis and optimization recommendations. " +
-          "Helps identify performance issues, cost spikes and reliability problems.",
-        options: { codemode: true },
-        execute: handlers.self_analysis as any,
-      });
-
-      editor.add({
-        name: "manage_settings",
-        input: manageSettingsSchema,
-        description:
-          "Reads or updates global scheduler settings: maxConcurrent, winterMode, notifications (webhook, Telegram, native OS notifications, quiet hours, filters, matrix alerts, digest) and history retention. Updates are merged into the current settings.",
-        options: { codemode: true },
-        execute: withAudit<SettingsArgs>(
-          "manage_settings",
-          (args) =>
-            args.action === "update"
-              ? { action: "settings.update", targetType: "settings", target: "global" }
-              : null,
-          handlers.manage_settings as any
-        ) as any,
-      });
-
-      editor.add({
-        name: "manage_local_ai",
-        input: manageLocalAiSchema,
-        description:
-          "Reads, updates or tests the local assistant for notification triage: mode (off, rules, llm, auto), Ollama/OpenAI baseUrl, model, timeout, fallback, confidence threshold and shadow mode. " +
-          "action=test sends one synthetic notification to the model and reports latency, protocol and verdict without saving anything. " +
-          "Without a model the scheduler keeps working through rules: notifications are never blocked by a missing model.",
-        options: { codemode: true },
-        execute: withAudit<LocalAiArgs>(
-          "manage_local_ai",
-          (args) =>
-            args.action === "update"
-              ? { action: "localAi.update", targetType: "settings", target: "triage" }
-              : null,
-          handlers.manage_local_ai as any
-        ) as any,
-      });
-
-      editor.add({
-        name: "manage_templates",
-        input: manageTemplatesSchema,
-        description:
-          "Lists, saves or deletes reusable task templates (prompt, schedule, retries, Quality Gate, chains, triggers, tool restrictions).",
-        options: { codemode: true },
-        execute: withAudit<TemplatesArgs>(
-          "manage_templates",
-          (args) =>
-            args.action === "list"
-              ? null
-              : {
-                  action: `template.${args.action}`,
-                  targetType: "template",
-                  target: args.id || args.name || "",
-                },
-          handlers.manage_templates as any
-        ) as any,
-      });
-
-      editor.add({
-        name: "manage_profiles",
-        input: manageProfilesSchema,
-        description:
-          "Lists, creates, switches or deletes isolated scheduler profiles (separate database, settings and dashboard port). Switching requires an OpenCode restart.",
-        options: { codemode: true },
-        execute: withAudit<ProfilesArgs>(
-          "manage_profiles",
-          (args) =>
-            args.action === "list"
-              ? null
-              : {
-                  action: `profile.${args.action}`,
-                  targetType: "profile",
-                  target: args.name || "",
-                },
-          handlers.manage_profiles as any
-        ) as any,
-      });
-
-      editor.add({
-        name: "transfer_tasks",
-        input: transferTasksSchema,
-        description:
-          "Exports all tasks as a portable JSON snapshot or imports tasks from such a snapshot, recreating them in the OS scheduler.",
-        options: { codemode: true },
-        execute: withAudit<TransferArgs>(
-          "transfer_tasks",
-          (args) =>
-            args.action === "import"
-              ? { action: "tasks.import", targetType: "tasks", target: "snapshot" }
-              : null,
-          handlers.transfer_tasks as any
-        ) as any,
-      });
-
-      editor.add({
-        name: "send_notification",
-        input: sendNotificationSchema,
-        description:
-          "Sends a test notification through the configured channel or sends the digest immediately.",
-        options: { codemode: true },
-        execute: handlers.send_notification as any,
-      });
-
-      editor.add({
-        name: "get_dashboard_info",
-        input: getDashboardInfoSchema,
-        description:
-          "Returns dashboard port and URL, OS platform, scheduler title and the active profile.",
-        options: { codemode: true },
-        execute: handlers.get_dashboard_info as any,
-      });
-
-      editor.add({
-        name: "cleanup_history",
-        input: cleanupHistorySchema,
-        description:
-          "Deletes old run history by age and/or record cap, using the stored retention policy unless overridden.",
-        options: { codemode: true },
-        execute: withAudit<CleanupHistoryArgs>(
-          "cleanup_history",
-          () => ({ action: "history.cleanup", targetType: "history", target: "runs" }),
-          handlers.cleanup_history as any
-        ) as any,
-      });
-
-      editor.add({
-        name: "manage_secrets",
-        input: manageSecretsSchema,
-        description:
-          "Manages the encrypted secret store: list (names and masked previews), set (create or replace) or delete. " +
-          "Secrets are encrypted with AES-256-GCM at rest and referenced from workspace env as ${secret:NAME}; " +
-          "values are never returned by list and are redacted from logs and audit details.",
-        options: { codemode: true },
-        execute: withAudit<SecretsArgs>(
-          "manage_secrets",
-          (args) =>
-            args.action === "list"
-              ? null
-              : {
-                  action: `secret.${args.action}`,
-                  targetType: "secret",
-                  target: (args.name ?? "").trim(),
-                },
-          handlers.manage_secrets as any
-        ) as any,
-      });
-
-      editor.add({
-        name: "get_audit_log",
-        input: getAuditLogSchema,
-        description:
-          "Returns the audit journal of task and settings mutations: who changed what, when and through which interface (mcp, gui, http). " +
-          "Filter by action, target, actor, time range and limit. Secret values are redacted.",
-        options: { codemode: true },
-        execute: handlers.get_audit_log as any,
-      });
-
-      editor.add({
-        name: "emit_event",
-        input: emitEventSchema,
-        description:
-          "Emits an MCP event: every task with triggerType 'mcp-event' matching the event name (and filter) is started in priority order.",
-        options: { codemode: true },
-        execute: handlers.emit_event as any,
-      });
+      for (const spec of createToolSpecs(runtime)) {
+        // Аудит навешивается здесь, чтобы V1 и V2 писали журнал одинаково.
+        const execute = spec.audit
+          ? withAudit(spec.name, spec.audit, spec.execute)
+          : spec.execute;
+        editor.add({
+          name: spec.name,
+          input: spec.input,
+          description: spec.description,
+          options: { codemode: true },
+          execute: execute as any,
+        });
+      }
     });
 
     // Нативный скилл плагина: агент видит краткое описание в списке доступных

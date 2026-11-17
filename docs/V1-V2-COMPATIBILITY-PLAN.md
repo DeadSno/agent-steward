@@ -87,7 +87,7 @@
 
 ### Задача З2.2. Общий реестр инструментов
 - П2.2.1 — вынести 25 `execute`-функций в `createToolHandlers(runtime)`. ✅
-- П2.2.2 — V2-обёртка `editor.add` остаётся тонкой.
+- П2.2.2 — V2-обёртка `editor.add` остаётся тонкой. ✅
 - П2.2.3 — V1-обёртка `tool()` использует те же handlers.
 
 ### Задача З2.3. Общие хуки
@@ -215,7 +215,7 @@
 |---|---|
 | Д0 | ✅ 17.11.2026 |
 | Д1 | ✅ 17.11.2026 |
-| Д2 | в работе (П2.1.1–П2.2.1) |
+| Д2 | в работе (П2.1.1–П2.2.2) |
 | Д3 | не начата |
 | Д4 | не начата |
 | Д5 | не начата |
@@ -261,5 +261,6 @@
 | П2.1.2 | `setup(ctx)` V2 теперь начинается с `const runtime = await createRuntime(ctx)`, регистрация инструментов/RPC/хуков осталась в `setup`. В общем cleanup вместо ручного `clearInterval` и `fileWatcherManager.stop()` вызывается `runtime.dispose()`. Порядок shutdown не изменён: `shutdownGate.begin()` → dispose регистраций → `closeDashboardServer()` → `waitForIdle()` → `closeDb()`. `test-docs` расширен проверкой «setup стартует через createRuntime» → 61/61. |
 | П2.1.3 | Отложено до появления V1-entrypoint (`server()` в З3.1): `createRuntime` уже экспортирован и не зависит от V2-контекста. |
 | П2.2.1 | Добавлены экспортируемые `ToolHandlers` и `createToolHandlers(runtime)` — реестр из 26 фактических инструментов (ключ = имя инструмента). Все 26 `execute` в `setup` переведены с прямых имён `*Execute` на `handlers.<name>`; сами обработчики пока остаются модульными, `runtime` зарезервирован под перенос состояния. `test-docs` получил две статические проверки: набор ключей `ToolHandlers` совпадает с именами инструментов, в регистрации не осталось прямых `*Execute` → 63/63. `npm run build`, `test-agent-tools` (23/23), `test-audit` (33/33) — OK. |
+| П2.2.2 | Метаданные всех 26 инструментов вынесены в декларативный `createToolSpecs(runtime)`: `ToolSpec { name, input, description, execute, audit? }`. `setup` теперь содержит один цикл `for (const spec of createToolSpecs(runtime))` и общий `editor.add` с `options: { codemode: true }`; аудит навешивается в цикле через `withAudit`, поэтому правила журнала заданы один раз в спецификации. В `setup` осталось два `editor.add` — цикл инструментов и регистрация скилла. `test-docs` расширен проверкой тонкой обёртки → 64/64; `npm run build`, `test-agent-tools` 23/23, `test-audit` 33/33 — OK. |
 
 
