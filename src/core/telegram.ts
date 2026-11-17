@@ -401,6 +401,12 @@ export async function sendTelegramMessage(
             description
           )
         ) {
+          console.warn(
+            `[notify] Telegram отклонил разметку (${sanitizeErrorText(
+              description,
+              safeToken
+            )}) — чанк повторно отправлен без parse_mode. Проверьте шаблоны уведомлений.`
+          );
           downgradedParseMode = true;
           parseModeForChunk = "";
           continue;

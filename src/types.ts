@@ -113,7 +113,12 @@ export const ScheduleJobArgs = z.object({
   name: z
     .string()
     .min(1)
-    .regex(/^[A-Za-z0-9_\-]+$/, "Имя задачи должно содержать только буквы, цифры, подчёркивание и дефис")
+    .superRefine((value, ctx) => {
+      const error = validateTaskName(value);
+      if (error) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: error });
+      }
+    })
     .describe("Имя задачи (уникально в рамках префикса OpenCode\\windows-scheduler)"),
   schedule: z
     .string()

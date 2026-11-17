@@ -24,6 +24,8 @@ import {
   generateSessionId,
   normalizeSessionMode,
   preservedSessionRunCount,
+  sessionStatePath,
+  writeSessionStateFile,
   type SessionMode,
 } from "./core/session.js";
 import { ensureWrapper, writePromptFile, writeWrapperCmd, lockFilePath, requestImmediateRun } from "./core/ps-wrapper.js";
@@ -272,7 +274,7 @@ export const scheduleTaskSchema = z.object({
   sessionMaxRuns: z
     .number()
     .int()
-    .min(1)
+    .min(0)
     .max(10000)
     .optional()
     .describe(
@@ -535,7 +537,7 @@ export const updateTaskSchema = z.object({
   sessionMaxRuns: z
     .number()
     .int()
-    .min(1)
+    .min(0)
     .max(10000)
     .optional()
     .describe(
@@ -1878,7 +1880,7 @@ async function updateTaskFromInput(
     input.sessionMaxRuns !== undefined ? input.sessionMaxRuns : previous.sessionMaxRuns;
   if (
     sessionMaxRuns !== undefined &&
-    (!Number.isInteger(sessionMaxRuns) || sessionMaxRuns < 1)
+    (!Number.isInteger(sessionMaxRuns) || sessionMaxRuns < 0)
   ) {
     return {
       success: false,
@@ -1992,6 +1994,38 @@ async function updateTaskFromInput(
     // Пересоздание могло изменить triggerType/watchPath — сразу
     // пересобираем набор файловых watcher-ов.
     await refreshTriggers();
+
+    // Спринт 27.5: при смене регистра имени (MyTask -> mytask) обновляем
+    // ссылки в других задачах, иначе DAG и цепочки продолжат указывать на
+    // старое написание.
+    if (previous.name !== name) {
+      const previousLower = previous.name.toLowerCase();
+      for (const task of listTaskDefinitions()) {
+        if (task.name.toLowerCase() === name.toLowerCase()) continue;
+        let changed = false;
+        const renameRef = (value: string): string => {
+          if (value.toLowerCase() === previousLower) {
+            changed = true;
+            return name;
+          }
+          return value;
+        };
+        const dependsOn = task.dependsOn?.map(renameRef);
+        const nextTaskOnSuccess = task.nextTaskOnSuccess
+          ? renameRef(task.nextTaskOnSuccess)
+          : task.nextTaskOnSuccess;
+        const nextTaskOnError = task.nextTaskOnError
+          ? renameRef(task.nextTaskOnError)
+          : task.nextTaskOnError;
+        if (!changed) continue;
+        await saveTask({
+          ...task,
+          ...(dependsOn ? { dependsOn } : {}),
+          nextTaskOnSuccess,
+          nextTaskOnError,
+        });
+      }
+    }
 
     // Спринт 27.5.2: после пересоздания задачи сообщаем ближайший запуск,
     // рассчитанный из нового определения, не дожидаясь ОС.
@@ -2314,14 +2348,7 @@ async function checkStuckMatrices(): Promise<void> {
 /** get_history — история запусков с фильтрами по задаче и статусу. */
 const getHistoryExecute = wrapExecute<HistoryArgs>(async (args) => {
   const limit = Math.max(1, Math.min(args.limit ?? 20, 200));
-  const taskFilter = args.taskName?.trim().toLowerCase();
-  const records = (await loadHistory())
-    .filter(
-      (record) =>
-        !taskFilter || record.taskName.toLowerCase() === taskFilter
-    )
-    .filter((record) => !args.status || record.status === args.status)
-    .slice(0, limit);
+  const records = await loadHistory(args.taskName, limit, args.status);
 
   return {
     content: JSON.stringify({
@@ -4022,7 +4049,7 @@ export default Plugin.define({
         }
         if (
           sessionMaxRuns !== undefined &&
-          (!Number.isInteger(sessionMaxRuns) || sessionMaxRuns < 1)
+          (!Number.isInteger(sessionMaxRuns) || sessionMaxRuns < 0)
         ) {
           return { success: false, message: t("tool.error.sessionMaxRuns", { name }) };
         }
@@ -4276,12 +4303,8 @@ export default Plugin.define({
         const filter = taskName?.trim().toLowerCase();
         const statusFilter = status?.trim().toLowerCase();
         const max = Math.max(1, Math.min(Math.floor(limit ?? 20), 200));
-        const records = (await loadHistory())
-          .filter((record) => !filter || record.taskName.toLowerCase() === filter)
-          .filter(
-            (record) => !statusFilter || String(record.status).toLowerCase() === statusFilter
-          );
-        return { records: records.slice(0, max) };
+        const records = await loadHistory(filter, max, statusFilter);
+        return { records };
       },
       get_metrics: async () => {
         return await loadMetrics();
@@ -5541,6 +5564,10 @@ async function schedulerCreateTask(
   // Обёртка зависит от платформы:
   //  - Windows: .cmd → PowerShell-скрипт (lock, таймаут, метрики);
   //  - Linux/macOS: .sh с тем же набором гарантий.
+  // Спринт 24: id сессии читается обёрткой из sidecar-файла в рантайме,
+  // поэтому ротация подхватывается без пересоздания задачи.
+  const sessionFile =
+    effectiveSession === "reuse" ? sessionStatePath(name) : undefined;
   let wrapperPath: string;
   try {
     if (scheduler.platform === "win32") {
@@ -5569,7 +5596,8 @@ async function schedulerCreateTask(
         retryDelay,
         undefined,
         permissionsConfig,
-        policyMeta
+        policyMeta,
+        sessionFile
       );
     } else {
       wrapperPath = await writeBashWrapper({
@@ -5594,6 +5622,7 @@ async function schedulerCreateTask(
         envFile: taskEnvFile,
         sessionMode: effectiveSession,
         sessionId: effectiveSessionId,
+        sessionFile,
         ...(effectiveTriggerType === "once" && scheduler.platform === "darwin"
           ? { oneShotCleanupCommand: buildLaunchdOneShotCleanup(sanitized, getProfileName()) }
           : {}),
@@ -5774,6 +5803,10 @@ async function schedulerCreateTask(
   } catch {
     // Не критично — основная задача уже создана.
   }
+
+  // Спринт 24: sidecar с актуальным id сессии — обёртка читает его перед
+  // каждым запуском, поэтому ротация не требует пересоздания задачи.
+  await writeSessionStateFile(name, effectiveSessionId);
 
   // Matrix (fan-out): создаём клоны по workspace и, при необходимости,
   // виртуальную задачу matrix-complete, которая запускается DAG-движком.

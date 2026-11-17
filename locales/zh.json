@@ -579,6 +579,7 @@
   "matrix.error.notMatrix": "任务 “{task}” 不是矩阵。",
   "matrix.error.workspaceIdsEmpty": "任务 “{task}”：matrix.workspaceIds 不能为空。",
   "matrix.error.workspaceMissing": "任务 “{task}”：工作区 “{workspace}” 未找到。",
+  "matrix.error.duplicateCloneName": "任务 “{task}”：克隆名称 “{name}” 已被其他工作区占用。请重命名工作区，使克隆名称唯一。",
   "notify.dedup.count": "（重复 {count}）",
   "notify.digest.cost": "成本：{cost} · 令牌：{tokens}",
   "notify.digest.noErrors": "无错误 🎉",

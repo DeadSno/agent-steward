@@ -71,9 +71,13 @@ export function latestHistoryByTask(
   return latest;
 }
 
-/** Читает историю запусков из БД (от новых к старым, как раньше — 200 записей). */
-export async function loadHistory(): Promise<HistoryRecord[]> {
-  return getHistory(null, 200).map((record) => ({
+/** Читает историю запусков из БД (от новых к старым; фильтры применяются в SQLite). */
+export async function loadHistory(
+  taskName?: string | null,
+  limit = 200,
+  status?: string | null
+): Promise<HistoryRecord[]> {
+  return getHistory(taskName, limit, status).map((record) => ({
     taskName: record.taskName,
     // Незавершённые записи до recovery показываем как error для GUI.
     status: (record.status === "running" ? "error" : record.status) as TaskStatus,

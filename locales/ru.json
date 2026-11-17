@@ -579,6 +579,7 @@
   "matrix.error.notMatrix": "Задача \"{task}\" не является матрицей.",
   "matrix.error.workspaceIdsEmpty": "Задача \"{task}\": matrix.workspaceIds не может быть пустым.",
   "matrix.error.workspaceMissing": "Задача \"{task}\": workspace \"{workspace}\" не найден.",
+  "matrix.error.duplicateCloneName": "Задача \"{task}\": имя клона \"{name}\" уже занято другим workspace. Переименуйте workspace, чтобы имена клонов не совпадали.",
   "notify.digest.cost": "Стоимость: {cost} · токенов: {tokens}",
   "notify.digest.noErrors": "Ошибок нет 🎉",
   "notify.digest.period.daily": "за сутки",

@@ -585,11 +585,11 @@ export function parseImportJson(raw: string): ParsedImport {
     let sessionMaxRuns: number | undefined;
     if (source.sessionMaxRuns !== undefined) {
       const raw = source.sessionMaxRuns;
-      if (typeof raw === "number" && Number.isFinite(raw) && raw >= 1) {
+      if (typeof raw === "number" && Number.isFinite(raw) && raw >= 0) {
         sessionMaxRuns = Math.floor(raw);
       } else {
         errors.push(
-          `Запись ${position}${name ? ` (${name})` : ""}: sessionMaxRuns должен быть целым числом ≥ 1.`
+          `Запись ${position}${name ? ` (${name})` : ""}: sessionMaxRuns должен быть целым числом ≥ 0 (0 — без ограничения).`
         );
         return;
       }

@@ -785,7 +785,7 @@ function normalizeTriageRule(value: unknown): TriageRule | null {
 
   if (operator === "regex") {
     try {
-      new RegExp(String(ruleValue), "i");
+      new RegExp(String(ruleValue), "iu");
     } catch {
       return null;
     }

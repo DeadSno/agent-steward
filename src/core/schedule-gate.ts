@@ -187,9 +187,15 @@ async function main(): Promise<number> {
         return 3;
       }
 
-      const wait = state.nextOpenAt
-        ? Math.max(0, state.nextOpenAt.getTime() - now.getTime())
-        : 0;
+      if (!state.nextOpenAt) {
+        // Окно закрыто, но время его открытия неизвестно (например, окно
+        // выходит за горизонт поиска). Разрешать запуск в этом случае нельзя.
+        console.error(
+          `[schedule-gate] ${state.reason ?? "вне окна"} — время открытия окна неизвестно, запуск пропущен.`
+        );
+        return 3;
+      }
+      const wait = Math.max(0, state.nextOpenAt.getTime() - now.getTime());
       if (wait <= 0) return 0;
       if (wait > MAX_POSTPONE_MS) {
         console.error(

@@ -46,6 +46,8 @@ export interface BashWrapperOptions {
   sessionMode?: import("../session.js").SessionMode;
   /** Спринт 24: id сессии для режима "reuse". */
   sessionId?: string;
+  /** Спринт 24: sidecar-файл с актуальным id сессии (перекрывает sessionId). */
+  sessionFile?: string;
   /** Pre-flight команда: ненулевой код отменяет запуск задачи. */
   beforeScript?: string;
   /** Post-flight команда: выполняется даже при ошибке основной задачи. */
@@ -108,6 +110,7 @@ export function buildBashWrapperScript(options: BashWrapperOptions): string {
     afterScript,
     sessionMode,
     sessionId,
+    sessionFile,
     oneShotCleanupCommand,
     allowedTools,
     deniedTools,
@@ -143,6 +146,7 @@ export function buildBashWrapperScript(options: BashWrapperOptions): string {
     // Спринт 24: режим сессии — "new" (по умолчанию), "reuse" (--session <id>), "last" (--continue).
     `SESSION_MODE=${shellQuote(sessionMode ?? "new")}`,
     `SESSION_ID=${shellQuote(sessionId ?? "")}`,
+    `SESSION_FILE=${shellQuote(sessionFile ?? "")}`,
     `BEFORE_SCRIPT=${shellQuote(beforeScript ?? "")}`,
     `AFTER_SCRIPT=${shellQuote(afterScript ?? "")}`,
     `ALLOWED_TOOLS=${shellQuote((allowedTools ?? []).join(","))}`,
@@ -361,11 +365,22 @@ export function buildBashWrapperScript(options: BashWrapperOptions): string {
     "# Ветвление вместо массива: bash 3.2 (macOS) с set -u падает на пустом",
     '# "${ARR[@]}".',
     "run_opencode() {",
-    '  if [ "$SESSION_MODE" = "reuse" ] && [ -n "$SESSION_ID" ]; then',
-    '    if [ -n "$MODEL" ]; then',
-    '      exec opencode run --auto --session "$SESSION_ID" --model "$MODEL" "$PROMPT"',
+    '  if [ "$SESSION_MODE" = "reuse" ]; then',
+    '    if [ -n "$SESSION_FILE" ] && [ -f "$SESSION_FILE" ]; then',
+    '      SESSION_ID="$(head -n 1 "$SESSION_FILE" 2>/dev/null | tr -d "\\r")"',
+    "    fi",
+    '    if [ -n "$SESSION_ID" ]; then',
+    '      if [ -n "$MODEL" ]; then',
+    '        exec opencode run --auto --session "$SESSION_ID" --model "$MODEL" "$PROMPT"',
+    "      else",
+    '        exec opencode run --auto --session "$SESSION_ID" "$PROMPT"',
+    "      fi",
     "    else",
-    '      exec opencode run --auto --session "$SESSION_ID" "$PROMPT"',
+    '      if [ -n "$MODEL" ]; then',
+    '        exec opencode run --auto --model "$MODEL" "$PROMPT"',
+    "      else",
+    '        exec opencode run --auto "$PROMPT"',
+    "      fi",
     "    fi",
     '  elif [ "$SESSION_MODE" = "last" ]; then',
     '    if [ -n "$MODEL" ]; then',

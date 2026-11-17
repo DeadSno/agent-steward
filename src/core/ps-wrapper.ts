@@ -49,6 +49,7 @@ export const WRAPPER_SCRIPT = `param(
     [string]$EnvFile,
     [string]$SessionMode,
     [string]$SessionId,
+    [string]$SessionFile,
     [int]$RetryCount = 0,
     [int]$RetryDelaySeconds = 0,
     [int]$GateTimeoutSeconds = 300,
@@ -648,8 +649,21 @@ try {
     if ($Model) {
         $opencodeArgs += @("--model", $Model)
     }
-    if ($SessionMode -eq 'reuse' -and $SessionId) {
-        $opencodeArgs += @("--session", $SessionId)
+    if ($SessionMode -eq 'reuse') {
+        # Спринт 24: актуальный id читаем из sidecar-файла — ротация сессии
+        # обновляет файл, и обёртку не нужно пересоздавать.
+        $effectiveSessionId = $SessionId
+        if ($SessionFile -and (Test-Path -LiteralPath $SessionFile)) {
+            try {
+                $fromFile = (Get-Content -LiteralPath $SessionFile -Raw -ErrorAction Stop).Trim()
+                if ($fromFile) { $effectiveSessionId = $fromFile }
+            } catch {
+                Write-Log "[windows-scheduler] Не удалось прочитать файл сессии: $($_.Exception.Message)"
+            }
+        }
+        if ($effectiveSessionId) {
+            $opencodeArgs += @("--session", $effectiveSessionId)
+        }
     } elseif ($SessionMode -eq 'last') {
         $opencodeArgs += @("--continue")
     }
@@ -894,7 +908,8 @@ export async function writeWrapperCmd(
   retryDelaySeconds?: number,
   gateTimeoutSeconds?: number,
   permissionsConfig?: string,
-  policyMeta?: unknown
+  policyMeta?: unknown,
+  sessionFile?: string
 ): Promise<string> {
   await fs.mkdir(WRAPPER_DIR, { recursive: true });
   const cmdPath = path.join(WRAPPER_DIR, `run-${sanitizedName}.cmd`);
@@ -1013,6 +1028,12 @@ export async function writeWrapperCmd(
       const safeSessionId = (sessionId ?? "").replace(/[\r\n"]+/g, "").trim();
       if (safeSessionId) {
         psArgs.push(`-SessionId "${safeSessionId}"`);
+      }
+      if (sessionFile?.trim()) {
+        const safeSessionFile = sessionFile.replace(/[\r\n"]+/g, "").trim();
+        if (safeSessionFile) {
+          psArgs.push(`-SessionFile "${safeSessionFile}"`);
+        }
       }
     }
   }

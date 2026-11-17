@@ -74,7 +74,11 @@ export function expandMatrixTask(task: TaskDefinition): TaskDefinition[] {
       );
     }
     const name = matrixCloneName(task.name, workspace.name);
-    if (usedNames.has(name.toLowerCase())) continue;
+    if (usedNames.has(name.toLowerCase())) {
+      throw new Error(
+        t("matrix.error.duplicateCloneName", { task: task.name, name })
+      );
+    }
     usedNames.add(name.toLowerCase());
 
     // Клон наследует промпт, модель, хуки, Quality Gate, role-scoped tools.

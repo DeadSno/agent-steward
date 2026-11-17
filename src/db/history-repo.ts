@@ -290,26 +290,39 @@ export function recordRun(
 /** История запусков (новые сверху). Без taskName — по всем задачам. */
 export function getHistory(
   taskName?: string | null,
-  limit = 200
+  limit = 200,
+  status?: string | null
 ): StoredHistoryRecord[] {
   const safeLimit = Math.max(1, Math.min(100000, Math.floor(limit) || 1));
-  const instance = getDb();
-  const rows = taskName
-    ? (instance
-        .prepare(
-          `SELECT * FROM history
-           WHERE lower(task_name) = lower(?)
-           ORDER BY started_at DESC, id DESC
-           LIMIT ?`
-        )
-        .all(taskName, safeLimit) as any[])
-    : (instance
-        .prepare(
-          `SELECT * FROM history
-           ORDER BY started_at DESC, id DESC
-           LIMIT ?`
-        )
-        .all(safeLimit) as any[]);
+  const clauses: string[] = [];
+  const params: any[] = [];
+  if (taskName) {
+    clauses.push("lower(task_name) = lower(?)");
+    params.push(taskName);
+  }
+  if (status) {
+    const normalizedStatus = status.trim().toLowerCase();
+    // loadHistory() отдаёт незавершённые записи (running) как error — сохраняем
+    // это поведение и при фильтрации на уровне SQLite.
+    if (normalizedStatus === "running") {
+      return [];
+    }
+    if (normalizedStatus === "error") {
+      clauses.push("lower(status) IN ('error', 'running')");
+    } else {
+      clauses.push("lower(status) = lower(?)");
+      params.push(normalizedStatus);
+    }
+  }
+  const where = clauses.length > 0 ? ` WHERE ${clauses.join(" AND ")}` : "";
+  params.push(safeLimit);
+  const rows = getDb()
+    .prepare(
+      `SELECT * FROM history${where}
+       ORDER BY started_at DESC, id DESC
+       LIMIT ?`
+    )
+    .all(...params) as any[];
   return rows.map(rowToRecord);
 }
 

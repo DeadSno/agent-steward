@@ -1,7 +1,10 @@
 import crypto from "node:crypto";
+import fs from "node:fs/promises";
+import path from "node:path";
 import { execFile } from "node:child_process";
 import { getTask, saveTask } from "../db/tasks-repo.js";
 import { appendStructuredLog } from "./structured-log.js";
+import { WRAPPER_DIR, sanitizeName } from "../types.js";
 
 export const SESSION_MODES = ["new", "reuse", "last"] as const;
 export type SessionMode = (typeof SESSION_MODES)[number];
@@ -71,11 +74,41 @@ export function preservedSessionRunCount(
   return previous.sessionRunCount ?? 0;
 }
 
+/** Путь к sidecar-файлу с актуальным id сессии задачи. */
+export function sessionStatePath(taskName: string): string {
+  return path.join(WRAPPER_DIR, `${sanitizeName(taskName)}.session`);
+}
+
+/**
+ * Записывает актуальный id сессии в sidecar-файл, который обёртка читает
+ * непосредственно перед запуском opencode. `undefined` удаляет файл.
+ * Никогда не бросает.
+ */
+export async function writeSessionStateFile(
+  taskName: string,
+  sessionId: string | undefined
+): Promise<void> {
+  try {
+    const file = sessionStatePath(taskName);
+    await fs.mkdir(WRAPPER_DIR, { recursive: true });
+    if (sessionId) {
+      await fs.writeFile(file, `${sessionId}\n`, "utf8");
+    } else {
+      await fs.unlink(file).catch(() => undefined);
+    }
+  } catch (error) {
+    console.warn(
+      `[session] Не удалось обновить файл сессии задачи "${taskName}":`,
+      error
+    );
+  }
+}
+
 /**
  * Best-effort ротация переиспользуемой сессии после завершения запуска.
- * Удаляет сессию через opencode CLI, очищает sessionId в определении задачи
- * и пишет событие в structured log. Никогда не бросает — сбой ротации
- * не должен ломать историю запуска.
+ * Удаляет сессию через opencode CLI, генерирует новый id, обновляет
+ * определение задачи и sidecar-файл обёртки. Никогда не бросает — сбой
+ * ротации не должен ломать историю запуска.
  */
 export async function rotateSessionIfNeeded(taskName: string): Promise<void> {
   try {
@@ -96,15 +129,17 @@ export async function rotateSessionIfNeeded(taskName: string): Promise<void> {
           // Удаление не должно мешать: просто фиксируем в логе ниже.
         }
       }
+      const newSessionId = generateSessionId();
       await saveTask({
         ...def,
-        sessionId: undefined,
+        sessionId: newSessionId,
         sessionRunCount: 0,
       });
+      await writeSessionStateFile(taskName, newSessionId);
       appendStructuredLog({
         event: "session.rotated",
         task: taskName,
-        reason: `maxRuns=${maxRuns} достигнут; сессия удалена и счётчик сброшен`,
+        reason: `maxRuns=${maxRuns} достигнут; сессия удалена, создана новая, счётчик сброшен`,
       });
     } else {
       await saveTask({ ...def, sessionRunCount: count });

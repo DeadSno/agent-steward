@@ -346,7 +346,7 @@ function candidatesOnDay(
   const result: Array<{ hour: number; minute: number }> = [];
   for (const hour of hours) {
     for (const minute of minutes) {
-      if (notBefore && notAfter) {
+      if (notBefore) {
         if (hour < notBefore.hour || (hour === notBefore.hour && minute < notBefore.minute)) continue;
       }
       if (notAfter) {
