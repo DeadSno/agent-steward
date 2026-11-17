@@ -1,0 +1,42 @@
+{
+  "name": "opencode-windows-scheduler",
+  "version": "1.5.6",
+  "description": "Deprecated. Use `agent-steward` instead. This package is a thin re-export of `agent-steward` for backward compatibility.",
+  "license": "MIT",
+  "author": "agent-steward contributors",
+  "homepage": "https://github.com/DeadSno/agent-steward#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DeadSno/agent-steward.git"
+  },
+  "bugs": {
+    "url": "https://github.com/DeadSno/agent-steward/issues"
+  },
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "opencode-v2",
+    "scheduler",
+    "deprecated"
+  ],
+  "main": "index.js",
+  "type": "module",
+  "exports": {
+    ".": "./index.js",
+    "./tui": "./index.js",
+    "./gui-experimental": "./index.js"
+  },
+  "files": [
+    "index.js",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22.22.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "agent-steward": "^1.5.6"
+  }
+}
