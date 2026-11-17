@@ -178,22 +178,33 @@
 ## Деталь Д5. Тесты совместимости
 
 ### Задача З5.1. Unit-тесты адаптера
-- П5.1.1 — форма default export: есть `setup` и `server`.
-- П5.1.2 — `server()` возвращает объект с `tool` и хуками.
-- П5.1.3 — набор имён инструментов совпадает V1/V2.
+- П5.1.1 — форма default export: есть `setup` и `server`. ✅
+- П5.1.2 — `server()` возвращает объект с `tool` и хуками. ✅ (`tool` +
+  `dispose`, повторная выгрузка безопасна)
+- П5.1.3 — набор имён инструментов совпадает V1/V2. ✅
+  (`deepEqual` с `createToolHandlers(null)`)
 
 ### Задача З5.2. Интеграция V1
-- П5.2.1 — установить `@opencode-ai/plugin@1.19.x` в тестовый стенд.
-- П5.2.2 — загрузить пакет как V1-плагин, вызвать 2–3 инструмента.
-- П5.2.3 — проверить TUI entrypoint.
+- П5.2.1 — установить `@opencode-ai/plugin@1.19.x` в тестовый стенд. ✅
+  (`1.19.5` уже в `devDependencies`; `test-dual-entry` валидирует схемы его
+  собственной копией zod)
+- П5.2.2 — загрузить пакет как V1-плагин, вызвать 2–3 инструмента. ✅
+  (`test-v1-integration.mjs`: `server({ directory })`, `list_tasks`,
+  `get_metrics`, `get_dashboard_info`, изолированные HOME и порт)
+- П5.2.3 — проверить TUI entrypoint. ✅ статически (`exports["./tui"]`,
+  `sidebar_content`, `src/tui-v1.tsx` — проверки `test-docs`); живой запуск
+  TUI требует интерактивного OpenCode и остаётся ручным.
 
 ### Задача З5.3. Интеграция V2
-- П5.3.1 — текущий V2 smoke-тест.
-- П5.3.2 — проверить GUI/RPC.
+- П5.3.1 — текущий V2 smoke-тест. ✅ (модульная форма `setup`/26 инструментов,
+  полный `npm test`; реальная загрузка CLI — ручная, см. Д4)
+- П5.3.2 — проверить GUI/RPC. ✅ (`npm run build:gui`, `gui-experimental.cjs`;
+  `src/gui.tsx`/`src/rpc.ts` не менялись)
 
 ### Задача З5.4. CI
-- П5.4.1 — job `compat-v1` и `compat-v2`.
-- П5.4.2 — не блокировать основные 3 ОС, если V1-стенд недоступен; вынести в отдельный job.
+- П5.4.1 — job `compat-v1` и `compat-v2`. ✅
+- П5.4.2 — не блокировать основные 3 ОС, если V1-стенд недоступен; вынести в
+  отдельный job. ✅ (оба job — `ubuntu-latest`, вне матрицы ОС)
 
 ---
 
@@ -249,7 +260,7 @@
 | Д2 | ✅ 17.11.2026 |
 | Д3 | ✅ 17.11.2026 |
 | Д4 | ✅ 17.11.2026 (регрессия; реальная загрузка — З5.2/З5.3) |
-| Д5 | не начата |
+| Д5 | ✅ 17.11.2026 |
 | Д6 | не начата |
 | Д7 | отложена |
 | Д8 | отложена |
@@ -325,5 +336,20 @@
 | П4.1.2 | `npm run build:gui` — OK (`gui-experimental.cjs`, 374.51 kB, gzip 91.00 kB); `src/gui.tsx` и `src/rpc.ts` в этой задаче не менялись, их entrypoint'ы не затронуты dual export. |
 | П4.2.1 | Полный `npm test` — 62 скрипта, ни одного `FAIL`, все финальные сводки `0 failed`; matrix/DAG/gates/dashboard/notifications, POSIX e2e (пропуск на Windows) и `test-shutdown` отработали штатно. Отдельно после сборки: `test-dual-entry`, `test-agent-tools` 23/23, `test-shutdown` — все проверки. |
 | П4.2.2 | `test-docs` — 80/80; цепочка выросла с 61 до 62 скриптов за счёт `test-dual-entry.mjs`. Попытка smoke-запуска реальными CLI (V2 2.2.3, V1 1.19.6) показала, что `plugin list`/`serve` не доказывают инстанцирование плагина, а `opencode run` требует модель и креды; поэтому реальная загрузка обеими линиями перенесена в З5.2/З5.3 без компромисса с секретами. |
+
+### Д5. Тесты совместимости — ✅ 17.11.2026
+
+| Подзадача | Результат |
+|---|---|
+| П5.1.1 | `test-dual-entry.mjs` проверяет default export: `id = "opencode-windows-scheduler"`, `setup` и `server` — функции, у `server` один аргумент. |
+| П5.1.2 | Там же: `createV1Hooks({ directory }, { startDashboard: false })` возвращает `tool` (объект) и `dispose` (функция); V1-интеграция дополнительно вызывает `dispose()` дважды — повторная выгрузка не бросает. |
+| П5.1.3 | Добавлена сверка `Object.keys(hooks.tool)` с `Object.keys(createToolHandlers(null))`: V1 и V2 видят один и тот же набор из 26 имён. `createToolHandlers(null)` безопасен — `runtime` пока не используется. |
+| П5.2.1 | `@opencode-ai/plugin@1.19.5` уже запинен в `devDependencies`; его собственная копия `zod@4.1.8` валидирует схемы из корневого `zod@4.6.7` (проверено в `test-dual-entry`). |
+| П5.2.2 | Создан `test-v1-integration.mjs`: реальный `server({ directory })` на V1-типах, изолированный `OPENCODE_SCHEDULER_HOME`, свободный порт через `OPENCODE_SCHEDULER_PORT`, вызовы `list_tasks`, `get_metrics`, `get_dashboard_info` с `success: true` и проверкой `dashboard.port`. Живой дашборд пользователя больше не переиспользуется. |
+| П5.2.3 | TUI проверяется статически: `test-docs` сверяет `exports["./tui"]`, наличие `sidebar_content`, `api.route.register`, `api.kv`, `api.lifecycle` и `src/tui-v1.tsx`. Живой TUI требует интерактивного OpenCode — оставлен ручным сценарием. |
+| П5.3.1 | V2 smoke — модульная форма (`setup`, 26 инструментов) плюс полный `npm test`; попытка реального CLI описана в Д4 и оставлена ручной. |
+| П5.3.2 | GUI/RPC не менялись; `npm run build:gui` собирает `gui-experimental.cjs` (374.51 kB). `test-docs` продолжает сверять entrypoint'ы. |
+| П5.4.1 | В `.github/workflows/ci.yml` добавлены отдельные job `compat-v1` (V1 SDK 1.19.x: `test-dual-entry`, `test-v1-integration`, `test-docs`) и `compat-v2` (устанавливает `@opencode/plugin@2.3.0` и `@opencode/schema@2.3.0`, гоняет `test-dual-entry`, `test-agent-tools`, `test-audit`). |
+| П5.4.2 | Оба job — `ubuntu-latest`, вне матрицы трёх ОС и без `needs` от неё, поэтому недоступность V1-стенда не блокирует Windows/macOS/Linux. `test-docs` расширен четырьмя проверками (подключение `test-v1-integration`, изолированный порт, сверка имён V1/V2, наличие job'ов) → **84/84**. |
 
 

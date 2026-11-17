@@ -52,3 +52,62 @@ jobs:
       - name: Test in Chinese locale
         if: matrix.os == 'ubuntu-latest'
         run: npm run test:parallel:zh
+
+  # Д5/З5.4: совместимость с линиями SDK. Эти jobs не входят в матрицу ОС
+  # и не блокируют три основные платформы: падение здесь означает регрессию
+  # адаптера, а не ОС-специфичную проблему.
+  compat-v2:
+    name: V2 SDK 2.3.0
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.22.0"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build backend
+        run: npm run build
+
+      - name: Install newest V2 SDK
+        run: npm install --no-save @opencode/plugin@2.3.0 @opencode/schema@2.3.0
+
+      - name: Check V2 entrypoint and adapter
+        run: |
+          node test-dual-entry.mjs
+          node test-agent-tools.mjs
+          node test-audit.mjs
+
+  compat-v1:
+    name: V1 SDK 1.19.x
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.22.0"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build backend
+        run: npm run build
+
+      - name: Check V1 server() and tools
+        run: |
+          node test-dual-entry.mjs
+          node test-v1-integration.mjs
+          node test-docs.mjs
+

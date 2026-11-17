@@ -19,9 +19,12 @@ process.env.OPENCODE_SCHEDULER_HOME = mkdtempSync(
   join(tmpdir(), "scheduler-dual-entry-")
 );
 
-const { default: pluginModule, createV1Hooks, toV1ToolResult } = await import(
-  "./dist/index.js"
-);
+const {
+  default: pluginModule,
+  createV1Hooks,
+  createToolHandlers,
+  toV1ToolResult,
+} = await import("./dist/index.js");
 
 // 1. Обе линии видят свои поля в одном default export.
 assert.equal(pluginModule.id, "opencode-windows-scheduler", "V2 id на месте");
@@ -46,6 +49,9 @@ assert.equal(typeof sample.execute, "function", "у инструмента ес�
 // 2.1. Все инструменты V2 попали в V1 и схемы отданы как raw shape, а не как ZodObject.
 const toolNames = Object.keys(hooks.tool).sort();
 assert.equal(toolNames.length, 26, "V1 получает все 26 инструментов");
+// З5.1: набор имён V1 совпадает с реестром, который использует V2.
+const v2ToolNames = Object.keys(createToolHandlers(null)).sort();
+assert.deepEqual(toolNames, v2ToolNames, "V1 и V2 видят один набор инструментов");
 for (const name of toolNames) {
   const item = hooks.tool[name];
   assert.equal(typeof item.description, "string", `${name}: описание — строка`);

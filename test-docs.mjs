@@ -249,6 +249,36 @@ check(
     "node test-dual-entry.mjs"
   ) && fs.existsSync(path.join(root, "test-dual-entry.mjs"))
 );
+const packageSrc = fs.readFileSync(path.join(root, "package.json"), "utf8");
+const integrationPath = path.join(root, "test-v1-integration.mjs");
+const integrationSrc = fs.existsSync(integrationPath)
+  ? fs.readFileSync(integrationPath, "utf8")
+  : "";
+check(
+  "package.json: интеграционный тест V1 подключён",
+  packageSrc.includes("node test-v1-integration.mjs") &&
+    fs.existsSync(integrationPath)
+);
+check(
+  "test-v1-integration: реальный server() и изолированный порт дашборда",
+  /pluginModule\.server\(\{ directory:/.test(integrationSrc) &&
+    /OPENCODE_SCHEDULER_PORT/.test(integrationSrc) &&
+    /hooks\.dispose\(\)/.test(integrationSrc)
+);
+check(
+  "test-dual-entry: наборы имён V1 и V2 сверяются",
+  /createToolHandlers/.test(
+    fs.readFileSync(path.join(root, "test-dual-entry.mjs"), "utf8")
+  )
+);
+const ciPath = path.join(root, ".github", "workflows", "ci.yml");
+const ciSrc = fs.existsSync(ciPath) ? fs.readFileSync(ciPath, "utf8") : "";
+check(
+  "CI: отдельные jobs compat-v1 и compat-v2",
+  /compat-v1:/.test(ciSrc) &&
+    /compat-v2:/.test(ciSrc) &&
+    /node test-v1-integration\.mjs/.test(ciSrc)
+);
 const tuiSrc = fs.readFileSync(path.join(root, "src", "tui.tsx"), "utf8");
 const tuiV1Path = path.join(root, "src", "tui-v1.tsx");
 check(
