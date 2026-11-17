@@ -82,6 +82,16 @@ check(
   !fs.existsSync(path.join(root, ".github", "workflows", "publish-placeholder.yml"))
 );
 
+// Контракт совместимости: числа в docs/COMPATIBILITY.md — источник истины
+// для README и CI. Минимум V1 зафиксирован в 1.5.6.
+const compatDoc = path.join(docs, "COMPATIBILITY.md");
+const compatText = fs.existsSync(compatDoc) ? fs.readFileSync(compatDoc, "utf8") : "";
+check("docs/COMPATIBILITY.md существует", compatText.length > 0);
+check("COMPATIBILITY: минимум V1 = 1.18.29", compatText.includes("1.18.29"));
+check("COMPATIBILITY: TUI V1 через @opencode-ai/plugin/tui", compatText.includes("@opencode-ai/plugin/tui"));
+check("COMPATIBILITY: минимум V2 = 2.2.7", compatText.includes("`2.2.7`"));
+check("COMPATIBILITY: V2 проверяется на 2.3.0", compatText.includes("2.3.0"));
+
 // Спринт 28: каталоги локалей обязаны совпадать по набору ключей.
 // Рассинхронизация — падение CI (см. ROADMAP, спринт 28).
 const localesDir = path.join(root, "locales");
