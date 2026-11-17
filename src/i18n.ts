@@ -20,13 +20,22 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export type Locale = "ru" | "en";
+export type Locale = "ru" | "en" | "zh";
 
 /** Порядок важен для UI: первым идёт локаль по умолчанию. */
-export const SUPPORTED_LOCALES: readonly Locale[] = ["ru", "en"];
+export const SUPPORTED_LOCALES: readonly Locale[] = ["ru", "en", "zh"];
 
 /** Русский остаётся локалью по умолчанию (см. ROADMAP, спринт 28). */
 export const DEFAULT_LOCALE: Locale = "ru";
+
+/**
+ * Режим локали (T7): `auto` — следовать за языком интерфейса OpenCode,
+ * конкретное значение — всегда использовать эту локаль.
+ */
+export type LocaleMode = "auto" | Locale;
+
+/** Значение режима «следовать за OpenCode». */
+export const LOCALE_AUTO = "auto" as const;
 
 /**
  * Каталог модуля: `src/` при запуске из исходников, `dist/` из сборки.
@@ -83,12 +92,54 @@ export function isLocale(value: unknown): value is Locale {
   );
 }
 
-/** Приводит произвольное значение к поддерживаемой локали. */
+/** true, если значение — допустимый режим локали (включая `auto`). */
+export function isLocaleMode(value: unknown): value is LocaleMode {
+  return value === LOCALE_AUTO || isLocale(value);
+}
+
+/**
+ * Маппинг BCP 47 → поддерживаемая локаль: `zh-CN`/`zh-Hans` → `zh`,
+ * `en-GB` → `en`, `ru-RU` → `ru`; неизвестное значение → `fallback`.
+ * Регистр и разделитель (`-` или `_`) не важны.
+ */
+export function mapAppLocale(
+  value: unknown,
+  fallback: Locale = DEFAULT_LOCALE
+): Locale {
+  if (typeof value !== "string") return fallback;
+  const base = value.trim().toLowerCase().split(/[-_]/)[0];
+  return isLocale(base) ? base : fallback;
+}
+
+/** Приводит произвольное значение к поддерживаемой локали (с учётом BCP 47). */
 export function normalizeLocale(
   value: unknown,
   fallback: Locale = DEFAULT_LOCALE
 ): Locale {
-  return isLocale(value) ? value : fallback;
+  return mapAppLocale(value, fallback);
+}
+
+/** Приводит значение к режиму локали: `auto` или поддерживаемая локаль. */
+export function normalizeLocaleMode(
+  value: unknown,
+  fallback: LocaleMode = DEFAULT_LOCALE
+): LocaleMode {
+  if (value === LOCALE_AUTO) return LOCALE_AUTO;
+  if (typeof value === "string") {
+    const base = value.trim().toLowerCase().split(/[-_]/)[0];
+    if (isLocale(base)) return base;
+  }
+  return fallback;
+}
+
+/**
+ * Разрешает режим в конкретную локаль. Серверный процесс языка OpenCode не
+ * видит, поэтому при `auto` берётся последняя известная локаль интерфейса
+ * (`uiLocale`, её присылает GUI), иначе — локаль по умолчанию.
+ */
+export function resolveLocale(mode: LocaleMode, lastKnown?: Locale): Locale {
+  if (mode !== LOCALE_AUTO) return mode;
+  return isLocale(lastKnown) ? lastKnown : DEFAULT_LOCALE;
 }
 
 /** Текущая локаль процесса. */

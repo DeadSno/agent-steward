@@ -9,6 +9,7 @@ import url from "node:url";
 import { spawnSync } from "node:child_process";
 import {
   DEFAULT_LOCALE,
+  LOCALE_AUTO,
   SUPPORTED_LOCALES,
   availableLocales,
   absentKeys,
@@ -17,9 +18,14 @@ import {
   getLocale,
   hasKey,
   isLocale,
+  isLocaleMode,
+  mapAppLocale,
   missingKeys,
   normalizeLocale,
+  normalizeLocaleMode,
+  registerCatalog,
   resetI18n,
+  resolveLocale,
   setLocale,
   t,
 } from "./dist/i18n.js";
@@ -40,14 +46,41 @@ check(
   getLocale() === normalizeLocale(process.env.OPENCODE_SCHEDULER_LOCALE)
 );
 setLocale("ru");
-check("SUPPORTED_LOCALES = [ru, en]", SUPPORTED_LOCALES.join(",") === "ru,en");
+check("SUPPORTED_LOCALES = [ru, en, zh]", SUPPORTED_LOCALES.join(",") === "ru,en,zh");
 check("isLocale('ru')", isLocale("ru") === true);
 check("isLocale('en')", isLocale("en") === true);
+check("isLocale('zh')", isLocale("zh") === true);
 check("isLocale('EN') — false", isLocale("EN") === false);
 check("isLocale(null) — false", isLocale(null) === false);
 check("normalizeLocale('en') → en", normalizeLocale("en") === "en");
+check("normalizeLocale('zh') → zh", normalizeLocale("zh") === "zh");
 check("normalizeLocale('de') → ru", normalizeLocale("de") === "ru");
 check("normalizeLocale(undefined) → ru", normalizeLocale(undefined) === "ru");
+
+// BCP 47 → Locale (T7): префиксный маппинг; регистр и разделитель не важны.
+check("mapAppLocale('zh-CN') → zh", mapAppLocale("zh-CN") === "zh");
+check("mapAppLocale('zh-Hans') → zh", mapAppLocale("zh-Hans") === "zh");
+check("mapAppLocale('en-GB') → en", mapAppLocale("en-GB") === "en");
+check("mapAppLocale('ru-RU') → ru", mapAppLocale("ru-RU") === "ru");
+check("mapAppLocale('ZH_hant_TW') → zh", mapAppLocale("ZH_hant_TW") === "zh");
+check("mapAppLocale('de-DE') → ru", mapAppLocale("de-DE") === "ru");
+check("mapAppLocale('') → ru", mapAppLocale("") === "ru");
+check("normalizeLocale('zh-CN') → zh", normalizeLocale("zh-CN") === "zh");
+
+// Режим локали (T7): auto + явные значения, неизвестное → fallback.
+check("LOCALE_AUTO = auto", LOCALE_AUTO === "auto");
+check("isLocaleMode('auto')", isLocaleMode("auto") === true);
+check("isLocaleMode('zh')", isLocaleMode("zh") === true);
+check("isLocaleMode('de') — false", isLocaleMode("de") === false);
+check("normalizeLocaleMode('auto') → auto", normalizeLocaleMode("auto") === "auto");
+check("normalizeLocaleMode('zh-CN') → zh", normalizeLocaleMode("zh-CN") === "zh");
+check("normalizeLocaleMode('de') → ru", normalizeLocaleMode("de") === "ru");
+check("normalizeLocaleMode(undefined) → ru", normalizeLocaleMode(undefined) === "ru");
+check("normalizeLocaleMode('de', 'auto') → auto", normalizeLocaleMode("de", "auto") === "auto");
+check("resolveLocale('auto') → ru", resolveLocale("auto") === "ru");
+check("resolveLocale('auto', 'zh') → zh", resolveLocale("auto", "zh") === "zh");
+check("resolveLocale('auto', 'uk') → ru", resolveLocale("auto", "uk") === "ru");
+check("resolveLocale('zh') → zh", resolveLocale("zh") === "zh");
 check("setLocale('en') возвращает en", setLocale("en") === "en");
 check("setLocale меняет getLocale", getLocale() === "en");
 check("setLocale('xx') откатывает к ru", setLocale("xx") === "ru" && getLocale() === "ru");
@@ -55,9 +88,11 @@ check("setLocale('xx') откатывает к ru", setLocale("xx") === "ru" && 
 // --- 2. Каталоги на диске ---------------------------------------------------
 const ruFile = catalogPath("ru");
 const enFile = catalogPath("en");
+const zhFile = catalogPath("zh");
 check("catalogPath('ru') находит locales/ru.json", !!ruFile && ruFile.endsWith(path.join("locales", "ru.json")));
 check("catalogPath('en') находит locales/en.json", !!enFile && enFile.endsWith(path.join("locales", "en.json")));
-check("availableLocales() = [ru, en]", availableLocales().join(",") === "ru,en");
+check("catalogPath('zh') находит locales/zh.json", !!zhFile && zhFile.endsWith(path.join("locales", "zh.json")));
+check("availableLocales() = [ru, en, zh]", availableLocales().join(",") === "ru,en,zh");
 check("каталоги читаются как JSON-объекты", !!JSON.parse(fs.readFileSync(ruFile, "utf8")));
 check("hasKey('server.notFound', 'ru')", hasKey("server.notFound", "ru") === true);
 check("hasKey('no.such.key', 'ru') — false", hasKey("no.such.key", "ru") === false);
@@ -125,6 +160,22 @@ check("смена локали не требует resetI18n", getLocale() === "
 // зато видно, что отсутствующий ключ возвращает сам ключ, а не пустую строку.
 setLocale("en");
 check("отсутствующий в en ключ → сам ключ", t("no.such.key") === "no.such.key");
+
+// --- 8b. Китайский каталог: fallback на ru --------------------------------
+// zh.json наполняется пакетами (см. docs/ZH-LOCALE-PLAN.md). Проверяем сам
+// механизм на пустом каталоге: отсутствующий ключ обязан давать русский
+// вариант, а не сырой ключ. Подмена каталога не зависит от прогресса перевода.
+registerCatalog("zh", {});
+setLocale("zh");
+check("setLocale('zh') возвращает zh", getLocale() === "zh");
+check(
+  "zh: отсутствующий ключ → русский вариант",
+  t("server.notFound") === "Страница не найдена."
+);
+check(
+  "zh: плюрализация отсутствующего ключа считается по ru",
+  t("common.runsCount", { count: 5 }) === "запусков: 5 запусков"
+);
 resetI18n();
 
 // --- 9. Локаль запуска через переменную окружения ---------------------------

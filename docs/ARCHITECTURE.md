@@ -131,8 +131,8 @@ from their clones instead of their own last run.
 | `src/profiles.ts` | Profile directory resolution: per-profile plugin dir (base for `default`, `<base>/profiles/<name>` for named profiles); profile name, marker, port, create/delete/switch |
 | `src/workspaces.ts` | Workspace registry and path validation; env pairs and `.env` file resolution with secret masking |
 | `src/templates.ts` | Reusable task templates |
-| `src/settings.ts` | Plugin settings: notifications, history retention, audit, interface locale, local AI/triage |
-| `src/i18n.ts` | Interface locale (`ru` default, `en`), JSON catalogs in `locales/`, ICU subset (`{param}`, `plural`) via built-in `Intl`, fallback to `ru` |
+| `src/settings.ts` | Plugin settings: notifications, history retention, audit, interface locale (`auto`/`ru`/`en`/`zh`) and last known UI locale, local AI/triage |
+| `src/i18n.ts` | Interface locale (`ru` default, `en`/`zh`), BCP 47 mapping, JSON catalogs in `locales/`, ICU subset (`{param}`, `plural`) via built-in `Intl`, fallback to `ru` |
 | `src/notifications.ts` | Multi-channel delivery (webhook, Telegram, native OS) with retries/backoff, templates, task filters, quiet hours, matrix and stuck-clone notifications, daily/weekly digest |
 | `src/core/telegram.ts` | Telegram Bot API `sendMessage`: parse-mode escaping, dashboard link, token validation and masking |
 | `src/core/native-notify.ts` | Native OS notifications: Windows Toast (PowerShell/WinRT), macOS `osascript`, Linux `notify-send`; no external dependency |
@@ -321,24 +321,28 @@ never requires a manual migration.
 
 ## Localization
 
-User-visible text lives in flat JSON catalogs: `locales/ru.json` (default) and
-`locales/en.json`. Keys are dot-separated and grouped by surface — `gui.*`, `notify.*`,
-`tool.*`, `dryRun.*`, `matrix.*`, `schedule.*` — and both catalogs must have the same
-key set with non-empty values.
+User-visible text lives in flat JSON catalogs: `locales/ru.json` (default),
+`locales/en.json` and `locales/zh.json`. Keys are dot-separated and grouped by surface —
+`gui.*`, `notify.*`, `tool.*`, `dryRun.*`, `matrix.*`, `schedule.*` — and all catalogs
+must have the same key set with non-empty values.
 
 `src/i18n.ts` loads the catalogs once and caches them. It exposes `t(key, params)`,
 `setLocale(locale)`, `messageIn(locale, key)` and `hasKey(key, locale)`. Lookup order is
 active locale → `en` → `ru` → the key itself, so a missing translation never renders as
-an empty string. The `locale` setting (`ru` default, `en` optional) is applied
-immediately, without restarting OpenCode. The sidebar GUI embeds the catalogs at build
-time via `registerCatalog`, because a webview bundle cannot read package files at
+an empty string. The `locale` setting (`ru` default, `en`/`zh` optional, `auto` follows
+the OpenCode interface language) is applied immediately, without restarting OpenCode.
+`auto` is resolved in the GUI through `ctx.locale.locale()` with BCP 47 prefix mapping
+(`zh-CN` → `zh`, `en-GB` → `en`); the resolved value is sent to the server as `uiLocale`,
+because the server process cannot see the window. The sidebar GUI embeds the catalogs at
+build time via `registerCatalog`, because a webview bundle cannot read package files at
 runtime.
 
 The template subset is deliberately small and dependency-free:
 
 - `{name}` — interpolation; the caller formats the value (duration, money, date).
 - `{count, plural, one {…} few {…} many {…} other {…}}` — plural forms through
-  `Intl.PluralRules` for the active locale (`ru` uses one/few/many, `en` one/other).
+  `Intl.PluralRules` for the active locale (`ru` uses one/few/many, `en` one/other,
+  `zh` only `other`).
 
 Rules:
 
@@ -347,10 +351,10 @@ Rules:
 - store stable codes, not localized text, in the database; translate at render time;
 - agent tool descriptions, schemas and API payloads stay English; `console.*`
   diagnostics stay Russian;
-- add every new key to both catalogs. `test-docs.mjs` enforces parity and non-empty
-  values; `npm run test:en` replays all suites under `en` and CI runs it on Linux.
-  `OPENCODE_SCHEDULER_LOCALE` only overrides the initial locale for tests and services —
-  it is not a user-facing setting.
+- add every new key to all catalogs. `test-docs.mjs` enforces parity and non-empty
+  values; `npm run test:en` and `npm run test:zh` replay all suites under `en`/`zh` and
+  CI runs them. `OPENCODE_SCHEDULER_LOCALE` only overrides the initial locale for tests
+  and services — it is not a user-facing setting.
 
 ## Security model
 

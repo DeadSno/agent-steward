@@ -121,7 +121,8 @@
     "test:windows-oem": "node test-windows-oem.mjs",
     "test:usage-from-log": "node test-usage-from-log.mjs",
     "test:posix-e2e": "node test-posix-e2e.mjs",
-    "test:en": "node scripts/test-locale.mjs en"
+    "test:en": "node scripts/test-locale.mjs en",
+    "test:zh": "node scripts/test-locale.mjs zh"
   },
   "dependencies": {
     "@opencode/plugin": "^2.2.7",

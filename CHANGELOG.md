@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Интерфейс на китайском (`locales/zh.json`):** полный перевод всех 772 ключей интерфейса (`gui.*`, `matrix.*`, `shadow.*`, `schedule.*`, `notify.*`, `tool.*`, `localAi.*`, `server.*`, `gitTrigger.*`, `dryRun.*`, `app.*`, `common.*`) с паритетом ключей и плейсхолдеров к `en.json`/`ru.json`; вместе с 5 ключами селектора языка — 777. Поддерживается через `locale: "zh"` в `manage_settings` и переключатель в шапке панели. GUI-бандл регистрирует каталог через `registerCatalog("zh", ...)`.
+- **Режим языка `auto` (T7):** `locale: "auto"` следует за языком интерфейса OpenCode. GUI читает `ctx.locale.locale()`, маппит BCP 47 (`zh-CN`/`zh-Hans` → `zh`, `en-GB` → `en`, `ru-RU` → `ru`) и переключает панель без перезапуска; селектор языка (🌐 Авто / Русский / English / 中文) появился в шапке панели. Серверный процесс языка окна не видит, поэтому GUI присылает разрешённую локаль в новом поле `uiLocale` — уведомления, дайджест, результаты инструментов и дашборд используют её. Старые настройки `ru`/`en` читаются без миграции.
+
 ## [1.5.5] - 2026-11-16
 
 ### Security

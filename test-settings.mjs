@@ -209,6 +209,66 @@ check(
     Array.isArray(noRules.notifications.triage?.rules)
 );
 
+// Язык интерфейса (T7): режим auto и обратная совместимость явных локалей.
+const defaultLocaleSettings = await settingsModule.loadSettings();
+check(
+  "loadSettings: локаль по умолчанию — ru",
+  defaultLocaleSettings.locale === "ru"
+);
+
+await settingsModule.saveSettings({ locale: "auto" });
+const autoLocaleSettings = await settingsModule.loadSettings();
+check(
+  "saveSettings/loadSettings: режим auto сохраняется",
+  autoLocaleSettings.locale === "auto"
+);
+
+await settingsModule.saveSettings({ locale: "zh-CN" });
+const bcpLocaleSettings = await settingsModule.loadSettings();
+check(
+  "saveSettings: BCP 47 zh-CN маппится в zh",
+  bcpLocaleSettings.locale === "zh"
+);
+
+await settingsModule.saveSettings({ locale: "en" });
+const explicitLocaleSettings = await settingsModule.loadSettings();
+check(
+  "saveSettings: явная локаль en сохраняется",
+  explicitLocaleSettings.locale === "en"
+);
+
+fs.writeFileSync(settingsFile, JSON.stringify({ locale: "en-GB" }), "utf8");
+const legacyLocaleSettings = await settingsModule.loadSettings();
+check(
+  "loadSettings: старый settings.json с en-GB читается как en",
+  legacyLocaleSettings.locale === "en"
+);
+
+fs.writeFileSync(settingsFile, JSON.stringify({ locale: "de-DE" }), "utf8");
+const unknownLocaleSettings = await settingsModule.loadSettings();
+check(
+  "loadSettings: неизвестная локаль откатывается к ru",
+  unknownLocaleSettings.locale === "ru"
+);
+
+// S24: последняя известная локаль интерфейса для серверного процесса.
+const defaultUiLocale = await settingsModule.loadSettings();
+check(
+  "loadSettings: uiLocale по умолчанию — ru",
+  defaultUiLocale.uiLocale === "ru"
+);
+
+await settingsModule.saveSettings({ uiLocale: "zh" });
+const savedUiLocale = await settingsModule.loadSettings();
+check("saveSettings/loadSettings: uiLocale сохраняется", savedUiLocale.uiLocale === "zh");
+
+fs.writeFileSync(settingsFile, JSON.stringify({ locale: "auto", uiLocale: "en-GB" }), "utf8");
+const autoUiLocale = await settingsModule.loadSettings();
+check(
+  "loadSettings: auto + uiLocale en-GB → режим auto, локаль en",
+  autoUiLocale.locale === "auto" && autoUiLocale.uiLocale === "en"
+);
+
 // Итог
 console.log(`\nSettings: ${passed}/${passed + failed} проверок прошли.`);
 if (failed > 0) {

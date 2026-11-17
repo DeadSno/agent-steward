@@ -2,10 +2,11 @@
  * Прогоняет тот же набор сюит, что `npm test`, с заданной локалью.
  *
  * Локаль задаётся переменной `OPENCODE_SCHEDULER_LOCALE`, которую читает
- * `src/i18n.ts` при загрузке: так один и тот же код проверяется в ru и en
+ * `src/i18n.ts` при загрузке: так один и тот же код проверяется в ru, en и zh
  * без правки settings.json.
  *
  * Запуск: node scripts/test-locale.mjs en
+ * Локали: ru (по умолчанию), en, zh.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -15,8 +16,8 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const locale = process.argv[2] ?? "en";
 
-if (locale !== "ru" && locale !== "en") {
-  console.error(`Неизвестная локаль: ${locale}. Ожидается ru или en.`);
+if (locale !== "ru" && locale !== "en" && locale !== "zh") {
+  console.error(`Неизвестная локаль: ${locale}. Ожидается ru, en или zh.`);
   process.exit(2);
 }
 

@@ -1,15 +1,17 @@
-import { createSignal, onCleanup, ErrorBoundary } from "solid-js"
+import { createEffect, createSignal, onCleanup, ErrorBoundary } from "solid-js"
 import { Panel, Plugin } from "@opencode/plugin/gui"
 import { SchedulerRpc } from "./rpc.js"
 import { loadHistory, loadMetrics, type HistoryRecord } from "./history.js"
-import { registerCatalog, setLocale, t, type TranslateParams, type Locale } from "./i18n.js"
+import { normalizeLocale, normalizeLocaleMode, registerCatalog, setLocale, t, type LocaleMode, type TranslateParams, type Locale } from "./i18n.js"
 // Каталоги встраиваются в бандл на этапе сборки: в webview OpenCode нет
 // доступа к файлам пакета, поэтому ленивый fs-загрузчик из i18n.ts не работает.
 import ruCatalog from "../locales/ru.json"
 import enCatalog from "../locales/en.json"
+import zhCatalog from "../locales/zh.json"
 
 registerCatalog("ru", ruCatalog)
 registerCatalog("en", enCatalog)
+registerCatalog("zh", zhCatalog)
 
 /** Счётчик смены локали: чтение в JSX-геттерах делает строки реактивными. */
 const [localeTick, setLocaleTick] = createSignal(0)
@@ -415,6 +417,42 @@ export default Plugin.define({
     const [maxConcurrent, setMaxConcurrent] = createSignal(1)
     const [winterMode, setWinterMode] = createSignal(false)
 
+    // Режим языка (T7): auto — следовать за локалью интерфейса OpenCode.
+    const [localeMode, setLocaleMode] = createSignal<LocaleMode>("ru")
+    // Последняя известная серверу локаль интерфейса (уведомления, дайджест, дашборд).
+    const [uiLocaleKnown, setUiLocaleKnown] = createSignal<Locale>("ru")
+
+    /** Локаль интерфейса OpenCode (BCP 47) или undefined, если хост её не дал. */
+    function appLocale(): string | undefined {
+      try {
+        return ctx.locale?.locale?.()
+      } catch {
+        return undefined
+      }
+    }
+
+    /** Применяет режим: auto берёт локаль OpenCode, иначе — явную. */
+    function applyLocaleMode(mode: LocaleMode): void {
+      applyLocale(mode === "auto" ? appLocale() : mode)
+    }
+
+    // auto должен следовать за сменой языка OpenCode в реальном времени.
+    // S24: серверный процесс окно не видит, поэтому при изменении отправляем
+    // ему разрешённую локаль — иначе уведомления останутся на прежнем языке.
+    createEffect(() => {
+      const mode = localeMode()
+      const app = appLocale()
+      if (mode !== "auto") return
+      applyLocale(app)
+      const resolved = normalizeLocale(app, "ru")
+      if (resolved !== uiLocaleKnown()) {
+        setUiLocaleKnown(resolved)
+        void rpc.save_settings({ uiLocale: resolved }).catch((err: any) => {
+          console.error("RPC Error (save_settings uiLocale):", err)
+        })
+      }
+    })
+
     // Настройки уведомлений (webhook)
     const [notificationsEnabled, setNotificationsEnabled] = createSignal(false)
     const [onlyOnError, setOnlyOnError] = createSignal(true)
@@ -615,7 +653,11 @@ export default Plugin.define({
         setAuditRetentionEnabled(Boolean(au?.enabled !== false))
         setAuditRetentionDays(Number(au?.retentionDays ?? 90))
         setAuditMaxRecords(Number(au?.maxRecords ?? 10000))
-        applyLocale((s as { locale?: string }).locale)
+        setUiLocaleKnown(normalizeLocale((s as { uiLocale?: string }).uiLocale, "ru"))
+        const mode = normalizeLocaleMode((s as { locale?: string }).locale, "ru")
+        setLocaleMode(mode)
+        // При auto язык задаёт OpenCode: ответ сервера его не переопределяет.
+        applyLocaleMode(mode)
       } catch (err: any) {
         console.error("RPC Error (get_settings):", err)
       }
@@ -723,6 +765,7 @@ export default Plugin.define({
 
     async function persistSettings(patch: {
       maxConcurrent?: number
+      locale?: LocaleMode
       winterMode?: boolean
       notifications?: NotificationSettings
       history?: HistorySettings
@@ -747,7 +790,11 @@ export default Plugin.define({
           setAuditRetentionDays(Number(au?.retentionDays ?? 90))
           setAuditMaxRecords(Number(au?.maxRecords ?? 10000))
         }
-        applyLocale((s as { locale?: string }).locale)
+        setUiLocaleKnown(normalizeLocale((s as { uiLocale?: string }).uiLocale, "ru"))
+        const mode = normalizeLocaleMode((s as { locale?: string }).locale, "ru")
+        setLocaleMode(mode)
+        // При auto язык задаёт OpenCode: ответ сервера его не переопределяет.
+        applyLocaleMode(mode)
         return true
       } catch (err: any) {
         console.error("RPC Error (save_settings):", err)
@@ -780,7 +827,11 @@ export default Plugin.define({
         setHistoryMaxRecords(Number(h?.maxRecords ?? 5000))
         setHistoryLastCleanupAt(h?.lastCleanupAt ?? null)
         setHistoryLastCleanupDeleted(Number(h?.lastCleanupDeleted ?? 0))
-        applyLocale((s as { locale?: string }).locale)
+        setUiLocaleKnown(normalizeLocale((s as { uiLocale?: string }).uiLocale, "ru"))
+        const mode = normalizeLocaleMode((s as { locale?: string }).locale, "ru")
+        setLocaleMode(mode)
+        // При auto язык задаёт OpenCode: ответ сервера его не переопределяет.
+        applyLocaleMode(mode)
         ctx.toast.show({
           title: result.success ? gt("gui.toast.historyCleanupDone") : gt("gui.toast.historyCleanupFailed"),
           variant: result.success ? "success" : "error",
@@ -2679,6 +2730,22 @@ export default Plugin.define({
                 </div>
               </div>
               <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                <select
+                  value={localeMode()}
+                  onChange={async (e) => {
+                    const next = normalizeLocaleMode(e.currentTarget.value, "ru")
+                    setLocaleMode(next)
+                    applyLocaleMode(next)
+                    await persistSettings({ locale: next })
+                  }}
+                  title={gt("gui.languageTitle")}
+                  style="padding:6px 10px;border-radius:999px;cursor:pointer;font-size:12px;border:1px solid #333;background:#1e1e1e;color:#e0e0e0;outline:none"
+                >
+                  <option value="auto">🌐 {gt("gui.languageAuto")}</option>
+                  <option value="ru">{gt("gui.languageRu")}</option>
+                  <option value="en">{gt("gui.languageEn")}</option>
+                  <option value="zh">{gt("gui.languageZh")}</option>
+                </select>
                 <select
                   value={workspaceFilter()}
                   onChange={(e) => setWorkspaceFilter(e.currentTarget.value)}

@@ -47,7 +47,7 @@ import {
 import { SchedulerRpc } from "./rpc.js";
 import { latestHistoryByTask, loadHistory, loadMetrics } from "./history.js";
 import { defaultNotifications, loadSettings, saveSettings } from "./settings.js";
-import { setLocale, t, type Locale } from "./i18n.js";
+import { resolveLocale, setLocale, t, type Locale, type LocaleMode } from "./i18n.js";
 import type {
   AuditSettings,
   HistorySettings,
@@ -856,10 +856,10 @@ export const manageSettingsSchema = z.object({
     .optional()
     .describe("How many task runs may execute at the same time."),
   locale: z
-    .enum(["ru", "en"])
+    .enum(["auto", "ru", "en", "zh"])
     .optional()
     .describe(
-      "Interface language: ru (default) or en. Applies without restart."
+      "Interface language: auto (follow OpenCode), ru (default), en or zh. Applies without restart."
     ),
   winterMode: z
     .boolean()
@@ -2692,7 +2692,7 @@ const manageSettingsExecute = wrapExecute<SettingsArgs>(async (args) => {
     permissions: args.permissions as PermissionSettings | undefined,
   });
   // Локаль процесса меняется сразу — перезапуск плагина не нужен.
-  setLocale(settings.locale);
+  setLocale(resolveLocale(settings.locale, settings.uiLocale));
   return { content: JSON.stringify({ success: true, settings }) };
 });
 
@@ -3368,7 +3368,8 @@ export default Plugin.define({
     // Спринт 28: язык интерфейса берём из настроек. Ошибка чтения не должна
     // мешать старту — в этом случае остаётся локаль по умолчанию (ru).
     try {
-      setLocale((await loadSettings()).locale);
+      const initialSettings = await loadSettings();
+      setLocale(resolveLocale(initialSettings.locale, initialSettings.uiLocale));
     } catch {
       // Локаль по умолчанию уже активна.
     }
@@ -4645,9 +4646,10 @@ export default Plugin.define({
         return await loadSettings();
       },
       save_settings: async (input: unknown) => {
-        const { maxConcurrent, locale, winterMode, notifications, history, integrations, audit, permissions } = input as {
+        const { maxConcurrent, locale, uiLocale, winterMode, notifications, history, integrations, audit, permissions } = input as {
           maxConcurrent?: number;
-          locale?: Locale;
+          locale?: LocaleMode;
+          uiLocale?: Locale;
           winterMode?: boolean;
           notifications?: NotificationSettings;
           history?: HistorySettings;
@@ -4659,6 +4661,7 @@ export default Plugin.define({
         if (
           maxConcurrent === undefined &&
           locale === undefined &&
+          uiLocale === undefined &&
           winterMode === undefined &&
           notifications === undefined &&
           history === undefined &&
@@ -4670,6 +4673,7 @@ export default Plugin.define({
             success: false,
             maxConcurrent: current.maxConcurrent,
             locale: current.locale,
+            uiLocale: current.uiLocale,
             winterMode: current.winterMode,
             notifications: current.notifications,
             history: current.history,
@@ -4681,6 +4685,7 @@ export default Plugin.define({
         const settings = await saveSettings({
           maxConcurrent,
           locale,
+          uiLocale,
           winterMode,
           notifications,
           history,
@@ -4689,11 +4694,12 @@ export default Plugin.define({
           permissions,
         });
         // Локаль процесса меняется сразу — перезапуск не нужен.
-        setLocale(settings.locale);
+        setLocale(resolveLocale(settings.locale, settings.uiLocale));
         return {
           success: true,
           maxConcurrent: settings.maxConcurrent,
           locale: settings.locale,
+          uiLocale: settings.uiLocale,
           winterMode: settings.winterMode,
           notifications: settings.notifications,
           history: settings.history,

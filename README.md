@@ -53,15 +53,18 @@ Want to see it without installing OpenCode? `node scripts/demo-dashboard.mjs` st
 
 ### Language
 
-The interface ships in Russian (default) and English. Switch it in the sidebar settings
-(Settings → Language) or with the `manage_settings` tool (`action: "update"`,
-`locale: "en"`). The switch applies without a restart to the GUI, notifications,
-digest and agent tool results. Dashboard localization is still being rolled out:
-some client-side strings remain Russian for now. Agent tool descriptions and schemas
-stay English by design, and diagnostics printed to the console stay Russian.
+The interface ships in Russian (default), English and Simplified Chinese. The language
+selector sits in the scheduler panel header (🌐 Auto / Русский / English / 中文) and is
+also available through the `manage_settings` tool (`action: "update"`, `locale: "zh"`).
+`locale: "auto"` (the "Auto" option) follows the OpenCode interface language: the panel
+reacts to language changes immediately, and the resolved locale is sent to the server so
+notifications, digests and the dashboard use the same language. The switch applies
+without a restart. Dashboard localization is still being rolled out: some client-side
+strings remain Russian for now. Agent tool descriptions and schemas stay English by
+design, and diagnostics printed to the console stay Russian.
 
-Catalogs live in `locales/ru.json` and `locales/en.json`; every key must exist in both,
-otherwise CI fails.
+Catalogs live in `locales/ru.json`, `locales/en.json` and `locales/zh.json`; every key
+must exist in all three, otherwise CI fails.
 
 Documentation is separate from the interface locale: the English docs are the primary
 source, with Russian (`docs/README.ru.md`) and Simplified Chinese (`docs/README.zh.md`,

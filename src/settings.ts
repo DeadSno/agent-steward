@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { PLUGIN_DIR } from "./types.js";
-import { DEFAULT_LOCALE, normalizeLocale, SUPPORTED_LOCALES, messageIn, t, type Locale } from "./i18n.js";
+import { DEFAULT_LOCALE, normalizeLocale, normalizeLocaleMode, SUPPORTED_LOCALES, messageIn, t, type Locale, type LocaleMode } from "./i18n.js";
 import {
   DEFAULT_PERMISSION_POLICY,
   normalizePolicy,
@@ -361,8 +361,17 @@ export interface PermissionSettings {
 export interface SchedulerSettings {
   /** Максимум одновременно выполняющихся задач. 0 — без ограничения. */
   maxConcurrent: number;
-  /** Язык интерфейса (Спринт 28): ru по умолчанию, en — опционально. */
-  locale: Locale;
+  /**
+   * Язык интерфейса (Спринт 28, режим `auto` — T7): `ru` по умолчанию,
+   * `en`/`zh` — явный выбор, `auto` — следовать за языком OpenCode.
+   */
+  locale: LocaleMode;
+  /**
+   * Последняя известная локаль интерфейса OpenCode (T7/S24): серверный процесс
+   * не видит `ctx.locale`, но рендерит уведомления, дайджест и дашборд.
+   * Применяется только при `locale: "auto"`.
+   */
+  uiLocale: Locale;
   /** Зимняя тема оформления GUI (снежинки, морозные рамки, градиент). */
   winterMode: boolean;
   /** Уведомления о завершении задач. */
@@ -1257,7 +1266,8 @@ export async function loadSettings(): Promise<SchedulerSettings> {
         parsed?.maxConcurrent,
         DEFAULT_MAX_CONCURRENT
       ),
-      locale: normalizeLocale(parsed?.locale, DEFAULT_LOCALE),
+      locale: normalizeLocaleMode(parsed?.locale, DEFAULT_LOCALE),
+      uiLocale: normalizeLocale(parsed?.uiLocale, DEFAULT_LOCALE),
       winterMode: normalizeWinterMode(
         parsed?.winterMode,
         DEFAULT_WINTER_MODE
@@ -1281,6 +1291,7 @@ export async function loadSettings(): Promise<SchedulerSettings> {
     return {
       maxConcurrent: DEFAULT_MAX_CONCURRENT,
       locale: DEFAULT_LOCALE,
+      uiLocale: DEFAULT_LOCALE,
       winterMode: DEFAULT_WINTER_MODE,
       notifications: fallbackNotifications,
       history: fallbackHistory,
@@ -1303,8 +1314,12 @@ export async function saveSettings(
         : current.maxConcurrent,
     locale:
       patch.locale !== undefined
-        ? normalizeLocale(patch.locale, current.locale)
+        ? normalizeLocaleMode(patch.locale, current.locale)
         : current.locale,
+    uiLocale:
+      patch.uiLocale !== undefined
+        ? normalizeLocale(patch.uiLocale, current.uiLocale)
+        : current.uiLocale,
     winterMode:
       patch.winterMode !== undefined
         ? normalizeWinterMode(patch.winterMode, current.winterMode)
