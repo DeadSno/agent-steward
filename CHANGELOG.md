@@ -4,6 +4,11 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ## [Unreleased]
 
+### Added
+
+- **Переименование пакета (`Д7`):** npm-пакет `opencode-windows-scheduler` переименован в `agent-steward` (релиз `agent-steward@0.0.2`, milestone 2.0.0). GitHub-репозиторий `DeadSno/opencode-windows-scheduler` → `DeadSno/agent-steward` с редиректами на старые URL. Старый пакет `opencode-windows-scheduler` остаётся как thin re-export (`legacy/`) для обратной совместимости на один major.
+- **`plugin id` не меняется:** остаётся `opencode-windows-scheduler` — конфиг OpenCode (`plugin` для V1, `plugins` для V2), пути состояния, префиксы задач, маркер дашборда и action ID в TUI без изменений. Миграция не требуется.
+
 ## [1.5.6] - 2026-11-17
 
 ### Added
