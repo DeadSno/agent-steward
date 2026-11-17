@@ -86,7 +86,7 @@
   (ждёт V1-entrypoint из З3.1)
 
 ### Задача З2.2. Общий реестр инструментов
-- П2.2.1 — вынести 25 `execute`-функций в `createToolHandlers(runtime)`.
+- П2.2.1 — вынести 25 `execute`-функций в `createToolHandlers(runtime)`. ✅
 - П2.2.2 — V2-обёртка `editor.add` остаётся тонкой.
 - П2.2.3 — V1-обёртка `tool()` использует те же handlers.
 
@@ -215,7 +215,7 @@
 |---|---|
 | Д0 | ✅ 17.11.2026 |
 | Д1 | ✅ 17.11.2026 |
-| Д2 | в работе (П2.1.1–П2.1.2) |
+| Д2 | в работе (П2.1.1–П2.2.1) |
 | Д3 | не начата |
 | Д4 | не начата |
 | Д5 | не начата |
@@ -260,5 +260,6 @@
 | П2.1.1 | В `src/index.ts` добавлен `createRuntime(ctxLike)` с типом `RuntimeContextLike` (только `location.directory`): язык из настроек, `initDb()`, `migrateJsonToDb()`, `recoverInterruptedRuns()`, `checkJsonBackups()`, GC артефактов, retention, таймеры автопродолжения и дайджеста, инициализация `LockManager`, catch-up пропущенных cron-запусков, `FileWatchManager`/`GitTriggerManager` + `refreshTriggers()`. Возвращает `SchedulerRuntime { projectDirectory, dispose() }`; `dispose` гасит оба таймера и останавливает watcher/git-менеджеры, не закрывая БД (это делает entrypoint после `waitForIdle`). |
 | П2.1.2 | `setup(ctx)` V2 теперь начинается с `const runtime = await createRuntime(ctx)`, регистрация инструментов/RPC/хуков осталась в `setup`. В общем cleanup вместо ручного `clearInterval` и `fileWatcherManager.stop()` вызывается `runtime.dispose()`. Порядок shutdown не изменён: `shutdownGate.begin()` → dispose регистраций → `closeDashboardServer()` → `waitForIdle()` → `closeDb()`. `test-docs` расширен проверкой «setup стартует через createRuntime» → 61/61. |
 | П2.1.3 | Отложено до появления V1-entrypoint (`server()` в З3.1): `createRuntime` уже экспортирован и не зависит от V2-контекста. |
+| П2.2.1 | Добавлены экспортируемые `ToolHandlers` и `createToolHandlers(runtime)` — реестр из 26 фактических инструментов (ключ = имя инструмента). Все 26 `execute` в `setup` переведены с прямых имён `*Execute` на `handlers.<name>`; сами обработчики пока остаются модульными, `runtime` зарезервирован под перенос состояния. `test-docs` получил две статические проверки: набор ключей `ToolHandlers` совпадает с именами инструментов, в регистрации не осталось прямых `*Execute` → 63/63. `npm run build`, `test-agent-tools` (23/23), `test-audit` (33/33) — OK. |
 
 

@@ -3615,10 +3615,85 @@ export async function createRuntime(ctxLike: RuntimeContextLike): Promise<Schedu
   };
 }
 
+/**
+ * Реестр execute-обработчиков всех инструментов плагина.
+ *
+ * Ключи совпадают с именами инструментов. Оба entrypoint'а (V2 `setup` и
+ * будущий V1 `server`) берут обработчики отсюда, поэтому поведение инструментов
+ * не зависит от версии OpenCode.
+ */
+export interface ToolHandlers {
+  schedule_task: typeof scheduleTaskExecute;
+  list_tasks: typeof listTasksExecute;
+  update_task: typeof updateTaskExecute;
+  delete_task: typeof deleteTaskExecute;
+  run_task_now: typeof runTaskNowExecute;
+  pause_task: typeof pauseTaskExecute;
+  resume_task: typeof resumeTaskExecute;
+  get_history: typeof getHistoryExecute;
+  get_task_logs: typeof getTaskLogsExecute;
+  dry_run: typeof dryRunExecute;
+  manage_workspaces: typeof manageWorkspacesExecute;
+  matrix_control: typeof matrixControlExecute;
+  get_metrics: typeof getMetricsExecute;
+  get_analytics: typeof getAnalyticsExecute;
+  self_analysis: typeof selfAnalysisExecute;
+  manage_settings: typeof manageSettingsExecute;
+  manage_local_ai: typeof manageLocalAiExecute;
+  manage_templates: typeof manageTemplatesExecute;
+  manage_profiles: typeof manageProfilesExecute;
+  transfer_tasks: typeof transferTasksExecute;
+  send_notification: typeof sendNotificationExecute;
+  get_dashboard_info: typeof getDashboardInfoExecute;
+  cleanup_history: typeof cleanupHistoryExecute;
+  emit_event: typeof emitEventExecute;
+  manage_secrets: typeof manageSecretsExecute;
+  get_audit_log: typeof getAuditLogExecute;
+}
+
+/**
+ * Создаёт реестр обработчиков для конкретного экземпляра ядра.
+ *
+ * `runtime` пока не используется: обработчики опираются на общие помощники
+ * модуля. Параметр оставлен, чтобы при переносе состояния в runtime сигнатуры
+ * инструментов не менялись.
+ */
+export function createToolHandlers(_runtime: SchedulerRuntime): ToolHandlers {
+  return {
+    schedule_task: scheduleTaskExecute,
+    list_tasks: listTasksExecute,
+    update_task: updateTaskExecute,
+    delete_task: deleteTaskExecute,
+    run_task_now: runTaskNowExecute,
+    pause_task: pauseTaskExecute,
+    resume_task: resumeTaskExecute,
+    get_history: getHistoryExecute,
+    get_task_logs: getTaskLogsExecute,
+    dry_run: dryRunExecute,
+    manage_workspaces: manageWorkspacesExecute,
+    matrix_control: matrixControlExecute,
+    get_metrics: getMetricsExecute,
+    get_analytics: getAnalyticsExecute,
+    self_analysis: selfAnalysisExecute,
+    manage_settings: manageSettingsExecute,
+    manage_local_ai: manageLocalAiExecute,
+    manage_templates: manageTemplatesExecute,
+    manage_profiles: manageProfilesExecute,
+    transfer_tasks: transferTasksExecute,
+    send_notification: sendNotificationExecute,
+    get_dashboard_info: getDashboardInfoExecute,
+    cleanup_history: cleanupHistoryExecute,
+    emit_event: emitEventExecute,
+    manage_secrets: manageSecretsExecute,
+    get_audit_log: getAuditLogExecute,
+  };
+}
+
 export default Plugin.define({
   id: "opencode-windows-scheduler",
   setup: async (ctx) => {
     const runtime = await createRuntime(ctx);
+    const handlers = createToolHandlers(runtime);
 
     const registration = await ctx.tool.transform((editor) => {
       // editor.add регистрирует новые инструменты плагина с codemode: true,
@@ -3635,7 +3710,7 @@ export default Plugin.define({
         execute: withAudit<ScheduleArgs>(
           "schedule_task",
           (args) => ({ action: "task.create", targetType: "task", target: args.name }),
-          scheduleTaskExecute as any
+          handlers.schedule_task as any
         ) as any,
       });
 
@@ -3646,7 +3721,7 @@ export default Plugin.define({
           `Lists plugin tasks from the scheduler (${scheduler.title}) with schedule, status, next chained task and working directory. ` +
           "Matrix parents include a per-clone summary.",
         options: { codemode: true },
-        execute: listTasksExecute as any,
+        execute: handlers.list_tasks as any,
       });
 
       editor.add({
@@ -3659,7 +3734,7 @@ export default Plugin.define({
         execute: withAudit<UpdateArgs>(
           "update_task",
           (args) => ({ action: "task.update", targetType: "task", target: args.name }),
-          updateTaskExecute as any
+          handlers.update_task as any
         ) as any,
       });
 
@@ -3673,7 +3748,7 @@ export default Plugin.define({
         execute: withAudit<DeleteArgs>(
           "delete_task",
           (args) => ({ action: "task.delete", targetType: "task", target: args.name }),
-          deleteTaskExecute as any
+          handlers.delete_task as any
         ) as any,
       });
 
@@ -3687,7 +3762,7 @@ export default Plugin.define({
         execute: withAudit<RunNowArgs>(
           "run_task_now",
           (args) => ({ action: "task.run", targetType: "task", target: args.name }),
-          runTaskNowExecute as any
+          handlers.run_task_now as any
         ) as any,
       });
 
@@ -3700,7 +3775,7 @@ export default Plugin.define({
         execute: withAudit<PauseArgs>(
           "pause_task",
           (args) => ({ action: "task.pause", targetType: "task", target: args.name }),
-          pauseTaskExecute as any
+          handlers.pause_task as any
         ) as any,
       });
 
@@ -3713,7 +3788,7 @@ export default Plugin.define({
         execute: withAudit<ResumeArgs>(
           "resume_task",
           (args) => ({ action: "task.resume", targetType: "task", target: args.name }),
-          resumeTaskExecute as any
+          handlers.resume_task as any
         ) as any,
       });
 
@@ -3724,7 +3799,7 @@ export default Plugin.define({
           "Returns recent run history (status, duration, tokens, cost, model, Quality Gate and pre/post-flight results). " +
           "Filter by taskName and/or status; newest first.",
         options: { codemode: true },
-        execute: getHistoryExecute as any,
+        execute: handlers.get_history as any,
       });
 
       editor.add({
@@ -3733,7 +3808,7 @@ export default Plugin.define({
         description:
           "Returns the tail of a task's log file written by the run wrapper. Use it to diagnose failed runs.",
         options: { codemode: true },
-        execute: getTaskLogsExecute as any,
+        execute: handlers.get_task_logs as any,
       });
 
       editor.add({
@@ -3742,7 +3817,7 @@ export default Plugin.define({
         description:
           "Simulates a task pipeline (or every task when name is omitted): execution order, DAG dependencies, matrix fan-out, estimated duration/cost and warnings. Nothing is executed.",
         options: { codemode: true },
-        execute: dryRunExecute as any,
+        execute: handlers.dry_run as any,
       });
 
       editor.add({
@@ -3761,7 +3836,7 @@ export default Plugin.define({
                   targetType: "workspace",
                   target: args.id || args.name || "",
                 },
-          manageWorkspacesExecute as any
+          handlers.manage_workspaces as any
         ) as any,
       });
 
@@ -3781,7 +3856,7 @@ export default Plugin.define({
                   target: args.name || "",
                 }
               : null,
-          matrixControlExecute as any
+          handlers.matrix_control as any
         ) as any,
       });
 
@@ -3791,7 +3866,7 @@ export default Plugin.define({
         description:
           "Returns aggregate run metrics: total runs, successes and failures across all tasks.",
         options: { codemode: true },
-        execute: getMetricsExecute as any,
+        execute: handlers.get_metrics as any,
       });
 
       editor.add({
@@ -3800,7 +3875,7 @@ export default Plugin.define({
         description:
           "Returns an analytics report for a period: run counts, success rate, duration, tokens and cost, plus top tasks.",
         options: { codemode: true },
-        execute: getAnalyticsExecute as any,
+        execute: handlers.get_analytics as any,
       });
 
       editor.add({
@@ -3810,7 +3885,7 @@ export default Plugin.define({
           "Generates a self-analysis report: system health score, anomaly detection, trend analysis and optimization recommendations. " +
           "Helps identify performance issues, cost spikes and reliability problems.",
         options: { codemode: true },
-        execute: selfAnalysisExecute as any,
+        execute: handlers.self_analysis as any,
       });
 
       editor.add({
@@ -3825,7 +3900,7 @@ export default Plugin.define({
             args.action === "update"
               ? { action: "settings.update", targetType: "settings", target: "global" }
               : null,
-          manageSettingsExecute as any
+          handlers.manage_settings as any
         ) as any,
       });
 
@@ -3843,7 +3918,7 @@ export default Plugin.define({
             args.action === "update"
               ? { action: "localAi.update", targetType: "settings", target: "triage" }
               : null,
-          manageLocalAiExecute as any
+          handlers.manage_local_ai as any
         ) as any,
       });
 
@@ -3863,7 +3938,7 @@ export default Plugin.define({
                   targetType: "template",
                   target: args.id || args.name || "",
                 },
-          manageTemplatesExecute as any
+          handlers.manage_templates as any
         ) as any,
       });
 
@@ -3883,7 +3958,7 @@ export default Plugin.define({
                   targetType: "profile",
                   target: args.name || "",
                 },
-          manageProfilesExecute as any
+          handlers.manage_profiles as any
         ) as any,
       });
 
@@ -3899,7 +3974,7 @@ export default Plugin.define({
             args.action === "import"
               ? { action: "tasks.import", targetType: "tasks", target: "snapshot" }
               : null,
-          transferTasksExecute as any
+          handlers.transfer_tasks as any
         ) as any,
       });
 
@@ -3909,7 +3984,7 @@ export default Plugin.define({
         description:
           "Sends a test notification through the configured channel or sends the digest immediately.",
         options: { codemode: true },
-        execute: sendNotificationExecute as any,
+        execute: handlers.send_notification as any,
       });
 
       editor.add({
@@ -3918,7 +3993,7 @@ export default Plugin.define({
         description:
           "Returns dashboard port and URL, OS platform, scheduler title and the active profile.",
         options: { codemode: true },
-        execute: getDashboardInfoExecute as any,
+        execute: handlers.get_dashboard_info as any,
       });
 
       editor.add({
@@ -3930,7 +4005,7 @@ export default Plugin.define({
         execute: withAudit<CleanupHistoryArgs>(
           "cleanup_history",
           () => ({ action: "history.cleanup", targetType: "history", target: "runs" }),
-          cleanupHistoryExecute as any
+          handlers.cleanup_history as any
         ) as any,
       });
 
@@ -3952,7 +4027,7 @@ export default Plugin.define({
                   targetType: "secret",
                   target: (args.name ?? "").trim(),
                 },
-          manageSecretsExecute as any
+          handlers.manage_secrets as any
         ) as any,
       });
 
@@ -3963,7 +4038,7 @@ export default Plugin.define({
           "Returns the audit journal of task and settings mutations: who changed what, when and through which interface (mcp, gui, http). " +
           "Filter by action, target, actor, time range and limit. Secret values are redacted.",
         options: { codemode: true },
-        execute: getAuditLogExecute as any,
+        execute: handlers.get_audit_log as any,
       });
 
       editor.add({
@@ -3972,7 +4047,7 @@ export default Plugin.define({
         description:
           "Emits an MCP event: every task with triggerType 'mcp-event' matching the event name (and filter) is started in priority order.",
         options: { codemode: true },
-        execute: emitEventExecute as any,
+        execute: handlers.emit_event as any,
       });
     });
 

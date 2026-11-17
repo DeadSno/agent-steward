@@ -144,6 +144,22 @@ check(
   /export async function createRuntime\(/.test(indexSrc) &&
     /setup: async \(ctx\) => \{\s*const runtime = await createRuntime\(ctx\);/.test(indexSrc)
 );
+const registeredTools = [...indexSrc.matchAll(/name: "([a-z_]+)",/g)].map((m) => m[1]);
+const handlerBlock = indexSrc.match(/export interface ToolHandlers \{([\s\S]*?)\n\}/);
+const handlerKeys = handlerBlock
+  ? [...handlerBlock[1].matchAll(/^\s{2}([a-z_]+): typeof /gm)].map((m) => m[1])
+  : [];
+check(
+  "src/index.ts: у каждого инструмента есть общий handler",
+  registeredTools.length > 0 &&
+    registeredTools.length === handlerKeys.length &&
+    registeredTools.every((name) => handlerKeys.includes(name))
+);
+check(
+  "src/index.ts: setup регистрирует инструменты через handlers.*",
+  !/execute: [a-zA-Z]+Execute as any/.test(indexSrc) &&
+    (indexSrc.match(/handlers\.[a-z_]+ as any/g) || []).length === registeredTools.length
+);
 const typesSrc = fs.readFileSync(path.join(root, "src", "types.ts"), "utf8");
 check(
   'src/types.ts: TASK_FOLDER остаётся "OpenCode"',
