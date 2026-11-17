@@ -1,6 +1,6 @@
 {
   "name": "agent-steward",
-  "version": "2.0.0",
+  "version": "0.0.2",
   "description": "OpenCode v2 plugin for scheduling and orchestrating AI agent jobs: cron, one-shot runs, DAG pipelines, matrix builds, quality gates, SQLite history, metrics and a local web dashboard. Windows, macOS and Linux. Free and open source (MIT).",
   "license": "MIT",
   "author": "agent-steward contributors",
