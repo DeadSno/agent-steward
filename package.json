@@ -1,16 +1,16 @@
 {
-  "name": "opencode-windows-scheduler",
+  "name": "agent-steward",
   "version": "1.5.6",
   "description": "OpenCode v2 plugin for scheduling and orchestrating AI agent jobs: cron, one-shot runs, DAG pipelines, matrix builds, quality gates, SQLite history, metrics and a local web dashboard. Windows, macOS and Linux. Free and open source (MIT).",
   "license": "MIT",
-  "author": "opencode-windows-scheduler contributors",
-  "homepage": "https://github.com/DeadSno/opencode-windows-scheduler#readme",
+  "author": "agent-steward contributors",
+  "homepage": "https://github.com/DeadSno/agent-steward#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/DeadSno/opencode-windows-scheduler.git"
+    "url": "git+https://github.com/DeadSno/agent-steward.git"
   },
   "bugs": {
-    "url": "https://github.com/DeadSno/opencode-windows-scheduler/issues"
+    "url": "https://github.com/DeadSno/agent-steward/issues"
   },
   "keywords": [
     "opencode",

@@ -355,17 +355,17 @@ First public release.
 - Deleting a matrix parent deletes its family, but deleting a workspace does not touch existing matrix jobs.
 - Agent tools cover a subset of the RPC surface (see roadmap item 0.4).
 
-[Unreleased]: https://github.com/DeadSno/opencode-windows-scheduler/compare/v1.5.3...HEAD
-[1.5.4]: https://github.com/DeadSno/opencode-windows-scheduler/compare/v1.5.3...v1.5.4
-[1.5.3]: https://github.com/DeadSno/opencode-windows-scheduler/compare/v1.5.2...v1.5.3
-[1.5.2]: https://github.com/DeadSno/opencode-windows-scheduler/compare/v1.5.1...v1.5.2
-[1.5.1]: https://github.com/DeadSno/opencode-windows-scheduler/compare/v1.5.0...v1.5.1
-[1.5.0]: https://github.com/DeadSno/opencode-windows-scheduler/compare/v1.4.0...v1.5.0
-[1.4.0]: https://github.com/DeadSno/opencode-windows-scheduler/compare/v1.3.0...v1.4.0
-[1.3.0]: https://github.com/DeadSno/opencode-windows-scheduler/compare/v1.2.3...v1.3.0
-[1.2.3]: https://github.com/DeadSno/opencode-windows-scheduler/compare/v1.2.2...v1.2.3
-[1.2.2]: https://github.com/DeadSno/opencode-windows-scheduler/compare/v1.2.1...v1.2.2
-[1.2.1]: https://github.com/DeadSno/opencode-windows-scheduler/compare/v1.2.0...v1.2.1
-[1.2.0]: https://github.com/DeadSno/opencode-windows-scheduler/compare/v1.1.0...v1.2.0
-[1.1.0]: https://github.com/DeadSno/opencode-windows-scheduler/compare/v1.0.0...v1.1.0
-[1.0.0]: https://github.com/DeadSno/opencode-windows-scheduler/releases/tag/v1.0.0
+[Unreleased]: https://github.com/DeadSno/agent-steward/compare/v1.5.3...HEAD
+[1.5.4]: https://github.com/DeadSno/agent-steward/compare/v1.5.3...v1.5.4
+[1.5.3]: https://github.com/DeadSno/agent-steward/compare/v1.5.2...v1.5.3
+[1.5.2]: https://github.com/DeadSno/agent-steward/compare/v1.5.1...v1.5.2
+[1.5.1]: https://github.com/DeadSno/agent-steward/compare/v1.5.0...v1.5.1
+[1.5.0]: https://github.com/DeadSno/agent-steward/compare/v1.4.0...v1.5.0
+[1.4.0]: https://github.com/DeadSno/agent-steward/compare/v1.3.0...v1.4.0
+[1.3.0]: https://github.com/DeadSno/agent-steward/compare/v1.2.3...v1.3.0
+[1.2.3]: https://github.com/DeadSno/agent-steward/compare/v1.2.2...v1.2.3
+[1.2.2]: https://github.com/DeadSno/agent-steward/compare/v1.2.1...v1.2.2
+[1.2.1]: https://github.com/DeadSno/agent-steward/compare/v1.2.0...v1.2.1
+[1.2.0]: https://github.com/DeadSno/agent-steward/compare/v1.1.0...v1.2.0
+[1.1.0]: https://github.com/DeadSno/agent-steward/compare/v1.0.0...v1.1.0
+[1.0.0]: https://github.com/DeadSno/agent-steward/releases/tag/v1.0.0

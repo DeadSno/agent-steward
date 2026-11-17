@@ -1,12 +1,12 @@
-# opencode-windows-scheduler
+# agent-steward
 
 > 用于在 OpenCode V1（≥ 1.18.29）或 V2 中调度与编排 AI agent 任务的插件 —— cron、一次性运行、DAG 流水线、矩阵构建、质量门禁、SQLite 历史记录和本地 Web 仪表盘。支持 Windows、macOS 和 Linux。免费开源（MIT）。
 
-[![CI](https://github.com/DeadSno/opencode-windows-scheduler/actions/workflows/ci.yml/badge.svg)](https://github.com/DeadSno/opencode-windows-scheduler/actions/workflows/ci.yml)
-[![npm](https://img.shields.io/npm/v/opencode-windows-scheduler.svg)](https://www.npmjs.com/package/opencode-windows-scheduler)
-[![npm downloads](https://img.shields.io/npm/dm/opencode-windows-scheduler.svg)](https://www.npmjs.com/package/opencode-windows-scheduler)
-[![license](https://img.shields.io/npm/l/opencode-windows-scheduler.svg)](LICENSE)
-[![node](https://img.shields.io/node/v/opencode-windows-scheduler.svg)](package.json)
+[![CI](https://github.com/DeadSno/agent-steward/actions/workflows/ci.yml/badge.svg)](https://github.com/DeadSno/agent-steward/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/agent-steward.svg)](https://www.npmjs.com/package/agent-steward)
+[![npm downloads](https://img.shields.io/npm/dm/agent-steward.svg)](https://www.npmjs.com/package/agent-steward)
+[![license](https://img.shields.io/npm/l/agent-steward.svg)](LICENSE)
+[![node](https://img.shields.io/node/v/agent-steward.svg)](package.json)
 
 Translations: [English](../README.md) · [Русский](README.ru.md).
 
@@ -107,8 +107,8 @@ V2 手动配置：
 从源码安装：
 
 ```bash
-git clone https://github.com/DeadSno/opencode-windows-scheduler.git
-cd opencode-windows-scheduler
+git clone https://github.com/DeadSno/agent-steward.git
+cd agent-steward
 npm install
 npm run build && npm run build:gui
 ```

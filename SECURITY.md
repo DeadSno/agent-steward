@@ -9,7 +9,7 @@
 
 ## Threat model — read this first
 
-`opencode-windows-scheduler` is a **local automation tool**. By design it:
+`agent-steward` is a **local automation tool**. By design it:
 
 - registers jobs with the operating system scheduler;
 - generates wrapper scripts that execute `opencode run` with a prompt;
@@ -30,7 +30,7 @@ Therefore:
 
 Please **do not open a public issue** for security problems.
 
-- Use GitHub Security Advisories: <https://github.com/DeadSno/opencode-windows-scheduler/security/advisories/new>
+- Use GitHub Security Advisories: <https://github.com/DeadSno/agent-steward/security/advisories/new>
 - Include: affected version, OS, reproduction steps, impact and a suggested fix if you have one.
 
 You can expect an acknowledgement within 72 hours and a coordinated disclosure timeline. Reporters will be credited in the release notes unless they prefer otherwise.

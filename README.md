@@ -1,12 +1,12 @@
-# opencode-windows-scheduler
+# agent-steward
 
 > OpenCode V1 (≥ 1.18.29) and V2 plugin for scheduling and orchestrating AI agent jobs — cron, one-shot runs, DAG pipelines, matrix builds, quality gates, SQLite history and a local web dashboard. Runs on Windows, macOS and Linux. Free and open source (MIT).
 
-[![CI](https://github.com/DeadSno/opencode-windows-scheduler/actions/workflows/ci.yml/badge.svg)](https://github.com/DeadSno/opencode-windows-scheduler/actions/workflows/ci.yml)
-[![npm](https://img.shields.io/npm/v/opencode-windows-scheduler.svg)](https://www.npmjs.com/package/opencode-windows-scheduler)
-[![npm downloads](https://img.shields.io/npm/dm/opencode-windows-scheduler.svg)](https://www.npmjs.com/package/opencode-windows-scheduler)
-[![license](https://img.shields.io/npm/l/opencode-windows-scheduler.svg)](LICENSE)
-[![node](https://img.shields.io/node/v/opencode-windows-scheduler.svg)](package.json)
+[![CI](https://github.com/DeadSno/agent-steward/actions/workflows/ci.yml/badge.svg)](https://github.com/DeadSno/agent-steward/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/agent-steward.svg)](https://www.npmjs.com/package/agent-steward)
+[![npm downloads](https://img.shields.io/npm/dm/agent-steward.svg)](https://www.npmjs.com/package/agent-steward)
+[![license](https://img.shields.io/npm/l/agent-steward.svg)](LICENSE)
+[![node](https://img.shields.io/node/v/agent-steward.svg)](package.json)
 
 Translations: [Russian](docs/README.ru.md) · [中文](docs/README.zh.md).
 
@@ -115,8 +115,8 @@ V2 — equivalent manual config:
 From source:
 
 ```bash
-git clone https://github.com/DeadSno/opencode-windows-scheduler.git
-cd opencode-windows-scheduler
+git clone https://github.com/DeadSno/agent-steward.git
+cd agent-steward
 npm install
 npm run build && npm run build:gui
 ```

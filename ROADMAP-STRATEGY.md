@@ -1,4 +1,4 @@
-# 🎯 Стратегический роадмап — opencode-windows-scheduler
+# 🎯 Стратегический роадмап — agent-steward
 
 > Цель: **стать лучшим планировщиком и оркестратором для OpenCode, оставаясь бесплатным и open source.**
 > Тактический спринт-план — в [ROADMAP.md](./ROADMAP.md), выпущенные изменения — в [CHANGELOG.md](./CHANGELOG.md).

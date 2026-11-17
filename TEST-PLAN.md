@@ -37,7 +37,7 @@
 ### 0.3 Подготовка окружения
 
 ```powershell
-cd opencode-windows-scheduler
+cd agent-steward
 npm run build          # tsc: dist/ (сервер, RPC, ядро)
 npm run build:gui      # vite: gui-experimental.cjs (панель OpenCode)
 npm test               # 39 наборов, полный регресс

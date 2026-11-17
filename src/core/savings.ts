@@ -15,7 +15,7 @@ export const CLOUD_REFERENCE_COST_PER_1K_TOKENS_USD = 0.01;
 
 /** Ссылка на методику — её показывают GUI и дашборд рядом с оценкой. */
 export const SAVINGS_METHODOLOGY_URL =
-  "https://github.com/DeadSno/opencode-windows-scheduler/blob/main/docs/SAVINGS.md#methodology";
+  "https://github.com/DeadSno/agent-steward/blob/main/docs/SAVINGS.md#methodology";
 
 /** Минимальный вид записи истории, нужный счётчику экономии. */
 export interface SavingsRecord {

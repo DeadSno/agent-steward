@@ -129,7 +129,7 @@ export function buildBashWrapperScript(options: BashWrapperOptions): string {
   });
   const lines: string[] = [
     "#!/usr/bin/env bash",
-    "# Сгенерировано opencode-windows-scheduler. Не редактируйте вручную:",
+    "# Сгенерировано agent-steward. Не редактируйте вручную:",
     "# файл перезаписывается при каждом обновлении задачи.",
     "set -u",
     "",

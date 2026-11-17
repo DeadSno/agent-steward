@@ -12,8 +12,8 @@ Thanks for taking the time to contribute! This project is MIT-licensed and free 
 ## Development setup
 
 ```bash
-git clone https://github.com/DeadSno/opencode-windows-scheduler.git
-cd opencode-windows-scheduler
+git clone https://github.com/DeadSno/agent-steward.git
+cd agent-steward
 npm install
 npm run build        # tsc
 npm run build:gui    # vite -> gui-experimental.cjs

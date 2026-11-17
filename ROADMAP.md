@@ -1,4 +1,4 @@
-# 🗺️ Roadmap — opencode-windows-scheduler
+# 🗺️ Roadmap — agent-steward
 
 Текущая версия: **1.5.6** (17.11.2026). Плагин опубликован в npm, CI зелёный на Windows / macOS / Linux, 26 инструментов агента, 63 тестовые сюиты.
 
