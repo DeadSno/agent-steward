@@ -181,6 +181,15 @@ function finish(result) {
     if (result.timedOut) {
       console.error(`Таймаут ${formatDuration(options.timeoutMs)}: ${result.suite}`);
     }
+    // GitHub Actions: логи job недоступны анонимно, поэтому дублируем хвост
+    // вывода в аннотацию. Она читается через публичный check-runs API.
+    if (process.env.GITHUB_ACTIONS === "true") {
+      const escape = (value) =>
+        value.replace(/%/g, "%25").replace(/\r/g, "").replace(/\n/g, "%0A");
+      const tail = output.split(/\r?\n/).slice(-20).join("\n");
+      const detail = `${result.timedOut ? "timeout " : ""}${tail}`.slice(0, 4000);
+      console.log(`::error title=${escape(result.suite)}::${escape(detail)}`);
+    }
   }
 }
 
