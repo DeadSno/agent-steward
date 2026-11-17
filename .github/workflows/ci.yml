@@ -115,8 +115,9 @@ jobs:
           node test-v1-integration.mjs
           node test-docs.mjs
 
-  # P0-1: smoke-проверка, что шим opencode-windows-scheduler устанавливается
-  # в чистую директорию (ETARGET раньше ломал fresh-install).
+  # P0-1: smoke-проверка, что шим opencode-windows-scheduler ставится
+  # в чистую директорию. Ставим локально собранные tarball'ы: установка из
+  # registry заблокирована до публикации agent-steward (P0-1.T2.1).
   shim-smoke:
     name: Shim smoke (opencode-windows-scheduler install)
     runs-on: ubuntu-latest
