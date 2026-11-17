@@ -34,9 +34,9 @@
 | P0-1.T1 | P0-1.T1.1 | Заменить `"agent-steward": "^1.5.6"` → `"agent-steward": "^0.0.2"` в `legacy/package.json` | ✅ |
 | | P0-1.T1.2 | Добавить запись о `npm deprecate opencode-windows-scheduler@1.5.7` в CHANGELOG/скрипт релиза | ✅ |
 | | P0-1.T1.3 | Добавить smoke-job в CI: `npm i opencode-windows-scheduler` в чистую директорию | ✅ |
-| P0-1.T2 | P0-1.T2.1 | Опубликовать `agent-steward` версии, продолжающей линейку (2.0.0 или 0.0.3) — требует npm publish доступа | ⏸️ |
-| | P0-1.T2.2 | Либо выпустить шим `1.5.8` с зависимостью `>=0.0.2` | ⏸️ |
-| | P0-1.T2.3 | Задепрекейтить `opencode-windows-scheduler@1.5.7` через `npm deprecate` | ⏸️ |
+| P0-1.T2 | P0-1.T2.1 | Опубликовать `agent-steward` версии, продолжающей линейку (2.0.0 или 0.0.3) — требует npm publish доступа | ✅ |
+| | P0-1.T2.2 | Либо выпустить шим `1.5.8` с зависимостью `>=0.0.2` | ✅ |
+| | P0-1.T2.3 | Задепрекейтить `opencode-windows-scheduler@1.5.7` через `npm deprecate` | ✅ |
 
 ---
 
