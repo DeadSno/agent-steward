@@ -334,6 +334,20 @@ check(
     /compat-v2:/.test(ciSrc) &&
     /node test-v1-integration\.mjs/.test(ciSrc)
 );
+// macOS дорог в релизной очереди (он блокировал publish 0.0.3), поэтому
+// проверяется обычным CI на каждом push. Инвариант не даёт молча потерять macOS.
+const releasePath = path.join(root, ".github", "workflows", "release.yml");
+const releaseSrc = fs.existsSync(releasePath)
+  ? fs.readFileSync(releasePath, "utf8")
+  : "";
+const ciOsMatrix = ciSrc.match(/os:\s*\[([^\]]+)\]/)?.[1] ?? "";
+const releaseOsMatrix = releaseSrc.match(/os:\s*\[([^\]]+)\]/)?.[1] ?? "";
+check(
+  "CI/release: macOS покрыт CI, релиз проверяет windows и ubuntu",
+  ciOsMatrix.includes("macos-latest") &&
+    releaseOsMatrix.includes("windows-latest") &&
+    releaseOsMatrix.includes("ubuntu-latest")
+);
 const tuiSrc = fs.readFileSync(path.join(root, "src", "tui.tsx"), "utf8");
 const tuiV1Path = path.join(root, "src", "tui-v1.tsx");
 check(
