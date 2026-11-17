@@ -7,6 +7,7 @@
  * Run: node test-dashboard-trust.mjs (after npm run build).
  */
 import fs from "node:fs";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 
@@ -14,7 +15,9 @@ const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ws-scheduler-trust-"));
 process.env.APPDATA = tempRoot;
 process.env.OPENCODE_SCHEDULER_HOME = path.join(tempRoot, "opencode", "windows-scheduler");
 
-const { isDashboardRequestTrusted } = await import("./dist/server.js");
+const { isDashboardRequestTrusted, startDashboardServer, closeDashboardServer, getDashboardPort } =
+  await import("./dist/server.js");
+const { closeDb } = await import("./dist/db/index.js");
 
 let passed = 0;
 let failed = 0;
@@ -76,7 +79,70 @@ check(
   isDashboardRequestTrusted(request({ ...client, origin: "file://" })) === false
 );
 
-fs.rmSync(tempRoot, { recursive: true, force: true });
+// Живые запросы к реальному серверу: unit-проверки выше не ловят
+// рассинхрон между isDashboardRequestTrusted и handleRequest.
+const dashboardDeps = {
+  getTasks: async () => [],
+  runTask: async () => ({ alreadyRunning: false }),
+  deleteTask: async () => {},
+};
+
+let foreignServer = null;
+try {
+  // Чужой сервис на порту: плагин не должен принять его за свой дашборд.
+  foreignServer = http.createServer((_req, res) => {
+    res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
+    res.end("foreign service");
+  });
+  await new Promise((resolve, reject) => {
+    foreignServer.once("error", reject);
+    foreignServer.listen(4415, "127.0.0.1", resolve);
+  });
+
+  const started = await startDashboardServer(dashboardDeps, { preferred: 4415, fallback: 4416 });
+  check(
+    "занятый чужим сервисом порт не переиспользуется",
+    Boolean(started) && started.port === 4416
+  );
+
+  const base = `http://127.0.0.1:${getDashboardPort()}`;
+  const noOrigin = await fetch(`${base}/api/tasks`);
+  check("живой запрос без Origin → 200", noOrigin.status === 200);
+
+  const evilOrigin = await fetch(`${base}/api/tasks`, {
+    headers: { origin: "https://evil.example" },
+  });
+  check("живой запрос с внешним Origin → 403", evilOrigin.status === 403);
+
+  const localOrigin = await fetch(`${base}/api/tasks`, {
+    headers: { origin: `http://127.0.0.1:${getDashboardPort()}` },
+  });
+  check("живой запрос с локальным Origin → 200", localOrigin.status === 200);
+
+  const evilRun = await fetch(`${base}/api/run`, {
+    method: "POST",
+    headers: { "content-type": "application/json", origin: "https://evil.example" },
+    body: JSON.stringify({ name: "test-task" }),
+  });
+  check("живой POST с внешним Origin → 403", evilRun.status === 403);
+} finally {
+  await closeDashboardServer().catch(() => {});
+  if (foreignServer) {
+    await new Promise((resolve) => foreignServer.close(resolve));
+  }
+  try {
+    closeDb();
+  } catch {
+    // БД могла не открыться — закрывать нечего.
+  }
+}
+
+try {
+  fs.rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+} catch (err) {
+  // На Windows SQLite/WAL может держать файл ещё мгновение; это не провал теста.
+  console.warn(`  warn временный каталог не удалён: ${err instanceof Error ? err.message : err}`);
+}
 
 console.log(`\nDashboard trust: ${passed} passed, ${failed} failed.`);
 if (failed > 0) process.exit(1);

@@ -43,8 +43,12 @@ jobs:
         run: npm run build:gui
 
       - name: Test
-        run: npm test
+        run: npm run test:parallel
 
       - name: Test in English locale
         if: matrix.os == 'ubuntu-latest'
-        run: npm run test:en
+        run: npm run test:parallel:en
+
+      - name: Test in Chinese locale
+        if: matrix.os == 'ubuntu-latest'
+        run: npm run test:parallel:zh

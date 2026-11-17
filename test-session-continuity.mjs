@@ -17,6 +17,7 @@ const {
   shouldRotateSession,
   preservedSessionRunCount,
   rotateSessionIfNeeded,
+  sessionStatePath,
 } = await import("./dist/core/session.js");
 const { buildBashWrapperScript } = await import("./dist/core/wrappers/bash.js");
 const { initDb, closeDb } = await import("./dist/db/index.js");
@@ -198,7 +199,12 @@ try {
     version: 1,
     tasks: [{ name: "Bogus Max", prompt: "нулевой лимит", schedule: "0 0 * * *", session: "reuse", sessionMaxRuns: 0 }],
   }));
-  check("sessionMaxRuns < 1 отклоняется", bogusMax.errors.length === 1 && bogusMax.tasks.length === 0);
+  check(
+    "sessionMaxRuns: 0 принимается (без лимита)",
+    bogusMax.errors.length === 0 &&
+      bogusMax.tasks.length === 1 &&
+      bogusMax.tasks[0]?.sessionMaxRuns === 0
+  );
 
   section("Ротация reuse-сессии после лимита запусков");
   {
@@ -215,7 +221,17 @@ try {
     await rotateSessionIfNeeded(rotateDef.name);
     const afterFirst = await getTask(rotateDef.name);
     check("после 2-го запуска счётчик сброшен", (afterFirst?.sessionRunCount ?? -1) === 0);
-    check("после 2-го запуска sessionId очищен", afterFirst?.sessionId === undefined);
+    check(
+      "после 2-го запуска создан новый sessionId",
+      typeof afterFirst?.sessionId === "string" &&
+        isValidSessionId(afterFirst.sessionId) &&
+        afterFirst.sessionId !== rotateDef.sessionId
+    );
+    check(
+      "после ротации sidecar-файл содержит новый sessionId",
+      fs.existsSync(sessionStatePath(rotateDef.name)) &&
+        fs.readFileSync(sessionStatePath(rotateDef.name), "utf8").trim() === afterFirst?.sessionId
+    );
 
     const countDef = {
       ...rotateDef,

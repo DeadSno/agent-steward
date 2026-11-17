@@ -86,6 +86,38 @@ interface SchedulerBackend {
   与 PowerShell 包装脚本相同的契约，因此历史/指标/重试/链式任务在各平台通用。
 - `PATH` 追加 `/opt/homebrew/bin`、`/usr/local/bin`、`~/.local/bin`、`~/.bun/bin`。
 
+## 功能矩阵
+
+| 能力 | Windows | Linux | macOS |
+|---|---|---|---|
+| 调度后端 | `schtasks` | `crontab` | `launchd` LaunchAgents |
+| 原生 cron 子集 | `* * * * *`、`*/N * * * *`（N ≤ 1439，60 % N = 0）、`M * * * *`、`M H * * *`、`M H * * D` | 完整 cron | 与 Windows 相同的子集 |
+| 其他 cron 表达式 | 分钟轮询 + schedule gate | 原生 cron | 分钟轮询 + schedule gate |
+| 月/周字段中的 `*/N` | 非原生 → 轮询 | 原生 | 非原生 → 轮询 |
+| 暂停 / 恢复 | `schtasks /change /disable` / `/enable` | 托管块中的 `# PAUSED:` 行 | `launchctl unload -w` / `load -w` |
+| 文件触发器 | 进程内 `FileWatchManager` | 相同 | 相同 |
+| 任务包装脚本 | `.cmd` + `.ps1` | `.sh` | `.sh` |
+| 日志 | `%APPDATA%\opencode\windows-scheduler\logs` | `~/.config/opencode/windows-scheduler/logs` | 与 Linux 相同 |
+| `secrets.key` 保护 | `icacls`（仅所有者）+ `chmod` 回退 | `chmod 0600` | `chmod 0600` |
+| 仪表盘 | `127.0.0.1`，动态标题 | 相同 | 相同 |
+| DAG / matrix / quality gates / 通知 | 插件内，与操作系统无关 | 相同 | 相同 |
+
+### 折衷
+
+1. **分钟轮询。** 原生子集之外的 cron 表达式，以及使用非系统 IANA 时区的任务，
+   由操作系统调度器每分钟启动一次；`schedule-gate` 决定是否真正执行。
+   代价是每个任务每分钟一个短生命周期的包装进程。
+2. **`M H */N * *` 故意不转换为 `schtasks /sc DAILY /mo N`。**
+   cron 从每月 1 日开始计数，并在月初重置；`/mo N` 从任务创建日期开始计数，
+   不会在月初重置。两者并不等价，因此该表达式保持轮询模式。
+   若要原生支持，应使用 `MONTHLY` 加显式 `/d` 列表，而不是 `DAILY /mo N`。
+3. **DST。** 网关按本地墙上时间工作。不存在的时间（春季前进）会被跳过；
+   有歧义的时间（秋季回拨）在第一次出现时执行。
+4. **Windows 上的 `*/N * * * *`** 仅在 `60 % N = 0` 且 `N ≤ 1439` 时原生支持。
+   否则回退到轮询：`schtasks /mo N` 从创建时刻计数，而 cron 从整点开始计数。
+5. **POSIX 包装脚本、crontab 和 launchd 尚未在真实 Linux/macOS 主机上执行**
+   （见“限制”）；语法和转义仅由测试覆盖。
+
 ## GUI 与仪表盘
 - 标题是动态的：Windows 上为「Windows 任务计划程序」，macOS/Linux 上为「OpenCode Scheduler」。
 - 标题来自 RPC 方法 `get_platform` → `{ platform, title }`。

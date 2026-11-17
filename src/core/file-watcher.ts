@@ -1,6 +1,8 @@
 import { watch, type FSWatcher } from "chokidar";
+import { isAbsolute } from "node:path";
 import { loadTaskDefinitions } from "../task-transfer.js";
 import { filterPaths, relativeTo } from "./glob.js";
+import { hasPathControlChars } from "./watch-paths.js";
 
 /**
  * Задержка между последним изменением файла и запуском задачи.
@@ -71,7 +73,24 @@ export class FileWatchManager {
           ? d.watchIgnore.filter((g): g is string => typeof g === "string" && g.trim().length > 0)
           : [],
       }))
-      .filter((d) => d.name.length > 0);
+      .filter((d) => d.name.length > 0)
+      .filter((d) => {
+        // Защита от legacy-записей и ручного редактирования БД: не запускаем
+        // watcher на путях с управляющими символами или выходом через `..`.
+        if (hasPathControlChars(d.path)) {
+          console.error(
+            `[windows-scheduler] Задача "${d.name}": путь наблюдения содержит управляющие символы — пропущен.`
+          );
+          return false;
+        }
+        if (!isAbsolute(d.path) && d.path.split(/[\\/]/).includes("..")) {
+          console.error(
+            `[windows-scheduler] Задача "${d.name}": относительный путь наблюдения выходит за рабочую директорию — пропущен.`
+          );
+          return false;
+        }
+        return true;
+      });
 
     const wantedKeys = new Set(wanted.map((d) => d.name.toLowerCase()));
 

@@ -87,6 +87,40 @@ The factory picks an implementation from `process.platform`:
   the same contract as the PowerShell wrapper, so history/metrics/retry/chains work everywhere.
 - `PATH` is extended with `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`, `~/.bun/bin`.
 
+## Feature matrix
+
+| Capability | Windows | Linux | macOS |
+|---|---|---|---|
+| Scheduler backend | `schtasks` | `crontab` | `launchd` LaunchAgents |
+| Native cron subset | `* * * * *`, `*/N * * * *` (N ≤ 1439, 60 % N = 0), `M * * * *`, `M H * * *`, `M H * * D` | full cron | same subset as Windows |
+| Other cron expressions | minute-poll + schedule gate | native cron | minute-poll + schedule gate |
+| `*/N` in day-of-month / day-of-week | not native → poll | native | not native → poll |
+| Pause / resume | `schtasks /change /disable` / `/enable` | `# PAUSED:` line in the managed block | `launchctl unload -w` / `load -w` |
+| File triggers | in-process `FileWatchManager` | same | same |
+| Task wrappers | `.cmd` + `.ps1` | `.sh` | `.sh` |
+| Logs | `%APPDATA%\opencode\windows-scheduler\logs` | `~/.config/opencode/windows-scheduler/logs` | same as Linux |
+| `secrets.key` protection | `icacls` (owner only) + `chmod` fallback | `chmod 0600` | `chmod 0600` |
+| Dashboard | `127.0.0.1`, dynamic title | same | same |
+| DAG / matrix / quality gates / notifications | in-plugin, OS-independent | same | same |
+
+### Compromises
+
+1. **Minute-poll.** Cron expressions outside the native subset, and tasks with a non-system
+   IANA time zone, are started every minute by the OS scheduler; `schedule-gate` decides
+   whether the run proceeds. The cost is one short-lived wrapper process per task per minute.
+2. **`M H */N * *` is deliberately not converted to `schtasks /sc DAILY /mo N`.**
+   Cron counts days from the 1st of each month and resets at month boundaries; `/mo N`
+   counts days from the task creation date and does not reset. The two schedules are not
+   equivalent, so the expression stays in poll mode. A native variant would require
+   `MONTHLY` with an explicit `/d` list, not `DAILY /mo N`.
+3. **DST.** The gate works with local wall-clock time. A nonexistent time (spring forward)
+   is skipped; an ambiguous time (fall back) runs at the first occurrence.
+4. **`*/N * * * *` on Windows** is native only when `60 % N = 0` and `N ≤ 1439`.
+   Otherwise the task falls back to poll mode, because `schtasks /mo N` counts from the
+   creation moment while cron counts from the start of the hour.
+5. **POSIX wrappers, crontab and launchd have not been executed on real Linux/macOS hosts**
+   (see Limitations); syntax and escaping are covered by tests only.
+
 ## GUI and dashboard
 - The title is dynamic: "Windows Task Scheduler" on Windows, "OpenCode Scheduler" on macOS/Linux.
 - The title comes from the `get_platform` RPC method → `{ platform, title }`.

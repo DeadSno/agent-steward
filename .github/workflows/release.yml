@@ -55,12 +55,15 @@ jobs:
         run: npm run build:gui
 
       - name: Test
-        run: npm test
+        run: npm run test:parallel
 
       # Locale tests are separate from `npm test`: catch a broken English UI
       # before publishing, not after the release.
       - name: Test in English locale
-        run: npm run test:en
+        run: npm run test:parallel:en
+
+      - name: Test in Chinese locale
+        run: npm run test:parallel:zh
 
       # Publish to npm. Two supported paths, no silent skip either way:
       #   1. NPM_TOKEN secret in the repo -> token auth.

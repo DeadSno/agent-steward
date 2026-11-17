@@ -71,7 +71,7 @@
     "prepare": "npm run build",
     "prepublishOnly": "npm run build && npm run build:gui",
     "pretest": "npm run build",
-    "test": "node test-sqlite.mjs && node test-crash-recovery.mjs && node test-workspaces.mjs && node test-role-scoped.mjs && node test-permissions-policy.mjs && node test-dry-run.mjs && node test-matrix.mjs && node test-matrix-lifecycle.mjs && node test-matrix-sync.mjs && node test-retention.mjs && node test-metrics.mjs && node test-savings.mjs && node test-schedule-v2.mjs && node test-notifications-v2.mjs && node test-notifications-dedup.mjs && node test-notifications-embedding.mjs && node test-notifications-summary.mjs && node test-settings.mjs && node test-notifications-v3.mjs && node test-triage.mjs && node test-triage-rules.mjs && node test-triage-compare.mjs && node test-triage-chain.mjs && node test-triage-shadow.mjs && node test-triage-audit.mjs && node test-triage-async.mjs && node test-local-ai.mjs && node test-secrets.mjs && node test-audit.mjs && node test-profiles.mjs && node test-env.mjs && node test-agent-tools.mjs && node test-skill.mjs && node test-integrations.mjs && node test-one-shot.mjs && node test-session-continuity.mjs && node test-task-status.mjs && node test-jobs-view.mjs && node test-dag.mjs && node test-dashboard.mjs && node test-dashboard-trust.mjs && node test-dashboard-dag.mjs && node test-dashboard-json.mjs && node test-docs.mjs && node test-glob.mjs && node test-git-trigger.mjs && node test-window-v3.mjs && node test-i18n.mjs && node test-gui-bundle.mjs && node test-stale-lock.mjs && node test-task-name-limit.mjs && node test-task-name-limit-profile.mjs && node test-delete-profile.mjs && node test-execution-hardening.mjs && node test-path-safety.mjs && node test-windows-oem.mjs && node test-usage-from-log.mjs && node test-posix-e2e.mjs",
+    "test": "node test-sqlite.mjs && node test-crash-recovery.mjs && node test-workspaces.mjs && node test-role-scoped.mjs && node test-permissions-policy.mjs && node test-dry-run.mjs && node test-matrix.mjs && node test-matrix-lifecycle.mjs && node test-matrix-sync.mjs && node test-retention.mjs && node test-metrics.mjs && node test-savings.mjs && node test-schedule-v2.mjs && node test-notifications-v2.mjs && node test-notifications-dedup.mjs && node test-notifications-embedding.mjs && node test-notifications-summary.mjs && node test-settings.mjs && node test-notifications-v3.mjs && node test-triage.mjs && node test-triage-rules.mjs && node test-triage-compare.mjs && node test-triage-chain.mjs && node test-triage-shadow.mjs && node test-triage-audit.mjs && node test-triage-async.mjs && node test-local-ai.mjs && node test-secrets.mjs && node test-audit.mjs && node test-profiles.mjs && node test-env.mjs && node test-agent-tools.mjs && node test-skill.mjs && node test-integrations.mjs && node test-one-shot.mjs && node test-session-continuity.mjs && node test-task-status.mjs && node test-jobs-view.mjs && node test-dag.mjs && node test-dashboard.mjs && node test-dashboard-trust.mjs && node test-dashboard-dag.mjs && node test-dashboard-json.mjs && node test-docs.mjs && node test-glob.mjs && node test-git-trigger.mjs && node test-window-v3.mjs && node test-i18n.mjs && node test-gui-bundle.mjs && node test-stale-lock.mjs && node test-task-name-limit.mjs && node test-task-name-limit-profile.mjs && node test-delete-profile.mjs && node test-execution-hardening.mjs && node test-path-safety.mjs && node test-watch-paths.mjs && node test-windows-oem.mjs && node test-schtasks-errors.mjs && node test-shutdown.mjs && node test-usage-from-log.mjs && node test-posix-e2e.mjs",
     "test:sqlite": "node test-sqlite.mjs",
     "test:crash": "node test-crash-recovery.mjs",
     "test:workspaces": "node test-workspaces.mjs",
@@ -119,10 +119,16 @@
     "test:task-name-limit": "node test-task-name-limit.mjs && node test-task-name-limit-profile.mjs",
     "test:delete-profile": "node test-delete-profile.mjs",
     "test:windows-oem": "node test-windows-oem.mjs",
+    "test:schtasks-errors": "node test-schtasks-errors.mjs",
+    "test:shutdown": "node test-shutdown.mjs",
     "test:usage-from-log": "node test-usage-from-log.mjs",
     "test:posix-e2e": "node test-posix-e2e.mjs",
+    "test:watch-paths": "node test-watch-paths.mjs",
     "test:en": "node scripts/test-locale.mjs en",
-    "test:zh": "node scripts/test-locale.mjs zh"
+    "test:zh": "node scripts/test-locale.mjs zh",
+    "test:parallel": "node scripts/run-tests.mjs",
+    "test:parallel:en": "node scripts/run-tests.mjs --locale=en",
+    "test:parallel:zh": "node scripts/run-tests.mjs --locale=zh"
   },
   "dependencies": {
     "@opencode/plugin": "^2.2.7",

@@ -46,6 +46,8 @@ import {
   runMatrix,
   syncMatrixFamily,
 } from "./core/matrix.js";
+import { normalizeWatchPath, validateWatchGlobs } from "./core/watch-paths.js";
+import { createShutdownGate } from "./core/shutdown.js";
 import { SchedulerRpc } from "./rpc.js";
 import { latestHistoryByTask, loadHistory, loadMetrics } from "./history.js";
 import { defaultNotifications, loadSettings, saveSettings } from "./settings.js";
@@ -146,6 +148,11 @@ import type { AuditEntryInput } from "./core/audit.js";
 // Путь к вспомогательному node-скрипту записи истории/метрик (dist/core/record-history.js).
 const require = createRequire(import.meta.url);
 const resolvedRecorder = require.resolve("./core/record-history.js");
+
+// Д6: ворота выгрузки. После dispose новые in-process запуски отклоняются,
+// а начатые — получают время завершить запись в БД.
+const shutdownGate = createShutdownGate();
+const SHUTDOWN_WAIT_MS = 15_000;
 
 /**
  * Плагин может загружаться как из dist, так и напрямую из src (tsx/транспиляция).
@@ -5056,16 +5063,26 @@ export default Plugin.define({
       );
     }
 
-    return () => {
+    return async () => {
+      shutdownGate.begin();
       clearInterval(pausedUntilTimer);
       clearInterval(notificationTimer);
       rpcRegistration.dispose();
       registration.dispose();
       void skillRegistration?.dispose();
       if (fileWatcherManager) void fileWatcherManager.stop();
-      // При выгрузке плагина обязательно закрываем HTTP-сервер дашборда,
-      // затем соединение SQLite (чекпойнт WAL выполняется в closeDb).
-      void closeDashboardServer().finally(() => closeDb());
+
+      // Сначала перестаём принимать новые запросы, затем ждём уже начатые
+      // in-process операции, чтобы не закрыть SQLite под активной записью.
+      await closeDashboardServer();
+      const wait = await shutdownGate.waitForIdle(SHUTDOWN_WAIT_MS);
+      if (wait.timedOut) {
+        console.warn(
+          `[windows-scheduler] Выгрузка: ${wait.remaining} запуск(ов) не завершились за ${SHUTDOWN_WAIT_MS} мс — закрываем БД.`
+        );
+      }
+      // Чекпойнт WAL выполняется в closeDb.
+      closeDb();
     };
   },
 });
@@ -5530,6 +5547,27 @@ async function schedulerCreateTask(
   const effectiveWorkingDirectory =
     workspace?.path || workingDirectory?.trim() || projectDirectory || process.cwd();
 
+  // Файловые триггеры: относительный watchPath не должен выходить за рабочую
+  // директорию задачи, а glob-маски — за пределы watchPath (path traversal).
+  let effectiveWatchPath = watchPath?.trim() || undefined;
+  if (effectiveWatchPath) {
+    try {
+      effectiveWatchPath = normalizeWatchPath(effectiveWatchPath, effectiveWorkingDirectory);
+    } catch (err: any) {
+      throw new Error(
+        t("tool.error.taskReason", { name, error: err.message || String(err) })
+      );
+    }
+  }
+  try {
+    validateWatchGlobs(normalizedWatchGlobs);
+    validateWatchGlobs(normalizedWatchIgnore);
+  } catch (err: any) {
+    throw new Error(
+      t("tool.error.taskReason", { name, error: err.message || String(err) })
+    );
+  }
+
   // Спринт 21: env-переменные workspace → отдельный файл, который читает обёртка.
   // Спринт 29.3: инжектит в env только реально используемые секреты (scoped-инъекция).
   const usedSecretNames = collectSecretNames(
@@ -5748,7 +5786,7 @@ async function schedulerCreateTask(
       effectiveSession,
       effectiveSessionId
     ),
-    watchPath: normalizedMatrix ? undefined : watchPath,
+    watchPath: normalizedMatrix ? undefined : effectiveWatchPath,
     timezone: normalizedTz,
     notBefore: normalizedNotBefore,
     notAfter: normalizedNotAfter,
@@ -6072,29 +6110,39 @@ async function recreateTaskFromDefinition(definition: TaskDefinition): Promise<v
  * на клоны, а не выполняет свой промпт.
  */
 async function runTaskEntry(name: string): Promise<{ alreadyRunning: boolean }> {
-  const definition = (await loadTaskDefinitions()).find(
-    (def) => def.name.toLowerCase() === name.trim().toLowerCase()
-  );
-  if (definition?.matrix) {
-    await runMatrix(definition);
-    return { alreadyRunning: false };
+  if (shutdownGate.isShuttingDown()) {
+    throw new Error(
+      "Плагин выгружается: новые запуски не принимаются. Повторите после перезапуска."
+    );
   }
 
-  // Любой запуск через этот вход — «сейчас», а не «по расписанию»:
-  // run_task_now, RPC GUI, файловый триггер, MCP-событие и catch-up.
-  // Маркер снимает проверку cron/окна внутри обёртки (poll-режим), иначе
-  // запуск молча отменялся бы schedule-gate с кодом 3.
-  const forceFile = await requestImmediateRun(name);
-  try {
-    return await scheduler.runTask(name);
-  } catch (err) {
-    // Планировщик не принял запуск — маркер не нужен, иначе он мог бы
-    // «разрешить» следующий плановый тик в обход расписания.
-    await fs.unlink(forceFile).catch(() => {
-      /* не критично */
-    });
-    throw err;
-  }
+  const run = (async () => {
+    const definition = (await loadTaskDefinitions()).find(
+      (def) => def.name.toLowerCase() === name.trim().toLowerCase()
+    );
+    if (definition?.matrix) {
+      await runMatrix(definition);
+      return { alreadyRunning: false };
+    }
+
+    // Любой запуск через этот вход — «сейчас», а не «по расписанию»:
+    // run_task_now, RPC GUI, файловый триггер, MCP-событие и catch-up.
+    // Маркер снимает проверку cron/окна внутри обёртки (poll-режим), иначе
+    // запуск молча отменялся бы schedule-gate с кодом 3.
+    const forceFile = await requestImmediateRun(name);
+    try {
+      return await scheduler.runTask(name);
+    } catch (err) {
+      // Планировщик не принял запуск — маркер не нужен, иначе он мог бы
+      // «разрешить» следующий плановый тик в обход расписания.
+      await fs.unlink(forceFile).catch(() => {
+        /* не критично */
+      });
+      throw err;
+    }
+  })();
+
+  return shutdownGate.track(run);
 }
 
 /**

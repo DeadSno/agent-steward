@@ -158,6 +158,66 @@ export interface SchtasksResult {
   code: number | null;
 }
 
+/**
+ * Поясняет известные коды и тексты ошибок schtasks.
+ *
+ * Возвращает `null`, если код/текст неизвестен: исходное сообщение в этом
+ * случае не меняется. schtasks часто возвращает общий код `1`, поэтому
+ * текстовая эвристика остаётся основным фолбэком.
+ */
+export function explainSchtasksError(
+  code: number | null,
+  text: string
+): string | null {
+  // HRESULT-коды приходят как знаковые 32-битные числа; приводим к unsigned.
+  const unsigned =
+    typeof code === "number" && Number.isFinite(code)
+      ? code < 0
+        ? code >>> 0
+        : code
+      : null;
+
+  const byCode: Record<number, string> = {
+    267009: "Задача сейчас выполняется.",
+    267010: "Задача отключена.",
+    267011: "Задача ещё ни разу не запускалась.",
+    267012: "У задачи больше нет запланированных запусков.",
+    267013: "Задача не запланирована.",
+    267014: "Выполнение задачи было прервано пользователем.",
+    2147942405: "Нет прав на операцию с задачей (access denied).",
+    2147942402: "Задача или файл не найдены.",
+  };
+
+  if (unsigned !== null && byCode[unsigned]) {
+    return byCode[unsigned];
+  }
+
+  const lower = text.toLowerCase();
+  const byText: Array<[string[], string]> = [
+    [
+      ["access is denied", "отказано в доступе"],
+      "Нет прав на операцию с задачей (access denied).",
+    ],
+    [
+      ["cannot find", "не удалось найти", "не найдено"],
+      "Задача или файл не найдены.",
+    ],
+    [
+      ["already running", "currently running", "уже выполняется", "уже запущена", "сейчас выполняется"],
+      "Задача уже выполняется.",
+    ],
+    [["is disabled", "отключена"], "Задача отключена."],
+  ];
+
+  for (const [needles, hint] of byText) {
+    if (needles.some((needle) => lower.includes(needle))) {
+      return hint;
+    }
+  }
+
+  return null;
+}
+
 /** Ошибка выполнения schtasks. */
 export class SchtasksError extends Error {
   constructor(
@@ -165,7 +225,8 @@ export class SchtasksError extends Error {
     public readonly code: number | null,
     public readonly stderr: string
   ) {
-    super(message);
+    const hint = explainSchtasksError(code, `${message} ${stderr}`);
+    super(hint ? `${message} | пояснение: ${hint}` : message);
     this.name = "SchtasksError";
   }
 }

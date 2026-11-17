@@ -266,6 +266,24 @@ export function validateWorkspacePath(workspacePath: string): void {
 }
 
 /**
+ * Валидация отображаемого имени workspace.
+ *
+ * Имя не участвует в путях напрямую (для клонов matrix используется
+ * sanitizeName), но попадает в логи и dashboard, поэтому запрещаем
+ * управляющие символы, переводы строк и слишком длинные значения.
+ * Кириллица разрешена.
+ */
+export function validateWorkspaceName(value: string): string | null {
+  const trimmed = (value ?? "").trim();
+  if (!trimmed) return "Имя workspace не может быть пустым.";
+  if (trimmed.length > 64) return "Имя workspace: не более 64 символов.";
+  if (/[\u0000-\u001f\u007f]/.test(trimmed)) {
+    return "Имя workspace не должно содержать управляющих символов и переводов строк.";
+  }
+  return null;
+}
+
+/**
  * Читает git remote origin. Если путь не git-репозиторий или remote не
  * настроен — возвращает undefined (это не ошибка).
  */
@@ -331,6 +349,8 @@ export function addWorkspace(input: AddWorkspaceInput): Workspace {
     throw new Error("Путь workspace не может быть пустым.");
   }
   const name = (input.name || basename(workspacePath) || workspacePath).trim();
+  const nameError = validateWorkspaceName(name);
+  if (nameError) throw new Error(nameError);
   try {
     validateWorkspacePath(workspacePath);
   } catch {
@@ -376,6 +396,8 @@ export function updateWorkspace(id: string, patch: UpdateWorkspacePatch): Worksp
   if (!existing) throw new Error(`Workspace '${id}' не найден.`);
 
   const nextName = patch.name?.trim() || existing.name;
+  const nameError = validateWorkspaceName(nextName);
+  if (nameError) throw new Error(nameError);
   const nextPath = patch.path?.trim() ? normalizePath(patch.path) : existing.path;
   if (nextPath !== existing.path) {
     try {

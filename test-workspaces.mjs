@@ -99,6 +99,44 @@ assert(
   "несуществующий путь workspace отклонён с понятной ошибкой"
 );
 
+// Валидация отображаемого имени workspace.
+let emptyNameError = "";
+try {
+  addWorkspace({ name: "   ", path: backendPath });
+} catch (err) {
+  emptyNameError = err.message;
+}
+assert(emptyNameError.includes("не может быть пустым"), "пустое имя workspace отклонено");
+
+let longNameError = "";
+try {
+  addWorkspace({ name: "x".repeat(65), path: backendPath });
+} catch (err) {
+  longNameError = err.message;
+}
+assert(longNameError.includes("не более 64"), "слишком длинное имя workspace отклонено");
+
+let controlNameError = "";
+try {
+  addWorkspace({ name: "back\nend", path: backendPath });
+} catch (err) {
+  controlNameError = err.message;
+}
+assert(controlNameError.includes("управляющих символов"), "перевод строки в имени workspace отклонён");
+
+let updateNameError = "";
+try {
+  updateWorkspace(frontend.id, { name: "web\r\nXSS" });
+} catch (err) {
+  updateNameError = err.message;
+}
+assert(updateNameError.includes("управляющих символов"), "некорректное имя отклонено при обновлении");
+assert(getWorkspace(frontend.id)?.name === "frontend", "имя workspace не изменено после ошибки");
+
+const cyrillic = updateWorkspace(backend.id, { name: "Бэкенд" });
+assert(cyrillic.name === "Бэкенд", "кириллица в имени workspace разрешена");
+updateWorkspace(backend.id, { name: "backend" });
+
 const renamed = updateWorkspace(frontend.id, { name: "web", path: frontendPath });
 assert(renamed.name === "web", "updateWorkspace обновляет имя");
 assert(getWorkspace(frontend.id)?.name === "web", "обновление сохранено в БД");
