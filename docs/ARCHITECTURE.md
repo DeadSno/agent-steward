@@ -118,6 +118,53 @@ is read from the database or from files under the plugin directory.
 history record and metrics into a `TaskItem`. Matrix parents get an aggregated status
 from their clones instead of their own last run.
 
+## Router (3-layer)
+
+The router decides *how* each task step executes — direct local call, MCP transport, or
+cloud model — without involving a model for known step types.
+
+### Слой 1 — статические правила (0 токенов, мгновенно)
+
+Таблица соответствий тип задачи → транспорт + исполнитель. Большинство операций
+известны заранее, модель не нужна.
+
+| Тип задачи | Транспорт | Исполнитель |
+| --- | --- | --- |
+| `read_file` | direct | local |
+| `write_file` | direct | local |
+| `run_tests` | direct | local |
+| `apply_diff` | direct | local |
+| `github_create_pr` | mcp | local |
+| `jira_update_task` | mcp | cloud |
+
+Агент хочет прочитать файл → роутер смотрит в таблицу → видит `direct + local` →
+выполняет напрямую, без MCP, без модели.
+
+### Слой 2 — Capability Map (0 токенов, быстро)
+
+SQLite-таблица `task_type → model / success_rate / avg_cost / avg_time /
+last_10_runs`. Обучается на исходах гейта (CONCEPT §9 learning loop).
+
+- `success_rate ≥ 0.85` → маршрут локально
+- `success_rate ≤ 0.30` → эскалация в облако или «нужно ревью»
+
+Это и есть learning loop: роутер учится на гейтах и становится точнее без затрат
+токенов на само решение.
+
+### Слой 3 — локальная модель (только декомпозиция и неоднозначность)
+
+Модель не маршрутизирует каждый шаг. Она только:
+1. Разбивает миссию на шаги с типами (планирование);
+2. Разрешает неоднозначность (Explore-режим, когда в Capability Map нет данных).
+
+После этого каждый шаг проходит через Слой 1 и Слой 2.
+
+### Эскалация
+
+При провале гейта роутер эскалирует в облако **по правилу**, без участия модели.
+
+---
+
 ## Modules
 
 | Path | Role |
