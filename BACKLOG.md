@@ -249,6 +249,7 @@
 | P3-7 | В `test-docs` добавить проверку паритета zh (сейчас ru/en; zh покрыт `test-i18n` — продублировать контракт явно) | Бэклог | ✅ |
 | P3-8 | Комментарий в `test-task-name-limit.mjs:1-3` («префикс = 29 → 208») неверен: фактически 28 → 209 (как и комментарий в `types.ts`) — поправить оба комментария | Бэклог | ✅ |
 | P3-9 | Документация содержала устаревшие пользовательские пути `windows-scheduler` (CROSS_PLATFORM ru/en/zh, FAQ ru/en/zh, FEATURES en/zh, ARCHITECTURE) — приведены к `agent-steward` с пометкой о legacy-алиасинге; `test-docs` 96/96 | Бэклог | ✅ |
+| P3-10 | GUI вызывал `get_shadow_report`, `reset_shadow_report`, `test_local_ai`, но методы отсутствовали в `SchedulerRpc.methods` → `TypeError: f.get_shadow_report is not a function` в Desktop; схемы добавлены, в `test-docs` введён инвариант «каждый `rpc.<method>` из gui.tsx объявлен в rpc.ts» | Бэклог | ✅ |
 
 ---
 

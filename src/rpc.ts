@@ -928,6 +928,85 @@ const CompareTriageOutput = {
   additionalProperties: false,
 } as const;
 
+/** Отчёт shadow-режима триажа для GUI. */
+const GetShadowReportInput = {
+  type: "object" as const,
+  properties: {},
+  additionalProperties: false,
+} as const;
+
+const GetShadowReportOutput = {
+  type: "object" as const,
+  properties: {
+    success: { type: "boolean" },
+    active: { type: "boolean" },
+    startedAt: { type: ["string", "null"] },
+    days: { type: "number" },
+    total: { type: "number" },
+    skips: { type: "number" },
+    wouldSuppress: { type: "number" },
+    bySource: { type: "object" },
+    persisted: { type: "boolean" },
+    truncated: { type: "boolean" },
+    decisions: { type: "array", items: { type: "object" } },
+  },
+  required: [
+    "success",
+    "active",
+    "startedAt",
+    "days",
+    "total",
+    "skips",
+    "wouldSuppress",
+    "bySource",
+    "persisted",
+    "truncated",
+    "decisions",
+  ],
+  additionalProperties: false,
+} as const;
+
+/** Сброс shadow-журнала триажа для GUI. */
+const ResetShadowReportInput = {
+  type: "object" as const,
+  properties: {},
+  additionalProperties: false,
+} as const;
+
+const ResetShadowReportOutput = {
+  type: "object" as const,
+  properties: {
+    success: { type: "boolean" },
+  },
+  required: ["success"],
+  additionalProperties: false,
+} as const;
+
+/** Проверка связи с локальной моделью триажа (GUI). */
+const TestLocalAiInput = {
+  type: "object" as const,
+  properties: {
+    mode: { type: "string" },
+    baseUrl: { type: "string" },
+    model: { type: "string" },
+    timeoutMs: { type: "number" },
+    fallback: { type: "string" },
+    confidenceThreshold: { type: "number" },
+  },
+  additionalProperties: false,
+} as const;
+
+const TestLocalAiOutput = {
+  type: "object" as const,
+  properties: {
+    success: { type: "boolean" },
+    localAi: { type: "object" },
+    result: { type: "object" },
+  },
+  required: ["success", "localAi", "result"],
+  additionalProperties: false,
+} as const;
+
 const TemplateItem = {
   type: "object" as const,
   properties: {
@@ -1605,6 +1684,18 @@ export const SchedulerRpc = Rpc.define({
     compare_triage: {
       input: CompareTriageInput,
       output: CompareTriageOutput,
+    },
+    get_shadow_report: {
+      input: GetShadowReportInput,
+      output: GetShadowReportOutput,
+    },
+    reset_shadow_report: {
+      input: ResetShadowReportInput,
+      output: ResetShadowReportOutput,
+    },
+    test_local_ai: {
+      input: TestLocalAiInput,
+      output: TestLocalAiOutput,
     },
   },
   events: {},

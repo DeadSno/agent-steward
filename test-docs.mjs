@@ -183,6 +183,22 @@ check(
   /export async function createRuntime\(/.test(indexSrc) &&
     /setup: async \(ctx\) => \{\s*const runtime = await createRuntime\(ctx\);/.test(indexSrc)
 );
+// Регресс: GUI вызывает rpc.<method>, но метод обязан быть объявлен в
+// SchedulerRpc.methods, иначе клиент падает с "TypeError: ... is not a function".
+const guiSrc = fs.readFileSync(path.join(root, "src", "gui.tsx"), "utf8");
+const methodsBlock = (rpcSrc.match(/methods:\s*\{([\s\S]*?)\n\s*\},\n\s*events:/) || [])[1] || "";
+const declaredMethods = new Set(
+  [...methodsBlock.matchAll(/^\s{4}([a-z_]+):\s*\{/gm)].map((m) => m[1])
+);
+const calledMethods = [
+  ...new Set([...guiSrc.matchAll(/\brpc\.([a-z_]+)\(/g)].map((m) => m[1])),
+];
+const missingMethods = calledMethods.filter((m) => !declaredMethods.has(m));
+check(
+  "src/gui.tsx: все rpc.<method> объявлены в SchedulerRpc.methods",
+  calledMethods.length > 0 && missingMethods.length === 0,
+  `missing: ${missingMethods.join(", ")}`
+);
 const registeredTools = [...indexSrc.matchAll(/name: "([a-z_]+)",/g)].map((m) => m[1]);
 const handlerBlock = indexSrc.match(/export interface ToolHandlers \{([\s\S]*?)\n\}/);
 const handlerKeys = handlerBlock
