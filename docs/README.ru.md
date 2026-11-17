@@ -1,6 +1,6 @@
 # opencode-windows-scheduler
 
-> Плагин для планирования и оркестрации задач AI-агентов в OpenCode v2: cron, одноразовые запуски, DAG-пайплайны, матричные сборки, Quality Gates и наблюдаемость. Бесплатно, с открытым кодом (MIT).
+> Плагин для планирования и оркестрации задач AI-агентов в OpenCode V1 (≥ 1.18.29) и V2: cron, одноразовые запуски, DAG-пайплайны, матричные сборки, Quality Gates и наблюдаемость. Бесплатно, с открытым кодом (MIT).
 
 [![CI](https://github.com/DeadSno/opencode-windows-scheduler/actions/workflows/ci.yml/badge.svg)](https://github.com/DeadSno/opencode-windows-scheduler/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/opencode-windows-scheduler.svg)](https://www.npmjs.com/package/opencode-windows-scheduler)
@@ -56,7 +56,8 @@ Translations: [English](../README.md) · [中文](README.zh.md).
 
 ## Установка
 
-Нужны OpenCode v2 и Node.js 22.22+.
+Нужны OpenCode V1 ≥ 1.18.29 или V2, и Node.js 22.22+. Матрица версий и различия
+поверхностей — в [COMPATIBILITY.md](COMPATIBILITY.md) (GUI и RPC — только V2, TUI — обе линии).
 
 ```bash
 opencode plugin add opencode-windows-scheduler

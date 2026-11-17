@@ -105,6 +105,67 @@ check(
     !pkg.peerDependencies?.["@opencode-ai/plugin"]
 );
 
+// З1.2: границы поверхности. GUI и RPC — только V2, TUI — обе линии.
+check(
+  "COMPATIBILITY: матрица поверхности V1 / V2",
+  compatText.includes("## Матрица поверхности V1 / V2")
+);
+check(
+  "COMPATIBILITY: GUI и RPC — только V2",
+  compatText.includes("| GUI-панель | **нет** | да |") &&
+    compatText.includes("| RPC-методы") &&
+    compatText.includes("GUI и RPC — только V2")
+);
+check(
+  "COMPATIBILITY: TUI — обе линии",
+  compatText.includes("| TUI-панель «Планировщик» | да") &&
+    compatText.includes("**обе линии**")
+);
+
+// З1.3: инварианты состояния. Значения в документации обязаны совпадать
+// с исходниками — иначе rename/dual-support незаметно ломает состояние.
+check(
+  "COMPATIBILITY: раздел «Инварианты состояния»",
+  compatText.includes("## Инварианты состояния")
+);
+check(
+  "COMPATIBILITY: инварианты перечисляют id, пути, БД и префикс",
+  ["opencode-windows-scheduler", "scheduler.db", "%APPDATA%", "\\OpenCode\\windows-scheduler\\"].every(
+    (needle) => compatText.includes(needle)
+  )
+);
+const indexSrc = fs.readFileSync(path.join(root, "src", "index.ts"), "utf8");
+check(
+  'src/index.ts: plugin id остаётся "opencode-windows-scheduler"',
+  /id:\s*"opencode-windows-scheduler"/.test(indexSrc)
+);
+const typesSrc = fs.readFileSync(path.join(root, "src", "types.ts"), "utf8");
+check(
+  'src/types.ts: TASK_FOLDER остаётся "OpenCode"',
+  typesSrc.includes('export const TASK_FOLDER = "OpenCode";')
+);
+const profilesSrc = fs.readFileSync(path.join(root, "src", "profiles.ts"), "utf8");
+check(
+  'src/profiles.ts: каталог "opencode/windows-scheduler" не переименован',
+  profilesSrc.includes('"opencode", "windows-scheduler"')
+);
+const dbSrc = fs.readFileSync(path.join(root, "src", "db", "index.ts"), "utf8");
+check(
+  'src/db/index.ts: SQLite остаётся "scheduler.db"',
+  dbSrc.includes('"scheduler.db"')
+);
+
+// П1.2.3: README всех локалей требуют V1 >=1.18.29 или V2, а не только v2.
+const readmeFiles = ["README.md", "docs/README.ru.md", "docs/README.zh.md"];
+const readmesOk = readmeFiles.filter((rel) => {
+  const text = fs.readFileSync(path.join(root, rel), "utf8");
+  return text.includes("1.18.29") && !/OpenCode v2/i.test(text);
+});
+check(
+  `README (${readmeFiles.length} локали): пол V1 1.18.29 и нет «OpenCode v2»`,
+  readmesOk.length === readmeFiles.length
+);
+
 // Спринт 28: каталоги локалей обязаны совпадать по набору ключей.
 // Рассинхронизация — падение CI (см. ROADMAP, спринт 28).
 const localesDir = path.join(root, "locales");

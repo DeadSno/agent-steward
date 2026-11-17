@@ -65,14 +65,14 @@
   (pinned, только типы), `peerDependencies` отсутствуют.
 
 ### Задача З1.2. Зафиксировать границы поверхности
-- П1.2.1 — таблица «V1 / V2» в `docs/CROSS_PLATFORM.md` или отдельном документе.
-- П1.2.2 — явно указать: GUI и RPC — только V2; TUI — обе версии.
-- П1.2.3 — README: требование «OpenCode v2» заменить на «V1 >=1.18.29 или V2».
+- П1.2.1 — таблица «V1 / V2» в `docs/CROSS_PLATFORM.md` или отдельном документе. ✅
+- П1.2.2 — явно указать: GUI и RPC — только V2; TUI — обе версии. ✅
+- П1.2.3 — README: требование «OpenCode v2» заменить на «V1 >=1.18.29 или V2». ✅
 
 ### Задача З1.3. Инварианты состояния
-- П1.3.1 — `plugin id` остаётся `opencode-windows-scheduler` до rename.
-- П1.3.2 — пути `%APPDATA%/opencode/windows-scheduler`, SQLite и логов не меняются.
-- П1.3.3 — префикс задач планировщика не меняется.
+- П1.3.1 — `plugin id` остаётся `opencode-windows-scheduler` до rename. ✅
+- П1.3.2 — пути `%APPDATA%/opencode/windows-scheduler`, SQLite и логов не меняются. ✅
+- П1.3.3 — префикс задач планировщика не меняется. ✅
 
 ---
 
@@ -213,7 +213,7 @@
 | Деталь | Статус |
 |---|---|
 | Д0 | ✅ 17.11.2026 |
-| Д1 | 🟡 в работе |
+| Д1 | ✅ 17.11.2026 |
 | Д2 | не начата |
 | Д3 | не начата |
 | Д4 | не начата |
@@ -238,12 +238,18 @@
 
 Побочный результат: `opencode-windows-scheduler@1.5.5` прошла automated review и стала `latest`.
 
-### Д1. Контракт совместимости — 🟡 в работе
+### Д1. Контракт совместимости — ✅ 17.11.2026
 
 | Подзадача | Результат |
 |---|---|
 | П1.1.1 | Создан `docs/COMPATIBILITY.md`: матрица версий (V1 — минимум `1.18.29`, проверочная `1.19.5`), обоснование минимума, контракт V1 (типы `PluginInput`/`Plugin`/`PluginModule`, состав `Hooks`, формат инструментов), таблица «чего в V1 нет». Проверено по реестру: `1.18.29` опубликована; последняя V1 SDK — `1.19.5`; V1 SDK зависит от `zod@4.1.8`, а пакет от `zod@^4.6.7` — мажор совпадает, отдельная копия zod не нужна. `test-docs` расширен на 3 проверки → 45/45. |
 | П1.1.2 | V2-строка заполнена: минимум `2.2.7`, проверяем `2.2.7` и `2.3.0`. Проверено по опубликованным типам всех 47 версий линии `2.x`: `Plugin.define` и `ctx.tool.transform` есть с `2.0.0`; набор доменов `ctx.*` с `2.0.0` совпадает с `2.2.7`; subpath `./gui` отсутствует в `2.1.4` и появляется в `2.2.0`; `./tui` и `./rpc` есть с `2.0.0`; между `2.2.7` и `2.3.0` контракт `Plugin.define`/`tool.transform` не менялся. Минимум выставлен по `2.2.7` (пол сборки и зависимости `^2.2.7`), а не по `2.0.0`: ядро там работает, GUI — нет. Добавлена таблица «что появилось когда» + раздел «Почему минимум V2 — 2.2.7». `test-docs` расширен на 2 проверки → 47/47. |
 | П1.1.3 | В `package.json` добавлена `devDependencies["@opencode-ai/plugin"] = "1.19.5"` (pinned, только типы адаптера); `dependencies["@opencode/plugin"]` остаётся `^2.2.7`; `peerDependencies` не объявляются. `npm install` — 18 пакетов, `package-lock.json` +324 строки; `npm ls` подтверждает `@opencode-ai/plugin@1.19.5` и `@opencode/plugin@2.2.7`. Импорт `@opencode-ai/plugin` и `@opencode-ai/plugin/tool` работает, `tool` — функция. Две копии zod (`4.1.8` внутри V1 SDK, `4.6.7` в корне), мажор один — схемы переиспользуются. В `docs/COMPATIBILITY.md` добавлен раздел «Где зафиксированы версии»; `test-docs` расширен на 3 проверки (пол V2, пин V1, отсутствие peerDependencies) → 50/50. |
+| П1.2.1 | В `docs/COMPATIBILITY.md` добавлен раздел «Матрица поверхности V1 / V2» на 9 строк: инструменты, хуки, TUI, GUI, RPC, dashboard, общее ядро, SQLite, ключ конфига. Выбран отдельный документ, а не `CROSS_PLATFORM.md`: версии и границы поверхности живут в одном источнике истины, `CROSS_PLATFORM.md` остаётся про ОС и пути. |
+| П1.2.2 | В матрице GUI и RPC помечены «**нет**» для V1 (subpath `/gui` и `/rpc` в V1-пакете отсутствуют), TUI — «**обе линии**»: V2 регистрирует панель через `setup(ctx)`, V1 — через отдельный `src/tui-v1.tsx` (З3.4). Под таблицей добавлен явный абзац «GUI и RPC — только V2»; пакет не обещает их в V1 и не подменяет TUI заглушкой. |
+| П1.2.3 | README (en/ru/zh) обновлены: tagline и раздел Install больше не требуют «OpenCode v2», теперь «V1 ≥ 1.18.29 или V2» + ссылка на `docs/COMPATIBILITY.md` (GUI/RPC — только V2, TUI — обе линии). Переводы `docs/README.ru.md` и `docs/README.zh.md` поправлены в том же коммите. |
+| П1.3.1 | `plugin id` остаётся `opencode-windows-scheduler` (`src/index.ts`, `Plugin.define({ id })`). Зафиксировано в разделе «Инварианты состояния»; `test-docs` сверяет значение в коде и документе. |
+| П1.3.2 | Пути состояния сведены в таблицу: Windows `%APPDATA%\opencode\windows-scheduler`, macOS/Linux `$XDG_CONFIG_HOME/opencode/windows-scheduler` или `~/.config/opencode/windows-scheduler`; профили — `<base>/profiles/<name>`; SQLite — `<PLUGIN_DIR>/scheduler.db` (`OPENCODE_SCHEDULER_DB` только для тестов); логи/обёртки/locks/prompts/env и `secrets.json`/`secrets.key` — под `<PLUGIN_DIR>`. `test-docs` сверяет `profiles.ts`, `db/index.ts`, `types.ts`. |
+| П1.3.3 | Префикс задач не меняется: Windows default — `\OpenCode\windows-scheduler\`, профиль — `\OpenCode\windows-scheduler-<profile>\` (`windows.ts`); crontab-блок — `opencode-scheduler:<folder>` (legacy без суффикса читается); launchd label — `com.opencode.scheduler.<name>`. В таблице инвариантов указано, что rename 2.0.0 меняет только npm-имя. Итог: `test-docs` 50 → 60/60. |
 
 

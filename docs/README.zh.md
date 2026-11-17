@@ -1,6 +1,6 @@
 # opencode-windows-scheduler
 
-> 用于调度与编排 AI agent 任务的 OpenCode v2 插件 —— cron、一次性运行、DAG 流水线、矩阵构建、质量门禁、SQLite 历史记录和本地 Web 仪表盘。支持 Windows、macOS 和 Linux。免费开源（MIT）。
+> 用于在 OpenCode V1（≥ 1.18.29）或 V2 中调度与编排 AI agent 任务的插件 —— cron、一次性运行、DAG 流水线、矩阵构建、质量门禁、SQLite 历史记录和本地 Web 仪表盘。支持 Windows、macOS 和 Linux。免费开源（MIT）。
 
 [![CI](https://github.com/DeadSno/opencode-windows-scheduler/actions/workflows/ci.yml/badge.svg)](https://github.com/DeadSno/opencode-windows-scheduler/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/opencode-windows-scheduler.svg)](https://www.npmjs.com/package/opencode-windows-scheduler)
@@ -65,7 +65,8 @@ Translations: [English](../README.md) · [Русский](README.ru.md).
 
 ## 安装
 
-需要 OpenCode v2 和 Node.js 22.22+（`node:sqlite` 与 chokidar 6 要求 Node.js 22.22+）。
+需要 OpenCode V1（≥ 1.18.29）或 V2，以及 Node.js 22.22+。版本矩阵与界面差异见
+[COMPATIBILITY.md](COMPATIBILITY.md)（GUI 与 RPC 仅支持 V2，TUI 两条版本线都支持）。
 
 ```bash
 opencode plugin add opencode-windows-scheduler

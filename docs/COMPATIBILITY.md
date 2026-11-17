@@ -11,6 +11,24 @@
 | **V1** (`1.x`) | `1.18.29` | `1.19.5` (ветка `1.19.x`) | поддерживается с `1.5.6` | `plugin` в конфиге, SDK `@opencode-ai/plugin` |
 | **V2** (`2.x`) | `2.2.7` | `2.2.7` и `2.3.0` (CI в Д5) | поддерживается с `1.0.0` | `plugins` в конфиге, SDK `@opencode/plugin` |
 
+## Матрица поверхности V1 / V2
+
+| Возможность | V1 (`>=1.18.29`) | V2 (`>=2.2.7`) | Комментарий |
+|---|---|---|---|
+| 25 инструментов агента | да, `tool()` | да, `ctx.tool.transform` | имена и схемы совпадают |
+| Хуки (tool / session / event / config) | да, строковые ключи в `Hooks` | да, типизированные домены `ctx.*` | аудит, permissions, события |
+| TUI-панель «Планировщик» | да, отдельный entrypoint `@opencode-ai/plugin/tui` | да, `src/tui.tsx` | **обе линии** |
+| GUI-панель | **нет** | да | subpath `@opencode/plugin/gui` в V1 отсутствует |
+| RPC-методы (`get_platform` и др.) | **нет** | да | subpath `@opencode/plugin/rpc` в V1 отсутствует |
+| HTTP-dashboard | да | да | не зависит от plugin API |
+| DAG, matrix, gates, история, уведомления | да | да | общее ядро |
+| SQLite-состояние | да | да | `<PLUGIN_DIR>/scheduler.db` |
+| Ключ конфига | `plugin` | `plugins` | dual-поддержка полей — задача З3.5 |
+
+**Явно:** GUI и RPC — только V2. TUI — обе линии: V2 регистрирует панель
+через `setup(ctx)`, V1 — через отдельный `src/tui-v1.tsx` (задача З3.4).
+Пакет не обещает GUI/RPC в V1 и не подменяет TUI-панель заглушкой.
+
 ## Где зафиксированы версии
 
 | Что | Где | Значение |
@@ -100,6 +118,29 @@ entrypoint (задача З3.4).
 | RPC-методы | нет subpath `@opencode-ai/plugin/rpc` |
 | `ctx.storage` | контекст V1 не предоставляет storage; состояние — SQLite пакета |
 | Типизированные домены (`ctx.tool.hook`, `ctx.event.subscribe`) | в V1 хуки — строковые ключи в объекте `Hooks` |
+
+## Инварианты состояния
+
+Эти значения не меняются ни при переходе на dual-support в `1.5.6`, ни при
+rename в `agent-steward` (`2.0.0`): иначе пользователи теряют историю, задачи,
+настройки и уже созданные записи в планировщике ОС. Значения проверяются
+`test-docs` по исходникам.
+
+| Что | Значение | Где |
+|---|---|---|
+| `plugin id` | `opencode-windows-scheduler` | `src/index.ts`, `Plugin.define({ id })` |
+| Каталог состояния (default) | Windows: `%APPDATA%\opencode\windows-scheduler`; macOS/Linux: `$XDG_CONFIG_HOME/opencode/windows-scheduler` или `~/.config/opencode/windows-scheduler` | `src/profiles.ts` |
+| Каталог нестандартного профиля | `<каталог состояния>/profiles/<profile>` | `src/profiles.ts` |
+| SQLite | `<PLUGIN_DIR>/scheduler.db`; `OPENCODE_SCHEDULER_DB` — только для тестов | `src/db/index.ts` |
+| Логи, обёртки, locks | `<PLUGIN_DIR>/logs`, `<PLUGIN_DIR>/wrappers`, `<PLUGIN_DIR>/locks` | `src/types.ts` |
+| Промпты и env-файлы задач | `<PLUGIN_DIR>/prompts`, `<PLUGIN_DIR>/env` | `src/index.ts` |
+| Секреты | `<PLUGIN_DIR>/secrets.json`, `<PLUGIN_DIR>/secrets.key` | `src/core/secrets.ts` |
+| Префикс задач Windows | `\OpenCode\windows-scheduler\`; профиль: `\OpenCode\windows-scheduler-<profile>\` | `src/core/scheduler/windows.ts` |
+| Блок crontab | `# >>> opencode-scheduler:<folder> >>>` … `# <<< opencode-scheduler:<folder> <<<` (legacy-блок без суффикса читается) | `src/core/scheduler/linux.ts` |
+| launchd label | `com.opencode.scheduler.<name>` | `src/core/scheduler/mac.ts` |
+
+Rename `2.0.0` меняет только npm-имя пакета (`agent-steward@0.0.2`): `plugin id`,
+пути, имена файлов БД/логов и префиксы задач остаются прежними (П7.2).
 
 ## Связанные документы
 

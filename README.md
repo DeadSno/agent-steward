@@ -1,6 +1,6 @@
 # opencode-windows-scheduler
 
-> OpenCode v2 plugin for scheduling and orchestrating AI agent jobs — cron, one-shot runs, DAG pipelines, matrix builds, quality gates, SQLite history and a local web dashboard. Runs on Windows, macOS and Linux. Free and open source (MIT).
+> OpenCode V1 (≥ 1.18.29) and V2 plugin for scheduling and orchestrating AI agent jobs — cron, one-shot runs, DAG pipelines, matrix builds, quality gates, SQLite history and a local web dashboard. Runs on Windows, macOS and Linux. Free and open source (MIT).
 
 [![CI](https://github.com/DeadSno/opencode-windows-scheduler/actions/workflows/ci.yml/badge.svg)](https://github.com/DeadSno/opencode-windows-scheduler/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/opencode-windows-scheduler.svg)](https://www.npmjs.com/package/opencode-windows-scheduler)
@@ -74,7 +74,7 @@ originals.
 
 ## Install
 
-Requires OpenCode v2 and Node.js 22.22+ (node:sqlite and chokidar 6 require Node.js 22.22+).
+Requires OpenCode V1 ≥ 1.18.29 or V2, and Node.js 22.22+ (node:sqlite and chokidar 6 require Node.js 22.22+). See [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md) for version support and the V1/V2 surface (GUI and RPC are V2-only; TUI works on both).
 
 ```bash
 opencode plugin add opencode-windows-scheduler
