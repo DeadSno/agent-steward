@@ -123,7 +123,7 @@ npm run build && npm run build:gui
 
 ## Agent tools
 
-The agent gets the full feature set — 25 tools covering scheduling, pipelines, operations, observability and administration:
+The agent gets the full feature set — 26 tools covering scheduling, pipelines, operations, observability and administration:
 
 | Tool | Arguments | What it does |
 |---|---|---|

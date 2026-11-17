@@ -1,6 +1,6 @@
 # План тестирования плагина `opencode-windows-scheduler`
 
-**Версия плагина:** 1.5.4 · **Платформа прогона:** Windows 11 · **Дата:** 16.11.2026
+**Версия плагина:** 1.5.6 · **Платформа прогона:** Windows 11 · **Дата:** 17.11.2026
 **Объект:** весь плагин — ядро, MCP-инструменты, GUI OpenCode, веб-дашборд, TUI, БД, интеграции, локальный ассистент триажа, бенчмарк.
 **Цель:** доказать три свойства для каждой детали:
 
@@ -45,7 +45,7 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 ```
 
 - GUI: OpenCode → боковая панель «Планировщик Windows». После пересборки панель перезагрузить.
-- MCP: 25 инструмента доступны агенту в этой же сессии.
+- MCP: 26 инструмента доступны агенту в этой же сессии.
 - Дашборд: `http://127.0.0.1:3782/` (порт может отличаться, смотреть `get_dashboard_info`).
 - Логи прогона: `test-run.log`; артефакты GUI — `gui-experimental.cjs`.
 
@@ -74,7 +74,7 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 | D01 | Ядро расписаний и ОС-бэкенды | `src/core/schedule-v2.ts`, `cron-to-schtasks.ts`, `one-shot.ts`, `core/scheduler/*` | `schedule_task`, `update_task`, `dry_run` | GUI-форма, дашборд | `test-schedule-v2`, `test-one-shot`, `test-window-v3` |
 | D02 | Жизненный цикл задач | `src/db/tasks-repo.ts`, `src/index.ts` | `schedule_task`, `list_tasks`, `update_task`, `delete_task`, `pause_task`, `resume_task` | GUI-таблица + форма | `test-agent-tools`, `test-task-status` |
 | D03 | Исполнение, блокировки, сессии | `src/core/ps-wrapper.ts`, `lock.ts`, `session.ts`, `record-history.ts` | `run_task_now`, `get_task_logs`, `get_history` | GUI «Запустить/Логи/История», дашборд | `test-crash-recovery`, `test-session-continuity` |
-| D04 | MCP-слой и скилл для агента | `src/index.ts`, `src/skill.ts`, `skills/` | все 25 инструмента | — (служебная деталь) | `test-agent-tools`, `test-skill` |
+| D04 | MCP-слой и скилл для агента | `src/index.ts`, `src/skill.ts`, `skills/` | все 26 инструмента | — (служебная деталь) | `test-agent-tools`, `test-skill` |
 | D05 | DAG и цепочки задач | `src/core/dry-run.ts`, `src/index.ts` | `dry_run`, `schedule_task.dependsOn`, `nextTaskOn*` | GUI-форма, дашборд-граф | `test-dag`, `test-dashboard-dag` |
 | D06 | Matrix (fan-out по workspace) | `src/core/matrix.ts` | `matrix_control`, `schedule_task.matrix` | GUI-форма, дашборд | `test-matrix`, `test-matrix-lifecycle`, `test-matrix-sync` |
 | D07 | Триггеры: cron/file/git/MCP/webhook | `src/core/file-watcher.ts`, `git-trigger.ts`, `glob.ts`, `src/server.ts` | `schedule_task`, `update_task`, `emit_event` | GUI-форма, `POST /api/hooks/:name` | `test-git-trigger`, `test-glob`, `test-integrations` |
@@ -190,13 +190,13 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 
 ### D04. MCP-слой и скилл для агента
 
-**Критерии приёмки:** все 25 инструмента зарегистрированы и вызываются; схемы валидируют аргументы; ошибки структурированы; агентский скилл доступен; инструменты работают в Code Mode.
+**Критерии приёмки:** все 26 инструментов зарегистрированы и вызываются; схемы валидируют аргументы; ошибки структурированы; агентский скилл доступен; инструменты работают в Code Mode.
 **Доступ агента:** весь набор MCP.
 **Доступ пользователя:** косвенно — через журнал аудита (actor `mcp`).
 
 | ID | Подзадача | Шаги | Ожидаемый результат |
 |---|---|---|---|
-| S04.1.1 | 🤖 Регистрация | список инструментов сессии | Ровно 25 инструментов из §1 |
+| S04.1.1 | 🤖 Регистрация | список инструментов сессии | Ровно 26 инструментов из §1 |
 | S04.1.2 | 🤖 Описания | проверить description каждого | Непустые, объясняют побочные эффекты |
 | S04.1.3 | 🧪 Невалидные аргументы | `schedule_task` без `name` | Ошибка схемы, задача не создана |
 | S04.1.4 | 🧪 Code Mode | вызовы через `execute`/`tools.*` | Работают так же, как прямые |
@@ -489,7 +489,7 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 ### D16. Поставка: сборка, пакет, документация
 
 **Критерии приёмки:** проект собирается без ошибок; GUI-бандл содержит каталоги локалей; публичные экспорты на месте; документация соответствует поведению; полный тест-сьют зелёный.
-**Доступ агента:** проверяется косвенно — после сборки доступны все 25 инструментов.
+**Доступ агента:** проверяется косвенно — после сборки доступны все 26 инструментов.
 **Доступ пользователя:** установка/обновление плагина, панель.
 
 | ID | Подзадача | Шаги | Ожидаемый результат |
@@ -561,7 +561,7 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 | D01 Расписания | `schedule_task`, `update_task`, `dry_run` | ✅ форма | ✅ nextRun | — | `create_task`, `update_task`, `dry_run` |
 | D02 CRUD | `schedule_task/list/update/delete`, `pause/resume` | ✅ | ✅ run/delete | ⌨️ run/pause/resume | `get_tasks`, `create_task`, `delete_task`, `pause_task`, `resume_task` |
 | D03 Исполнение | `run_task_now`, `get_task_logs`, `get_history` | ✅ | ✅ run | ⌨️ log | `run_task`, `get_task_logs`, `get_history` |
-| D04 MCP-слой | все 25 | — | — | — | — |
+| D04 MCP-слой | все 26 | — | — | — | — |
 | D05 DAG | `dry_run` + поля | ✅ | ✅ граф | — | `dry_run`, `dry_run_all` |
 | D06 Matrix | `matrix_control` | ✅ | ✅ бейдж/отмена | — | `get_matrix_results`, `cancel_matrix`, `cleanup_matrix_orphans`, `expand_matrix_preview` |
 | D07 Триггеры | `schedule_task`, `emit_event` | ✅ | ✅ hook | — | `emit_event`, `POST /api/hooks/:name` |
@@ -660,7 +660,7 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 
 | Дорожка | Кто выполняет | Инструмент | Что проверяется |
 |---|---|---|---|
-| Агент | MCP-агент | `schedule_task`, `list_tasks`, `run_task_now`, `get_history`, `manage_settings`, `manage_local_ai` и др. | Все 25 инструментов вызываются, схемы валидируют аргументы, ошибки структурированы |
+| Агент | MCP-агент | `schedule_task`, `list_tasks`, `run_task_now`, `get_history`, `manage_settings`, `manage_local_ai` и др. | Все 26 инструментов вызываются, схемы валидируют аргументы, ошибки структурированы |
 | Пользователь | Человек | GUI OpenCode, веб-дашборд, TUI | Кнопки, настройки, формы, дашборд — работают и дают тот же результат |
 | Паритет | Агент + человек параллельно | Любая операция (create → run → read → delete) | Состояние совпадает во всех интерфейсах, аудит содержит корректный actor |
 
