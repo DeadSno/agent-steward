@@ -240,6 +240,78 @@ For every migrated job:
    right workspace path.
 6. Wait for at least one natural scheduled run before deleting the old definition.
 
+## From `opencode-windows-scheduler` to `agent-steward` (package rename)
+
+The npm package `opencode-windows-scheduler` was renamed to `agent-steward` at milestone
+**2.0.0**. This section covers the rename migration only — task definitions, schedules,
+history and settings are **unchanged**.
+
+### What changes
+
+| Item | Before (`opencode-windows-scheduler`) | After (`agent-steward`) |
+|------|--------------------------------------|-------------------------|
+| npm package name | `opencode-windows-scheduler` | `agent-steward` |
+| GitHub repository | `DeadSno/opencode-windows-scheduler` | `DeadSno/agent-steward` |
+| Install command | `opencode plugin add opencode-windows-scheduler` | `opencode plugin add opencode-windows-scheduler` |
+| V1 config key | `"plugin": ["opencode-windows-scheduler"]` | same (unchanged) |
+| V2 config key | `"plugins": ["opencode-windows-scheduler"]` | same (unchanged) |
+| `plugin id` | `opencode-windows-scheduler` | same (unchanged) |
+| State paths | `%APPDATA%\opencode\windows-scheduler` / `~/.config/opencode/windows-scheduler` | same (unchanged) |
+
+**Only the npm package name and GitHub repository changed.** Your tasks, schedules,
+SQLite history, profiles, secrets and dashboard settings continue to work without
+modification.
+
+### Migration steps
+
+1. **Update the OpenCode config** (`opencode.jsonc`):
+
+   V1:
+   ```jsonc
+   {
+     "$schema": "https://opencode.ai/config.json",
+     "plugin": ["opencode-windows-scheduler"]
+   }
+   ```
+
+   V2:
+   ```jsonc
+   {
+     "$schema": "https://opencode.ai/config.json",
+     "plugins": ["opencode-windows-scheduler"]
+   }
+   ```
+
+   The plugin key stays `opencode-windows-scheduler` — only the npm package name
+   changed. Restart OpenCode after saving.
+
+2. **Install from the new package** — OpenCode resolves the plugin by `plugin id`, not
+   by npm package name, so existing installations keep working. New installs use
+   `agent-steward`:
+
+   ```bash
+   opencode plugin add opencode-windows-scheduler
+   ```
+
+   OpenCode will install the `agent-steward` package under the hood (the `plugin id`
+   `opencode-windows-scheduler` maps to the new package).
+
+3. **Old package (`opencode-windows-scheduler`)** — remains published as a thin
+   re-export wrapper around `agent-steward` for one major version. It receives only
+   critical patches. No action required if you already have it installed; it will
+   continue to work until `npm deprecate` (planned for `>= 2.1`, after download parity
+   with the new package).
+
+4. **Verify** — run `dry_run` on any existing task and confirm it executes. Check
+   `get_history` for the latest runs. Nothing should change in behaviour.
+
+### Rollback
+
+No rollback is needed — the `plugin id` and all state paths are identical before and
+after the rename. If you prefer the old npm package name, keep using
+`opencode-windows-scheduler` (the thin re-export) until it is deprecated.
+
+
 ## Local AI / triage migration
 
 If you are migrating from a setup that used cloud AI for lightweight task triage or
