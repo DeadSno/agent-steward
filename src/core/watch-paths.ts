@@ -27,12 +27,18 @@ export function normalizeWatchPath(watchPath: string, baseDir: string): string {
     throw new Error("Путь наблюдения не должен содержать управляющих символов и переводов строк.");
   }
 
+  // Конфиг задач кросс-платформенный: на POSIX обратный слэш не является
+  // разделителем, но пользователь мог вставить Windows-путь. Трактуем его
+  // как разделитель до проверки traversal, иначе `..\evil` проскочит.
+  const normalizedInput =
+    process.platform === "win32" ? trimmed : trimmed.replace(/\\/g, "/");
+
   // Абсолютный путь — явное намерение пользователя, оставляем как есть.
   if (isAbsolute(trimmed) || /^[A-Za-z]:[\\/]/.test(trimmed)) {
-    return normalize(trimmed);
+    return normalize(normalizedInput);
   }
 
-  const resolved = resolve(baseDir, trimmed);
+  const resolved = resolve(baseDir, normalizedInput);
   const rel = relative(baseDir, resolved);
   if (rel === ".." || rel.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) || isAbsolute(rel)) {
     throw new Error(
