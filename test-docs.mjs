@@ -310,6 +310,30 @@ check(
   readmesOk.length === readmeFiles.length
 );
 
+// З3.5: у каждой линии свой ключ конфига, примеры есть во всех локалях.
+const configKeysOk = readmeFiles.filter((rel) => {
+  const text = fs.readFileSync(path.join(root, rel), "utf8");
+  return (
+    text.includes('"plugin": ["opencode-windows-scheduler"]') &&
+    text.includes('"plugins": ["opencode-windows-scheduler"]')
+  );
+});
+check(
+  `README (${readmeFiles.length} локали): ключи plugin (V1) и plugins (V2)`,
+  configKeysOk.length === readmeFiles.length
+);
+const compatibilitySrc = fs.readFileSync(
+  path.join(root, "docs", "COMPATIBILITY.md"),
+  "utf8"
+);
+check(
+  "COMPATIBILITY: раздел о ключах конфигурации по линиям",
+  compatibilitySrc.includes("**Конфигурация по линиям.**") &&
+    compatibilitySrc.includes("`plugin`") &&
+    compatibilitySrc.includes("`plugins`") &&
+    !compatibilitySrc.includes("dual-поддержка полей")
+);
+
 // Спринт 28: каталоги локалей обязаны совпадать по набору ключей.
 // Рассинхронизация — падение CI (см. ROADMAP, спринт 28).
 const localesDir = path.join(root, "locales");

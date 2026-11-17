@@ -68,11 +68,29 @@ Translations: [English](../README.md) · [Русский](README.ru.md).
 需要 OpenCode V1（≥ 1.18.29）或 V2，以及 Node.js 22.22+。版本矩阵与界面差异见
 [COMPATIBILITY.md](COMPATIBILITY.md)（GUI 与 RPC 仅支持 V2，TUI 两条版本线都支持）。
 
+配置键因版本线而异：
+
+| OpenCode 版本线 | `opencode.jsonc` 中的键 |
+|---|---|
+| V1（`1.18.29`–`1.19.x`） | `"plugin": ["opencode-windows-scheduler"]` |
+| V2（`≥ 2.2.7`） | `"plugins": ["opencode-windows-scheduler"]` |
+
+请使用对应版本线的键，无需同时添加两者。V2 可直接用 CLI：
+
 ```bash
 opencode plugin add opencode-windows-scheduler
 ```
 
-或者手动把插件加入 `opencode.jsonc`：
+V1 手动配置：
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": ["opencode-windows-scheduler"]
+}
+```
+
+V2 手动配置：
 
 ```jsonc
 {
@@ -84,7 +102,7 @@ opencode plugin add opencode-windows-scheduler
 }
 ```
 
-`experimental.schedules: false` 会关闭 OpenCode 内置调度器，避免 agent 把内置任务工具与本插件的工具混淆。修改配置后请重启 OpenCode。
+`experimental.schedules: false` 会关闭 OpenCode 内置调度器，避免 agent 把内置任务工具与本插件的工具混淆。修改配置后请重启 OpenCode。TUI 面板随同一个包提供（`exports["./tui"]`），两条版本线都用同一条配置启用。
 
 从源码安装：
 

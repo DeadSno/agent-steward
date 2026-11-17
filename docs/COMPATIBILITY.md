@@ -23,13 +23,19 @@
 | HTTP-dashboard | да | да | не зависит от plugin API |
 | DAG, matrix, gates, история, уведомления | да | да | общее ядро |
 | SQLite-состояние | да | да | `<PLUGIN_DIR>/scheduler.db` |
-| Ключ конфига | `plugin` | `plugins` | dual-поддержка полей — задача З3.5 |
+| Ключ конфига | `plugin` | `plugins` | ключ своей линии; см. «Конфигурация по линиям» |
 
 **Явно:** GUI и RPC — только V2. TUI — обе линии: `package.json` объявляет
 `exports["./tui"] = "./src/tui.tsx"` (как в документации OpenCode для
 пакетов-плагинов), а сам модуль отдаёт `{ ...v2Tui, tui: tuiV1 }`: V2 читает
 `setup`, V1 — `tui`. Пакет не обещает GUI/RPC в V1 и не подменяет TUI-панель
 заглушкой.
+
+**Конфигурация по линиям.** Ключ выбирает загрузчик OpenCode, а не плагин: сам
+пакет не читает ни `plugin`, ни `plugins`, поэтому чужое поле не может уронить
+его код. V1 подключается ключом `plugin` в `opencode.jsonc`, V2 — ключом
+`plugins` или командой `opencode plugin add opencode-windows-scheduler`. Оба
+ключа одновременно не нужны. Примеры для обеих линий — в README (en/ru/zh).
 
 **TUI в V1.** `src/tui-v1.tsx` реализует `TuiPluginModule` и живёт на тех же
 данных, что V2: `getJobsView`, `groupJobsForDisplay`, `statusIcon`,

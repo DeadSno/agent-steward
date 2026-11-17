@@ -59,11 +59,29 @@ Translations: [English](../README.md) · [中文](README.zh.md).
 Нужны OpenCode V1 ≥ 1.18.29 или V2, и Node.js 22.22+. Матрица версий и различия
 поверхностей — в [COMPATIBILITY.md](COMPATIBILITY.md) (GUI и RPC — только V2, TUI — обе линии).
 
+Ключ конфигурации зависит от линии:
+
+| Линия OpenCode | Ключ в `opencode.jsonc` |
+|---|---|
+| V1 (`1.18.29`–`1.19.x`) | `"plugin": ["opencode-windows-scheduler"]` |
+| V2 (`≥ 2.2.7`) | `"plugins": ["opencode-windows-scheduler"]` |
+
+Используйте ключ своей линии; добавлять оба не нужно. В V2 проще через CLI:
+
 ```bash
 opencode plugin add opencode-windows-scheduler
 ```
 
-Или добавьте плагин в `opencode.jsonc` вручную:
+V1 — вручную:
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": ["opencode-windows-scheduler"]
+}
+```
+
+V2 — тот же плагин вручную:
 
 ```jsonc
 {
@@ -75,7 +93,7 @@ opencode plugin add opencode-windows-scheduler
 }
 ```
 
-`experimental.schedules: false` отключает встроенный планировщик OpenCode, чтобы агент не путал встроенные инструменты расписаний с инструментами этого плагина. После изменения конфигурации перезапустите OpenCode.
+`experimental.schedules: false` отключает встроенный планировщик OpenCode, чтобы агент не путал встроенные инструменты расписаний с инструментами этого плагина. После изменения конфигурации перезапустите OpenCode. Панель TUI входит в тот же пакет (`exports["./tui"]`), поэтому включается той же записью на обеих линиях.
 
 Из исходников:
 

@@ -76,11 +76,29 @@ originals.
 
 Requires OpenCode V1 ≥ 1.18.29 or V2, and Node.js 22.22+ (node:sqlite and chokidar 6 require Node.js 22.22+). See [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md) for version support and the V1/V2 surface (GUI and RPC are V2-only; TUI works on both).
 
+The config key differs between lines:
+
+| OpenCode line | Key in `opencode.jsonc` |
+|---|---|
+| V1 (`1.18.29`–`1.19.x`) | `"plugin": ["opencode-windows-scheduler"]` |
+| V2 (`≥ 2.2.7`) | `"plugins": ["opencode-windows-scheduler"]` |
+
+Use the key of your line; there is no need to add both. On V2 the CLI does it for you:
+
 ```bash
 opencode plugin add opencode-windows-scheduler
 ```
 
-Or add the plugin to `opencode.jsonc` manually:
+V1 — manual config:
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": ["opencode-windows-scheduler"]
+}
+```
+
+V2 — equivalent manual config:
 
 ```jsonc
 {
@@ -92,7 +110,7 @@ Or add the plugin to `opencode.jsonc` manually:
 }
 ```
 
-`experimental.schedules: false` disables the built-in OpenCode scheduler so the agent does not confuse built-in job tools with this plugin's tools. Restart OpenCode after changing the config.
+`experimental.schedules: false` disables the built-in OpenCode scheduler so the agent does not confuse built-in job tools with this plugin's tools. Restart OpenCode after changing the config. The TUI panel is part of the same package (`exports["./tui"]`), so it is enabled by the same entry on both lines.
 
 From source:
 
