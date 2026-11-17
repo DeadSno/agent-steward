@@ -80,9 +80,10 @@
 
 ### Задача З2.1. Вынести bootstrap из `setup(ctx)`
 - П2.1.1 — `createRuntime(ctxLike)` с инициализацией БД, миграции, recovery, GC,
-  retention, таймеров, watcher/git-trigger.
-- П2.1.2 — `setup(ctx)` V2 вызывает `createRuntime(ctx)` и регистрацию V2.
+  retention, таймеров, watcher/git-trigger. ✅
+- П2.1.2 — `setup(ctx)` V2 вызывает `createRuntime(ctx)` и регистрацию V2. ✅
 - П2.1.3 — `server()` V1 вызывает `createRuntime(v1Context)` и регистрацию V1.
+  (ждёт V1-entrypoint из З3.1)
 
 ### Задача З2.2. Общий реестр инструментов
 - П2.2.1 — вынести 25 `execute`-функций в `createToolHandlers(runtime)`.
@@ -214,7 +215,7 @@
 |---|---|
 | Д0 | ✅ 17.11.2026 |
 | Д1 | ✅ 17.11.2026 |
-| Д2 | не начата |
+| Д2 | в работе (П2.1.1–П2.1.2) |
 | Д3 | не начата |
 | Д4 | не начата |
 | Д5 | не начата |
@@ -251,5 +252,13 @@
 | П1.3.1 | `plugin id` остаётся `opencode-windows-scheduler` (`src/index.ts`, `Plugin.define({ id })`). Зафиксировано в разделе «Инварианты состояния»; `test-docs` сверяет значение в коде и документе. |
 | П1.3.2 | Пути состояния сведены в таблицу: Windows `%APPDATA%\opencode\windows-scheduler`, macOS/Linux `$XDG_CONFIG_HOME/opencode/windows-scheduler` или `~/.config/opencode/windows-scheduler`; профили — `<base>/profiles/<name>`; SQLite — `<PLUGIN_DIR>/scheduler.db` (`OPENCODE_SCHEDULER_DB` только для тестов); логи/обёртки/locks/prompts/env и `secrets.json`/`secrets.key` — под `<PLUGIN_DIR>`. `test-docs` сверяет `profiles.ts`, `db/index.ts`, `types.ts`. |
 | П1.3.3 | Префикс задач не меняется: Windows default — `\OpenCode\windows-scheduler\`, профиль — `\OpenCode\windows-scheduler-<profile>\` (`windows.ts`); crontab-блок — `opencode-scheduler:<folder>` (legacy без суффикса читается); launchd label — `com.opencode.scheduler.<name>`. В таблице инвариантов указано, что rename 2.0.0 меняет только npm-имя. Итог: `test-docs` 50 → 60/60. |
+
+### Д2. Извлечение общего ядра — в работе
+
+| Подзадача | Результат |
+|---|---|
+| П2.1.1 | В `src/index.ts` добавлен `createRuntime(ctxLike)` с типом `RuntimeContextLike` (только `location.directory`): язык из настроек, `initDb()`, `migrateJsonToDb()`, `recoverInterruptedRuns()`, `checkJsonBackups()`, GC артефактов, retention, таймеры автопродолжения и дайджеста, инициализация `LockManager`, catch-up пропущенных cron-запусков, `FileWatchManager`/`GitTriggerManager` + `refreshTriggers()`. Возвращает `SchedulerRuntime { projectDirectory, dispose() }`; `dispose` гасит оба таймера и останавливает watcher/git-менеджеры, не закрывая БД (это делает entrypoint после `waitForIdle`). |
+| П2.1.2 | `setup(ctx)` V2 теперь начинается с `const runtime = await createRuntime(ctx)`, регистрация инструментов/RPC/хуков осталась в `setup`. В общем cleanup вместо ручного `clearInterval` и `fileWatcherManager.stop()` вызывается `runtime.dispose()`. Порядок shutdown не изменён: `shutdownGate.begin()` → dispose регистраций → `closeDashboardServer()` → `waitForIdle()` → `closeDb()`. `test-docs` расширен проверкой «setup стартует через createRuntime» → 61/61. |
+| П2.1.3 | Отложено до появления V1-entrypoint (`server()` в З3.1): `createRuntime` уже экспортирован и не зависит от V2-контекста. |
 
 

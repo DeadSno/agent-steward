@@ -139,6 +139,11 @@ check(
   'src/index.ts: plugin id остаётся "opencode-windows-scheduler"',
   /id:\s*"opencode-windows-scheduler"/.test(indexSrc)
 );
+check(
+  "src/index.ts: setup V2 стартует через общий createRuntime",
+  /export async function createRuntime\(/.test(indexSrc) &&
+    /setup: async \(ctx\) => \{\s*const runtime = await createRuntime\(ctx\);/.test(indexSrc)
+);
 const typesSrc = fs.readFileSync(path.join(root, "src", "types.ts"), "utf8");
 check(
   'src/types.ts: TASK_FOLDER остаётся "OpenCode"',

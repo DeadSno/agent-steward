@@ -3392,71 +3392,98 @@ async function scheduleEventRun(taskName: string, reason: string): Promise<void>
   timer.unref?.();
 }
 
-export default Plugin.define({
-  id: "opencode-windows-scheduler",
-  setup: async (ctx) => {
-    // Папка проекта — рабочая директория задач по умолчанию. Благодаря ей
-    // `opencode run` подхватывает opencode.json с MCP-серверами проекта.
-    projectDirectory = ctx.location?.directory || process.cwd();
+/**
+ * Минимальный контракт контекста, который нужен общему ядру.
+ * V2 передаёт сюда setup-контекст, V1 — контекст из `server()`.
+ */
+export interface RuntimeContextLike {
+  location?: { directory?: string };
+}
 
-    // Спринт 28: язык интерфейса берём из настроек. Ошибка чтения не должна
-    // мешать старту — в этом случае остаётся локаль по умолчанию (ru).
-    try {
-      const initialSettings = await loadSettings();
-      setLocale(resolveLocale(initialSettings.locale, initialSettings.uiLocale));
-    } catch {
-      // Локаль по умолчанию уже активна.
-    }
+/**
+ * Общее ядро плагина: всё, что должно произойти ровно один раз при старте,
+ * независимо от версии OpenCode (V1/V2).
+ *
+ * Здесь нет регистрации инструментов, RPC и хуков — это делают entrypoint'ы.
+ * Ядро владеет таймерами и менеджерами триггеров и умеет корректно их гасить.
+ */
+export interface SchedulerRuntime {
+  projectDirectory: string;
+  /** Останавливает таймеры и наблюдателей; БД закрывает entrypoint после ожидания idle. */
+  dispose: () => void;
+}
 
-    // Спринт 12: SQLite — основное хранилище. Открываем БД, при первом запуске
-    // автоматически переносим данные из JSON, затем восстанавливаем прерванные
-    // запуски. Ошибки миграции не должны мешать плагину стартовать.
-    initDb();
-    try {
-      await migrateJsonToDb();
-    } catch (err: any) {
+export async function createRuntime(ctxLike: RuntimeContextLike): Promise<SchedulerRuntime> {
+  // Папка проекта — рабочая директория задач по умолчанию. Благодаря ей
+  // `opencode run` подхватывает opencode.json с MCP-серверами проекта.
+  projectDirectory = ctxLike.location?.directory || process.cwd();
+
+  // Спринт 28: язык интерфейса берём из настроек. Ошибка чтения не должна
+  // мешать старту — в этом случае остаётся локаль по умолчанию (ru).
+  try {
+    const initialSettings = await loadSettings();
+    setLocale(resolveLocale(initialSettings.locale, initialSettings.uiLocale));
+  } catch {
+    // Локаль по умолчанию уже активна.
+  }
+
+  // Спринт 12: SQLite — основное хранилище. Открываем БД, при первом запуске
+  // автоматически переносим данные из JSON, затем восстанавливаем прерванные
+  // запуски. Ошибки миграции не должны мешать плагину стартовать.
+  initDb();
+  try {
+    await migrateJsonToDb();
+  } catch (err: any) {
+    console.error(
+      `[migrate] Не удалось мигрировать JSON → SQLite: ${
+        err instanceof Error ? err.message : String(err)
+      }`
+    );
+  }
+  try {
+    recoverInterruptedRuns();
+  } catch (err: any) {
+    console.error(
+      `[recovery] Не удалось восстановить незавершённые запуски: ${
+        err instanceof Error ? err.message : String(err)
+      }`
+    );
+  }
+  checkJsonBackups();
+  void garbageCollectTaskArtifacts().catch((err) => {
+    console.log(`[gc] Не удалось вычистить мусорные файлы: ${err instanceof Error ? err.message : String(err)}`);
+  });
+
+  // Спринт 18: ежедневная очистка истории. Ошибка ретеншна не должна мешать
+  // плагину стартовать — пишем в лог и продолжаем.
+  void maybeRunHistoryRetention()
+    .then((report) => {
+      if (report && report.deleted > 0) {
+        console.log(
+          `[retention] Удалено ${report.deleted} записей истории ` +
+            `(по возрасту: ${report.deletedByAge}, по лимиту: ${report.deletedByCount}); ` +
+            `осталось ${report.kept}.`
+        );
+      }
+    })
+    .catch((err: any) => {
       console.error(
-        `[migrate] Не удалось мигрировать JSON → SQLite: ${
+        `[retention] Не удалось очистить историю: ${
           err instanceof Error ? err.message : String(err)
         }`
       );
-    }
-    try {
-      recoverInterruptedRuns();
-    } catch (err: any) {
-      console.error(
-        `[recovery] Не удалось восстановить незавершённые запуски: ${
-          err instanceof Error ? err.message : String(err)
-        }`
-      );
-    }
-    checkJsonBackups();
-    void garbageCollectTaskArtifacts().catch((err) => {
-      console.log(`[gc] Не удалось вычистить мусорные файлы: ${err instanceof Error ? err.message : String(err)}`);
     });
 
-    // Спринт 18: ежедневная очистка истории. Ошибка ретеншна не должна мешать
-    // плагину стартовать — пишем в лог и продолжаем.
-    void maybeRunHistoryRetention()
-      .then((report) => {
-        if (report && report.deleted > 0) {
-          console.log(
-            `[retention] Удалено ${report.deleted} записей истории ` +
-              `(по возрасту: ${report.deletedByAge}, по лимиту: ${report.deletedByCount}); ` +
-              `осталось ${report.kept}.`
-          );
-        }
-      })
-      .catch((err: any) => {
-        console.error(
-          `[retention] Не удалось очистить историю: ${
-            err instanceof Error ? err.message : String(err)
-          }`
-        );
-      });
-
-    // Спринт 19: автопродолжение задач, поставленных на паузу до даты.
-    // Проверяем сразу при старте и далее раз в 5 минут, пока плагин жив.
+  // Спринт 19: автопродолжение задач, поставленных на паузу до даты.
+  // Проверяем сразу при старте и далее раз в 5 минут, пока плагин жив.
+  void resumeExpiredPauses().catch((err: any) => {
+    console.error(
+      `[windows-scheduler] Не удалось проверить автопродолжение: ${
+        err instanceof Error ? err.message : String(err)
+      }`
+    );
+  });
+  const pausedUntilTimer = setInterval(() => {
     void resumeExpiredPauses().catch((err: any) => {
       console.error(
         `[windows-scheduler] Не удалось проверить автопродолжение: ${
@@ -3464,120 +3491,134 @@ export default Plugin.define({
         }`
       );
     });
-    const pausedUntilTimer = setInterval(() => {
-      void resumeExpiredPauses().catch((err: any) => {
-        console.error(
-          `[windows-scheduler] Не удалось проверить автопродолжение: ${
-            err instanceof Error ? err.message : String(err)
-          }`
-        );
-      });
-    }, PAUSED_UNTIL_CHECK_MS);
-    pausedUntilTimer.unref?.();
+  }, PAUSED_UNTIL_CHECK_MS);
+  pausedUntilTimer.unref?.();
 
-    // Спринт 20: дайджест и детектор зависших матриц. Проверяем сразу при
-    // старте и далее раз в минуту; таймер не держит процесс Node живым.
-    const notificationTimer = setInterval(() => {
-      void maybeSendDigest().catch(() => undefined);
-      void checkStuckMatrices().catch((err: any) => {
-        console.error(
-          `[windows-scheduler] Детектор зависших матриц: ${
-            err instanceof Error ? err.message : String(err)
-          }`
-        );
-      });
-    }, NOTIFICATION_CHECK_MS);
-    notificationTimer.unref?.();
+  // Спринт 20: дайджест и детектор зависших матриц. Проверяем сразу при
+  // старте и далее раз в минуту; таймер не держит процесс Node живым.
+  const notificationTimer = setInterval(() => {
     void maybeSendDigest().catch(() => undefined);
-    void checkStuckMatrices().catch(() => undefined);
+    void checkStuckMatrices().catch((err: any) => {
+      console.error(
+        `[windows-scheduler] Детектор зависших матриц: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
+    });
+  }, NOTIFICATION_CHECK_MS);
+  notificationTimer.unref?.();
+  void maybeSendDigest().catch(() => undefined);
+  void checkStuckMatrices().catch(() => undefined);
 
-    // Инициализация блокировок: создаём директорию и очищаем зависшие lock-файлы (>24 ч).
-    const lockManager = new LockManager(LOCK_DIR);
-    await lockManager.initialize();
+  // Инициализация блокировок: создаём директорию и очищаем зависшие lock-файлы (>24 ч).
+  const lockManager = new LockManager(LOCK_DIR);
+  await lockManager.initialize();
 
-    // Восстановление пропущенных запусков (catch-up): если OpenCode был закрыт,
-    // а задача должна была выполниться (с nextRun прошло >5 мин и в истории нет
-    // записи после этого времени) — запускаем её немедленно.
-    void (async () => {
-      try {
-        const definitions = await loadTaskDefinitions();
-        const history = await loadHistory();
-        const now = new Date();
-        const catchUpThresholdMs = 5 * 60 * 1000;
+  // Восстановление пропущенных запусков (catch-up): если OpenCode был закрыт,
+  // а задача должна была выполниться (с nextRun прошло >5 мин и в истории нет
+  // записи после этого времени) — запускаем её немедленно.
+  void (async () => {
+    try {
+      const definitions = await loadTaskDefinitions();
+      const history = await loadHistory();
+      const now = new Date();
+      const catchUpThresholdMs = 5 * 60 * 1000;
 
-        // Сначала запускаем задачи с более высоким приоритетом (10 — максимум).
-        const prioritized = [...definitions].sort(
-          (a, b) => (normalizePriority(b.priority) ?? 5) - (normalizePriority(a.priority) ?? 5)
+      // Сначала запускаем задачи с более высоким приоритетом (10 — максимум).
+      const prioritized = [...definitions].sort(
+        (a, b) => (normalizePriority(b.priority) ?? 5) - (normalizePriority(a.priority) ?? 5)
+      );
+
+      for (const def of prioritized) {
+        // Catch-up имеет смысл только для cron-задач.
+        if ((def.triggerType ?? "cron") !== "cron") continue;
+        if (!def.schedule) continue;
+        // Задача на паузе до даты — её включит авто-продолжение.
+        if (def.pausedUntil) continue;
+        const prev = prevRun(def.schedule, now, def.timezone);
+        if (!prev) continue;
+        const ageMs = now.getTime() - prev.getTime();
+        if (ageMs < catchUpThresholdMs) continue;
+
+        // Есть ли запись в истории после предполагаемого времени запуска?
+        const ranAfter = history.some(
+          (r) =>
+            r.taskName.toLowerCase() === def.name.toLowerCase() &&
+            new Date(r.startedAt).getTime() >= prev.getTime()
         );
+        if (ranAfter) continue;
 
-        for (const def of prioritized) {
-          // Catch-up имеет смысл только для cron-задач.
-          if ((def.triggerType ?? "cron") !== "cron") continue;
-          if (!def.schedule) continue;
-          // Задача на паузе до даты — её включит авто-продолжение.
-          if (def.pausedUntil) continue;
-          const prev = prevRun(def.schedule, now, def.timezone);
-          if (!prev) continue;
-          const ageMs = now.getTime() - prev.getTime();
-          if (ageMs < catchUpThresholdMs) continue;
-
-          // Есть ли запись в истории после предполагаемого времени запуска?
-          const ranAfter = history.some(
-            (r) =>
-              r.taskName.toLowerCase() === def.name.toLowerCase() &&
-              new Date(r.startedAt).getTime() >= prev.getTime()
+        // Запускаем задачу и пишем в лог.
+        try {
+          await runTaskEntry(def.name);
+          console.log(
+            `[windows-scheduler] Запущено восстановление пропущенной задачи "${def.name}" (последний срабатывал ~${Math.round(ageMs / 1000)} с назад).`
           );
-          if (ranAfter) continue;
-
-          // Запускаем задачу и пишем в лог.
-          try {
-            await runTaskEntry(def.name);
-            console.log(
-              `[windows-scheduler] Запущено восстановление пропущенной задачи "${def.name}" (последний срабатывал ~${Math.round(ageMs / 1000)} с назад).`
-            );
-          } catch (err: any) {
-            console.error(
-              `[windows-scheduler] Не удалось восстановить задачу "${def.name}": ${
-                err instanceof Error ? err.message : String(err)
-              }`
-            );
-          }
+        } catch (err: any) {
+          console.error(
+            `[windows-scheduler] Не удалось восстановить задачу "${def.name}": ${
+              err instanceof Error ? err.message : String(err)
+            }`
+          );
         }
-      } catch (err: any) {
-        console.error(
-          `[windows-scheduler] Catch-up ошибка: ${err instanceof Error ? err.message : String(err)}`
-        );
       }
-    })();
+    } catch (err: any) {
+      console.error(
+        `[windows-scheduler] Catch-up ошибка: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  })();
 
-    // Файловые триггеры (File Watchers): задачи с triggerType === "file"
-    // запускаются при изменении watchPath через chokidar (с дебаунсом).
-    fileWatcherManager = new FileWatchManager(async (taskName) => {
-      try {
-        await scheduleEventRun(taskName, "изменение отслеживаемого файла");
-      } catch (err: any) {
-        console.error(
-          `[windows-scheduler] Не удалось запустить задачу "${taskName}" по файловому триггеру: ${
-            err instanceof Error ? err.message : String(err)
-          }`
-        );
-      }
-    });
+  // Файловые триггеры (File Watchers): задачи с triggerType === "file"
+  // запускаются при изменении watchPath через chokidar (с дебаунсом).
+  fileWatcherManager = new FileWatchManager(async (taskName) => {
+    try {
+      await scheduleEventRun(taskName, "изменение отслеживаемого файла");
+    } catch (err: any) {
+      console.error(
+        `[windows-scheduler] Не удалось запустить задачу "${taskName}" по файловому триггеру: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
+    }
+  });
 
-    // Спринт 27: git-триггеры — опрос HEAD и запуск при новых коммитах,
-    // затронувших подходящие файлы.
-    gitTriggerManager = new GitTriggerManager(async (taskName, info) => {
-      try {
-        await scheduleEventRun(taskName, `новый коммит ${info.head?.slice(0, 7) ?? ""}`);
-      } catch (err: any) {
-        console.error(
-          `[windows-scheduler] Не удалось запустить задачу "${taskName}" по git-триггеру: ${
-            err instanceof Error ? err.message : String(err)
-          }`
-        );
+  // Спринт 27: git-триггеры — опрос HEAD и запуск при новых коммитах,
+  // затронувших подходящие файлы.
+  gitTriggerManager = new GitTriggerManager(async (taskName, info) => {
+    try {
+      await scheduleEventRun(taskName, `новый коммит ${info.head?.slice(0, 7) ?? ""}`);
+    } catch (err: any) {
+      console.error(
+        `[windows-scheduler] Не удалось запустить задачу "${taskName}" по git-триггеру: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
+    }
+  });
+  void refreshTriggers();
+
+  return {
+    projectDirectory,
+    dispose: () => {
+      clearInterval(pausedUntilTimer);
+      clearInterval(notificationTimer);
+      if (fileWatcherManager) {
+        void fileWatcherManager.stop();
+        fileWatcherManager = null;
       }
-    });
-    void refreshTriggers();
+      if (gitTriggerManager) {
+        void gitTriggerManager.stop();
+        gitTriggerManager = null;
+      }
+    },
+  };
+}
+
+export default Plugin.define({
+  id: "opencode-windows-scheduler",
+  setup: async (ctx) => {
+    const runtime = await createRuntime(ctx);
 
     const registration = await ctx.tool.transform((editor) => {
       // editor.add регистрирует новые инструменты плагина с codemode: true,
@@ -5065,12 +5106,10 @@ export default Plugin.define({
 
     return async () => {
       shutdownGate.begin();
-      clearInterval(pausedUntilTimer);
-      clearInterval(notificationTimer);
       rpcRegistration.dispose();
       registration.dispose();
       void skillRegistration?.dispose();
-      if (fileWatcherManager) void fileWatcherManager.stop();
+      runtime.dispose();
 
       // Сначала перестаём принимать новые запросы, затем ждём уже начатые
       // in-process операции, чтобы не закрыть SQLite под активной записью.
