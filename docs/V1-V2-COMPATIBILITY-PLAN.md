@@ -82,13 +82,14 @@
 - П2.1.1 — `createRuntime(ctxLike)` с инициализацией БД, миграции, recovery, GC,
   retention, таймеров, watcher/git-trigger. ✅
 - П2.1.2 — `setup(ctx)` V2 вызывает `createRuntime(ctx)` и регистрацию V2. ✅
-- П2.1.3 — `server()` V1 вызывает `createRuntime(v1Context)` и регистрацию V1.
-  (ждёт V1-entrypoint из З3.1)
+- П2.1.3 — `server()` V1 вызывает `createRuntime(v1Context)` и регистрацию V1. ✅
+  (`server()` → `createV1Hooks()` → `createRuntime`, те же specs/handlers)
 
 ### Задача З2.2. Общий реестр инструментов
 - П2.2.1 — вынести 25 `execute`-функций в `createToolHandlers(runtime)`. ✅
 - П2.2.2 — V2-обёртка `editor.add` остаётся тонкой. ✅
-- П2.2.3 — V1-обёртка `tool()` использует те же handlers.
+- П2.2.3 — V1-обёртка `tool()` использует те же handlers. ✅
+  (`createV1Hooks` идёт по тем же `createToolSpecs`)
 
 ### Задача З2.3. Общие хуки
 - П2.3.1 — проверить и зафиксировать: аудит/permissions/события уже живут в
@@ -105,18 +106,21 @@
 - П2.4.1 — `createShutdownHandler(runtime, registrations)` — общий сценарий
   выгрузки: `shutdownGate.begin()` → dispose регистраций → `runtime.dispose()`
   → dashboard → `waitForIdle(15_000)` → `closeDb()`. ✅
-- П2.4.2 — V2 возвращает cleanup из `setup()`, V1 — из `server()` (ждёт
-  V1-entrypoint из З3.1).
+- П2.4.2 — V2 возвращает cleanup из `setup()`, V1 — из `server()`. ✅
+  (обе линии возвращают `createShutdownHandler(runtime)`)
 
 ---
 
 ## Деталь Д3. V1-адаптер
 
 ### Задача З3.1. Dual export
-- П3.1.1 — `const v2 = Plugin.define({ id, setup })`.
-- П3.1.2 — `const v1 = { async server() { ... } }`.
-- П3.1.3 — `export default { ...v2, ...v1 }`.
-- П3.1.4 — проверить, что V2 игнорирует `server`, а V1 — `setup`.
+- П3.1.1 — `const v2 = Plugin.define({ id, setup })`. ✅ (`v2Plugin`)
+- П3.1.2 — `const v1 = { async server() { ... } }`. ✅ (`v1Plugin` типа
+  `V1PluginModule`, `server()` → `createV1Hooks()`)
+- П3.1.3 — `export default { ...v2, ...v1 }`. ✅
+- П3.1.4 — проверить, что V2 игнорирует `server`, а V1 — `setup`. ✅
+  (`test-dual-entry.mjs` — модульная проверка формы экспорта и V1-хуков;
+  реальная загрузка обеими линиями — в Д4)
 
 ### Задача З3.2. Инструменты V1
 - П3.2.1 — замапить 25 инструментов в `tool({ description, args, execute })`.
@@ -227,8 +231,8 @@
 |---|---|
 | Д0 | ✅ 17.11.2026 |
 | Д1 | ✅ 17.11.2026 |
-| Д2 | в работе (П2.1.1–П2.4.1; П2.1.3, П2.2.3 и П2.4.2 — вместе с Д3) |
-| Д3 | не начата |
+| Д2 | ✅ 17.11.2026 |
+| Д3 | в работе (З3.1 закрыта, З3.2–З3.4 впереди) |
 | Д4 | не начата |
 | Д5 | не начата |
 | Д6 | не начата |
@@ -265,19 +269,28 @@
 | П1.3.2 | Пути состояния сведены в таблицу: Windows `%APPDATA%\opencode\windows-scheduler`, macOS/Linux `$XDG_CONFIG_HOME/opencode/windows-scheduler` или `~/.config/opencode/windows-scheduler`; профили — `<base>/profiles/<name>`; SQLite — `<PLUGIN_DIR>/scheduler.db` (`OPENCODE_SCHEDULER_DB` только для тестов); логи/обёртки/locks/prompts/env и `secrets.json`/`secrets.key` — под `<PLUGIN_DIR>`. `test-docs` сверяет `profiles.ts`, `db/index.ts`, `types.ts`. |
 | П1.3.3 | Префикс задач не меняется: Windows default — `\OpenCode\windows-scheduler\`, профиль — `\OpenCode\windows-scheduler-<profile>\` (`windows.ts`); crontab-блок — `opencode-scheduler:<folder>` (legacy без суффикса читается); launchd label — `com.opencode.scheduler.<name>`. В таблице инвариантов указано, что rename 2.0.0 меняет только npm-имя. Итог: `test-docs` 50 → 60/60. |
 
-### Д2. Извлечение общего ядра — в работе
+### Д2. Извлечение общего ядра — ✅ 17.11.2026 (П2.1.3, П2.2.3, П2.4.2 закрыты в З3.1)
 
 | Подзадача | Результат |
 |---|---|
 | П2.1.1 | В `src/index.ts` добавлен `createRuntime(ctxLike)` с типом `RuntimeContextLike` (только `location.directory`): язык из настроек, `initDb()`, `migrateJsonToDb()`, `recoverInterruptedRuns()`, `checkJsonBackups()`, GC артефактов, retention, таймеры автопродолжения и дайджеста, инициализация `LockManager`, catch-up пропущенных cron-запусков, `FileWatchManager`/`GitTriggerManager` + `refreshTriggers()`. Возвращает `SchedulerRuntime { projectDirectory, dispose() }`; `dispose` гасит оба таймера и останавливает watcher/git-менеджеры, не закрывая БД (это делает entrypoint после `waitForIdle`). |
 | П2.1.2 | `setup(ctx)` V2 теперь начинается с `const runtime = await createRuntime(ctx)`, регистрация инструментов/RPC/хуков осталась в `setup`. В общем cleanup вместо ручного `clearInterval` и `fileWatcherManager.stop()` вызывается `runtime.dispose()`. Порядок shutdown не изменён: `shutdownGate.begin()` → dispose регистраций → `closeDashboardServer()` → `waitForIdle()` → `closeDb()`. `test-docs` расширен проверкой «setup стартует через createRuntime» → 61/61. |
-| П2.1.3 | Отложено до появления V1-entrypoint (`server()` в З3.1): `createRuntime` уже экспортирован и не зависит от V2-контекста. |
+| П2.1.3 | Закрыто в З3.1: `server()` V1 вызывает `createV1Hooks()`, который поднимает `createRuntime({ location: { directory } })`. Регистрация V1 — те же `createToolSpecs`, навешенные на `v1Tool()`. |
 | П2.2.1 | Добавлены экспортируемые `ToolHandlers` и `createToolHandlers(runtime)` — реестр из 26 фактических инструментов (ключ = имя инструмента). Все 26 `execute` в `setup` переведены с прямых имён `*Execute` на `handlers.<name>`; сами обработчики пока остаются модульными, `runtime` зарезервирован под перенос состояния. `test-docs` получил две статические проверки: набор ключей `ToolHandlers` совпадает с именами инструментов, в регистрации не осталось прямых `*Execute` → 63/63. `npm run build`, `test-agent-tools` (23/23), `test-audit` (33/33) — OK. |
 | П2.2.2 | Метаданные всех 26 инструментов вынесены в декларативный `createToolSpecs(runtime)`: `ToolSpec { name, input, description, execute, audit? }`. `setup` теперь содержит один цикл `for (const spec of createToolSpecs(runtime))` и общий `editor.add` с `options: { codemode: true }`; аудит навешивается в цикле через `withAudit`, поэтому правила журнала заданы один раз в спецификации. В `setup` осталось два `editor.add` — цикл инструментов и регистрация скилла. `test-docs` расширен проверкой тонкой обёртки → 64/64; `npm run build`, `test-agent-tools` 23/23, `test-audit` 33/33 — OK. |
 | П2.3.1 | Проверено по исходникам: hook-домены (`ctx.tool.hook`, `ctx.permission.hook`, `ctx.event.subscribe`) в коде отсутствуют. Аудит уже общий — `withAudit` навешивается в `createToolSpecs`; permissions — `resolvePermissions`/`buildOpencodeConfig` в env фонового запуска (`src/core/permissions.ts`); события — `emit_event`, `FileWatchManager` и `GitTriggerManager` из `createRuntime`. В `docs/COMPATIBILITY.md` строка матрицы уточнена («API есть, но плагин его не использует») и добавлен абзац «Хуки не используются осознанно» с причинами и следствием для Д3. `test-docs` расширен двумя защитными проверками (общий код не ссылается на V2-домены; документ фиксирует отказ) → 66/66. |
 | П2.3.2 | Не требуется: V2 hook-домены не используются, отдельный hook-адаптер не нужен. ✅ |
 | П2.3.3 | Не требуется: V1-хуки не используются; паритет линий достигается общими handlers и `createRuntime`, а не строковыми ключами. ✅ |
 | П2.4.1 | В `src/index.ts` добавлен `createShutdownHandler(runtime, registrations, { waitMs })`: `shutdownGate.begin()` → последовательный `dispose()` регистраций (ошибка одной логируется и не мешает остальным) → `runtime.dispose()` → `closeDashboardServer()` → `waitForIdle(15_000)` → `closeDb()`. `setup` V2 теперь возвращает этот обработчик с `rpcRegistration`, `registration` и (если есть) `skillRegistration`; ручной cleanup удалён, `shutdownGate.begin()` встречается в коде один раз. В `docs/COMPATIBILITY.md` добавлен абзац «Единая выгрузка». `test-docs` расширен двумя проверками (порядок шагов, использование обработчика) → 68/68. |
-| П2.4.2 | Отложено до V1-entrypoint (З3.1): V2 уже отдаёт cleanup из `setup()`; V1 вернёт тот же `createShutdownHandler` из `server()`. |
+| П2.4.2 | Закрыто в З3.1: V2 отдаёт `createShutdownHandler(runtime, [rpc, tools, skill])` из `setup()`, V1 — `createShutdownHandler(runtime)` из `dispose` в `Hooks`. Порядок шагов и таймаут общие. |
+
+### Д3. V1-адаптер — в работе
+
+| Подзадача | Результат |
+|---|---|
+| П3.1.1 | `export default Plugin.define({...})` заменён на `const v2Plugin = Plugin.define({...})` (`src/index.ts`); `setup` не менялся. Инлайн-блок запуска dashboard вынесен из `setup` в общую функцию `startSchedulerDashboard()` (одинаковый вызов `startDashboardServer` для обеих линий). `npm run build` — OK. |
+| П3.1.2 | Добавлены: `toV1ToolResult(result)` — конвертация V2 `Tool.Result` в V1 `ToolResult` (строка как есть; `content`-строка/массив text → `{ output, metadata }`; иначе JSON.stringify); `createV1Hooks(input, options)` — `createRuntime({ location: { directory } })`, цикл по тем же `createToolSpecs` c `withAudit`, инструменты через `v1Tool({ description, args: spec.input.shape, execute })`, dashboard при `startDashboard !== false`, возврат `{ tool, dispose: createShutdownHandler(runtime) }`; `v1Plugin: V1PluginModule = { id, server }`, где `server()` вызывает `createV1Hooks({ directory: input.directory })`. Типы V1 — из запиненного `@opencode-ai/plugin@1.19.5`. |
+| П3.1.3 | Итоговый экспорт — `export default { ...v2Plugin, ...v1Plugin }` (V2 читает `setup`, V1 — `server`, каждая линия игнорирует чужие поля). В `docs/COMPATIBILITY.md` добавлен раздел «Двойной экспорт» со схемой entrypoint'ов и перечнем общего ядра; отдельно зафиксировано, что GUI, RPC и скиллы в V1 не регистрируются. |
+| П3.1.4 | Создан `test-dual-entry.mjs`: изолирует `OPENCODE_SCHEDULER_HOME` во временный каталог до динамического импорта `dist/index.js` (нет побочных эффектов на рабочую БД); проверяет форму экспорта (`id`, `setup`, `server`, арность), `createV1Hooks({ startDashboard: false })` — наличие `tool.schedule_task` (description/args/execute) и `dispose`, все ветки `toV1ToolResult`. Все проверки пройдены; тест подключён в `npm test`. Модульная проверка формы — здесь; реальная загрузка обеими линиями OpenCode — в Д4. `test-docs` расширен четырьмя проверками (константа V2, общее ядро в V1-entrypoint, spread-экспорт, подключение теста) → **72/72**. |
 
 

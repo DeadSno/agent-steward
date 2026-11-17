@@ -1,4 +1,10 @@
 import { Plugin, Rpc } from "@opencode/plugin";
+import {
+  tool as v1Tool,
+  type Hooks as V1Hooks,
+  type PluginInput as V1PluginInput,
+  type PluginModule as V1PluginModule,
+} from "@opencode-ai/plugin";
 import { z } from "zod";
 import { Tool } from "@opencode/schema/tool";
 import { createRequire } from "node:module";
@@ -4019,7 +4025,28 @@ export function createToolSpecs(runtime: SchedulerRuntime): ToolSpec[] {
   ];
 }
 
-export default Plugin.define({
+/**
+ * Запускает локальный веб-дашборд. Общий шаг для V2-setup и V1-server:
+ * повторный вызов безопасен, защита от второго сервера внутри startDashboardServer.
+ */
+async function startSchedulerDashboard(): Promise<void> {
+  const dashboard = await startDashboardServer({
+    getTasks: async () => (await collectTasksView()).tasks,
+    runTask: (name) => runTaskEntry(name),
+    deleteTask: async (name) => {
+      await deleteTaskWithFamily(name);
+    },
+    cancelMatrix: (name) => cancelMatrixRun(name),
+    cleanupMatrixOrphans: () => cleanupOrphanedMatrixTasks(),
+  });
+  if (dashboard) {
+    console.log(
+      `[windows-scheduler] Открыть дашборд в браузере: http://localhost:${dashboard.port}`
+    );
+  }
+}
+
+const v2Plugin = Plugin.define({
   id: "opencode-windows-scheduler",
   setup: async (ctx) => {
     const runtime = await createRuntime(ctx);
@@ -5152,23 +5179,7 @@ export default Plugin.define({
       );
     });
 
-    // Локальный веб-дашборд (Спринт 5): HTTP-сервер на 3782 (фолбэки 4782/5782).
-    // Повторный вызов не создаёт второй сервер — защита от двойного запуска
-    // реализована внутри startDashboardServer.
-    const dashboard = await startDashboardServer({
-      getTasks: async () => (await collectTasksView()).tasks,
-      runTask: (name) => runTaskEntry(name),
-      deleteTask: async (name) => {
-        await deleteTaskWithFamily(name);
-      },
-      cancelMatrix: (name) => cancelMatrixRun(name),
-      cleanupMatrixOrphans: () => cleanupOrphanedMatrixTasks(),
-    });
-    if (dashboard) {
-      console.log(
-        `[windows-scheduler] Открыть дашборд в браузере: http://localhost:${dashboard.port}`
-      );
-    }
+    await startSchedulerDashboard();
 
     return createShutdownHandler(runtime, [
       rpcRegistration,
@@ -5177,6 +5188,73 @@ export default Plugin.define({
     ]);
   },
 });
+
+/**
+ * Приводит результат V2-обработчика (`Tool.Result`) к формату V1 (`ToolResult`).
+ * V1 ждёт строку или `{ output, metadata }`; V2 отдаёт `{ content }`.
+ */
+export function toV1ToolResult(result: any): any {
+  if (typeof result === "string") return result;
+  if (Array.isArray(result?.content)) {
+    const text = result.content
+      .filter((part: any) => part?.type === "text" && typeof part.text === "string")
+      .map((part: any) => part.text)
+      .join("\n");
+    return { output: text, metadata: result.metadata };
+  }
+  if (typeof result?.content === "string") {
+    return { output: result.content, metadata: result.metadata };
+  }
+  if (typeof result?.output === "string") {
+    return { output: result.output, metadata: result.metadata };
+  }
+  return { output: JSON.stringify(result), metadata: result?.metadata };
+}
+
+/**
+ * V1-entrypoint (OpenCode 1.x): module contract `{ id?, server }`.
+ *
+ * Возвращает те же инструменты, что V2-setup, но через `tool()` и строковые
+ * ключи `Hooks`. Ядро и аудит общие: `createRuntime`, `createToolSpecs`,
+ * `createShutdownHandler`. GUI/RPC/скиллы — только V2, здесь их нет.
+ */
+export async function createV1Hooks(
+  input: Pick<V1PluginInput, "directory"> = { directory: process.cwd() },
+  options: { startDashboard?: boolean } = {}
+): Promise<V1Hooks> {
+  const runtime = await createRuntime({ location: { directory: input.directory } });
+  const tools: Record<string, any> = {};
+  for (const spec of createToolSpecs(runtime)) {
+    const execute = spec.audit
+      ? withAudit(spec.name, spec.audit, spec.execute)
+      : spec.execute;
+    tools[spec.name] = v1Tool({
+      description: spec.description,
+      // spec.input — ZodObject; V1 tool() ждёт raw shape.
+      args: (spec.input?.shape ?? {}) as any,
+      execute: (async (args: any, context: any) =>
+        toV1ToolResult(await execute(args, context))) as any,
+    });
+  }
+  if (options.startDashboard !== false) {
+    await startSchedulerDashboard();
+  }
+  return {
+    tool: tools,
+    dispose: createShutdownHandler(runtime),
+  };
+}
+
+const v1Plugin: V1PluginModule = {
+  id: "opencode-windows-scheduler",
+  server: async (input) => createV1Hooks({ directory: input.directory }),
+};
+
+/**
+ * Двойной экспорт: V2 читает `id`/`setup`, V1 — `server`. Каждая линия
+ * игнорирует поле другой; общее ядро одно.
+ */
+export default { ...v2Plugin, ...v1Plugin };
 
 /**
  * Дополнительные настройки матрицы (Спринт 17): matrix.concurrency и

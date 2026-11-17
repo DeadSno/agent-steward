@@ -202,6 +202,34 @@ check(
   /return createShutdownHandler\(runtime, \[/.test(indexSrc) &&
     (indexSrc.match(/shutdownGate\.begin\(\)/g) || []).length === 1
 );
+// З3.1: dual export. V2 — const с id/setup, V1 — server на том же ядре.
+check(
+  "src/index.ts: V2 объявлен отдельной константой",
+  /const v2Plugin = Plugin\.define\(\{/.test(indexSrc)
+);
+const v1HooksBlock = indexSrc.match(
+  /export async function createV1Hooks\([\s\S]*?\n\}/
+);
+const v1HooksSrc = v1HooksBlock ? v1HooksBlock[0] : "";
+check(
+  "src/index.ts: V1-entrypoint использует общие createRuntime/createToolSpecs/createShutdownHandler",
+  v1HooksSrc.length > 0 &&
+    /createRuntime\(/.test(v1HooksSrc) &&
+    /createToolSpecs\(runtime\)/.test(v1HooksSrc) &&
+    /createShutdownHandler\(runtime\)/.test(v1HooksSrc) &&
+    /v1Tool\(\{/.test(v1HooksSrc)
+);
+check(
+  "src/index.ts: default export объединяет V2 и V1",
+  /export default \{ \.\.\.v2Plugin, \.\.\.v1Plugin \};/.test(indexSrc) &&
+    /const v1Plugin: V1PluginModule = \{/.test(indexSrc)
+);
+check(
+  "package.json: тест двойного экспорта подключён",
+  fs.readFileSync(path.join(root, "package.json"), "utf8").includes(
+    "node test-dual-entry.mjs"
+  ) && fs.existsSync(path.join(root, "test-dual-entry.mjs"))
+);
 const typesSrc = fs.readFileSync(path.join(root, "src", "types.ts"), "utf8");
 check(
   'src/types.ts: TASK_FOLDER остаётся "OpenCode"',

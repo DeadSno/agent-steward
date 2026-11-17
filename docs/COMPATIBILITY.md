@@ -50,6 +50,20 @@ registrations)`: `shutdownGate.begin()` → освобождение регис�
 операций → `closeDb()`. V2 отдаёт этот cleanup из `setup(ctx)`, V1 — из
 `server()` (З3.1); порядок и таймаут `15_000` мс общие.
 
+**Двойной экспорт.** В `src/index.ts`:
+
+- `const v2Plugin = Plugin.define({ id, setup })` — entrypoint V2;
+- `const v1Plugin: V1PluginModule = { id, server }` — entrypoint V1, `server()`
+  вызывает `createV1Hooks()`;
+- `export default { ...v2Plugin, ...v1Plugin }` — каждая линия читает свои поля
+  (`setup` или `server`) и игнорирует чужие.
+
+`createV1Hooks()` поднимает то же ядро (`createRuntime`), собирает те же
+`createToolSpecs`, навешивает тот же `withAudit`, конвертирует `Tool.Result` в
+V1 `ToolResult` (`{ output, metadata }`) и возвращает `Hooks` с `tool` и
+`dispose`. Дашборд общий — `startSchedulerDashboard()`; GUI, RPC и скиллы в V1
+не регистрируются, потому что их API там нет.
+
 ## Где зафиксированы версии
 
 | Что | Где | Значение |
