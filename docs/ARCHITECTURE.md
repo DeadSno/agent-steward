@@ -202,7 +202,7 @@ last_10_runs`. Обучается на исходах гейта (CONCEPT §9 le
 | `src/core/cron-to-schtasks.ts` | Cron → Task Scheduler translation |
 | `src/core/schedule-v2.ts` | Extended cron parser/matcher, timezone math, launch windows, poll-mode decisions |
 | `src/core/schedule-gate.ts` | Wrapper-side gate: cron re-check (poll mode), window postpone, defer-file |
-| `src/db/` | SQLite access: schema, migrations, repositories, recovery |
+| `src/db/` | SQLite access: schema, migrations, repositories, recovery; `runs-repo.ts` keeps durable `runs`/`run_steps` state, `run-journal.ts` writes transitions around each step, `run-resume.ts` continues a crashed chain |
 | `src/shared/jobs-view.ts` | Task view shared by the GUI and dashboard |
 
 ## Scheduling backends
@@ -355,7 +355,61 @@ the whole plugin directory (database, logs, locks, wrappers, prompts) with
 
 Schema evolution is additive: `applySchema` runs `CREATE TABLE IF NOT EXISTS` on every
 connection and adds missing columns after `PRAGMA table_info`, so upgrading the plugin
-never requires a manual migration.
+never requires a manual migration. `SCHEMA_VERSION` (currently `3`) is stored in
+`PRAGMA user_version`; incremental steps live in `MIGRATIONS`.
+
+### Durable run state (Sprint 36.1)
+
+Sprint 36.1 adds `runs` and `run_steps`, the persistence layer for resumable DAG
+execution:
+
+| Table | Purpose |
+| --- | --- |
+| `runs` | One row per execution (`pending → running → passed/failed/cancelled`), with `task_name`, `parent_run_id`, `workspace_id`, `started_at`, `finished_at`, `metadata_json` |
+| `run_steps` | One row per step (`pending → running → passed/failed/skipped`), with `position`, `attempt`, `idempotency_key`, `started_at`, `finished_at`, `error`, `output_json`; unique per `(run_id, step_name)`, cascade-deleted with the run |
+
+`src/db/runs-repo.ts` owns the transitions and rejects invalid ones
+(`InvalidTransitionError`). A failed step can be retried explicitly (`retryStep`),
+which increments `attempt` and returns it to `running`. The tables survive process
+crashes and reconnects, which is the prerequisite for resume (36.2) and
+idempotent steps (36.3).
+
+`src/db/run-journal.ts` (Sprint 36.1.b) writes every transition to disk before
+and after executing the step body: `beginStepAttempt` commits `running` + `started_at`
+before the body runs; `recordStepSuccess`/`recordStepFailure` commit `passed`/`failed`
+(and `finished_at`/`error`/`output_json`) after it. The high-level wrappers
+`runStepStatefully` / `runStepStatefullyAsync` execute `body` between those two
+commits and propagate its error while still recording `failed`. `recoverInterruptedSteps`
+marks any `running` steps left after a process crash as `failed` — preserving
+`attempt`, so the next repeat gets `attempt + 1` and never restarts from 1.
+SQLite runs in WAL mode with `synchronous = NORMAL`, so a committed transition
+survives a `kill -9` (only the last in-flight commit can be lost with a power cut).
+
+### Resume from the middle (Sprint 36.2)
+
+`src/db/run-resume.ts` continues a run after a crash. `run_steps.position`
+(schema v3) fixes the order of a linear chain — `created_at` can be identical
+for steps inserted in one transaction, so it cannot be used for ordering; on an
+existing v2 database the migration backfills `position` from the insertion order.
+The `(run_id, position)` index is created after migrations, not in `SCHEMA_SQL`:
+on an old database the column does not exist yet, so an early `CREATE INDEX`
+would fail before the `ALTER TABLE` step.
+`findResumeStep` returns the first step that is not `passed`/`skipped`.
+`resumeRunSync` / `resumeRun` then:
+
+1. recover dangling `running` steps (`recoverInterruptedSteps`), so the crash
+   victim is retried with `attempt + 1`;
+2. skip already passed/skipped steps without invoking their handlers;
+3. validate that every remaining step has a handler **before** any side effect;
+4. reopen a `failed` run (`reopenRun`, the only `failed → running` transition);
+5. execute the rest through the journal and finalize the run as `passed` or
+   `failed`.
+
+The result reports `resumedFrom`, `resumedFromAttempt`, `executed`, `skipped`,
+`failedStep` and `error`. With `stopOnError: false` the chain continues after a
+failure, but the run still ends `failed`. This is covered by
+`test-run-resume.mjs`, including a real `kill -9` in the middle of a four-step
+chain.
 
 ## Interfaces
 

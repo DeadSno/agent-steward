@@ -121,6 +121,51 @@ CREATE TABLE IF NOT EXISTS notification_embeddings (
 
 CREATE INDEX IF NOT EXISTS idx_notification_embeddings_task ON notification_embeddings(task_name, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_notification_embeddings_created ON notification_embeddings(created_at DESC);
+
+-- Спринт 36.1 (durable DAG): запуск как единица выполнения.
+-- Строка создаётся до старта шагов и переживает сбой процесса — это основа
+-- для resume в 36.2. Статусы: pending → running → passed/failed/cancelled.
+CREATE TABLE IF NOT EXISTS runs (
+  id TEXT PRIMARY KEY,
+  task_name TEXT NOT NULL,
+  status TEXT NOT NULL,
+  parent_run_id TEXT,
+  workspace_id TEXT,
+  started_at TEXT,
+  finished_at TEXT,
+  error TEXT,
+  metadata_json TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_runs_task ON runs(task_name, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status, started_at DESC);
+
+-- Спринт 36.1: шаг запуска. Поле attempt позволяет повторить шаг, не теряя
+-- историю предыдущих попыток; idempotency_key защищает от повторного
+-- выполнения того же шага (36.3). Статусы: pending → running → passed/failed/skipped.
+CREATE TABLE IF NOT EXISTS run_steps (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+  step_name TEXT NOT NULL,
+  -- Порядок шага в линейной цепочке (36.2): 0, 1, 2... Стабилен для resume.
+  position INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL,
+  attempt INTEGER NOT NULL DEFAULT 1,
+  idempotency_key TEXT,
+  started_at TEXT,
+  finished_at TEXT,
+  error TEXT,
+  output_json TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(run_id, step_name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_run_steps_run ON run_steps(run_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_run_steps_status ON run_steps(status);
+CREATE INDEX IF NOT EXISTS idx_run_steps_key ON run_steps(run_id, idempotency_key);
 `;
 
 interface SchemaDb {
@@ -136,7 +181,7 @@ interface SchemaDb {
  * миграций. Увеличивайте при добавлении новой ступени в {@link MIGRATIONS}
  * и добавляйте соответствующую запись в массив.
  */
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 3;
 
 /** Возвращает сохранённую версию схемы (0 у legacy-БД без user_version). */
 export function getSchemaVersion(db: SchemaDb): number {
@@ -207,7 +252,70 @@ const MIGRATIONS: { to: number; migrate: (db: SchemaDb) => void }[] = [
       }
     },
   },
+  {
+    // Ступень 2 — Спринт 36.1: durable DAG. Таблицы создаются идемпотентно,
+    // чтобы legacy-БД (user_version = 0/1) получила их и индексы при обновлении,
+    // а не только при создании файла с нуля.
+    to: 2,
+    migrate(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS runs (
+          id TEXT PRIMARY KEY,
+          task_name TEXT NOT NULL,
+          status TEXT NOT NULL,
+          parent_run_id TEXT,
+          workspace_id TEXT,
+          started_at TEXT,
+          finished_at TEXT,
+          error TEXT,
+          metadata_json TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_runs_task ON runs(task_name, started_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status, started_at DESC);
+
+        CREATE TABLE IF NOT EXISTS run_steps (
+          id TEXT PRIMARY KEY,
+          run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+          step_name TEXT NOT NULL,
+          status TEXT NOT NULL,
+          attempt INTEGER NOT NULL DEFAULT 1,
+          idempotency_key TEXT,
+          started_at TEXT,
+          finished_at TEXT,
+          error TEXT,
+          output_json TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          UNIQUE(run_id, step_name)
+        );
+        CREATE INDEX IF NOT EXISTS idx_run_steps_run ON run_steps(run_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_run_steps_status ON run_steps(status);
+        CREATE INDEX IF NOT EXISTS idx_run_steps_key ON run_steps(run_id, idempotency_key);
+      `);
+    },
+  },
+  {
+    // Ступень 3 — Спринт 36.2: явный порядок шага в линейной цепочке.
+    // created_at может совпасть у шагов одной транзакции, поэтому resume
+    // не может опираться на время; position фиксирует порядок создания.
+    to: 3,
+    migrate(db) {
+      if (!tableColumns(db, "run_steps").includes("position")) {
+        db.exec("ALTER TABLE run_steps ADD COLUMN position INTEGER NOT NULL DEFAULT 0");
+        // Для уже существующих строк порядок = порядок вставки (rowid).
+        db.exec("UPDATE run_steps SET position = rowid");
+      }
+    },
+  },
 ];
+
+/** Имена колонок таблицы (пустой массив, если таблицы нет). */
+function tableColumns(db: SchemaDb, table: string): string[] {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as { name?: string }[];
+  return columns.map((column) => column.name).filter((name): name is string => Boolean(name));
+}
 
 /**
  * Применяет схему к открытому соединению.
@@ -228,6 +336,11 @@ export function applySchema(db: SchemaDb): void {
       step.migrate(db);
     }
   }
+
+  // Индекс по position нельзя объявлять в SCHEMA_SQL: на старой БД таблица
+  // run_steps ещё без этой колонки, и CREATE INDEX упал бы до миграции.
+  // Поэтому создаём его после миграций — заодно лечим БД, где индекс потерян.
+  db.exec("CREATE INDEX IF NOT EXISTS idx_run_steps_position ON run_steps(run_id, position)");
 
   if (fromVersion !== SCHEMA_VERSION) {
     // PRAGMA не принимает параметры — подставляем проверенное число.

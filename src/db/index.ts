@@ -68,7 +68,11 @@ export function initDb(file: string = dbFile): SqliteDatabase {
   const instance = new DatabaseSync(file);
 
   // WAL — конкурентное чтение во время записи и устойчивость к сбоям.
+  // synchronous = NORMAL в WAL гарантирует, что закоммиченная транзакция
+  // переживает падение процесса (шаг 36.1.b); при потере питания может
+  // потеряться только последний коммит — это осознанный компромисс.
   instance.exec("PRAGMA journal_mode = WAL;");
+  instance.exec("PRAGMA synchronous = NORMAL;");
   instance.exec("PRAGMA foreign_keys = ON;");
   instance.exec("PRAGMA busy_timeout = 5000;");
   applySchema(instance);

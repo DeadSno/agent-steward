@@ -250,6 +250,9 @@
 | P3-8 | Комментарий в `test-task-name-limit.mjs:1-3` («префикс = 29 → 208») неверен: фактически 28 → 209 (как и комментарий в `types.ts`) — поправить оба комментария | Бэклог | ✅ |
 | P3-9 | Документация содержала устаревшие пользовательские пути `windows-scheduler` (CROSS_PLATFORM ru/en/zh, FAQ ru/en/zh, FEATURES en/zh, ARCHITECTURE) — приведены к `agent-steward` с пометкой о legacy-алиасинге; `test-docs` 96/96 | Бэклог | ✅ |
 | P3-10 | GUI вызывал `get_shadow_report`, `reset_shadow_report`, `test_local_ai`, но методы отсутствовали в `SchedulerRpc.methods` → `TypeError: f.get_shadow_report is not a function` в Desktop; схемы добавлены, в `test-docs` введён инвариант «каждый `rpc.<method>` из gui.tsx объявлен в rpc.ts» | Бэклог | ✅ |
+| P3-11 | Durable DAG, подзадача 36.1.a: `SCHEMA_VERSION` 2, таблицы `runs`/`run_steps` (status, attempt, idempotency_key, timestamps), миграционная ступень v2; репозиторий `src/db/runs-repo.ts` с валидацией переходов и `retryStep`; тест `test-run-state.mjs` в цепочке `npm test`; раздел «Durable run state» в ARCHITECTURE | Спринт 36 | ✅ |
+| P3-12 | Durable DAG, подзадача 36.1.b: модуль `src/db/run-journal.ts` — каждый переход шага пишется в БД до и после тела (`beginStepAttempt`, `runStepStatefully`, `recordStepSuccess/Failure`); `recoverInterruptedSteps` помечает зависшие `running` как `failed`, сохраняя `attempt`; `PRAGMA synchronous = NORMAL` в WAL; тест `test-run-journal.mjs` с реальным `kill -9` посреди шага в цепочке `npm test` | Спринт 36 | ✅ |
+| P3-13 | Durable DAG, подзадача 36.2: resume с середины — `SCHEMA_VERSION` 3 и колонка `run_steps.position` (миграция бэкфиллит порядок), `src/db/run-resume.ts` (`findResumeStep`, `resumeRunSync`/`resumeRun`, `reopenRun` failed → running), пропуск завершённых шагов, валидация обработчиков до побочных эффектов, `test-run-resume.mjs` с `kill -9` посреди линейной цепочки | Спринт 36 | ✅ |
 
 ---
 

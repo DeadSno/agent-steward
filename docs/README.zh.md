@@ -231,7 +231,7 @@ src/
 npm install
 npm run build        # tsc
 npm run build:gui    # vite
-npm test             # 70 test suites, 600+ checks
+npm test             # 73 test suites, 600+ checks
 npm run test:en      # same suites with the English locale
 ```
 
