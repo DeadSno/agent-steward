@@ -1,6 +1,7 @@
 # Migration guide
 
-How to move existing automation into `opencode-windows-scheduler` from cron, systemd
+How to move existing automation into `agent-steward` (plugin id
+`opencode-windows-scheduler`) from cron, systemd
 timers, launchd, Windows Task Scheduler, or another scheduler plugin.
 
 - [Before you start](#before-you-start)
@@ -19,10 +20,11 @@ timers, launchd, Windows Task Scheduler, or another scheduler plugin.
 1. **Install and build.**
 
    ```bash
-   npm install -g opencode-windows-scheduler
+   npm install -g agent-steward
    ```
 
-   Add the plugin to `opencode.json` and restart OpenCode. If OpenCode's built-in
+   Add the plugin to `opencode.json` and reload OpenCode (V2 reloads config
+   automatically; on V1 restart it). If OpenCode's built-in
    schedules are enabled, disable them so two schedulers do not run the same work.
 
 2. **Check Node.** `node --version` must be 20 or newer (22.5+ for the built-in SQLite
@@ -252,25 +254,28 @@ history and settings are **unchanged**.
 |------|--------------------------------------|-------------------------|
 | npm package name | `opencode-windows-scheduler` | `agent-steward` |
 | GitHub repository | `DeadSno/opencode-windows-scheduler` | `DeadSno/agent-steward` |
-| Install command | `opencode plugin add opencode-windows-scheduler` | `opencode plugin add opencode-windows-scheduler` |
-| V1 config key | `"plugin": ["opencode-windows-scheduler"]` | same (unchanged) |
-| V2 config key | `"plugins": ["opencode-windows-scheduler"]` | same (unchanged) |
+| Install command | `opencode plugin add opencode-windows-scheduler` | `opencode plugin add agent-steward` |
+| V1 config key | `"plugin": ["opencode-windows-scheduler"]` | `"plugin": ["agent-steward"]` |
+| V2 config key | `"plugins": ["opencode-windows-scheduler"]` | `"plugins": ["agent-steward"]` |
 | `plugin id` | `opencode-windows-scheduler` | same (unchanged) |
-| State paths | `%APPDATA%\opencode\agent-steward` / `~/.config/opencode/agent-steward` | same (unchanged) |
+| State paths | `%APPDATA%\opencode\windows-scheduler` / `~/.config/opencode/windows-scheduler` | `%APPDATA%\opencode\agent-steward` / `~/.config/opencode/agent-steward` (migrated automatically) |
+| Windows task folder | `\OpenCode\windows-scheduler\` | `\OpenCode\agent-steward\` (legacy folder still recognized) |
 
-**Only the npm package name and GitHub repository changed.** Your tasks, schedules,
-SQLite history, profiles, secrets and dashboard settings continue to work without
-modification.
+**The npm package name, config entries and user-facing data/task paths changed.**
+The plugin id, SQLite filename and log file names stay the same. On first start the
+legacy state directory is copied to the new location and absolute paths in settings
+are rewritten; existing tasks and history are preserved.
 
 ### Migration steps
 
-1. **Update the OpenCode config** (`opencode.jsonc`):
+1. **Update the OpenCode config** (`opencode.jsonc`) — the value is the npm package
+   name, so it changes to `agent-steward`:
 
    V1:
    ```jsonc
    {
      "$schema": "https://opencode.ai/config.json",
-     "plugin": ["opencode-windows-scheduler"]
+     "plugin": ["agent-steward"]
    }
    ```
 
@@ -278,23 +283,22 @@ modification.
    ```jsonc
    {
      "$schema": "https://opencode.ai/config.json",
-     "plugins": ["opencode-windows-scheduler"]
+     "plugins": ["agent-steward"]
    }
    ```
 
-   The plugin key stays `opencode-windows-scheduler` — only the npm package name
-   changed. Restart OpenCode after saving.
+   The `plugin id` reported by the plugin remains `opencode-windows-scheduler`.
+   OpenCode V2 reloads the config automatically (use `/reload` if needed); on V1
+   restart OpenCode after saving.
 
-2. **Install from the new package** — OpenCode resolves the plugin by `plugin id`, not
-   by npm package name, so existing installations keep working. New installs use
-   `agent-steward`:
+2. **Install from the new package**:
 
    ```bash
-   opencode plugin add opencode-windows-scheduler
+   opencode plugin add agent-steward
    ```
 
-   OpenCode will install the `agent-steward` package under the hood (the `plugin id`
-   `opencode-windows-scheduler` maps to the new package).
+   Existing installations that still list `opencode-windows-scheduler` keep working
+   until the thin re-export wrapper is deprecated.
 
 3. **Old package (`opencode-windows-scheduler`)** — remains published as a thin
    re-export wrapper around `agent-steward` for one major version. It receives only
@@ -303,13 +307,17 @@ modification.
    with the new package).
 
 4. **Verify** — run `dry_run` on any existing task and confirm it executes. Check
-   `get_history` for the latest runs. Nothing should change in behaviour.
+   `get_history` for the latest runs. Task behaviour should not change; after the first
+   start your data appears in the new state directory.
 
 ### Rollback
 
-No rollback is needed — the `plugin id` and all state paths are identical before and
-after the rename. If you prefer the old npm package name, keep using
-`opencode-windows-scheduler` (the thin re-export) until it is deprecated.
+The `plugin id`, SQLite filename and log names are identical before and after the
+rename, so the plugin itself needs no rollback. If you prefer the old npm package name,
+switch the config entry back to `opencode-windows-scheduler` while the thin re-export is
+still published. Note that `agent-steward` is the authoritative state directory after
+migration: copy it back to the legacy path if the old package must read the migrated
+data.
 
 
 ## Local AI / triage migration

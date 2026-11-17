@@ -63,13 +63,13 @@ Translations: [English](../README.md) · [中文](README.zh.md).
 
 | Линия OpenCode | Ключ в `opencode.jsonc` |
 |---|---|
-| V1 (`1.18.29`–`1.19.x`) | `"plugin": ["opencode-windows-scheduler"]` |
-| V2 (`≥ 2.2.7`) | `"plugins": ["opencode-windows-scheduler"]` |
+| V1 (`1.18.29`–`1.19.x`) | `"plugin": ["agent-steward"]` |
+| V2 (`≥ 2.2.7`) | `"plugins": ["agent-steward"]` |
 
 Используйте ключ своей линии; добавлять оба не нужно. В V2 проще через CLI:
 
 ```bash
-opencode plugin add opencode-windows-scheduler
+opencode plugin add agent-steward
 ```
 
 V1 — вручную:
@@ -77,7 +77,7 @@ V1 — вручную:
 ```jsonc
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": ["opencode-windows-scheduler"]
+  "plugin": ["agent-steward"]
 }
 ```
 
@@ -86,14 +86,14 @@ V2 — тот же плагин вручную:
 ```jsonc
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugins": ["opencode-windows-scheduler"],
+  "plugins": ["agent-steward"],
   "experimental": {
     "schedules": false
   }
 }
 ```
 
-`experimental.schedules: false` отключает встроенный планировщик OpenCode, чтобы агент не путал встроенные инструменты расписаний с инструментами этого плагина. После изменения конфигурации перезапустите OpenCode. Панель TUI входит в тот же пакет (`exports["./tui"]`), поэтому включается той же записью на обеих линиях.
+`experimental.schedules: false` отключает встроенный планировщик OpenCode, чтобы агент не путал встроенные инструменты расписаний с инструментами этого плагина. В OpenCode 2.x конфигурация перезагружается автоматически; если изменения не подхватились, выполните `/reload`. В 1.x перезапустите OpenCode после правки конфигурации. Панель TUI входит в тот же пакет (`exports["./tui"]`), поэтому включается той же записью на обеих линиях.
 
 Из исходников:
 
@@ -224,7 +224,7 @@ src/
 npm install
 npm run build        # tsc
 npm run build:gui    # vite
-npm test             # 67 сюит, 600+ проверок
+npm test             # 70 сюит, 600+ проверок
 npm run test:en      # те же сюиты с английской локалью
 ```
 

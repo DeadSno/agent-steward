@@ -25,7 +25,7 @@ Scheduler, уведомления, аналитика — триггеры и о
 ## Текущая точка (agent-steward 0.0.2, milestone Д7)
 
 - Опубликован в npm, CI зелёный на Windows / macOS / Linux
-- `plugin id` не меняется: `opencode-windows-scheduler` — все пути состояния без изменений
+- `plugin id` не меняется: `opencode-windows-scheduler` — имена SQLite/логов и ID действий TUI без изменений; каталог данных — `agent-steward` (legacy мигрирует автоматически)
 - Dual-support: один пакет работает с OpenCode V1 (≥ 1.18.29) и V2 (≥ 2.2.7)
 - 26 инструментов агента — паритет с RPC-поверхностью
 - Локальный триаж + shadow mode, `manage_local_ai`, блок настроек в GUI — есть

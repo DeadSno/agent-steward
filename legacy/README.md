@@ -20,5 +20,5 @@ No changes are needed to your OpenCode config — the `plugin id`
 ```
 
 New installs resolve to the `agent-steward` package automatically. See
-[docs/MIGRATION.md](../docs/MIGRATION.md#from-opencode-windows-scheduler-to-agent-steward-rename)
+[docs/MIGRATION.md](../docs/MIGRATION.md#from-opencode-windows-scheduler-to-agent-steward-package-rename)
 for details.

@@ -1,6 +1,7 @@
 # Architecture
 
-This document explains how `opencode-windows-scheduler` is put together: the process
+This document explains how `agent-steward` (plugin id
+`opencode-windows-scheduler`) is put together: the process
 model, the modules, the data model and the extension points.
 
 - [Design principles](#design-principles)

@@ -80,13 +80,13 @@ The config key differs between lines:
 
 | OpenCode line | Key in `opencode.jsonc` |
 |---|---|
-| V1 (`1.18.29`–`1.19.x`) | `"plugin": ["opencode-windows-scheduler"]` |
-| V2 (`≥ 2.2.7`) | `"plugins": ["opencode-windows-scheduler"]` |
+| V1 (`1.18.29`–`1.19.x`) | `"plugin": ["agent-steward"]` |
+| V2 (`≥ 2.2.7`) | `"plugins": ["agent-steward"]` |
 
 Use the key of your line; there is no need to add both. On V2 the CLI does it for you:
 
 ```bash
-opencode plugin add opencode-windows-scheduler
+opencode plugin add agent-steward
 ```
 
 V1 — manual config:
@@ -94,7 +94,7 @@ V1 — manual config:
 ```jsonc
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": ["opencode-windows-scheduler"]
+  "plugin": ["agent-steward"]
 }
 ```
 
@@ -103,14 +103,14 @@ V2 — equivalent manual config:
 ```jsonc
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugins": ["opencode-windows-scheduler"],
+  "plugins": ["agent-steward"],
   "experimental": {
     "schedules": false
   }
 }
 ```
 
-`experimental.schedules: false` disables the built-in OpenCode scheduler so the agent does not confuse built-in job tools with this plugin's tools. Restart OpenCode after changing the config. The TUI panel is part of the same package (`exports["./tui"]`), so it is enabled by the same entry on both lines.
+`experimental.schedules: false` disables the built-in OpenCode scheduler so the agent does not confuse built-in job tools with this plugin's tools. In OpenCode 2.x, config changes reload automatically; use `/reload` if the change is not picked up. On 1.x, restart OpenCode after editing the config. The TUI panel is part of the same package (`exports["./tui"]`), so it is enabled by the same entry on both lines.
 
 From source:
 
@@ -239,7 +239,7 @@ Tasks are **interactive only** by default: Task Scheduler starts them only while
 npm install
 npm run build        # tsc
 npm run build:gui    # vite
-npm test             # 67 test suites, 600+ checks
+npm test             # 70 test suites, 600+ checks
 npm run test:en      # same suites with the English locale
 ```
 

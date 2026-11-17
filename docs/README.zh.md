@@ -72,13 +72,13 @@ Translations: [English](../README.md) · [Русский](README.ru.md).
 
 | OpenCode 版本线 | `opencode.jsonc` 中的键 |
 |---|---|
-| V1（`1.18.29`–`1.19.x`） | `"plugin": ["opencode-windows-scheduler"]` |
-| V2（`≥ 2.2.7`） | `"plugins": ["opencode-windows-scheduler"]` |
+| V1（`1.18.29`–`1.19.x`） | `"plugin": ["agent-steward"]` |
+| V2（`≥ 2.2.7`） | `"plugins": ["agent-steward"]` |
 
 请使用对应版本线的键，无需同时添加两者。V2 可直接用 CLI：
 
 ```bash
-opencode plugin add opencode-windows-scheduler
+opencode plugin add agent-steward
 ```
 
 V1 手动配置：
@@ -86,7 +86,7 @@ V1 手动配置：
 ```jsonc
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": ["opencode-windows-scheduler"]
+  "plugin": ["agent-steward"]
 }
 ```
 
@@ -95,14 +95,14 @@ V2 手动配置：
 ```jsonc
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugins": ["opencode-windows-scheduler"],
+  "plugins": ["agent-steward"],
   "experimental": {
     "schedules": false
   }
 }
 ```
 
-`experimental.schedules: false` 会关闭 OpenCode 内置调度器，避免 agent 把内置任务工具与本插件的工具混淆。修改配置后请重启 OpenCode。TUI 面板随同一个包提供（`exports["./tui"]`），两条版本线都用同一条配置启用。
+`experimental.schedules: false` 会关闭 OpenCode 内置调度器，避免 agent 把内置任务工具与本插件的工具混淆。OpenCode 2.x 会自动重新加载配置；如未生效，请执行 `/reload`。1.x 修改配置后请重启 OpenCode。TUI 面板随同一个包提供（`exports["./tui"]`），两条版本线都用同一条配置启用。
 
 从源码安装：
 
@@ -231,7 +231,7 @@ src/
 npm install
 npm run build        # tsc
 npm run build:gui    # vite
-npm test             # 67 test suites, 600+ checks
+npm test             # 70 test suites, 600+ checks
 npm run test:en      # same suites with the English locale
 ```
 

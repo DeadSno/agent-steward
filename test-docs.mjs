@@ -396,15 +396,19 @@ check(
 );
 
 // З3.5: у каждой линии свой ключ конфига, примеры есть во всех локалях.
+// В конфиге указывается npm-имя пакета (agent-steward); plugin id отдельный
+// и по-прежнему opencode-windows-scheduler.
 const configKeysOk = readmeFiles.filter((rel) => {
   const text = fs.readFileSync(path.join(root, rel), "utf8");
   return (
-    text.includes('"plugin": ["opencode-windows-scheduler"]') &&
-    text.includes('"plugins": ["opencode-windows-scheduler"]')
+    text.includes('"plugin": ["agent-steward"]') &&
+    text.includes('"plugins": ["agent-steward"]') &&
+    !text.includes('"plugin": ["opencode-windows-scheduler"]') &&
+    !text.includes('"plugins": ["opencode-windows-scheduler"]')
   );
 });
 check(
-  `README (${readmeFiles.length} локали): ключи plugin (V1) и plugins (V2)`,
+  `README (${readmeFiles.length} локали): ключи plugin (V1) и plugins (V2) указывают npm-имя agent-steward`,
   configKeysOk.length === readmeFiles.length
 );
 

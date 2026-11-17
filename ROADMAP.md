@@ -16,7 +16,7 @@
 ### Что сделано
 
 - Пакет переименован: `opencode-windows-scheduler` → `agent-steward` (релиз 0.0.2), старый пакет остаётся как thin re-export (`legacy/`) на один major.
-- `plugin id` не меняется: `opencode-windows-scheduler` — все пути состояния, маркер дашборда, ID действий TUI без изменений.
+- `plugin id` не меняется: `opencode-windows-scheduler` — имена SQLite и логов, формат `runs.jsonl`, маркер дашборда и ID действий TUI без изменений; каталог данных переименован в `agent-steward` с автоматической миграцией legacy-данных.
 - Dual-support: один пакет работает с OpenCode V1 (≥ 1.18.29) и V2 (≥ 2.2.7) — общий ядро `createRuntime`, 26 инструментов.
 - GitHub-репозиторий: `DeadSno/agent-steward` с редиректами со старых URL.
 

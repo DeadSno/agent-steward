@@ -34,7 +34,7 @@
 **Конфигурация по линиям.** Ключ выбирает загрузчик OpenCode, а не плагин: сам
 пакет не читает ни `plugin`, ни `plugins`, поэтому чужое поле не может уронить
 его код. V1 подключается ключом `plugin` в `opencode.jsonc`, V2 — ключом
-`plugins` или командой `opencode plugin add opencode-windows-scheduler`. Оба
+`plugins` или командой `opencode plugin add agent-steward`. Оба
 ключа одновременно не нужны. Примеры для обеих линий — в README (en/ru/zh).
 
 **TUI в V1.** `src/tui-v1.tsx` реализует `TuiPluginModule` и живёт на тех же
@@ -223,8 +223,12 @@ rename в `agent-steward` (Д7): иначе пользователи теряю�
 | Блок crontab | `# >>> opencode-scheduler:<folder> >>>` … `# <<< opencode-scheduler:<folder> <<<` (legacy-блок без суффикса читается) | `src/core/scheduler/linux.ts` |
 | launchd label | `com.opencode.scheduler.<name>` | `src/core/scheduler/mac.ts` |
 
-Rename (Д7) меняет только npm-имя пакета (`agent-steward@0.0.2`): `plugin id`,
-пути, имена файлов БД/логов и префиксы задач остаются прежними (П7.2).
+Rename (Д7) меняет npm-имя пакета (`agent-steward@0.0.2`), каталог данных
+(`opencode/agent-steward`; legacy `opencode/windows-scheduler` копируется при первом
+запуске) и папку задач Windows (`\OpenCode\agent-steward\`; legacy-папка читается и
+удаляется по требованию). `plugin id`, имена файлов SQLite/логов и
+crontab/launchd-маркеры остаются прежними (П7.2); ключи TUI-хранилища вида
+`opencode-windows-scheduler.*` тоже не меняются.
 
 ## Связанные документы
 
