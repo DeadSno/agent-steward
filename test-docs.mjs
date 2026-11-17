@@ -91,6 +91,19 @@ check("COMPATIBILITY: минимум V1 = 1.18.29", compatText.includes("1.18.29
 check("COMPATIBILITY: TUI V1 через @opencode-ai/plugin/tui", compatText.includes("@opencode-ai/plugin/tui"));
 check("COMPATIBILITY: минимум V2 = 2.2.7", compatText.includes("`2.2.7`"));
 check("COMPATIBILITY: V2 проверяется на 2.3.0", compatText.includes("2.3.0"));
+check(
+  "package.json: @opencode/plugin на полу ^2.2.7",
+  pkg.dependencies?.["@opencode/plugin"] === "^2.2.7"
+);
+check(
+  "package.json: @opencode-ai/plugin запинен 1.19.5",
+  pkg.devDependencies?.["@opencode-ai/plugin"] === "1.19.5"
+);
+check(
+  "package.json: peerDependencies не объявляют plugin API",
+  !pkg.peerDependencies?.["@opencode/plugin"] &&
+    !pkg.peerDependencies?.["@opencode-ai/plugin"]
+);
 
 // Спринт 28: каталоги локалей обязаны совпадать по набору ключей.
 // Рассинхронизация — падение CI (см. ROADMAP, спринт 28).
