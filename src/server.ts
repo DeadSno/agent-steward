@@ -1721,6 +1721,7 @@ function renderPage(): string {
   var updated = document.getElementById('updated');
   var allTasks = [];
   var allWorkspaces = [];
+  var allAnalytics = null;
   var activeWorkspace = 'all';
   /** Раскрытые родители матриц (имя → true). */
   var expandedMatrixParents = {};
@@ -1732,6 +1733,8 @@ function renderPage(): string {
   // (HTTP 499), и тогда в консоли появляется ошибка при каждой загрузке.
   var preferSummaryMetrics = true;
   var metricsFallbackLogged = false;
+  // P3-29: тяжёлая аналитика обновляется реже остальных блоков.
+  var ANALYTICS_INTERVAL_MS = 60000;
 
   function esc(s) {
     var d = document.createElement('div');
@@ -2314,7 +2317,7 @@ function renderPage(): string {
     }
 
     if (visible.length === 0) {
-      rows.innerHTML = '<tr><td colspan="9" class="empty">🎄 Задач пока нет. Самое время украсить ёлку!</td></tr>';
+      rows.innerHTML = '<tr><td colspan="9" class="empty">' + EMPTY_TASKS_HTML + '</td></tr>';
       return;
     }
     var html = '';
@@ -2335,7 +2338,7 @@ function renderPage(): string {
       }
     }
     if (shown === 0) {
-      rows.innerHTML = '<tr><td colspan="9" class="empty">🎄 Задач пока нет. Самое время украсить ёлку!</td></tr>';
+      rows.innerHTML = '<tr><td colspan="9" class="empty">' + EMPTY_TASKS_HTML + '</td></tr>';
       return;
     }
     rows.innerHTML = html;
@@ -2398,6 +2401,16 @@ function renderPage(): string {
   // Без него кросс-сайтовый fetch не пройдёт (нужен CORS-preflight, которого нет).
   var CLIENT_HEADERS = { 'X-Scheduler-Client': 'dashboard' };
 
+  // P3-29: новогоднее оформление (снежинки и «украсить ёлку») — только по
+  // явному флагу ?snow=1, чтобы не крутить 18 анимаций круглый год.
+  var FESTIVE = false;
+  try {
+    FESTIVE = new URLSearchParams(location.search).get('snow') === '1';
+  } catch (_) {}
+  var EMPTY_TASKS_HTML = FESTIVE
+    ? '🎄 Задач пока нет. Самое время украсить ёлку!'
+    : 'Задач пока нет. Самое время создать!';
+
   // Устойчивая загрузка: антивирусы иногда блокируют отдельные URL
   // (например, /api/metrics) статусом 499 и картинкой вместо JSON.
   // Один сбой не должен ломать весь дашборд.
@@ -2445,8 +2458,7 @@ function renderPage(): string {
         loadMetricsJson(),
         safeJson('/api/history', { records: [] }),
         safeJson('/api/models-analysis', { models: [], totals: {}, whatIf: [] }),
-        safeJson('/api/workspaces', { workspaces: [] }),
-        safeJson('/api/analytics?days=14', null)
+        safeJson('/api/workspaces', { workspaces: [] })
       ]);
       var tasks = (results[0] && results[0].tasks) || [];
       var m = results[1] || {};
@@ -2466,13 +2478,32 @@ function renderPage(): string {
       renderGraph(tasks);
       renderHistory(history);
       renderModelsAnalysis(modelsAnalysis);
-      renderAnalytics(results[5]);
+      renderAnalytics(allAnalytics);
       showServerWarn(results[0] ? null : 'Не удалось загрузить список задач — остальные блоки обновлены. Подробности в консоли (F12).');
       updated.textContent = 'Обновлено: ' + new Date().toLocaleTimeString();
     } catch (err) {
       var msg = err && err.message ? err.message : String(err);
       showServerWarn('Не удалось получить данные дашборда: ' + msg + ' Откройте консоль браузера (F12) — там тело ответа сервера.');
       rows.innerHTML = '<tr><td colspan="9" class="empty">❌ Ошибка загрузки данных: ' + esc(msg) + '</td></tr>';
+    }
+  }
+
+  // P3-29: аналитика — тяжёлая агрегация SQLite, грузим реже основных блоков
+  // и используем ETag/If-None-Match, чтобы не перезапрашивать неизменённые данные.
+  var analyticsEtag = null;
+  async function loadAnalytics() {
+    try {
+      var headers = { 'X-Scheduler-Client': 'dashboard' };
+      if (analyticsEtag) headers['If-None-Match'] = analyticsEtag;
+      var res = await fetch('/api/analytics?days=14', { cache: 'no-store', headers: headers });
+      if (res.status === 304) return; // не изменилось с прошлого раза
+      analyticsEtag = res.headers.get('ETag');
+      allAnalytics = await readJson(res);
+      if (allAnalytics && allAnalytics.totals) {
+        renderAnalytics(allAnalytics);
+      }
+    } catch (err) {
+      console.error('Аналитика недоступна:', err);
     }
   }
 
@@ -2640,6 +2671,8 @@ function renderPage(): string {
 
   loadAll();
   setInterval(loadAll, 5000);
+  loadAnalytics();
+  setInterval(loadAnalytics, ANALYTICS_INTERVAL_MS);
 })();
 </script>
 
