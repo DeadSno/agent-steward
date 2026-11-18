@@ -136,7 +136,7 @@ profile gets the first free port from 3783 upward when it is created, recorded i
 dashboard response carries `x-plugin-profile`, so a second profile neither reuses
 another profile's server nor treats it as a zombie.
 
-`SCHEMA_VERSION` is currently **9**; migrations are additive and idempotent,
+`SCHEMA_VERSION` is currently **10**; migrations are additive and idempotent,
 applied through `PRAGMA user_version` on open.
 
 | Tables | Purpose |
@@ -147,7 +147,7 @@ applied through `PRAGMA user_version` on open.
 | `git_state` | git-trigger heads and polling state |
 | `notification_dedup`, `notification_embeddings` | rule-based and embedding dedup |
 | `runs`, `run_steps`, `run_dlq`, `run_injections` | durable runs: state machine, step journal, dead-letter queue, pause-time context injections; v9 adds `owner_id` / `lease_until` to `run_steps` |
-| `capability_map` | router layer 2: task type → model / success rate / costs / last runs |
+| `capability_map` | router layer 2: task type → model / success rate / costs / last runs; v10 adds `first_pass_count` |
 
 ### Known limitations (execution)
 
@@ -227,23 +227,34 @@ cloud model — without involving a model for known step types.
 
 ### Слой 2 — Capability Map (0 токенов, быстро)
 
-SQLite-таблица `task_type → model / success_rate / avg_cost / avg_time /
-last_10_runs`. Обучается на исходах гейта (CONCEPT §9 learning loop).
+SQLite-таблица `task_type → model / success_rate / first_pass_rate /
+avg_cost / avg_time / last_10_runs`. Обучается на исходах гейта
+(CONCEPT §9 learning loop).
 
-- `success_rate ≥ 0.85` → маршрут локально
-- `success_rate ≤ 0.30` → эскалация в облако или «нужно ревью»
+- `effective_success_rate ≥ 0.85` → маршрут локально
+- `effective_success_rate ≤ 0.30` → эскалация в облако или «нужно ревью»
+
+`effective_success_rate = 0.7 × decayed_success_rate + 0.3 × first_pass_rate`.
+`decayed_success_rate` считается по `last_10_runs` с half-life 8 исходов
+(свежий исход весит 1, каждый предыдущий — вдвое меньше на каждые 8 шагов),
+поэтому недавние провалы быстро перевешивают старые успехи. `first_pass_rate`
+— доля успехов, достигнутых с первой попытки (`attempts = 1`); явный флаг
+`firstPass` позволяет переопределить это для конкретного исхода.
 
 Это и есть learning loop: роутер учится на гейтах и становится точнее без затрат
 токенов на само решение.
 
-Реализация (Спринт 36.5.b): `src/db/capability-repo.ts`, таблица `capability_map`
-(`SCHEMA_VERSION = 9`). `recordCapabilityOutcome` обновляет счётчики, считает
+Реализация (Спринт 36.5.b, B13): `src/db/capability-repo.ts`, таблица
+`capability_map` (`SCHEMA_VERSION = 10`). `recordCapabilityOutcome` обновляет
+счётчики (`runs_total`, `runs_passed`, `first_pass_count`), кумулятивный
 `success_rate` и скользящие средние стоимости/времени, хранит `last_10_runs`
 (JSON, новые справа). `decideCapabilityRoute` решает по правилам:
 меньше `MIN_RUNS_FOR_DECISION = 3` исходов → `explore` (решает слой 3),
-`≥ 0.85` → `local`, `≤ 0.30` → `cloud`, между порогами → `review`. Пороги
-передаются параметром, поэтому политика меняется без миграции данных.
-Покрытие — `test-capability-map.mjs`.
+`effective_success_rate ≥ 0.85` → `local`, `≤ 0.30` → `cloud`, между порогами →
+`review`. Пороги передаются параметром, поэтому политика меняется без миграции
+данных. При миграции v9 → v10 legacy-записи получают
+`first_pass_count = runs_passed` (старые успехи считаются успехами с первой
+попытки). Покрытие — `test-capability-map.mjs`.
 
 ### Слой 3 — локальная модель (только декомпозиция и неоднозначность)
 
@@ -303,7 +314,7 @@ last_10_runs`. Обучается на исходах гейта (CONCEPT §9 le
 | `src/core/schedule-gate.ts` | Wrapper-side gate: cron re-check (poll mode), window postpone, defer-file |
 | `src/db/` | SQLite access: schema, migrations, repositories, recovery; `runs-repo.ts` keeps durable `runs`/`run_steps` state, `run-journal.ts` writes transitions around each step, `run-resume.ts` continues a crashed chain, `step-idempotency.ts` replays steps by key, `run-dlq.ts` parks deterministically failed steps |
 | `src/core/router/rules.ts` | Router layer 1: static rules task type → transport + executor, normalization, no imports (0 tokens) |
-| `src/db/capability-repo.ts` | Router layer 2: Capability Map - gate outcomes per task type, success_rate, moving averages, last 10 runs, threshold decision |
+| `src/db/capability-repo.ts` | Router layer 2: Capability Map - gate outcomes per task type, cumulative and decayed success_rate, first_pass_rate, moving averages, last 10 runs, threshold decision |
 | `src/core/router/planner.ts` | Router layer 3: mission decomposition (model once per mission) and heuristic fallback, steps carry type only, routing stays in layers 1-2 |
 | `src/core/router/dispatch.ts` | Router assembly: `routeStep` runs layer 1 then layer 2 and returns transport/executor, never imports the planner |
 | `src/core/router/escalation.ts` | Gate failure escalation `local → cloud → review → blocked` by pure transition table, no DB, no model |
@@ -485,7 +496,7 @@ the whole plugin directory (database, logs, locks, wrappers, prompts) with
 
 Schema evolution is additive: `applySchema` runs `CREATE TABLE IF NOT EXISTS` on every
 connection and adds missing columns after `PRAGMA table_info`, so upgrading the plugin
-never requires a manual migration. `SCHEMA_VERSION` (currently `9`) is stored in
+never requires a manual migration. `SCHEMA_VERSION` (currently `10`) is stored in
 `PRAGMA user_version`; incremental steps live in `MIGRATIONS`.
 
 ### Durable run state (Sprint 36.1)
@@ -884,7 +895,7 @@ after the agent with the user's privileges and are not filtered by tool policy.
 |---|---|---|
 | Миссия | цель + scope + gate-спека + safety + бюджет | `missions` (план 38, опциональный шаблон) |
 | Задача | миссия-шаблон + триггер | `tasks` (есть) |
-| Запуск | durable-исполнение: шаги, попытки, вердикты | `runs` / `run_steps` (есть, SCHEMA_VERSION 9) |
+| Запуск | durable-исполнение: шаги, попытки, вердикты | `runs` / `run_steps` (есть, SCHEMA_VERSION 10) |
 | Исход гейта | вердикт + provenance + экономика | `gate_outcomes` (план 40) |
 
 ### Путь исполнения (целевой)

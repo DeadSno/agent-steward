@@ -23,19 +23,6 @@ Legacy: `opencode-windows-scheduler@1.5.8`.
 
 # 1. Бэклог (аудит 18.11)
 
-## Деталь 1.11 — Capability map (router)
-`src/db/capability-repo.ts`
-
-**Задача B13 — Decay + `first_pass_rate`** · P2 · ⬜
-
-`success_rate` кумулятивный без затухания; `last_10_runs` не участвует в решении (CONCEPT §5, §6.3).
-
-- [ ] B13.1 Затухание успеха (half-life)
-- [ ] B13.2 `first_pass_rate` (успех с первой попытки)
-- [ ] B13.3 Участие `last_10_runs` в выборе
-- [ ] B13.4 Тест: старые успехи не перевешивают свежие провалы
-- [ ] B13.5 Docs
-
 ## Деталь 1.12 — Дедуп уведомлений
 `src/notifications.ts` (`tokenize`)
 

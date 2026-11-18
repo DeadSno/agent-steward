@@ -59,6 +59,7 @@ for (const column of [
   "model",
   "runs_total",
   "runs_passed",
+  "first_pass_count",
   "success_rate",
   "avg_cost_usd",
   "avg_time_ms",
@@ -207,6 +208,89 @@ assert(
 assert(capability.listCapabilities(1).length === 1, "limit работает");
 assert(listed.some((item) => item.taskType === "run_tests"), "run_tests попал в список");
 
+// 12b. B13.1: затухание успехов — свежие исходы весят больше старых
+assert(capability.decayedSuccessRate([]) === 0, "decay: пустая история даёт 0");
+assert(capability.decayedSuccessRate([1]) === 1, "decay: единственный свежий успех даёт 1");
+const decayOldSuccess = capability.decayedSuccessRate([1, 1, 1, 0, 0, 0, 0, 0, 0, 0]);
+const decayNewSuccess = capability.decayedSuccessRate([0, 0, 0, 0, 0, 1, 1, 1, 1, 1]);
+assert(
+  decayNewSuccess > decayOldSuccess,
+  `decay: свежие успехи весят больше старых (${decayNewSuccess.toFixed(3)} > ${decayOldSuccess.toFixed(3)})`,
+);
+
+// 12c. B13.2: first_pass_rate считается по попыткам, а не по успеху
+const firstPassOutcome1 = capability.recordCapabilityOutcome({
+  taskType: "first_pass_audit",
+  passed: true,
+  attempts: 1,
+});
+assert(firstPassOutcome1.firstPassCount === 1, "first-pass: успех с attempt=1 засчитан");
+assert(firstPassOutcome1.firstPassRate === 1, "first-pass: 1 из 1");
+const firstPassOutcome2 = capability.recordCapabilityOutcome({
+  taskType: "first_pass_audit",
+  passed: true,
+  attempts: 3,
+});
+assert(firstPassOutcome2.firstPassCount === 1, "first-pass: успех с attempt=3 не засчитан");
+assert(firstPassOutcome2.successRate === 1, "first-pass: кумулятивный success_rate остаётся 1");
+assert(firstPassOutcome2.firstPassRate === 0.5, "first-pass: 1 из 2 = 0.5");
+const firstPassOutcome3 = capability.recordCapabilityOutcome({
+  taskType: "first_pass_audit",
+  passed: false,
+});
+assert(firstPassOutcome3.firstPassRate === 1 / 3, "first-pass: провал уменьшает долю до 1/3");
+const firstPassOutcome4 = capability.recordCapabilityOutcome({
+  taskType: "first_pass_audit",
+  passed: true,
+  attempts: 5,
+  firstPass: true,
+});
+assert(firstPassOutcome4.firstPassCount === 2, "first-pass: явный firstPass=true засчитан");
+assert(firstPassOutcome4.firstPassRate === 0.5, "first-pass: 2 из 4 = 0.5");
+for (const [label, outcome] of [
+  ["attempts=0", { taskType: "bad_attempts", passed: true, attempts: 0 }],
+  ["firstPass=строка", { taskType: "bad_first_pass", passed: true, firstPass: "yes" }],
+]) {
+  let rejected = false;
+  try {
+    capability.recordCapabilityOutcome(outcome);
+  } catch {
+    rejected = true;
+  }
+  assert(rejected, `first-pass: невалидный ${label} отклонён`);
+  assert(capability.getCapability(outcome.taskType) === null, `first-pass: ${label} не создал запись`);
+}
+
+// 12d. B13.4: старые успехи не перевешивают свежие провалы
+for (let index = 0; index < 20; index += 1) {
+  capability.recordCapabilityOutcome({
+    taskType: "stale_success",
+    passed: true,
+    attempts: 1,
+  });
+}
+for (let index = 0; index < 10; index += 1) {
+  capability.recordCapabilityOutcome({
+    taskType: "stale_success",
+    passed: false,
+  });
+}
+const stale = capability.getCapability("stale_success");
+assert(stale.runsTotal === 30, "B13.4: 30 исходов в истории");
+assert(stale.successRate > 0.6, "B13.4: кумулятивный success_rate всё ещё высокий");
+assert(
+  stale.last10Runs.length === 10 && stale.last10Runs.every((value) => value === 0),
+  "B13.4: последние 10 исходов — провалы",
+);
+assert(stale.decayedSuccessRate < 0.5, "B13.4: затухающий success_rate ниже 0.5");
+assert(stale.effectiveSuccessRate < 0.85, "B13.4: эффективная надёжность ниже 0.85");
+const staleDecision = capability.decideCapabilityRoute("stale_success");
+assert(staleDecision.target !== "local", "B13.4: свежие провалы не дают local-модель");
+assert(
+  staleDecision.effectiveSuccessRate === stale.effectiveSuccessRate,
+  "B13.4: решение использует effectiveSuccessRate",
+);
+
 // 13. Карта переживает переоткрытие БД
 closeDb();
 initDb(dbPath);
@@ -228,6 +312,40 @@ assert(getSchemaVersion(getDb()) === SCHEMA_VERSION, `legacy v5 поднялас
 assert(capability.isCapabilityMapReady(), "миграция создала capability_map");
 const legacyOutcome = capability.recordCapabilityOutcome({ taskType: "apply_diff", passed: true });
 assert(legacyOutcome.runsTotal === 1, "карта работает сразу после миграции");
+closeDb();
+
+// 15. Старая карта v9 получает first_pass_count с backfill из runs_passed
+const legacyCapPath = path.join(tempRoot, "legacy-v9-capability.db");
+const legacyCap = new DatabaseSync(legacyCapPath);
+legacyCap.exec(`
+  PRAGMA user_version = 9;
+  CREATE TABLE capability_map (
+    task_type TEXT PRIMARY KEY,
+    model TEXT NOT NULL,
+    runs_total INTEGER NOT NULL DEFAULT 0,
+    runs_passed INTEGER NOT NULL DEFAULT 0,
+    success_rate REAL NOT NULL DEFAULT 0,
+    avg_cost_usd REAL NOT NULL DEFAULT 0,
+    avg_time_ms REAL NOT NULL DEFAULT 0,
+    last_10_runs TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  INSERT INTO capability_map (
+    task_type, model, runs_total, runs_passed, success_rate,
+    avg_cost_usd, avg_time_ms, last_10_runs, created_at, updated_at
+  ) VALUES (
+    'legacy_cap', 'local', 5, 4, 0.8, 0, 0, '[1,1,0,1,1]',
+    '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'
+  );
+`);
+legacyCap.close();
+initDb(legacyCapPath);
+assert(getSchemaVersion(getDb()) === SCHEMA_VERSION, `legacy v9 поднялась до v${SCHEMA_VERSION}`);
+const migratedCap = capability.getCapability("legacy_cap");
+assert(migratedCap !== null, "legacy v9: запись карты сохранена");
+assert(migratedCap.firstPassCount === 4, "legacy v9: first_pass_count заполнен из runs_passed");
+assert(migratedCap.firstPassRate === 0.8, "legacy v9: first_pass_rate = 4/5");
 closeDb();
 
 console.log(process.exitCode ? "\nЕсть провалы." : "\nВсе проверки Capability Map пройдены.");

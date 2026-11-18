@@ -226,6 +226,7 @@ CREATE TABLE IF NOT EXISTS capability_map (
   model TEXT NOT NULL,
   runs_total INTEGER NOT NULL DEFAULT 0,
   runs_passed INTEGER NOT NULL DEFAULT 0,
+  first_pass_count INTEGER,
   success_rate REAL NOT NULL DEFAULT 0,
   avg_cost_usd REAL NOT NULL DEFAULT 0,
   avg_time_ms REAL NOT NULL DEFAULT 0,
@@ -250,7 +251,7 @@ interface SchemaDb {
  * миграций. Увеличивайте при добавлении новой ступени в {@link MIGRATIONS}
  * и добавляйте соответствующую запись в массив.
  */
-export const SCHEMA_VERSION = 9;
+export const SCHEMA_VERSION = 10;
 
 /** Возвращает сохранённую версию схемы (0 у legacy-БД без user_version). */
 export function getSchemaVersion(db: SchemaDb): number {
@@ -501,6 +502,25 @@ const MIGRATIONS: { to: number; migrate: (db: SchemaDb) => void }[] = [
       }
       if (!columnNames.includes("lease_until")) {
         db.exec("ALTER TABLE run_steps ADD COLUMN lease_until TEXT");
+      }
+    },
+  },
+  {
+    // Ступень 10 — first-pass статистика Capability Map (B13). Успех с первой
+    // попытки нельзя восстановить из runs_passed, поэтому для legacy-строк
+    // считаем все прошлые успехи первыми (first_pass_count = runs_passed).
+    // NULL отличает «не заполнено миграцией» от честного нуля.
+    to: 10,
+    migrate(db) {
+      const columnNames = tableColumns(db, "capability_map");
+      if (!columnNames.includes("first_pass_count")) {
+        db.exec("ALTER TABLE capability_map ADD COLUMN first_pass_count INTEGER");
+      }
+      const columnsAfter = tableColumns(db, "capability_map");
+      if (columnsAfter.includes("first_pass_count")) {
+        db.exec(
+          "UPDATE capability_map SET first_pass_count = runs_passed WHERE first_pass_count IS NULL",
+        );
       }
     },
   },

@@ -31,13 +31,33 @@ export const MIN_RUNS_FOR_DECISION = 3;
 /** Сколько последних исходов хранить (1 — гейт пройден, 0 — провал). */
 export const RECENT_RUNS_LIMIT = 10;
 
+/**
+ * B13: полураспад веса исхода в последних прогонах. Исход давностью
+ * `SUCCESS_HALF_LIFE_RUNS` прогонов весит вдвое меньше свежего.
+ */
+export const SUCCESS_HALF_LIFE_RUNS = 8;
+
+/** B13: доля затухающего success rate в итоговой надёжности. */
+export const DECAY_WEIGHT = 0.7;
+
+/** B13: доля first-pass rate в итоговой надёжности. */
+export const FIRST_PASS_WEIGHT = 0.3;
+
 export interface CapabilityRecord {
   taskType: string;
   /** Исполнитель, который последним обрабатывал тип задачи. */
   model: string;
   runsTotal: number;
   runsPassed: number;
+  /** B13: сколько успехов получено с первой попытки. */
+  firstPassCount: number;
+  /** B13: first_pass_count / runs_total. */
+  firstPassRate: number;
   successRate: number;
+  /** B13: success rate последних прогонов с экспоненциальным затуханием. */
+  decayedSuccessRate: number;
+  /** B13: 0.7 * decayedSuccessRate + 0.3 * firstPassRate — вход маршрутизации. */
+  effectiveSuccessRate: number;
   avgCostUsd: number;
   avgTimeMs: number;
   /** Последние исходы, старые слева, новые справа, максимум 10. */
@@ -53,6 +73,10 @@ export interface CapabilityOutcome {
   passed: boolean;
   costUsd?: number;
   timeMs?: number;
+  /** B13: число попыток до исхода (1 — с первой). */
+  attempts?: number;
+  /** B13: явный признак first-pass; по умолчанию passed && attempts <= 1. */
+  firstPass?: boolean;
 }
 
 export interface CapabilityThresholds {
@@ -67,6 +91,12 @@ export interface CapabilityDecision {
   /** Машиночитаемая причина: no-data | local-reliable | escalate | review. */
   reason: "no-data" | "local-reliable" | "escalate" | "review";
   successRate: number;
+  /** B13: надёжность с учётом затухания и first-pass, по ней принимается решение. */
+  effectiveSuccessRate: number;
+  /** B13: затухающий success rate последних прогонов. */
+  decayedSuccessRate: number;
+  /** B13: доля успехов с первой попытки. */
+  firstPassRate: number;
   runsTotal: number;
   capability: CapabilityRecord | null;
 }
@@ -91,6 +121,14 @@ function requireNonNegative(value: number, field: string): number {
   return value;
 }
 
+/** B13: номер попытки — целое ≥ 1. */
+function requireAttempts(value: number): number {
+  if (!Number.isInteger(value) || value < 1) {
+    throw new Error(`Некорректное значение attempts: ожидалось целое ≥ 1, получено ${value}.`);
+  }
+  return value;
+}
+
 function parseRecentRuns(raw: unknown): number[] {
   if (typeof raw !== "string" || raw.trim() === "") {
     return [];
@@ -109,18 +147,64 @@ function parseRecentRuns(raw: unknown): number[] {
   }
 }
 
+/**
+ * B13: экспоненциально взвешенный success rate последних исходов.
+ *
+ * Свежий исход весит 1, исход давностью `halfLife` прогонов — 0.5.
+ * Так старые успехи не перевешивают свежие провалы, а `last_10_runs`
+ * участвует в решении, а не только хранится для отчёта.
+ */
+export function decayedSuccessRate(
+  runs: number[],
+  halfLife: number = SUCCESS_HALF_LIFE_RUNS,
+): number {
+  const recent = runs
+    .filter((value) => value === 0 || value === 1)
+    .slice(-RECENT_RUNS_LIMIT);
+  if (recent.length === 0) return 0;
+  const hl = Number.isFinite(halfLife) && halfLife > 0 ? halfLife : SUCCESS_HALF_LIFE_RUNS;
+  let weighted = 0;
+  let weights = 0;
+  recent.forEach((value, index) => {
+    const age = recent.length - 1 - index;
+    const weight = Math.pow(0.5, age / hl);
+    weighted += weight * value;
+    weights += weight;
+  });
+  return weights > 0 ? weighted / weights : 0;
+}
+
+/** B13: надёжность для маршрутизации — затухание плюс успех с первой попытки. */
+export function effectiveReliability(decayedRate: number, firstPassRate: number): number {
+  const decayed = Math.min(1, Math.max(0, decayedRate));
+  const firstPass = Math.min(1, Math.max(0, firstPassRate));
+  return DECAY_WEIGHT * decayed + FIRST_PASS_WEIGHT * firstPass;
+}
+
 function rowToRecord(row: Record<string, unknown>): CapabilityRecord {
   const runsTotal = Number(row.runs_total) || 0;
   const runsPassed = Number(row.runs_passed) || 0;
+  const successRate =
+    Number(row.success_rate) || (runsTotal > 0 ? runsPassed / runsTotal : 0);
+  const firstPassCount = Number(row.first_pass_count) || 0;
+  const firstPassRate =
+    runsTotal > 0 ? Math.min(1, firstPassCount / runsTotal) : 0;
+  const last10Runs = parseRecentRuns(row.last_10_runs);
+  const decayed =
+    last10Runs.length > 0 ? decayedSuccessRate(last10Runs) : successRate;
   return {
     taskType: String(row.task_type),
     model: String(row.model ?? DEFAULT_MODEL),
     runsTotal,
     runsPassed,
-    successRate: Number(row.success_rate) || (runsTotal > 0 ? runsPassed / runsTotal : 0),
+    firstPassCount,
+    firstPassRate,
+    successRate,
+    decayedSuccessRate: decayed,
+    effectiveSuccessRate: effectiveReliability(decayed, firstPassRate),
     avgCostUsd: Number(row.avg_cost_usd) || 0,
     avgTimeMs: Number(row.avg_time_ms) || 0,
-    last10Runs: parseRecentRuns(row.last_10_runs),
+    last10Runs,
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
   };
@@ -159,6 +243,16 @@ export function recordCapabilityOutcome(outcome: CapabilityOutcome): CapabilityR
   const time = outcome.timeMs === undefined ? 0 : requireNonNegative(outcome.timeMs, "timeMs");
   const model = (outcome.model ?? DEFAULT_MODEL).trim() || DEFAULT_MODEL;
   const passed = outcome.passed ? 1 : 0;
+  const attempts = outcome.attempts === undefined ? undefined : requireAttempts(outcome.attempts);
+  if (outcome.firstPass !== undefined && typeof outcome.firstPass !== "boolean") {
+    throw new Error("Признак firstPass должен быть boolean.");
+  }
+  // B13: без явного признака успех считается первым, если попытка одна
+  // (или число попыток не передано — обратная совместимость).
+  const firstPass =
+    passed === 1 &&
+    (outcome.firstPass ?? (attempts === undefined || attempts === 1));
+  const firstPassIncrement = firstPass ? 1 : 0;
 
   return withTransaction(() => {
     const db = getDb();
@@ -167,13 +261,14 @@ export function recordCapabilityOutcome(outcome: CapabilityOutcome): CapabilityR
     if (!existing) {
       db.prepare(
         `INSERT INTO capability_map (
-           task_type, model, runs_total, runs_passed, success_rate,
+           task_type, model, runs_total, runs_passed, first_pass_count, success_rate,
            avg_cost_usd, avg_time_ms, last_10_runs, created_at, updated_at
-         ) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?)`,
+         ) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         key,
         model,
         passed,
+        firstPassIncrement,
         passed,
         cost,
         time,
@@ -189,13 +284,16 @@ export function recordCapabilityOutcome(outcome: CapabilityOutcome): CapabilityR
       const recent = [...existing.last10Runs, passed].slice(-RECENT_RUNS_LIMIT);
       db.prepare(
         `UPDATE capability_map
-            SET model = ?, runs_total = ?, runs_passed = ?, success_rate = ?,
-                avg_cost_usd = ?, avg_time_ms = ?, last_10_runs = ?, updated_at = ?
+            SET model = ?, runs_total = ?, runs_passed = ?,
+                first_pass_count = COALESCE(first_pass_count, 0) + ?,
+                success_rate = ?, avg_cost_usd = ?, avg_time_ms = ?,
+                last_10_runs = ?, updated_at = ?
           WHERE task_type = ?`,
       ).run(
         model,
         runsTotal,
         runsPassed,
+        firstPassIncrement,
         runsPassed / runsTotal,
         avgCost,
         avgTime,
@@ -215,9 +313,13 @@ export function recordCapabilityOutcome(outcome: CapabilityOutcome): CapabilityR
 /**
  * Решение слоя 2 по порогам (0 токенов).
  *
+ * Пороги применяются к `effectiveSuccessRate` — 0.7 затухающего success rate
+ * последних прогонов плюс 0.3 first-pass rate (B13), а не к кумулятивному
+ * success rate. Поэтому старые успехи не перевешивают свежие провалы.
+ *
  * - данных меньше `minRuns` → `explore` (решает слой 3);
- * - `success_rate ≥ 0.85` → `local`;
- * - `success_rate ≤ 0.30` → `cloud` (эскалация);
+ * - `effectiveSuccessRate ≥ 0.85` → `local`;
+ * - `effectiveSuccessRate ≤ 0.30` → `cloud` (эскалация);
  * - между порогами → `review` (нужен человек или облачный ревьюер).
  */
 export function decideCapabilityRoute(
@@ -233,34 +335,46 @@ export function decideCapabilityRoute(
   }
 
   const capability = getCapability(key);
+  const effectiveSuccessRate = capability?.effectiveSuccessRate ?? 0;
+  const decayedSuccessRate = capability?.decayedSuccessRate ?? 0;
+  const firstPassRate = capability?.firstPassRate ?? 0;
   if (!capability || capability.runsTotal < minRuns) {
     return {
       taskType: key,
       target: "explore",
       reason: "no-data",
       successRate: capability?.successRate ?? 0,
+      effectiveSuccessRate,
+      decayedSuccessRate,
+      firstPassRate,
       runsTotal: capability?.runsTotal ?? 0,
       capability,
     };
   }
 
-  if (capability.successRate >= localSuccess) {
+  if (effectiveSuccessRate >= localSuccess) {
     return {
       taskType: key,
       target: "local",
       reason: "local-reliable",
       successRate: capability.successRate,
+      effectiveSuccessRate,
+      decayedSuccessRate,
+      firstPassRate,
       runsTotal: capability.runsTotal,
       capability,
     };
   }
 
-  if (capability.successRate <= cloudFailure) {
+  if (effectiveSuccessRate <= cloudFailure) {
     return {
       taskType: key,
       target: "cloud",
       reason: "escalate",
       successRate: capability.successRate,
+      effectiveSuccessRate,
+      decayedSuccessRate,
+      firstPassRate,
       runsTotal: capability.runsTotal,
       capability,
     };
@@ -271,6 +385,9 @@ export function decideCapabilityRoute(
     target: "review",
     reason: "review",
     successRate: capability.successRate,
+    effectiveSuccessRate,
+    decayedSuccessRate,
+    firstPassRate,
     runsTotal: capability.runsTotal,
     capability,
   };
