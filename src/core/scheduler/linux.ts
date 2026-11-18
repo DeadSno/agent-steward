@@ -294,11 +294,19 @@ export class LinuxScheduler extends PosixSchedulerBase {
   }
 
   protected async applyPause(entry: RegistryEntry, paused: boolean): Promise<void> {
+    // P1-12: entry получен из find() ДО setPaused(), поэтому без этой строки
+    // upsert ниже возвращал в реестр paused:false, и listTasks() показывал
+    // приостановленную one-shot задачу как Ready.
+    entry.paused = paused;
     if (entry.triggerType === "once") {
       if (paused) {
         await this.cancelAt(entry);
       } else if (entry.runAt && Date.parse(entry.runAt) > Date.now()) {
         entry.atJobId = await this.scheduleAt(entry);
+      } else {
+        console.warn(
+          `[scheduler] Задача "${entry.name}" не будет перезапущена: время one-shot запуска уже прошло (${entry.runAt ?? "runAt не задан"}). Создайте новую задачу.`,
+        );
       }
       await this.registry.upsert(entry);
       return;

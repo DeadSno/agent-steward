@@ -204,7 +204,11 @@ try {
     `elapsedMs=${elapsedMs}`
   );
   const [record] = getHistory(spec.name, 5);
-  check("таймаут: запись истории есть со статусом ошибки", record?.status === "error", record?.status);
+  check("таймаут: запись истории есть со статусом timeout", record?.status === "timeout", record?.status);
+  check(
+    "таймаут: в логе причина — таймаут",
+    readLog(spec.logFile).includes("прервана по таймауту")
+  );
 
   // Внук должен умереть вместе с группой процессов.
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -239,7 +243,8 @@ try {
 } catch (err) {
   console.log("[diag] section 2 THREW:", err instanceof Error ? err.stack : String(err));
   check("таймаут: задача убита раньше 15 с", false, "section threw");
-  check("таймаут: запись истории есть со статусом ошибки", false, "section threw");
+  check("таймаут: запись истории есть со статусом timeout", false, "section threw");
+  check("таймаут: в логе причина — таймаут", false, "section threw");
   check("таймаут: внук (sleep) не переживает убийство дерева", false, "section threw");
 }
 

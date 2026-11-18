@@ -39,6 +39,7 @@ import { ensureWrapper, writePromptFile, writeWrapperCmd, lockFilePath, requestI
 import { getSchedulerBackend } from "./core/scheduler/index.js";
 import { SCHEDULER_SKILL_ID, loadSchedulerSkill } from "./skill.js";
 import { getTaskLogs } from "./core/scheduler/logs.js";
+import { findSanitizedNameConflict, sanitizedConflictMessage } from "./core/task-name.js";
 import { writeBashWrapper } from "./core/wrappers/bash.js";
 import { simulatePipeline } from "./core/dry-run.js";
 import {
@@ -5530,6 +5531,18 @@ async function schedulerCreateTask(
   // Для отката файлов: при обновлении существующей задачи файлы переиспользуются,
   // удалять их при сбое нельзя — в БД остаётся прежнее определение.
   const definitionExisted = Boolean(getTask(normalizedName));
+  // P1-10: при создании проверяем, что sanitized-имя не занято другой задачей
+  // или её оставшимися файлами. Иначе «my task» и «my-task» делят
+  // wrapper/prompt/lock/log, а вторая задача перезаписывает первую.
+  if (!definitionExisted) {
+    const conflict = findSanitizedNameConflict(
+      normalizedName,
+      listTaskDefinitions().map((def) => def.name),
+    );
+    if (conflict) {
+      throw new Error(sanitizedConflictMessage(normalizedName, conflict));
+    }
+  }
 
   const normalizedModel = model?.trim() || undefined;
   if (normalizedModel) {

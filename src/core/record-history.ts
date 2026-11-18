@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import { pathToFileURL } from "node:url";
-import { createSchedulerBackend } from "./scheduler/index.js";
+import { runTaskNow } from "./scheduler/run-now.js";
 import { notifyTaskCompletion } from "../notifications.js";
 import { finishRun, getHistory, recordRun, startRun } from "../db/history-repo.js";
 import { getSetting, setSetting } from "../db/settings-repo.js";
@@ -124,7 +124,7 @@ async function loadRetryConfig(taskName: string): Promise<{ count: number; delay
  */
 async function triggerTask(taskName: string): Promise<boolean> {
   try {
-    await createSchedulerBackend().runTask(taskName);
+    await runTaskNow(taskName);
     return true;
   } catch (err: any) {
     console.error(
@@ -221,7 +221,7 @@ async function runRetry(taskName: string, delaySec: number): Promise<void> {
   await new Promise<void>((resolve) => setTimeout(resolve, delay * 1000));
 
   try {
-    await createSchedulerBackend().runTask(taskName);
+    await runTaskNow(taskName);
     console.log(`[agent-steward] Повторный запуск задачи "${taskName}".`);
   } catch (err: any) {
     console.error(
