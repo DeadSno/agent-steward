@@ -141,6 +141,14 @@ cloud model — without involving a model for known step types.
 Агент хочет прочитать файл → роутер смотрит в таблицу → видит `direct + local` →
 выполняет напрямую, без MCP, без модели.
 
+Реализация (Спринт 36.5.a): `src/core/router/rules.ts` — замороженная таблица
+`STATIC_ROUTE_RULES`, `routeStaticStep(taskType)` (нормализует `Run Tests` /
+`run-tests` → `run_tests`), `isStaticTaskType`, `listStaticRouteRules`.
+Модуль не импортирует ни БД, ни модель, ни транспорт, поэтому горячий путь
+физически не может стоить токенов; неизвестный тип возвращает `undefined` и
+передаётся слою 2. Покрытие — `test-router-rules.mjs` (22 проверки, включая
+1000 маршрутизаций быстрее 50 мс).
+
 ### Слой 2 — Capability Map (0 токенов, быстро)
 
 SQLite-таблица `task_type → model / success_rate / avg_cost / avg_time /
@@ -152,6 +160,15 @@ last_10_runs`. Обучается на исходах гейта (CONCEPT §9 le
 Это и есть learning loop: роутер учится на гейтах и становится точнее без затрат
 токенов на само решение.
 
+Реализация (Спринт 36.5.b): `src/db/capability-repo.ts`, таблица `capability_map`
+(`SCHEMA_VERSION = 6`). `recordCapabilityOutcome` обновляет счётчики, считает
+`success_rate` и скользящие средние стоимости/времени, хранит `last_10_runs`
+(JSON, новые справа). `decideCapabilityRoute` решает по правилам:
+меньше `MIN_RUNS_FOR_DECISION = 3` исходов → `explore` (решает слой 3),
+`≥ 0.85` → `local`, `≤ 0.30` → `cloud`, между порогами → `review`. Пороги
+передаются параметром, поэтому политика меняется без миграции данных.
+Покрытие — `test-capability-map.mjs`.
+
 ### Слой 3 — локальная модель (только декомпозиция и неоднозначность)
 
 Модель не маршрутизирует каждый шаг. Она только:
@@ -159,6 +176,8 @@ last_10_runs`. Обучается на исходах гейта (CONCEPT §9 le
 2. Разрешает неоднозначность (Explore-режим, когда в Capability Map нет данных).
 
 После этого каждый шаг проходит через Слой 1 и Слой 2.
+
+**Реализация (Спринт 36.5.c):** `src/core/router/planner.ts`. `planMission(mission, { decomposer, maxSteps })` вызывает декомпозер — локальную модель — один раз на миссию и нормализует типы через `normalizeTaskType`; без декомпозера работает `decomposeHeuristically` по ключевым словам, без сети и модели. `planMissionSync` — вариант для синхронных мест. Шаг плана содержит только `stepName` и `taskType`, маршрут по-прежнему выбирают слои 1–2; типы вне статических правил собираются в `ambiguousTaskTypes` для `decideCapabilityRoute`. Пустая миссия, пустой или битый план модели — ошибка, а не молчаливый план. Покрытие — `test-planner.mjs`.
 
 ### Эскалация
 
@@ -203,6 +222,9 @@ last_10_runs`. Обучается на исходах гейта (CONCEPT §9 le
 | `src/core/schedule-v2.ts` | Extended cron parser/matcher, timezone math, launch windows, poll-mode decisions |
 | `src/core/schedule-gate.ts` | Wrapper-side gate: cron re-check (poll mode), window postpone, defer-file |
 | `src/db/` | SQLite access: schema, migrations, repositories, recovery; `runs-repo.ts` keeps durable `runs`/`run_steps` state, `run-journal.ts` writes transitions around each step, `run-resume.ts` continues a crashed chain, `step-idempotency.ts` replays steps by key, `run-dlq.ts` parks deterministically failed steps |
+| `src/core/router/rules.ts` | Router layer 1: static rules task type → transport + executor, normalization, no imports (0 tokens) |
+| `src/db/capability-repo.ts` | Router layer 2: Capability Map - gate outcomes per task type, success_rate, moving averages, last 10 runs, threshold decision |
+| `src/core/router/planner.ts` | Router layer 3: mission decomposition (model once per mission) and heuristic fallback, steps carry type only, routing stays in layers 1-2 |
 | `src/shared/jobs-view.ts` | Task view shared by the GUI and dashboard |
 
 ## Scheduling backends
@@ -355,7 +377,7 @@ the whole plugin directory (database, logs, locks, wrappers, prompts) with
 
 Schema evolution is additive: `applySchema` runs `CREATE TABLE IF NOT EXISTS` on every
 connection and adds missing columns after `PRAGMA table_info`, so upgrading the plugin
-never requires a manual migration. `SCHEMA_VERSION` (currently `5`) is stored in
+never requires a manual migration. `SCHEMA_VERSION` (currently `6`) is stored in
 `PRAGMA user_version`; incremental steps live in `MIGRATIONS`.
 
 ### Durable run state (Sprint 36.1)

@@ -186,6 +186,24 @@ CREATE TABLE IF NOT EXISTS run_dlq (
 CREATE INDEX IF NOT EXISTS idx_run_dlq_status ON run_dlq(status, created_at DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_run_dlq_open_unique
   ON run_dlq(run_id, step_name) WHERE status = 'open';
+
+-- Спринт 36.5.b (Capability Map): исходы гейта по типам задач.
+-- Слой 2 роутера читает success_rate и avg_* и выбирает local/cloud/review
+-- без вызова модели. last_10_runs — JSON-массив 1 (гейт пройден) / 0 (провал).
+CREATE TABLE IF NOT EXISTS capability_map (
+  task_type TEXT PRIMARY KEY,
+  model TEXT NOT NULL,
+  runs_total INTEGER NOT NULL DEFAULT 0,
+  runs_passed INTEGER NOT NULL DEFAULT 0,
+  success_rate REAL NOT NULL DEFAULT 0,
+  avg_cost_usd REAL NOT NULL DEFAULT 0,
+  avg_time_ms REAL NOT NULL DEFAULT 0,
+  last_10_runs TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_capability_success ON capability_map(success_rate DESC);
 `;
 
 interface SchemaDb {
@@ -201,7 +219,7 @@ interface SchemaDb {
  * миграций. Увеличивайте при добавлении новой ступени в {@link MIGRATIONS}
  * и добавляйте соответствующую запись в массив.
  */
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 
 /** Возвращает сохранённую версию схемы (0 у legacy-БД без user_version). */
 export function getSchemaVersion(db: SchemaDb): number {
@@ -370,6 +388,28 @@ const MIGRATIONS: { to: number; migrate: (db: SchemaDb) => void }[] = [
         CREATE INDEX IF NOT EXISTS idx_run_dlq_status ON run_dlq(status, created_at DESC);
         CREATE UNIQUE INDEX IF NOT EXISTS idx_run_dlq_open_unique
           ON run_dlq(run_id, step_name) WHERE status = 'open';
+      `);
+    },
+  },
+  {
+    // Ступень 6 — Спринт 36.5.b: Capability Map роутера. Таблица только
+    // добавляется, поэтому ступень идемпотентна и безопасна для старых БД.
+    to: 6,
+    migrate(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS capability_map (
+          task_type TEXT PRIMARY KEY,
+          model TEXT NOT NULL,
+          runs_total INTEGER NOT NULL DEFAULT 0,
+          runs_passed INTEGER NOT NULL DEFAULT 0,
+          success_rate REAL NOT NULL DEFAULT 0,
+          avg_cost_usd REAL NOT NULL DEFAULT 0,
+          avg_time_ms REAL NOT NULL DEFAULT 0,
+          last_10_runs TEXT NOT NULL DEFAULT '[]',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_capability_success ON capability_map(success_rate DESC);
       `);
     },
   },

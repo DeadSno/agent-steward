@@ -1,7 +1,7 @@
 // Спринт 36.3: идемпотентные ключи шагов.
 //
 // Проверяем:
-//  - схема v5 (уникальность ключей появилась в v4) и частичный UNIQUE-индекс по (run_id, idempotency_key);
+//  - схема v6 (уникальность ключей появилась в v4) и частичный UNIQUE-индекс по (run_id, idempotency_key);
 //  - повторный вызов с тем же ключом не выполняет тело второй раз;
 //  - результат берётся из output_json, attempt не растёт;
 //  - ключ уникален в пределах запуска, но переиспользуем между запусками;
@@ -48,8 +48,8 @@ const DatabaseSync = createRequire(import.meta.url)("node:sqlite").DatabaseSync;
 
 initDb(dbPath);
 
-// --- 1. Схема v5 и уникальный индекс ---------------------------------------
-assert(SCHEMA_VERSION === 5, "SCHEMA_VERSION = 5");
+// --- 1. Схема v6 и уникальный индекс ---------------------------------------
+assert(SCHEMA_VERSION === 6, "SCHEMA_VERSION = 6");
 assert(getSchemaVersion(getDb()) === SCHEMA_VERSION, `user_version = ${SCHEMA_VERSION}`);
 
 const indexes = getDb()

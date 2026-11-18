@@ -1,7 +1,7 @@
 // Спринт 36.4: DLQ — детерминированно упавшие шаги и ручной retry.
 //
 // Проверяем:
-//  - схема v5: таблица run_dlq и частичный UNIQUE по открытым записям;
+//  - схема v6: таблица run_dlq и частичный UNIQUE по открытым записям;
 //  - шаг, исчерпавший попытки, попадает в очередь со снимком ошибки;
 //  - повторный скан не создаёт дублей, шаг ниже порога не попадает;
 //  - ручной retry переоткрывает запуск, делает attempt + 1 и закрывает запись;
@@ -63,9 +63,9 @@ function failStepN(runId, stepName, attempts) {
   }
 }
 
-// --- 1. Схема v5 и индексы DLQ ---------------------------------------------
-assert(SCHEMA_VERSION === 5, "SCHEMA_VERSION = 5");
-assert(getSchemaVersion(getDb()) === 5, "user_version = 5");
+// --- 1. Схема v6 и индексы DLQ ---------------------------------------------
+assert(SCHEMA_VERSION === 6, "SCHEMA_VERSION = 6");
+assert(getSchemaVersion(getDb()) === 6, "user_version = 6");
 
 const tables = getDb()
   .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'run_dlq'")
@@ -206,7 +206,7 @@ legacy.exec(`
 legacy.close();
 
 initDb(legacyPath);
-assert(getSchemaVersion(getDb()) === 5, "legacy v4 мигрировала до v5");
+assert(getSchemaVersion(getDb()) === 6, "legacy v4 мигрировала до v6");
 assert(dlq.isDlqReady(), "в legacy-БД появилась run_dlq");
 const legacyRun = repo.createRun({ taskName: "legacy", steps: [{ stepName: "old" }] });
 repo.startRun(legacyRun.id);
