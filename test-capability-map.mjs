@@ -46,8 +46,8 @@ const DatabaseSync = createRequire(import.meta.url)("node:sqlite").DatabaseSync;
 
 initDb(dbPath);
 
-// 1. Схема v7
-assert(SCHEMA_VERSION === 7, `схема поднята до v7 (${SCHEMA_VERSION})`);
+// 1. Схема (capability_map с v6)
+assert(SCHEMA_VERSION >= 6, `схема не ниже v6 (${SCHEMA_VERSION})`);
 assert(getSchemaVersion(getDb()) === SCHEMA_VERSION, "PRAGMA user_version совпадает со SCHEMA_VERSION");
 assert(capability.isCapabilityMapReady(), "таблица capability_map создана");
 const columns = getDb()
@@ -224,7 +224,7 @@ const legacy = new DatabaseSync(legacyPath);
 legacy.exec("PRAGMA user_version = 5");
 legacy.close();
 initDb(legacyPath);
-assert(getSchemaVersion(getDb()) === 7, "legacy v5 поднялась до v7");
+assert(getSchemaVersion(getDb()) === SCHEMA_VERSION, `legacy v5 поднялась до v${SCHEMA_VERSION}`);
 assert(capability.isCapabilityMapReady(), "миграция создала capability_map");
 const legacyOutcome = capability.recordCapabilityOutcome({ taskType: "apply_diff", passed: true });
 assert(legacyOutcome.runsTotal === 1, "карта работает сразу после миграции");

@@ -63,9 +63,9 @@ function failStepN(runId, stepName, attempts) {
   }
 }
 
-// --- 1. Схема v7 и индексы DLQ ---------------------------------------------
-assert(SCHEMA_VERSION === 7, "SCHEMA_VERSION = 7");
-assert(getSchemaVersion(getDb()) === 7, "user_version = 7");
+// --- 1. Схема (DLQ с v5) и индексы DLQ -------------------------------------
+assert(SCHEMA_VERSION >= 5, "SCHEMA_VERSION не ниже v5 (DLQ)");
+assert(getSchemaVersion(getDb()) === SCHEMA_VERSION, `user_version = ${SCHEMA_VERSION}`);
 
 const tables = getDb()
   .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'run_dlq'")
@@ -206,7 +206,7 @@ legacy.exec(`
 legacy.close();
 
 initDb(legacyPath);
-assert(getSchemaVersion(getDb()) === 7, "legacy v4 мигрировала до v7");
+assert(getSchemaVersion(getDb()) === SCHEMA_VERSION, `legacy v4 мигрировала до v${SCHEMA_VERSION}`);
 assert(dlq.isDlqReady(), "в legacy-БД появилась run_dlq");
 const legacyRun = repo.createRun({ taskName: "legacy", steps: [{ stepName: "old" }] });
 repo.startRun(legacyRun.id);

@@ -48,8 +48,8 @@ const DatabaseSync = createRequire(import.meta.url)("node:sqlite").DatabaseSync;
 
 initDb(dbPath);
 
-// --- 1. Схема v7 и уникальный индекс ---------------------------------------
-assert(SCHEMA_VERSION === 7, "SCHEMA_VERSION = 7");
+// --- 1. Схема (идемпотентные ключи с v4) и уникальный индекс ---------------
+assert(SCHEMA_VERSION >= 4, `SCHEMA_VERSION не ниже v4 (${SCHEMA_VERSION})`);
 assert(getSchemaVersion(getDb()) === SCHEMA_VERSION, `user_version = ${SCHEMA_VERSION}`);
 
 const indexes = getDb()

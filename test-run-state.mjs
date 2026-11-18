@@ -61,9 +61,9 @@ const indexNames = (table) =>
     .all()
     .map((row) => String(row.name));
 
-// --- 1. Свежая БД: схема v7 и таблицы durable DAG -----------------------
+// --- 1. Свежая БД: схема v3+ и таблицы durable DAG -----------------------
 initDb(dbPath);
-assert(SCHEMA_VERSION === 7, "SCHEMA_VERSION = 7");
+assert(SCHEMA_VERSION >= 3, `SCHEMA_VERSION не ниже v3 (${SCHEMA_VERSION})`);
 assert(
   getSchemaVersion(getDb()) === SCHEMA_VERSION,
   `свежая БД: user_version = ${SCHEMA_VERSION}`,
@@ -312,7 +312,7 @@ v2.close();
 initDb(v2Path);
 assert(
   getSchemaVersion(getDb()) === SCHEMA_VERSION,
-  "БД v2 с run_steps без position открылась и поднялась до v7",
+  `БД v2 с run_steps без position открылась и поднялась до v${SCHEMA_VERSION}`,
 );
 assert(
   columnsOf("run_steps").includes("position"),

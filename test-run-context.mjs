@@ -56,9 +56,9 @@ const createRun = (taskName, steps) =>
   repo.createRun({ taskName, steps: steps.map((stepName) => ({ stepName })) });
 const stepStatus = (runId, name) => repo.getStep(runId, name)?.status;
 
-// --- 1. Схема v7 ------------------------------------------------------------
-assert(SCHEMA_VERSION === 7, `SCHEMA_VERSION = ${SCHEMA_VERSION}`);
-assert(getSchemaVersion(getDb()) === 7, "user_version = 7");
+// --- 1. Схема (run_injections с v7) ---------------------------------------
+assert(SCHEMA_VERSION >= 7, `SCHEMA_VERSION не ниже v7 (${SCHEMA_VERSION})`);
+assert(getSchemaVersion(getDb()) === SCHEMA_VERSION, `user_version = ${SCHEMA_VERSION}`);
 const table = getDb()
   .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'run_injections'")
   .get();
