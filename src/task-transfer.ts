@@ -225,6 +225,14 @@ export interface TaskDefinition {
   runWhenLoggedOff?: boolean;
   /** Когда задача была создана — защита от ложного catch-up сразу после создания. */
   createdAt?: string;
+  /**
+   * Спринт 32 (Pipeline-as-code): имя pipeline, из которого создан шаг.
+   * Хранится в definition_json и позволяет apply отличать «свои» задачи
+   * от созданных вручную. Не участвует в запуске.
+   */
+  pipelineName?: string;
+  /** Спринт 32: стабильный id шага внутри pipeline (для diff/apply). */
+  pipelineStepId?: string;
 }
 
 const PREFIX = `\\OpenCode\\${TASK_FOLDER_NAME}\\`;

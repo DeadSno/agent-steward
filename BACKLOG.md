@@ -663,12 +663,12 @@ LIMIT ?
 
 | Задача | Подзадача | Описание | Статус |
 |--------|-----------|----------|--------|
-| P2-33.T1 | P2-33.T1.1 | Типы `PipelineSpec`/`PipelineStep` в `src/core/pipeline-spec.ts`: version, name, steps[] (id, needs[], prompt, schedule/trigger, model, gate, matrix, tools, timeout, retry) | ☐ |
-| | P2-33.T1.2 | Валидатор: уникальные id, ссылки `needs` существуют, нет циклов, cron/trigger, matrix, имена задач по `validateTaskName`, model, tools, лимит шагов | ☐ |
-| | P2-33.T1.3 | Тест валидатора: позитив + негатив (дубль id, цикл, битый needs, пустой steps) | ☐ |
-| P2-33.T2 | P2-33.T2.1 | Парсер YAML→`PipelineSpec` (`yaml` перенести из devDependencies в dependencies) | ☐ |
-| | P2-33.T2.2 | Маппинг `PipelineSpec`→`TaskDefinition[]`: `needs`→`dependsOn`, `gate`→`qualityGate`, `matrix.workspaces`→`matrix.workspaceIds`, `trigger`→`triggerType`; шаги без cron получают ручной триггер/DAG | ☐ |
-| | P2-33.T2.3 | Идемпотентный diff/apply: create/update/unchanged, не трогать задачи без `pipelineName`; маркеры `pipelineName`/`pipelineStepId` в `definition_json` (без миграции БД) | ☐ |
+| P2-33.T1 | P2-33.T1.1 | Типы `PipelineSpec`/`PipelineStep` в `src/core/pipeline-spec.ts`: version, name, steps[] (id, needs[], prompt, schedule/trigger, model, gate, matrix, tools, timeout, retry) | ✅ |
+| | P2-33.T1.2 | Валидатор: уникальные id, ссылки `needs` существуют, нет циклов, cron/trigger, matrix, имена задач по `validateTaskName`, model, tools, лимит шагов | ✅ |
+| | P2-33.T1.3 | Тест валидатора: позитив + негатив (дубль id, цикл, битый needs, пустой steps) | ✅ |
+| P2-33.T2 | P2-33.T2.1 | Парсер YAML→`PipelineSpec` (`yaml` перенести из devDependencies в dependencies) | ✅ |
+| | P2-33.T2.2 | Маппинг `PipelineSpec`→`TaskDefinition[]`: `needs`→`dependsOn`, `gate`→`qualityGate`, `matrix.workspaces`→`matrix.workspaceIds`, `trigger`→`triggerType`; шаги без cron получают ручной триггер/DAG | ✅ |
+| | P2-33.T2.3 | Идемпотентный diff/apply: create/update/unchanged, не трогать задачи без `pipelineName`; маркеры `pipelineName`/`pipelineStepId` в `definition_json` (без миграции БД) | ✅ |
 | | P2-33.T2.4 | Round-trip тест: YAML→задачи→export→YAML без потери значимых полей | ☐ |
 | P2-33.T3 | P2-33.T3.1 | `bin` в package.json + точка входа CLI `agent-steward` | ☐ |
 | | P2-33.T3.2 | `pipeline validate <file>` с exit-кодами 0/1 и человекочитаемым выводом | ☐ |
@@ -677,7 +677,7 @@ LIMIT ?
 | P2-33.T4 | P2-33.T4.1 | Агент-инструменты/RPC `pipeline_validate`/`pipeline_apply`/`pipeline_export` + обновить счётчики инструментов/RPC в доках и `test-docs.mjs` | ☐ |
 | P2-33.T5 | P2-33.T5.1 | `docs/PIPELINE.md` + пример `opencode.pipeline.yaml` | ☐ |
 | | P2-33.T5.2 | README (ru/en/zh) — раздел Pipeline-as-code | ☐ |
-| P2-33.T6 | P2-33.T6.1 | `test-pipeline.mjs` + включить в `npm test` | ☐ |
+| P2-33.T6 | P2-33.T6.1 | `test-pipeline.mjs` + включить в `npm test` | ✅ |
 | | P2-33.T6.2 | Приёмка: полный `npm test`, `npm run build`, `npm run lint` (0 ошибок) | ☐ |
 
 ### Деталь P3-38: CJK-токенизатор — i18n-срез, не блокер 0.1.0
