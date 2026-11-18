@@ -152,6 +152,31 @@ assert(
   "у восстановленной записи рассчитан duration_ms"
 );
 
+// --- 3c. Legacy без владельца и чужой хост: решает возраст (B1.5) --------
+const clock = new Date("2026-03-01T12:00:00.000Z");
+const freshIso = new Date(clock.getTime() - 60_000).toISOString();
+const oldIso = new Date(clock.getTime() - 25 * 60 * 60 * 1000).toISOString();
+const insertLegacy = getDb().prepare(
+  "INSERT INTO history (task_name, status, started_at, finished_at) VALUES (?, 'running', ?, NULL)"
+);
+insertLegacy.run("Legacy Fresh", freshIso);
+insertLegacy.run("Legacy Old", oldIso);
+const insertForeign = getDb().prepare(
+  "INSERT INTO history (task_name, status, started_at, finished_at, owner_pid, owner_host, owner_started_at) VALUES (?, 'running', ?, NULL, ?, ?, ?)"
+);
+insertForeign.run("Foreign Fresh", freshIso, process.pid, "another-host", freshIso);
+insertForeign.run("Foreign Old", oldIso, process.pid, "another-host", oldIso);
+
+const legacyOutcome = recoverInterrupted({ now: clock });
+assert(
+  legacyOutcome.recovered === 2 && legacyOutcome.keptAlive === 2,
+  `возраст решает для legacy и чужого хоста (${JSON.stringify(legacyOutcome)})`
+);
+assert(getHistory("Legacy Fresh", 1)[0]?.status === "running", "свежая legacy-строка осталась running");
+assert(getHistory("Legacy Old", 1)[0]?.status === "error", "просроченная legacy-строка помечена error");
+assert(getHistory("Foreign Fresh", 1)[0]?.status === "running", "свежая строка чужого хоста осталась running");
+assert(getHistory("Foreign Old", 1)[0]?.status === "error", "просроченная строка чужого хоста помечена error");
+
 // --- 4. Штатный --finish обновляет ту же строку -------------------------
 const start2 = runRecorder(["--start", "Finish Task", "2026-03-01T11:00:00.000Z"]);
 const finishId = Number(String(start2.stdout || "").trim());

@@ -30,7 +30,6 @@ Legacy: `opencode-windows-scheduler@1.5.8`.
 
 `recoverInterrupted()` помечает все `finished_at IS NULL` как `error` без проверки PID/владельца/возраста. Перезапуск плагина во время живого прогона финализирует его досрочно.
 
-- [ ] B1.5 Тесты: legacy-строка без владельца, превышение возраста, чужой хост
 - [ ] B1.6 Docs/CHANGELOG, счётчик schema в `test-docs`
 
 ## Деталь 1.2 — Ретраи

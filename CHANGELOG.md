@@ -15,7 +15,7 @@ All notable changes to this project are documented here. Format follows [Keep a 
 ### Fixed
 
 - **CI: `test-docs` после переименования раздела ARCHITECTURE:** проверка «4 типа процессов» искала `| Recorder |`, а в новой «Execution model» строка называется `| recorder |`; заменена на проверку входов (ad-hoc / internal orchestration / registered triggers) и таблицы процессов. Из-за неё падали все джобы `Test`, `V1 SDK` и `V2 SDK`.
-- **`test-crash-recovery`: семантика recovery:** сценарий разделён на живой владелец (запись остаётся `running`, `{recovered:0,keptAlive:1}`) и мёртвый (PID завершённого процесса → `{recovered:1}`, статус `error`, сообщение, `finished_at`, `duration_ms`).
+- **`test-crash-recovery`: семантика recovery:** сценарий разделён на живой владелец (запись остаётся `running`, `{recovered:0,keptAlive:1}`) и мёртвый (PID завершённого процесса → `{recovered:1}`, статус `error`, сообщение, `finished_at`, `duration_ms`); добавлена матрица «legacy без владельца / чужой хост × свежая / просроченная строка» с внедрёнными `now` и `maxUnverifiableAgeMs` (B1.5).
 
 ### Verified
 
