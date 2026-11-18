@@ -21,7 +21,7 @@ const notifications = await import("./dist/notifications.js");
 const settingsModule = await import("./dist/settings.js");
 const dbModule = await import("./dist/db/index.js");
 
-const { notifyTaskCompletion } = notifications;
+const { notifyTaskCompletion, tokenize, textToVector } = notifications;
 
 const results = [];
 let passed = 0;
@@ -190,6 +190,42 @@ await withWebhook(async (hookUrl) => {
   });
   check(
     "embedding #6: без suppressDuplicates оба доставлены",
+    webhookCalls.length === 2
+  );
+});
+
+// --- 7. B14: CJK-токенизация ------------------------------------------------
+await withWebhook(async (hookUrl) => {
+  await writeSettings(hookUrl);
+  clearEmbeddings();
+
+  const zhTokens = tokenize("任务执行失败");
+  check(
+    "B14: zh-текст даёт токены-биграммы",
+    zhTokens.includes("任务") && zhTokens.includes("失败")
+  );
+  const zhVector = textToVector("任务执行失败");
+  check(
+    "B14: zh-сообщение даёт ненулевой вектор",
+    zhVector.some((value) => value !== 0)
+  );
+
+  await notifyTaskCompletion("任务部署", "success", 1000, null, 0, 0, {
+    asyncTriage: false,
+  });
+  await notifyTaskCompletion("任务部署", "success", 1000, null, 0, 0, {
+    asyncTriage: false,
+  });
+  check(
+    "B14: повторное zh-уведомление подавлено",
+    webhookCalls.length === 1
+  );
+
+  await notifyTaskCompletion("数据备份", "success", 1000, null, 0, 0, {
+    asyncTriage: false,
+  });
+  check(
+    "B14: другое zh-уведомление доставлено",
     webhookCalls.length === 2
   );
 });

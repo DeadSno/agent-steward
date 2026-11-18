@@ -145,7 +145,7 @@ applied through `PRAGMA user_version` on open.
 | `history`, `metrics` | run outcomes, duration / tokens / cost, analytics; v8 adds `owner_pid` / `owner_host` / `owner_started_at` so recovery can keep live runs |
 | `audit_log` | mutation journal (who / what / when / which interface) |
 | `git_state` | git-trigger heads and polling state |
-| `notification_dedup`, `notification_embeddings` | rule-based and embedding dedup |
+| `notification_dedup`, `notification_embeddings` | rule-based and embedding dedup; tokenizer emits overlapping CJK bigrams so CJK messages get non-zero vectors |
 | `runs`, `run_steps`, `run_dlq`, `run_injections` | durable runs: state machine, step journal, dead-letter queue, pause-time context injections; v9 adds `owner_id` / `lease_until` to `run_steps` |
 | `capability_map` | router layer 2: task type → model / success rate / costs / last runs; v10 adds `first_pass_count` |
 

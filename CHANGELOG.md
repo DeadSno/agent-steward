@@ -14,6 +14,9 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Fixed
 
+- **B14.3 — документация CJK-дедупа:** `docs/FEATURES.md` и `docs/FEATURES.zh.md` описывают биграммную токенизацию CJK: иероглифы без пробелов режутся на перекрывающиеся биграммы, поэтому сообщения на `zh`/`ja`/`ko` дают ненулевой вектор и участвуют в семантическом дедупе; `docs/ARCHITECTURE.md` отмечает это в таблице хранилищ.
+- **B14.2 — тест zh-дедупа:** `test-notifications-embedding.mjs` проверяет, что `tokenize("任务执行失败")` даёт биграммы «任务»/«失败», вектор ненулевой, повторное китайское уведомление подавляется, а другое — доставляется.
+- **B14.1 — CJK-токенизатор:** `tokenize` в `src/notifications.ts` больше не вырезает CJK: блоки хань/каны/хангыля режутся на перекрывающиеся биграммы (одиночный символ — униграмма). Вектор строится тем же feature hashing без новых зависимостей и словарей.
 - **B13.5 — документация capability-роутинга:** `docs/ARCHITECTURE.md` описывает schema v10 (`first_pass_count`), half-life 8 исходов, формулу `effective_success_rate = 0.7 × decayed_success_rate + 0.3 × first_pass_rate`, first-pass по `attempts = 1`/явному флагу и backfill `first_pass_count = runs_passed` при миграции; версия схемы в тексте обновлена до 10.
 - **B13.4 — тест «старые успехи не перевешивают свежие провалы»:** `test-capability-map.mjs` проверяет 20 старых успехов + 10 свежих провалов: кумулятивный `success_rate` остаётся выше 0.6, но decayed падает ниже 0.5, effective — ниже 0.85, и роутер не выбирает `local`.
 - **B13.3 — `last_10_runs` участвует в решении:** `decayedSuccessRate` считает успешность по последним 10 исходам с half-life 8 (свежий вес 1), а `decideCapabilityRoute` применяет пороги `local`/`cloud` к `effectiveSuccessRate`, а не к кумулятивному счётчику.

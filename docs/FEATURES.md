@@ -657,7 +657,9 @@ It never changes run status, retries, Quality Gates, DAG dependencies or history
   messages are converted to normalized bag-of-words vectors stored in SQLite,
   compared by cosine similarity against the window, and suppressed above
   `threshold` (0.85 default). Important statuses are never suppressed. No new
-  dependencies and no external embedding model are required.
+  dependencies and no external embedding model are required. CJK text (Chinese,
+  Japanese, Korean) is tokenized into overlapping bigrams, so messages without
+  spaces produce non-zero vectors and participate in dedup too.
 - `notifications.summary` renders at most three short lines for Telegram and
   toasts. The model returns strict JSON `{"lines": [...]}`; any failure falls
   back to deterministic truncation (status, error, runtime/tokens/cost), and

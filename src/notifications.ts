@@ -639,13 +639,43 @@ function embeddingKey(taskName: string, status: string): string {
   return `emb:${(taskName + "|" + status).toLowerCase()}`;
 }
 
-/** Простой токенизатор: слова, цифры, нижний регистр. */
-function tokenize(text: string): string[] {
-  return text
-    .toLowerCase()
-    .replace(/[^a-zа-яё0-9\s]/g, " ")
-    .split(/\s+/)
-    .filter((t) => t.length > 0);
+/**
+ * CJK-символы: хирагана, катакана, хань, совместимые идеограммы, хангыль.
+ * Регэксп без `g`, проверяется посимвольно.
+ */
+const CJK_CHAR_RE = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af]/;
+
+/** Латиница, кириллица, цифры и диакритика — как раньше, но без вырезания CJK. */
+const TOKEN_CHUNK_RE =
+  /[a-z\u00c0-\u024f\u0400-\u04ff0-9]+|[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af]+/g;
+
+/**
+ * Простой токенизатор: слова, цифры, нижний регистр.
+ *
+ * B14: CJK-блоки больше не вырезаются. Иероглифы не разделены пробелами,
+ * поэтому слово режется на перекрывающиеся биграммы («任务失败» → «任务»,
+ * «务失», «失败»); одиночный иероглиф остаётся униграммой. Это даёт
+ * ненулевой вектор для `zh`/`ja`/`ko` и работает без словарей и
+ * `Intl.Segmenter`, одинаково на всех платформах.
+ */
+export function tokenize(text: string): string[] {
+  const tokens: string[] = [];
+  for (const match of text.toLowerCase().matchAll(TOKEN_CHUNK_RE)) {
+    const chunk = match[0];
+    if (CJK_CHAR_RE.test(chunk[0])) {
+      const chars = Array.from(chunk);
+      if (chars.length === 1) {
+        tokens.push(chars[0]);
+        continue;
+      }
+      for (let i = 0; i < chars.length - 1; i++) {
+        tokens.push(chars[i] + chars[i + 1]);
+      }
+    } else {
+      tokens.push(chunk);
+    }
+  }
+  return tokens;
 }
 
 /**
@@ -659,7 +689,7 @@ function tokenize(text: string): string[] {
  * Вес — 1 + log(tf), L2-нормализация; знак из старшего бита хеша снижает
  * влияние коллизий.
  */
-function textToVector(text: string): number[] {
+export function textToVector(text: string): number[] {
   const tokens = tokenize(text);
   const vec: number[] = new Array(EMBEDDING_DIMENSION).fill(0);
   if (tokens.length === 0) return vec;
