@@ -13,6 +13,13 @@ import { getProfileName, getProfilePort } from "./profiles.js";
 import { simulatePipeline } from "./core/dry-run.js";
 import { loadSettings } from "./settings.js";
 import {
+  DEFAULT_MODEL_PRICE_PER_MILLION,
+  DEFAULT_PRICE_PER_MILLION,
+  catalogPricePerMillion,
+  normalizeModelId,
+  resolveWhatIfModels,
+} from "./core/opencode-models.js";
+import {
   authenticateHookRequest,
   extractHookSignature,
   extractHookToken,
@@ -158,26 +165,6 @@ export interface ModelAnalysis {
   successRate: number;
 }
 
-/**
- * Приблизительные цены моделей в USD за 1M токенов (значения по умолчанию).
- * Используются для What-If-анализа, когда в логе нет точной стоимости.
- * Переопределяются переменной окружения OPENCODE_SCHEDULER_MODEL_PRICES (JSON:
- * {"openai/gpt-4o": 10, "deepseek/deepseek-coder": 0.28, ...}).
- */
-const DEFAULT_MODEL_PRICE_PER_MILLION: Record<string, number> = {
-  "openai/gpt-4o": 10,
-  "openai/gpt-4o-mini": 0.6,
-  "deepseek/deepseek-coder": 0.28,
-  "anthropic/claude-3-5-sonnet": 9,
-  "anthropic/claude-3-5-haiku": 1.2,
-  "google/gemini-2.5-pro": 3.5,
-  "google/gemini-2.0-flash": 0.3,
-};
-const DEFAULT_PRICE_PER_MILLION = 3;
-
-/** Модели для What-If-блока по умолчанию. */
-const DEFAULT_WHAT_IF_MODELS = ["openai/gpt-4o", "deepseek/deepseek-coder"];
-
 /** Чтение JSON из переменной окружения с фолбэком на значение по умолчанию. */
 function envJson<T>(name: string, fallback: T): T {
   const raw = process.env[name];
@@ -192,21 +179,28 @@ function envJson<T>(name: string, fallback: T): T {
   }
 }
 
+/** Ручное переопределение цен: OPENCODE_SCHEDULER_MODEL_PRICES (JSON). */
 const envModelPrices = envJson<Record<string, number>>(
   "OPENCODE_SCHEDULER_MODEL_PRICES",
   {},
 );
 
-/** Цены моделей: дефолты + переопределение из окружения. */
-const MODEL_PRICE_PER_MILLION: Record<string, number> = {
-  ...DEFAULT_MODEL_PRICE_PER_MILLION,
-  ...envModelPrices,
-};
-
-/** Цена модели за 1M токенов (fallback — средняя оценка). */
+/**
+ * Цена модели за 1M токенов.
+ *
+ * Порядок: ручное переопределение → каталог цен OpenCode (models.dev) →
+ * встроенная таблица → средняя оценка.
+ */
 export function modelPrice(model: string | undefined): number {
-  const key = (model ?? "").trim().toLowerCase();
-  return MODEL_PRICE_PER_MILLION[key] ?? DEFAULT_PRICE_PER_MILLION;
+  const key = normalizeModelId(model);
+
+  const override = envModelPrices[key];
+  if (typeof override === "number" && Number.isFinite(override)) return override;
+
+  const fromOpencode = catalogPricePerMillion(key);
+  if (fromOpencode !== null) return fromOpencode;
+
+  return DEFAULT_MODEL_PRICE_PER_MILLION[key] ?? DEFAULT_PRICE_PER_MILLION;
 }
 
 /** Оценка стоимости запуска по токенам (если точная цена неизвестна). */
@@ -269,20 +263,33 @@ export function aggregateModels(
     }))
     .sort((a, b) => b.totalRuns - a.totalRuns);
 
-  const envWhatIfModels = envJson<string[]>(
+  // What-If: сначала модели, которые реально запускались, затем по одной
+  // модели на каждую цену из доступных в OpenCode. Явный список из
+  // окружения главнее.
+  const usedModels = models
+    .map((item) => item.model)
+    .filter((model) => model !== "по умолчанию");
+  const envWhatIfModels = envJson<string[] | null>(
     "OPENCODE_SCHEDULER_WHAT_IF_MODELS",
-    DEFAULT_WHAT_IF_MODELS,
+    null,
   );
-  const whatIfModels = Array.isArray(envWhatIfModels)
-    ? envWhatIfModels
-    : DEFAULT_WHAT_IF_MODELS;
-  const whatIf = whatIfModels.map((model) => ({
+  const selection =
+    Array.isArray(envWhatIfModels) && envWhatIfModels.length > 0
+      ? { models: envWhatIfModels, source: "env" as const }
+      : resolveWhatIfModels(usedModels);
+
+  const whatIf = selection.models.map((model) => ({
     model,
     pricePerMillion: modelPrice(model),
     cost: Number(((totalTokens * modelPrice(model)) / 1_000_000).toFixed(4)),
   }));
 
-  return { models, totals: { totalRuns, totalTokens, totalCost: Number(totalCost.toFixed(6)) }, whatIf };
+  return {
+    models,
+    totals: { totalRuns, totalTokens, totalCost: Number(totalCost.toFixed(6)) },
+    whatIf,
+    whatIfSource: selection.source,
+  };
 }
 
 /**
@@ -2116,6 +2123,14 @@ function renderPage(): string {
     box.innerHTML = html;
 
     var parts = [];
+    var source = data && data.whatIfSource;
+    if (source === 'opencode') {
+      parts.push('Модели и цены — из OpenCode (ваши доступные модели):');
+    } else if (source === 'history') {
+      parts.push('Модели для сравнения — те, что уже запускались:');
+    } else if (source === 'default') {
+      parts.push('OpenCode недоступен, показаны модели по умолчанию:');
+    }
     for (var j = 0; j < whatIf.length; j++) {
       var w = whatIf[j];
       parts.push('Если бы все запуски выполнялись через <b>' + esc(w.model) + '</b>, это стоило бы ~<b>' + money(w.cost) + '</b> (' + w.pricePerMillion + ' $/1M токенов).');

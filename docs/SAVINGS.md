@@ -42,6 +42,35 @@ there is nothing to compare.
 So the counter answers "how much would this cost in the cloud at the reference
 price", not "how much money came back to the account".
 
+## What-If models and prices
+
+The dashboard block "what if every run used model X" does not rely on a fixed
+model list any more. Both the list and the prices come from OpenCode itself:
+
+1. **Available models** — `opencode models`, i.e. exactly the models configured
+   on this machine (providers, keys, local Ollama models). Models that already
+   appear in the run history go first; after them there is one model per
+   distinct price level (cheapest, middle, most expensive), at most five
+   entries in total.
+2. **Prices** — the models.dev catalogue that OpenCode caches in
+   `<cache>/opencode/models.json` (`cost.input` / `cost.output`, USD per 1M
+   tokens). History does not split tokens into input and output, so the
+   estimate uses the average of the two prices.
+
+Price lookup order: `OPENCODE_SCHEDULER_MODEL_PRICES` (JSON) → OpenCode
+catalogue → built-in table → $3 per 1M tokens. Local providers (Ollama,
+LM Studio) and `*-free` models cost zero.
+
+| Variable | Meaning |
+| --- | --- |
+| `OPENCODE_SCHEDULER_WHAT_IF_MODELS` | explicit JSON list, replaces the selection |
+| `OPENCODE_SCHEDULER_MODEL_PRICES` | explicit prices, for example `{"openai/gpt-4o": 2.5}` |
+| `OPENCODE_SCHEDULER_MODELS_CACHE` | path to another `models.json` |
+| `OPENCODE_SCHEDULER_MODEL_SOURCE=static` | never call OpenCode, use built-in values only |
+
+If OpenCode is not reachable, the block falls back to the built-in list and
+prices, so the dashboard keeps working.
+
 ## API
 
 `get_analytics` returns `report.savings`:

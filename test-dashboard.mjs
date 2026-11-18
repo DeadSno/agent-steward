@@ -58,6 +58,27 @@ assert(Array.isArray(hist.records), "GET /api/history вернул массив 
 const metrics = await fetch(base + "/api/metrics").then(r => r.json());
 assert("total" in metrics && "success" in metrics && "error" in metrics, "GET /api/metrics вернул total/success/error");
 
+// GET /api/models-analysis — What-If теперь берёт модели и цены из OpenCode,
+// поэтому проверяем форму ответа и допустимый источник, а не конкретный список.
+const analysis = await fetch(base + "/api/models-analysis").then(r => r.json());
+assert(
+  Array.isArray(analysis.whatIf) && analysis.whatIf.length > 0,
+  "GET /api/models-analysis вернул непустой whatIf",
+);
+assert(
+  ["env", "history", "opencode", "default"].includes(analysis.whatIfSource),
+  "whatIfSource — одно из env/history/opencode/default (факт: " + analysis.whatIfSource + ")",
+);
+assert(
+  analysis.whatIf.every(
+    (w) =>
+      typeof w.model === "string" &&
+      typeof w.pricePerMillion === "number" &&
+      typeof w.cost === "number",
+  ),
+  "каждый whatIf содержит model/pricePerMillion/cost числами",
+);
+
 // POST /api/run/:name.
 const run = await fetch(base + "/api/run/" + encodeURIComponent("test-task"), { method: "POST" }).then(r => r.json());
 assert(run.success === true, "POST /api/run успешен");

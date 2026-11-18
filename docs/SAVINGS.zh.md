@@ -33,6 +33,24 @@ Translations: [English](SAVINGS.md) · [Русский](SAVINGS.ru.md)
 
 因此该计数器回答的是「按参考价格在云端要花多少钱」，而不是「实际退回了多少钱」。
 
+## What-If：模型与价格
+
+仪表盘的「如果所有运行都使用模型 X」区块不再依赖硬编码列表。列表和价格都来自 OpenCode 本身：
+
+1. **可用模型** —— `opencode models`，即本机实际配置的模型（提供商、密钥、本地 Ollama 模型）。先列出运行历史中出现过的模型，之后每种价格只列一个（最便宜、中间、最贵），总共不超过五行。
+2. **价格** —— OpenCode 缓存在 `<cache>/opencode/models.json` 的 models.dev 目录（`cost.input` / `cost.output`，USD / 1M token）。历史记录不区分输入与输出 token，因此取两者价格的平均值。
+
+价格顺序：`OPENCODE_SCHEDULER_MODEL_PRICES`（JSON）→ OpenCode 目录 → 内置表 → 每 1M token 3 美元。本地提供商（Ollama、LM Studio）和 `*-free` 模型按零计算。
+
+| 变量 | 含义 |
+| --- | --- |
+| `OPENCODE_SCHEDULER_WHAT_IF_MODELS` | 显式 JSON 列表，替换自动选择 |
+| `OPENCODE_SCHEDULER_MODEL_PRICES` | 显式价格，例如 `{"openai/gpt-4o": 2.5}` |
+| `OPENCODE_SCHEDULER_MODELS_CACHE` | 指向另一个 `models.json` |
+| `OPENCODE_SCHEDULER_MODEL_SOURCE=static` | 不访问 OpenCode，只用内置值 |
+
+如果 OpenCode 不可用，该区块会回退到内置列表和价格，仪表盘继续正常工作。
+
 ## API
 
 `get_analytics` 返回 `report.savings`：
