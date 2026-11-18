@@ -1,14 +1,17 @@
+import os from "node:os";
 import { getDb, withTransaction } from "./index.js";
 import {
   finishStep,
   getRun,
   getStep,
+  renewStepLease as renewStepLeaseRow,
   retryStep,
   startRun,
   startStep,
   type FinishOptions,
   type RunRecord,
   type RunStepRecord,
+  type StepLease,
 } from "./runs-repo.js";
 
 /**
@@ -23,10 +26,29 @@ import {
 /** Текст ошибки, которым помечается шаг, прерванный падением процесса. */
 export const STEP_INTERRUPTED_ERROR = "Прервано падением процесса";
 
+/**
+ * B12: срок lease шага по умолчанию. Живой процесс продлевает lease
+ * (heartbeat в `runStepStatefullyAsync` или явный `renewStepLease`), поэтому
+ * recovery финализирует шаг только после истечения этого срока.
+ */
+export const STEP_LEASE_MS = 60_000;
+
+let cachedOwnerId: string | null = null;
+
+/** B12: идентификатор текущего процесса — `host:pid:startedAt`. */
+export function getStepOwnerId(): string {
+  if (!cachedOwnerId) {
+    cachedOwnerId = `${os.hostname()}:${process.pid}:${nowIso()}`;
+  }
+  return cachedOwnerId;
+}
+
 /** Опции начала попытки. */
 export interface BeginStepOptions {
   /** Начать запуск, если он ещё в статусе pending (по умолчанию true). */
   startRun?: boolean;
+  /** B12: срок lease в миллисекундах (по умолчанию {@link STEP_LEASE_MS}). */
+  leaseMs?: number;
 }
 
 /** Результат выполнения шага через `runStepStatefully`. */
@@ -68,13 +90,39 @@ export function beginStepAttempt(
   }
 
   const step = requireStep(runId, stepName);
+  const lease = buildLease(options.leaseMs);
   if (step.status === "failed") {
-    retryStep(step.id);
+    retryStep(step.id, undefined, lease);
   } else {
-    startStep(step.id);
+    startStep(step.id, undefined, lease);
   }
 
   return requireStep(runId, stepName);
+}
+
+/**
+ * B12: продлевает lease шага текущего процесса.
+ *
+ * Нужен долгим синхронным шагам: без продления recovery сочтёт шаг
+ * осиротевшим после {@link STEP_LEASE_MS}. Возвращает false, если шаг уже
+ * не `running`.
+ */
+export function renewStepLease(
+  runId: string,
+  stepName: string,
+  leaseMs: number = STEP_LEASE_MS,
+): boolean {
+  const step = requireStep(runId, stepName);
+  if (step.status !== "running") return false;
+  return renewStepLeaseRow(step.id, buildLease(leaseMs));
+}
+
+function buildLease(leaseMs: number = STEP_LEASE_MS): StepLease {
+  const duration = Number.isFinite(leaseMs) && leaseMs > 0 ? leaseMs : STEP_LEASE_MS;
+  return {
+    ownerId: getStepOwnerId(),
+    leaseUntil: new Date(Date.now() + duration).toISOString(),
+  };
 }
 
 /** Закрывает попытку успехом: running → passed, сохраняет output. */
@@ -127,28 +175,67 @@ export async function runStepStatefullyAsync<T>(
   body: () => Promise<T> | T,
   options: BeginStepOptions = {},
 ): Promise<StepExecution<T>> {
+  const leaseMs = options.leaseMs ?? STEP_LEASE_MS;
   const attempt = beginStepAttempt(runId, stepName, options).attempt;
+  // B12: heartbeat продлевает lease, пока тело шага реально выполняется.
+  const timer = setInterval(
+    () => {
+      try {
+        renewStepLease(runId, stepName, leaseMs);
+      } catch {
+        // Шаг уже финализирован — продлевать нечего.
+      }
+    },
+    Math.max(10, Math.floor(leaseMs / 3)),
+  );
+  timer.unref?.();
   let result: T;
   try {
-    result = await body();
-  } catch (err) {
-    recordStepFailure(runId, stepName, err);
-    throw err;
+    try {
+      result = await body();
+    } catch (err) {
+      recordStepFailure(runId, stepName, err);
+      throw err;
+    }
+  } finally {
+    clearInterval(timer);
   }
   const step = recordStepSuccess(runId, stepName, result);
   return { step, result, attempt };
 }
 
+export interface RecoverStepsOptions {
+  /**
+   * B12: текущий момент для проверки lease. По умолчанию now; тесты и
+   * отложенный recovery передают «будущее», чтобы lease считался истёкшим.
+   */
+  now?: string | Date;
+}
+
 /**
- * Помечает все зависшие `running`-шаги как failed, сохраняя `attempt`.
+ * Помечает осиротевшие `running`-шаги как failed, сохраняя `attempt`.
  *
- * Возвращает обновлённые записи. `attempt` не сбрасывается — следующая попытка
- * получит `attempt + 1` через `retryStep`, поэтому номер попытки переживает
- * падение процесса и восстановление.
+ * B12: шаг финализируется только при отсутствии lease (legacy-строки) или
+ * истёкшем `lease_until`. Шаг с живым lease принадлежит работающему процессу
+ * и не трогается. Возвращает обновлённые записи.
+ *
+ * `attempt` не сбрасывается — следующая попытка получит `attempt + 1` через
+ * `retryStep`, поэтому номер попытки переживает падение процесса и восстановление.
  */
-export function recoverInterruptedSteps(runId?: string): RunStepRecord[] {
+export function recoverInterruptedSteps(
+  runId?: string,
+  options: RecoverStepsOptions = {},
+): RunStepRecord[] {
   const running = listRunningSteps(runId);
   if (running.length === 0) return [];
+
+  const nowMs = options.now ? new Date(options.now).getTime() : Date.now();
+  const expired = running.filter((step) => {
+    if (!step.leaseUntil) return true;
+    const until = Date.parse(step.leaseUntil);
+    return Number.isNaN(until) || until <= nowMs;
+  });
+  if (expired.length === 0) return [];
 
   return withTransaction(() => {
     const timestamp = nowIso();
@@ -156,10 +243,10 @@ export function recoverInterruptedSteps(runId?: string): RunStepRecord[] {
       `UPDATE run_steps SET status = 'failed', error = ?, finished_at = ?,
          updated_at = ? WHERE id = ? AND status = 'running'`,
     );
-    for (const step of running) {
+    for (const step of expired) {
       update.run(STEP_INTERRUPTED_ERROR, timestamp, timestamp, step.id);
     }
-    return running.map((step) => requireStep(step.runId, step.stepName));
+    return expired.map((step) => requireStep(step.runId, step.stepName));
   });
 }
 

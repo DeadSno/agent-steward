@@ -110,9 +110,23 @@ assert(
   "findResumeStep указывает на прерванный build",
 );
 
+let liveLeaseError = null;
+try {
+  resume.resumeRunSync(runA.id, { handlers: handlersFor(chain, []) });
+} catch (error) {
+  liveLeaseError = error;
+}
+assert(
+  liveLeaseError && /выполняется другим процессом/.test(liveLeaseError.message),
+  "живой lease не даёт возобновить запуск параллельно",
+);
+
 const callsA = [];
 const resultA = resume.resumeRunSync(runA.id, {
   handlers: handlersFor(chain, callsA),
+  // B12: упавший процесс оставил живой lease — считаем его истёкшим, как это
+  // сделал бы планировщик после таймаута, и восстанавливаем шаг.
+  recoverNow: new Date(Date.now() + journal.STEP_LEASE_MS + 1000),
 });
 
 assert(resultA.resumedFrom === "build", "resume начался с build");

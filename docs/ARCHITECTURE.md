@@ -136,7 +136,7 @@ profile gets the first free port from 3783 upward when it is created, recorded i
 dashboard response carries `x-plugin-profile`, so a second profile neither reuses
 another profile's server nor treats it as a zombie.
 
-`SCHEMA_VERSION` is currently **8**; migrations are additive and idempotent,
+`SCHEMA_VERSION` is currently **9**; migrations are additive and idempotent,
 applied through `PRAGMA user_version` on open.
 
 | Tables | Purpose |
@@ -146,7 +146,7 @@ applied through `PRAGMA user_version` on open.
 | `audit_log` | mutation journal (who / what / when / which interface) |
 | `git_state` | git-trigger heads and polling state |
 | `notification_dedup`, `notification_embeddings` | rule-based and embedding dedup |
-| `runs`, `run_steps`, `run_dlq`, `run_injections` | durable runs: state machine, step journal, dead-letter queue, pause-time context injections |
+| `runs`, `run_steps`, `run_dlq`, `run_injections` | durable runs: state machine, step journal, dead-letter queue, pause-time context injections; v9 adds `owner_id` / `lease_until` to `run_steps` |
 | `capability_map` | router layer 2: task type → model / success rate / costs / last runs |
 
 ### Known limitations (execution)
@@ -237,7 +237,7 @@ last_10_runs`. Обучается на исходах гейта (CONCEPT §9 le
 токенов на само решение.
 
 Реализация (Спринт 36.5.b): `src/db/capability-repo.ts`, таблица `capability_map`
-(`SCHEMA_VERSION = 8`). `recordCapabilityOutcome` обновляет счётчики, считает
+(`SCHEMA_VERSION = 9`). `recordCapabilityOutcome` обновляет счётчики, считает
 `success_rate` и скользящие средние стоимости/времени, хранит `last_10_runs`
 (JSON, новые справа). `decideCapabilityRoute` решает по правилам:
 меньше `MIN_RUNS_FOR_DECISION = 3` исходов → `explore` (решает слой 3),
@@ -485,7 +485,7 @@ the whole plugin directory (database, logs, locks, wrappers, prompts) with
 
 Schema evolution is additive: `applySchema` runs `CREATE TABLE IF NOT EXISTS` on every
 connection and adds missing columns after `PRAGMA table_info`, so upgrading the plugin
-never requires a manual migration. `SCHEMA_VERSION` (currently `8`) is stored in
+never requires a manual migration. `SCHEMA_VERSION` (currently `9`) is stored in
 `PRAGMA user_version`; incremental steps live in `MIGRATIONS`.
 
 ### Durable run state (Sprint 36.1)
@@ -514,6 +514,20 @@ marks any `running` steps left after a process crash as `failed` — preserving
 `attempt`, so the next repeat gets `attempt + 1` and never restarts from 1.
 SQLite runs in WAL mode with `synchronous = NORMAL`, so a committed transition
 survives a `kill -9` (only the last in-flight commit can be lost with a power cut).
+
+### Step leases (B12)
+
+Schema v9 adds ownership to `run_steps`: `owner_id` (`hostname:pid:startedAt` of
+the executing process) and `lease_until`. `beginStepAttempt` writes both when it
+commits `running`, with the lease `STEP_LEASE_MS` (60 s) ahead.
+`runStepStatefullyAsync` renews the lease from an `unref`'d timer every third of
+the lease; synchronous chains call `renewStepLease(runId, stepName)` before long
+work. `recoverInterruptedSteps` finalizes only `running` steps whose lease is
+missing (legacy rows) or already expired — a live lease belongs to another
+process and is left running. Consequently `resumeRunSync` / `resumeRun` refuse to
+continue while a live lease remains; `recoverNow` lets a caller treat a lease as
+expired (tests and delayed recovery). This prevents a restarted plugin from
+marking a live worker's step as failed and from running the same step twice.
 
 ### Resume from the middle (Sprint 36.2)
 
@@ -870,7 +884,7 @@ after the agent with the user's privileges and are not filtered by tool policy.
 |---|---|---|
 | Миссия | цель + scope + gate-спека + safety + бюджет | `missions` (план 38, опциональный шаблон) |
 | Задача | миссия-шаблон + триггер | `tasks` (есть) |
-| Запуск | durable-исполнение: шаги, попытки, вердикты | `runs` / `run_steps` (есть, SCHEMA_VERSION 8) |
+| Запуск | durable-исполнение: шаги, попытки, вердикты | `runs` / `run_steps` (есть, SCHEMA_VERSION 9) |
 | Исход гейта | вердикт + provenance + экономика | `gate_outcomes` (план 40) |
 
 ### Путь исполнения (целевой)

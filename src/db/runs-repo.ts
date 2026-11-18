@@ -79,7 +79,12 @@ export interface RunStepRecord {
   position: number;
   status: StepStatus;
   attempt: number;
+  /** Ключ идемпотентности (36.3); уникален в пределах запуска. */
   idempotencyKey: string | null;
+  /** B12: идентификатор процесса-владельца шага (`host:pid:startedAt`). */
+  ownerId: string | null;
+  /** B12: момент, до которого владелец обязан продлить lease (ISO). */
+  leaseUntil: string | null;
   startedAt: string | null;
   finishedAt: string | null;
   error: string | null;
@@ -113,6 +118,12 @@ export interface CreateStepOptions {
 export interface FinishOptions {
   error?: string | null;
   output?: unknown;
+}
+
+/** B12: владелец шага и срок его lease. */
+export interface StepLease {
+  ownerId: string;
+  leaseUntil: string;
 }
 
 function nowIso(): string {
@@ -162,6 +173,8 @@ function stepRowToRecord(row: any): RunStepRecord {
     status: String(row.status) as StepStatus,
     attempt: Number(row.attempt) || 1,
     idempotencyKey: row.idempotency_key == null ? null : String(row.idempotency_key),
+    ownerId: row.owner_id == null ? null : String(row.owner_id),
+    leaseUntil: row.lease_until == null ? null : String(row.lease_until),
     startedAt: row.started_at == null ? null : String(row.started_at),
     finishedAt: row.finished_at == null ? null : String(row.finished_at),
     error: row.error == null ? null : String(row.error),
@@ -410,7 +423,7 @@ export function findStepByIdempotencyKey(
 }
 
 /** pending → running. Возвращает false, если шаг не найден. */
-export function startStep(id: string, startedAt = nowIso()): boolean {
+export function startStep(id: string, startedAt = nowIso(), lease?: StepLease): boolean {
   return withTransaction(() => {
     const step = getStepById(id);
     if (!step) return false;
@@ -418,9 +431,9 @@ export function startStep(id: string, startedAt = nowIso()): boolean {
     getDb()
       .prepare(
         `UPDATE run_steps SET status = 'running', started_at = ?, finished_at = NULL,
-           error = NULL, updated_at = ? WHERE id = ?`,
+           error = NULL, owner_id = ?, lease_until = ?, updated_at = ? WHERE id = ?`,
       )
-      .run(startedAt, nowIso(), id);
+      .run(startedAt, lease?.ownerId ?? null, lease?.leaseUntil ?? null, nowIso(), id);
     return true;
   });
 }
@@ -459,7 +472,7 @@ export function finishStep(
  * Это единственный переход из финального статуса шага. Предыдущая попытка
  * остаётся видимой в счётчике attempt; для 36.4 (DLQ) здесь появится лимит.
  */
-export function retryStep(id: string, startedAt = nowIso()): boolean {
+export function retryStep(id: string, startedAt = nowIso(), lease?: StepLease): boolean {
   return withTransaction(() => {
     const step = getStepById(id);
     if (!step) return false;
@@ -469,11 +482,28 @@ export function retryStep(id: string, startedAt = nowIso()): boolean {
     getDb()
       .prepare(
         `UPDATE run_steps SET status = 'running', attempt = attempt + 1,
-           started_at = ?, finished_at = NULL, error = NULL, updated_at = ? WHERE id = ?`,
+           started_at = ?, finished_at = NULL, error = NULL,
+           owner_id = ?, lease_until = ?, updated_at = ? WHERE id = ?`,
       )
-      .run(startedAt, nowIso(), id);
+      .run(startedAt, lease?.ownerId ?? null, lease?.leaseUntil ?? null, nowIso(), id);
     return true;
   });
+}
+
+/**
+ * B12: продлевает lease выполняющегося шага.
+ *
+ * Возвращает false, если шаг уже не `running` (например, recovery успел
+ * финализировать его после истечения lease): продлевать нечего.
+ */
+export function renewStepLease(id: string, lease: StepLease): boolean {
+  const result = getDb()
+    .prepare(
+      `UPDATE run_steps SET owner_id = ?, lease_until = ?, updated_at = ?
+       WHERE id = ? AND status = 'running'`,
+    )
+    .run(lease.ownerId, lease.leaseUntil, nowIso(), id);
+  return Number(result.changes) > 0;
 }
 
 /** Количество шагов запуска (для health/отчётов). */

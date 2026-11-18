@@ -74,8 +74,24 @@ assert(
   "старт шага на диске: running, attempt = 1 после закрытия/открытия БД",
 );
 
+// B12: живой lease защищает шаг от recovery, пока процесс работает.
+const expiredNow = () => new Date(Date.now() + journal.STEP_LEASE_MS + 1000);
+assert(
+  Boolean(afterRestart?.leaseUntil) && Date.parse(afterRestart.leaseUntil) > Date.now(),
+  "B12: beginStepAttempt записал lease_until в будущем",
+);
+assert(
+  afterRestart?.ownerId?.includes(String(process.pid)),
+  "B12: owner_id содержит PID текущего процесса",
+);
+assert(
+  journal.recoverInterruptedSteps(runA.id).length === 0 &&
+    repo.getStep(runA.id, "prepare")?.status === "running",
+  "B12: recovery не трогает шаг с живым lease",
+);
+
 // --- 2. Восстановление зависшего шага и повтор без потери attempt ------------
-const recovered = journal.recoverInterruptedSteps(runA.id);
+const recovered = journal.recoverInterruptedSteps(runA.id, { now: expiredNow() });
 assert(recovered.length === 1, "recoverInterruptedSteps вернул один шаг");
 assert(recovered[0].status === "failed", "зависший шаг помечен failed");
 assert(recovered[0].attempt === 1, "recoverInterruptedSteps сохранил attempt = 1");
@@ -99,7 +115,7 @@ assert(
   "attempt = 2 пережил переоткрытие БД (не потерян)",
 );
 
-journal.recoverInterruptedSteps(runA.id);
+journal.recoverInterruptedSteps(runA.id, { now: expiredNow() });
 const third = journal.beginStepAttempt(runA.id, "prepare");
 assert(
   third.status === "running" && third.attempt === 3,
@@ -176,6 +192,41 @@ const asyncExecution = await journal.runStepStatefullyAsync(runD.id, "deploy", a
 assert(asyncExecution.step.status === "passed", "async-шаг завершён passed");
 assert(asyncExecution.result === "deployed", "async-шаг вернул результат тела");
 
+// --- 5b. B12: heartbeat продлевает lease долгого async-шага -----------------
+const runLease = repo.createRun({ taskName: "lease", steps: [{ stepName: "long" }] });
+let observedLease = null;
+const leaseExecution = await journal.runStepStatefullyAsync(
+  runLease.id,
+  "long",
+  async () => {
+    await new Promise((resolve) => setTimeout(resolve, 360));
+    observedLease = repo.getStep(runLease.id, "long")?.leaseUntil ?? null;
+    return "long-done";
+  },
+  { leaseMs: 120 },
+);
+assert(leaseExecution.step.status === "passed", "B12: долгий async-шаг завершён passed");
+assert(
+  Boolean(observedLease) && Date.parse(observedLease) > Date.now(),
+  "B12: heartbeat продлил lease во время выполнения шага",
+);
+
+// --- 5c. B12: явное продление lease для синхронных шагов -------------------
+const runRenew = repo.createRun({ taskName: "renew", steps: [{ stepName: "sync" }] });
+const renewStart = journal.beginStepAttempt(runRenew.id, "sync", { leaseMs: 50 });
+const renewed = journal.renewStepLease(runRenew.id, "sync", 5_000);
+const afterRenew = repo.getStep(runRenew.id, "sync");
+assert(renewed, "B12: renewStepLease вернул true для running-шага");
+assert(
+  Date.parse(afterRenew?.leaseUntil ?? "") > Date.parse(renewStart.leaseUntil ?? ""),
+  "B12: renewStepLease сдвинул lease_until вперёд",
+);
+journal.recordStepSuccess(runRenew.id, "sync");
+assert(
+  journal.renewStepLease(runRenew.id, "sync") === false,
+  "B12: renewStepLease не продлевает завершённый шаг",
+);
+
 // --- 6. Kill -9 посреди шага ------------------------------------------------
 const runE = repo.createRun({ taskName: "crash", steps: [{ stepName: "crashy" }] });
 
@@ -219,7 +270,13 @@ assert(crashed?.attempt === 1, "после kill -9 attempt = 1 сохранён"
 assert(Boolean(crashed?.startedAt), "после kill -9 started_at сохранён");
 assert(journal.listRunningSteps(runE.id).length === 1, "listRunningSteps видит зависший шаг");
 
-const crashRecovered = journal.recoverInterruptedSteps(runE.id);
+// B12: сразу после kill -9 lease ещё не истёк — шаг не финализируется вслепую.
+assert(
+  journal.recoverInterruptedSteps(runE.id).length === 0,
+  "B12: recovery не убивает шаг до истечения lease",
+);
+
+const crashRecovered = journal.recoverInterruptedSteps(runE.id, { now: expiredNow() });
 assert(
   crashRecovered[0]?.status === "failed" && crashRecovered[0]?.attempt === 1,
   "после kill -9 восстановление: failed, attempt = 1",

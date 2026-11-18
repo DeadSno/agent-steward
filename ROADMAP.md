@@ -23,19 +23,6 @@ Legacy: `opencode-windows-scheduler@1.5.8`.
 
 # 1. Бэклог (аудит 18.11)
 
-## Деталь 1.10 — Durable runs / lease
-`src/db/run-journal.ts`, `src/db/schema.ts`
-
-**Задача B12 — Lease/owner на `run_steps`** · P2 · ⬜
-
-`recoverInterruptedSteps()` помечает `failed` все `running`-шаги, включая живые чужие процессы. В `run_steps` нет владельца/lease (CONCEPT §5).
-
-- [ ] B12.1 Колонки `owner_id`, `lease_until` в `run_steps` (schema v9)
-- [ ] B12.2 Продление lease при выполнении шага
-- [ ] B12.3 Recovery: `failed` только при истёкшем lease
-- [ ] B12.4 Тест: два процесса, живой шаг не убивается
-- [ ] B12.5 Docs
-
 ## Деталь 1.11 — Capability map (router)
 `src/db/capability-repo.ts`
 

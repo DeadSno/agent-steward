@@ -157,7 +157,10 @@ async function chaosRound(killAt) {
   const integrity = getDb().prepare("PRAGMA integrity_check;").get();
   assert(String(integrity?.integrity_check) === "ok", "SQLite integrity_check = ok");
 
-  const recovered = journal.recoverInterruptedSteps(runId);
+  const recoveredLive = journal.recoverInterruptedSteps(runId);
+  assert(recoveredLive.length === 0, "B12: recovery не трогает шаг с живым lease");
+  const expiredNow = new Date(Date.now() + journal.STEP_LEASE_MS + 1000);
+  const recovered = journal.recoverInterruptedSteps(runId, { now: expiredNow });
   assert(recovered.length === 1, "recoverInterruptedSteps нашёл ровно один зависший шаг");
   assert(
     recovered[0]?.stepName === killAt &&

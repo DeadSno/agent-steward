@@ -159,6 +159,10 @@ CREATE TABLE IF NOT EXISTS run_steps (
   status TEXT NOT NULL,
   attempt INTEGER NOT NULL DEFAULT 1,
   idempotency_key TEXT,
+  -- B12: владелец и lease шага. Живой процесс продлевает lease; recovery
+  -- финализирует только шаги с истёкшим lease, не трогая чужие живые.
+  owner_id TEXT,
+  lease_until TEXT,
   started_at TEXT,
   finished_at TEXT,
   error TEXT,
@@ -246,7 +250,7 @@ interface SchemaDb {
  * миграций. Увеличивайте при добавлении новой ступени в {@link MIGRATIONS}
  * и добавляйте соответствующую запись в массив.
  */
-export const SCHEMA_VERSION = 8;
+export const SCHEMA_VERSION = 9;
 
 /** Возвращает сохранённую версию схемы (0 у legacy-БД без user_version). */
 export function getSchemaVersion(db: SchemaDb): number {
@@ -482,6 +486,21 @@ const MIGRATIONS: { to: number; migrate: (db: SchemaDb) => void }[] = [
       }
       if (!columnNames.includes("owner_started_at")) {
         db.exec("ALTER TABLE history ADD COLUMN owner_started_at TEXT");
+      }
+    },
+  },
+  {
+    // Ступень 9 — lease/владелец шага (B12). Recovery больше не убивает
+    // `running`-шаги вслепую: у шага есть owner_id и lease_until, а живой
+    // процесс продлевает lease. Колонки аддитивные — ступень идемпотентна.
+    to: 9,
+    migrate(db) {
+      const columnNames = tableColumns(db, "run_steps");
+      if (!columnNames.includes("owner_id")) {
+        db.exec("ALTER TABLE run_steps ADD COLUMN owner_id TEXT");
+      }
+      if (!columnNames.includes("lease_until")) {
+        db.exec("ALTER TABLE run_steps ADD COLUMN lease_until TEXT");
       }
     },
   },

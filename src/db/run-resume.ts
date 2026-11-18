@@ -8,6 +8,7 @@ import {
   type RunStepRecord,
 } from "./runs-repo.js";
 import {
+  listRunningSteps,
   recoverInterruptedSteps,
   requireRun,
   runStepStatefully,
@@ -38,6 +39,11 @@ export interface ResumeOptions {
   handlers: Record<string, StepHandler>;
   /** Восстанавливать зависшие `running`-шаги перед продолжением (по умолчанию true). */
   recover?: boolean;
+  /**
+   * B12: момент для проверки lease при восстановлении. По умолчанию now.
+   * Передавайте будущее время, чтобы считать lease зависшего шага истёкшим.
+   */
+  recoverNow?: string | Date;
   /** Останавливаться на первой ошибке (по умолчанию true). */
   stopOnError?: boolean;
 }
@@ -84,7 +90,17 @@ function prepareResume(runId: string, options: ResumeOptions): ResumePlan {
     throw new Error(`Запуск отменён, возобновление невозможно: ${runId}`);
   }
 
-  if (options.recover !== false) recoverInterruptedSteps(runId);
+  if (options.recover !== false) recoverInterruptedSteps(runId, { now: options.recoverNow });
+
+  // B12: шаг с живым lease принадлежит работающему процессу. Возобновлять его
+  // здесь нельзя — иначе два исполнителя возьмут один шаг.
+  const active = listRunningSteps(runId);
+  if (active.length > 0) {
+    const step = active[0];
+    throw new Error(
+      `Шаг ${step.stepName} выполняется другим процессом (lease до ${step.leaseUntil ?? "неизвестно"}); возобновление отложено.`,
+    );
+  }
 
   const steps = listRunSteps(runId);
   const startIndex = steps.findIndex((step) => !isStepDone(step.status));
