@@ -202,7 +202,7 @@ last_10_runs`. Обучается на исходах гейта (CONCEPT §9 le
 | `src/core/cron-to-schtasks.ts` | Cron → Task Scheduler translation |
 | `src/core/schedule-v2.ts` | Extended cron parser/matcher, timezone math, launch windows, poll-mode decisions |
 | `src/core/schedule-gate.ts` | Wrapper-side gate: cron re-check (poll mode), window postpone, defer-file |
-| `src/db/` | SQLite access: schema, migrations, repositories, recovery; `runs-repo.ts` keeps durable `runs`/`run_steps` state, `run-journal.ts` writes transitions around each step, `run-resume.ts` continues a crashed chain |
+| `src/db/` | SQLite access: schema, migrations, repositories, recovery; `runs-repo.ts` keeps durable `runs`/`run_steps` state, `run-journal.ts` writes transitions around each step, `run-resume.ts` continues a crashed chain, `step-idempotency.ts` replays steps by key |
 | `src/shared/jobs-view.ts` | Task view shared by the GUI and dashboard |
 
 ## Scheduling backends
@@ -355,7 +355,7 @@ the whole plugin directory (database, logs, locks, wrappers, prompts) with
 
 Schema evolution is additive: `applySchema` runs `CREATE TABLE IF NOT EXISTS` on every
 connection and adds missing columns after `PRAGMA table_info`, so upgrading the plugin
-never requires a manual migration. `SCHEMA_VERSION` (currently `3`) is stored in
+never requires a manual migration. `SCHEMA_VERSION` (currently `4`) is stored in
 `PRAGMA user_version`; incremental steps live in `MIGRATIONS`.
 
 ### Durable run state (Sprint 36.1)
@@ -410,6 +410,34 @@ The result reports `resumedFrom`, `resumedFromAttempt`, `executed`, `skipped`,
 failure, but the run still ends `failed`. This is covered by
 `test-run-resume.mjs`, including a real `kill -9` in the middle of a four-step
 chain.
+
+### Idempotent steps (Sprint 36.3)
+
+`run_steps.idempotency_key` is unique per run: schema v4 deduplicates legacy
+duplicates (keeping the first row, nulling the rest) and replaces the old
+non-unique index with the partial unique index `idx_run_steps_key_unique
+(run_id, idempotency_key) WHERE idempotency_key IS NOT NULL`. The index is
+created in the migration, after the dedupe — the same ordering trap as
+`position`.
+
+`src/db/step-idempotency.ts` exposes `runStepOnce` / `runStepOnceAsync`:
+
+1. a key that belongs to another step in the same run is rejected with
+   `IdempotencyConflictError`;
+2. an already `passed`/`skipped` step is **replayed** from `output_json` — the
+   body is not called, `attempt` does not grow and no side effect repeats
+   (`replayed: true`, `executed: false`);
+3. a `failed` step is retried with `attempt + 1`, so a transient error does not
+   turn into a permanent skip;
+4. a `running` step, or a second call for the same key while the first is still
+   inside the body, raises `StepInFlightError` — the in-process `inFlight` set
+   covers parallel async calls, the unique index covers the database;
+5. a missing step is created with the key, then executed through the journal
+   from 36.1.b.
+
+The same key is allowed in different runs; `test-step-idempotency.mjs` covers
+first execution, replay from cache (including after reconnect), conflicts,
+retry and parallel deduplication.
 
 ## Interfaces
 

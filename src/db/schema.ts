@@ -165,7 +165,6 @@ CREATE TABLE IF NOT EXISTS run_steps (
 
 CREATE INDEX IF NOT EXISTS idx_run_steps_run ON run_steps(run_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_run_steps_status ON run_steps(status);
-CREATE INDEX IF NOT EXISTS idx_run_steps_key ON run_steps(run_id, idempotency_key);
 `;
 
 interface SchemaDb {
@@ -181,7 +180,7 @@ interface SchemaDb {
  * миграций. Увеличивайте при добавлении новой ступени в {@link MIGRATIONS}
  * и добавляйте соответствующую запись в массив.
  */
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 /** Возвращает сохранённую версию схемы (0 у legacy-БД без user_version). */
 export function getSchemaVersion(db: SchemaDb): number {
@@ -307,6 +306,24 @@ const MIGRATIONS: { to: number; migrate: (db: SchemaDb) => void }[] = [
         // Для уже существующих строк порядок = порядок вставки (rowid).
         db.exec("UPDATE run_steps SET position = rowid");
       }
+    },
+  },
+  {
+    // Ступень 4 — Спринт 36.3: ключ идемпотентности уникален в пределах запуска.
+    // Дубли (если были) обнуляются, оставляем первый по rowid; затем старый
+    // неуникальный индекс заменяется частичным уникальным.
+    to: 4,
+    migrate(db) {
+      db.exec(`UPDATE run_steps SET idempotency_key = NULL
+        WHERE idempotency_key IS NOT NULL
+          AND rowid NOT IN (
+            SELECT MIN(rowid) FROM run_steps
+             WHERE idempotency_key IS NOT NULL
+             GROUP BY run_id, idempotency_key
+          )`);
+      db.exec("DROP INDEX IF EXISTS idx_run_steps_key");
+      db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_run_steps_key_unique
+        ON run_steps(run_id, idempotency_key) WHERE idempotency_key IS NOT NULL`);
     },
   },
 ];
