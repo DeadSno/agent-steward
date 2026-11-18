@@ -630,6 +630,64 @@ LIMIT ?
 | P3-35 | `src/core/session.ts:126` — ротация сессии на Windows не удаляет сессию: `execFile("opencode", ["session","delete",id])` падает молча, потому что `opencode` там `opencode.cmd`, а Node 24 не запускает `.cmd` без shell. Подтверждено на этой машине: `execFileSync("opencode")` → ENOENT, `execFileSync("opencode.cmd")` → EINVAL, `cmd.exe /d /s /c opencode models` → OK. Счётчик `sessionRunCount` при этом обнуляется, то есть задача считает, что сессия новая, а контекст тянется старый. (18.11.2026: создан `src/core/opencode-cli.ts` — кроссплатформенный запуск `opencode` через `cmd.exe` на Windows; `src/core/session.ts` — `rotateSessionIfNeeded` использует `runOpencode` для `session delete`, логирует ошибку удаления и всё равно ротирует (новый id, счётчик сброшен, sidecar обновлён); `src/core/opencode-models.ts` — переиспользует `opencodeCommand` вместо inline `execFileSync`; `test-session-continuity.mjs` 57/57, build OK, lint 0 ошибок) | Бэклог | ✅ |
 | P3-36 | Ссылка «docs/MIGRATION.md» на странице npm-пакета `opencode-windows-scheduler` вела на `https://github.com/DeadSno/agent-steward/blob/docs/MIGRATION.md#...` — несуществующую ветку `docs`. Причина: npm переписывает относительную ссылку `../docs/MIGRATION.md` из `legacy/README.md`, склеивая repository URL с путём и теряя ветку. (18.11.2026: ссылка заменена на абсолютную `https://github.com/DeadSno/agent-steward/blob/dev/docs/MIGRATION.md#from-opencode-windows-scheduler-to-agent-steward-package-rename` — на dev есть и файл, и нужный анкор; в `test-docs.mjs` добавлены 4 проверки; реальная проверка GitHub URL выполнена; для появления исправления на npm нужен ре-паблиш legacy-пакета, например 1.5.9) | Бэклог | ✅ |
 | P3-37 | CI красный с run #110: все 6 matrix-задач падают на шаге `Test` в `test-run-now.mjs` (5/6, «record-history: прямых createSchedulerBackend().runTask больше нет». Причина: тест P1-9 запрещал любое упоминание `createSchedulerBackend`, а коммит `1a43e8a` (P2-27) добавил легитимный `createSchedulerBackend().deleteTask` для очистки ONCE-задач. (18.11.2026: проверка сужена до отсутствия прямых `.runTask(` в `dist/core/record-history.js`, добавлена позитивная проверка `createSchedulerBackend().deleteTask`; `test-run-now.mjs` 7/7, полный `npm test` зелёный, build OK, lint 0 ошибок) | CI | ✅ |
+| P3-39 | CI run #44308638812 (`windows-latest`, Node 22.22.0): `test-registry-resilience.mjs` падает с `EPERM: operation not permitted, open ...\locks\registry-p2-16-parallel.lock` в `LockManager.acquire` (40 параллельных `upsert`). Причина: на Windows конкурентный create/delete одного lock-файла возвращает `EPERM`/`EACCES`/`EBUSY` вместо `EEXIST`, а `acquire()` обрабатывал только `EEXIST`; `release()` мог упасть на `unlink`, пока другие процессы читают lock. (18.11.2026: `acquire()` трактует `EPERM`/`EACCES`/`EBUSY` как «занято» → `withLockWait` повторяет; добавлен `unlinkWithRetry()` с короткими повторами для Windows-блокировок. `test-registry-resilience.mjs` 10/10 прогонов локально, build OK) | CI | ✅ |
+
+---
+
+### Деталь P2-31: lease/owner на run_steps — требуется CONCEPT §5, §6 перед 0.1.0
+
+**Подтверждено:** `src/db/schema.ts:148-164` — таблица `run_steps` без полей `owner_pid`, `lease_token`, `lease_expires_at`. `src/db/run-journal.ts:149-164` — `recoverInterruptedSteps()` помечает failed ВСЕ running-шаги, в т.ч. исполняемые другим живым процессом. Конкурирующий процесс может взять тот же шаг → двойной прогон, потеря 출력은. CONCEPT §5: "неdependencies; leases/locks/таймауты/бюджеты" (стр. ~135). CONCEPT §6: исполнительный цикл шаги 3–6 — внутренний цикл на каждый шаг миссии.
+
+| Задача | Подзадача | Описание | Статус |
+|--------|-----------|----------|--------|
+| P2-31.T1 | P2-31.T1.1 | Миграция schema: добавить `owner_pid TEXT`, `lease_token TEXT`, `lease_expires_at TEXT` в `run_steps` (SCHEMA_VERSION → 8) | ☐ |
+| | P2-31.T1.2 | `beginStepAttempt()` записывает owner_pid + lease_token + TTL перед телом шага | ☐ |
+| | P2-31.T1.3 | `recoverInterruptedSteps()` помечает failed только шаги с мёртвым/истёкшим lease; живые lease оставляет running | ☐ |
+| | P2-31.T1.4 | `completeStep()` проверяет владельца по lease_token, иначе ошибка "step owned by another process" | ☐ |
+| | P2-31.T2.1 | Тест: два конкуррентных процесса, один шаг running живой — recovery не тронет; мёртвый pid — пометит failed | ☐ |
+
+### Деталь P2-32: decay + first_pass_rate в capability-map — требуется CONCEPT §5, §6 перед 0.1.0
+
+**Подтверждено:** `src/db/capability-repo.ts:223-277` — `decideCapabilityRoute` использует только кумулятивный `success_rate`, без затухания, без `first_pass_rate`. `last_10_runs` пишется но не участвует в решении. CONCEPT §5 (стр. 109-110): capability-map "с затуханием старых данных". CONCEPT §6.3 (стр. 143): роутинг "с учётом reliability (first_pass_rate, попытки, decay), локаль first, explore capped". CONCEPT §5 (стр. 116): "first_pass_rate и среднее число попыток участвуют в роутинге."
+
+| Задача | Подзадача | Описание | Статус |
+|--------|-----------|----------|--------|
+| P2-32.T1 | P2-32.T1.1 | Экспоненциальное затухание success_rate: старые исходы теряют вес (half-life через `decayedSuccessRate(runs, now)`) | ☐ |
+| | P2-32.T1.2 | `first_pass_rate` хранится в capability_map и участвует в `decideCapabilityRoute` (помимо success_rate) | ☐ |
+| | P2-32.T1.3 | `last_10_runs` учитывается в решении (недавние исходы больший вес, чем кумулятивный) | ☐ |
+| | P2-32.T2.1 | Тест: старые успехи затухают, recent failures смещают маршрут с local → cloud/review | ☐ |
+
+### Деталь P2-33: Pipeline-as-code — спринт 32, версия 0.0.5
+
+**Цель:** `opencode.pipeline.yaml` в репозитории + CLI `agent-steward pipeline validate|apply|export`; DAG, матрицы и Quality Gates описываются ревьюируемым файлом. Основание: ROADMAP спринт 32, ROADMAP-STRATEGY §5 (стр. 90-94), CONCEPT §13.4 (стабильные форматы) и §14 (открытые форматы pipeline/ledger). В коде заготовок нет — только `simulatePipeline` в dry-run.
+
+| Задача | Подзадача | Описание | Статус |
+|--------|-----------|----------|--------|
+| P2-33.T1 | P2-33.T1.1 | Типы `PipelineSpec`/`PipelineStep` в `src/core/pipeline-spec.ts`: version, name, steps[] (id, needs[], prompt, schedule/trigger, model, gate, matrix, tools, timeout, retry) | ☐ |
+| | P2-33.T1.2 | Валидатор: уникальные id, ссылки `needs` существуют, нет циклов, cron/trigger, matrix, имена задач по `validateTaskName`, model, tools, лимит шагов | ☐ |
+| | P2-33.T1.3 | Тест валидатора: позитив + негатив (дубль id, цикл, битый needs, пустой steps) | ☐ |
+| P2-33.T2 | P2-33.T2.1 | Парсер YAML→`PipelineSpec` (`yaml` перенести из devDependencies в dependencies) | ☐ |
+| | P2-33.T2.2 | Маппинг `PipelineSpec`→`TaskDefinition[]`: `needs`→`dependsOn`, `gate`→`qualityGate`, `matrix.workspaces`→`matrix.workspaceIds`, `trigger`→`triggerType`; шаги без cron получают ручной триггер/DAG | ☐ |
+| | P2-33.T2.3 | Идемпотентный diff/apply: create/update/unchanged, не трогать задачи без `pipelineName`; маркеры `pipelineName`/`pipelineStepId` в `definition_json` (без миграции БД) | ☐ |
+| | P2-33.T2.4 | Round-trip тест: YAML→задачи→export→YAML без потери значимых полей | ☐ |
+| P2-33.T3 | P2-33.T3.1 | `bin` в package.json + точка входа CLI `agent-steward` | ☐ |
+| | P2-33.T3.2 | `pipeline validate <file>` с exit-кодами 0/1 и человекочитаемым выводом | ☐ |
+| | P2-33.T3.3 | `pipeline export` — БД→YAML (по `pipelineName`) | ☐ |
+| | P2-33.T3.4 | `pipeline apply <file>` — создать/обновить задачи, отчёт create/update/unchanged | ☐ |
+| P2-33.T4 | P2-33.T4.1 | Агент-инструменты/RPC `pipeline_validate`/`pipeline_apply`/`pipeline_export` + обновить счётчики инструментов/RPC в доках и `test-docs.mjs` | ☐ |
+| P2-33.T5 | P2-33.T5.1 | `docs/PIPELINE.md` + пример `opencode.pipeline.yaml` | ☐ |
+| | P2-33.T5.2 | README (ru/en/zh) — раздел Pipeline-as-code | ☐ |
+| P2-33.T6 | P2-33.T6.1 | `test-pipeline.mjs` + включить в `npm test` | ☐ |
+| | P2-33.T6.2 | Приёмка: полный `npm test`, `npm run build`, `npm run lint` (0 ошибок) | ☐ |
+
+### Деталь P3-38: CJK-токенизатор — i18n-срез, не блокер 0.1.0
+
+**Подтверждено:** `src/notifications.ts:643-649` — `tokenize()` regex `[^a-zа-яё0-9\s]` вырезает CJK-символы → китайские сообщения дают нулевой вектор → семантический дедуп для zh молча не работает.
+
+| Задача | Подзадача | Описание | Статус |
+|--------|-----------|----------|--------|
+| P3-38.T1 | P3-38.T1.1 | Заменить regex на `\p{L}` (Unicode-буквы) или добавить CJK-биграммы в токенизатор | ☐ |
+| | P3-38.T2.1 | Тест: китайский текст даёт ненулевой вектор, дедупzh работает | ☐ |
 
 ---
 

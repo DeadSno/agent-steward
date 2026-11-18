@@ -147,11 +147,47 @@ export class LockManager {
       await fs.writeFile(lockPath, token, { flag: "wx" });
       return token;
     } catch (err: any) {
-      if (err.code === "EEXIST") {
+      // P3-39: на Windows конкурентный create/delete того же lock-файла
+      // возвращает EPERM/EACCES/EBUSY вместо EEXIST. Это тот же случай
+      // «блокировка занята», а не ошибка прав: отдаём null, а withLockWait
+      // повторит попытку (withLock корректно пропустит запуск).
+      if (
+        err.code === "EEXIST" ||
+        err.code === "EPERM" ||
+        err.code === "EACCES" ||
+        err.code === "EBUSY"
+      ) {
         return null;
       }
       throw err;
     }
+  }
+
+  /**
+   * Удаляет lock-файл, переживая кратковременные Windows-блокировки.
+   *
+   * На Windows unlink может вернуть EPERM/EACCES/EBUSY, пока другой процесс
+   * читает файл (проверка владельца в withLockWait) или файл ещё «висящий»
+   * после создания. Несколько коротких повторов решают гонку; ENOENT — уже
+   * удалён, это не ошибка.
+   */
+  private async unlinkWithRetry(lockPath: string, attempts = 6): Promise<boolean> {
+    for (let i = 0; i < attempts; i += 1) {
+      try {
+        await fs.unlink(lockPath);
+        return true;
+      } catch (err: any) {
+        if (err.code === "ENOENT") return false;
+        const transient =
+          err.code === "EPERM" || err.code === "EACCES" || err.code === "EBUSY";
+        if (transient && i < attempts - 1) {
+          await new Promise((resolve) => setTimeout(resolve, 10 * (i + 1)));
+          continue;
+        }
+        throw err;
+      }
+    }
+    return false;
   }
 
   /**
@@ -172,13 +208,9 @@ export class LockManager {
       throw err;
     }
     if (current !== token) return false;
-    try {
-      await fs.unlink(lockPath);
-      return true;
-    } catch (err: any) {
-      if (err.code === "ENOENT") return false;
-      throw err;
-    }
+    // P3-39: на Windows unlink может кратковременно упасть EPERM, пока
+    // другие процессы читают lock для проверки владельца.
+    return this.unlinkWithRetry(lockPath);
   }
 
   /**
