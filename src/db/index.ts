@@ -69,6 +69,11 @@ export function initDb(file: string = dbFile): SqliteDatabase {
   const DatabaseSync = loadSqlite();
   const instance = new DatabaseSync(file);
 
+  // busy_timeout ДОЛЖЕН быть установлен до WAL: при одновременном старте
+  // нескольких процессов (каждое завершение задачи — отдельный
+  // `node record-history`) переключение journal_mode требует эксклюзивной
+  // блокировки. Без таймаута SQLite сразу падает с "database is locked".
+  instance.exec("PRAGMA busy_timeout = 5000;");
   // WAL — конкурентное чтение во время записи и устойчивость к сбоям.
   // synchronous = NORMAL в WAL гарантирует, что закоммиченная транзакция
   // переживает падение процесса (шаг 36.1.b); при потере питания может
@@ -76,7 +81,6 @@ export function initDb(file: string = dbFile): SqliteDatabase {
   instance.exec("PRAGMA journal_mode = WAL;");
   instance.exec("PRAGMA synchronous = NORMAL;");
   instance.exec("PRAGMA foreign_keys = ON;");
-  instance.exec("PRAGMA busy_timeout = 5000;");
   applySchema(instance);
 
   db = instance;

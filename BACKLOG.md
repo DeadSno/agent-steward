@@ -581,7 +581,11 @@ LIMIT ?
 
 | Задача | Подзадача | Описание | Статус |
 |--------|-----------|----------|--------|
-| P2-30.T1 | P2-30.T1.1 | Хранить retry per-task (отдельная колонка/таблица) или делать атомарный UPDATE | ☐ |
+| P2-30.T1 | P2-30.T1.1 | Хранить retry per-task (отдельная колонка/таблица) или делать атомарный UPDATE | ✅ |
+
+**Реализовано (18.11.2026):** счётчик повторов хранится отдельной строкой settings на задачу: ключ `retry_state:<имя в нижнем регистре>`. В `src/db/settings-repo.ts` добавлен `decrementCounterSetting(key, initial)`: `INSERT ... ON CONFLICT DO NOTHING`, затем атомарный `UPDATE ... SET value_json = CAST(CAST(value_json AS INTEGER) - 1 AS TEXT) WHERE key = ? AND CAST(value_json AS INTEGER) > 0 RETURNING ...`. В `record-history.ts` удалены общий `RetryState`/`loadRetryState`/`writeRetryState`/`clearRetryState`; `scheduleRetry` уменьшает счётчик атомарно, при исчерпании удаляет ключ, при успехе — `deleteSetting(retryStateKey(...))`. Дополнительно в `src/db/index.ts` `PRAGMA busy_timeout = 5000` теперь выполняется **до** `PRAGMA journal_mode = WAL` — параллельный старт процессов `record-history` больше не падает с `database is locked`.
+
+**Проверено запуском (после фикса):** `test-retry-counter.mjs` — 3/3: 20 параллельных процессов с начальным значением 20 дают уникальные значения 0..19 без потерь; 21-й вызов возвращает `null`; ключи разных задач независимы. `npm run build` — OK. Тест зарегистрирован в `npm test` и `test:retry-counter`.
 
 ---
 

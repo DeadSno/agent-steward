@@ -5,7 +5,7 @@ import { runTaskNow } from "./scheduler/run-now.js";
 import { createSchedulerBackend } from "./scheduler/index.js";
 import { notifyTaskCompletion } from "../notifications.js";
 import { finishRun, getLatestHistoryByTask, recordRun, startRun } from "../db/history-repo.js";
-import { getSetting, setSetting } from "../db/settings-repo.js";
+import { deleteSetting, decrementCounterSetting } from "../db/settings-repo.js";
 import { getTask, listTasks } from "../db/tasks-repo.js";
 import { rotateSessionIfNeeded } from "./session.js";
 import type { TaskDefinition } from "../task-transfer.js";
@@ -17,7 +17,12 @@ import {
 
 type Status = "success" | "error" | "timeout";
 
-const RETRY_STATE_KEY = "retry_state";
+/** Префикс ключа настроек со счётчиком повторов конкретной задачи. */
+const RETRY_STATE_PREFIX = "retry_state:";
+
+function retryStateKey(taskName: string): string {
+  return `${RETRY_STATE_PREFIX}${taskName.toLowerCase()}`;
+}
 
 /** Сколько последних строк лога сканировать при поиске токенов/стоимости. */
 const LOG_TAIL_LINES = 500;
@@ -137,25 +142,12 @@ async function triggerTask(taskName: string): Promise<boolean> {
   }
 }
 
-/** Счётчик оставшихся повторов по задачам (ключ — имя в нижнем регистре). */
-type RetryState = Record<string, number>;
-
-async function loadRetryState(): Promise<RetryState> {
-  const raw = getSetting<RetryState>(RETRY_STATE_KEY, {});
-  return raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
-}
-
-async function writeRetryState(state: RetryState): Promise<void> {
-  setSetting(RETRY_STATE_KEY, state);
-}
-
-async function clearRetryState(taskName: string): Promise<void> {
-  const state = await loadRetryState();
-  const key = Object.keys(state).find((k) => k.toLowerCase() === taskName.toLowerCase());
-  if (!key) return;
-  delete state[key];
-  await writeRetryState(state);
-}
+/*
+ * P2-30: раньше счётчики повторов лежали одним JSON-объектом в настройках.
+ * Каждое завершение задачи — отдельный процесс record-history, поэтому
+ * параллельные завершения перезаписывали map и теряли декременты. Теперь
+ * на задачу отдельный ключ и атомарный UPDATE ... RETURNING.
+ */
 
 /**
  * Планирует повторный запуск упавшей задачи.
@@ -170,20 +162,14 @@ async function scheduleRetry(taskName: string): Promise<boolean> {
     const { count, delay } = await loadRetryConfig(taskName);
     if (count <= 0) return false;
 
-    const state = await loadRetryState();
-    const key = taskName.toLowerCase();
-    const remaining = Object.prototype.hasOwnProperty.call(state, key)
-      ? Number(state[key]) || 0
-      : count;
+    const key = retryStateKey(taskName);
+    const remaining = decrementCounterSetting(key, count);
 
-    if (remaining <= 0) {
-      await clearRetryState(taskName);
+    if (remaining === null) {
+      deleteSetting(key);
       console.log(`[agent-steward] Повторы для "${taskName}" исчерпаны.`);
       return false;
     }
-
-    state[key] = remaining - 1;
-    await writeRetryState(state);
 
     const script = process.argv[1];
     if (!script) return false;
@@ -199,7 +185,7 @@ async function scheduleRetry(taskName: string): Promise<boolean> {
 
     console.log(
       `[agent-steward] Задача "${taskName}" будет повторена через ${delay} с ` +
-        `(осталось повторов: ${remaining - 1}).`,
+        `(осталось повторов: ${remaining}).`,
     );
     return true;
   } catch (err: any) {
@@ -583,7 +569,7 @@ async function handleCompletion(
 
   if (st === "success") {
     // Успешный запуск сбрасывает счётчик повторов.
-    await clearRetryState(taskName);
+    await deleteSetting(retryStateKey(taskName));
     if (chainTarget) {
       const started = await triggerTask(chainTarget);
       if (started) {
