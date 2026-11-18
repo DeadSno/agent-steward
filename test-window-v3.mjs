@@ -106,6 +106,10 @@ check("gate: вне окна, --window-policy skip → exit 3", runGate(["--cron
 check("gate: вне окна, --window-policy run → exit 0", runGate(["--cron", "0 8 * * *", "--tz", "UTC", "--now", "2026-11-16T08:00:00Z", "--days", "1,2,3,4,5", "--not-before", "09:00", "--not-after", "19:00", "--window-policy", "run"]).status === 0);
 // cron не совпал → exit 3 независимо от дней.
 check("gate: cron не совпал, дни совпадают → exit 3", runGate(["--cron", "0 9 * * *", "--tz", "UTC", "--now", "2026-11-16T10:00:00Z", "--days", "1,2,3,4,5"]).status === 3);
+// P2-25: невалидный cron → fail-closed (exit 3 + громкий лог), а не запуск каждый тик.
+const invalidCron = runGate(["--cron", "not-a-cron", "--tz", "UTC", "--now", "2026-11-16T10:00:00Z", "--days", "1,2,3,4,5"]);
+check("P2-25: невалидный cron → exit 3 (fail-closed)", invalidCron.status === 3);
+check("P2-25: в логе явная ошибка fail-closed", /fail-closed/i.test(invalidCron.stderr));
 
 // --- 7. P2-24: cron, который никогда не попадает в окно ----------------------
 const p224From = new Date("2026-11-16T09:00:00Z");

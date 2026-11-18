@@ -161,11 +161,15 @@ async function main(): Promise<number> {
     try {
       spec = parseCron(cronExpr);
     } catch (err: any) {
+      // Fail-closed: при повреждённом cron проверка расписания невозможна.
+      // Если пропустить её (fail-open), задача с окном/днями будет
+      // запускаться на каждом минутном тике — включая дорогие LLM-агенты.
       console.error(
-        `[schedule-gate] Невалидный cron «${cronExpr}»: ${
+        `[schedule-gate] ОШИБКА: невалидный cron «${cronExpr}»: ${
           err instanceof Error ? err.message : String(err)
-        } — пропускаем проверку cron.`,
+        }. Запуск пропущен (fail-closed). Исправьте расписание задачи.`,
       );
+      return 3;
     }
   }
 
