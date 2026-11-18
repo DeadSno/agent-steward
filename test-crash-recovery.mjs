@@ -26,8 +26,7 @@ const assert = (cond, msg) => {
 
 const { initDb, closeDb, getDb } = await import("./dist/db/index.js");
 const { saveTask, getTask } = await import("./dist/db/tasks-repo.js");
-const { getHistory } = await import("./dist/db/history-repo.js");
-const { recoverInterruptedRuns } = await import("./dist/db/recovery.js");
+const { getHistory, recoverInterrupted } = await import("./dist/db/history-repo.js");
 const { WRAPPER_SCRIPT } = await import("./dist/core/ps-wrapper.js");
 const { buildBashWrapperScript } = await import("./dist/core/wrappers/bash.js");
 
@@ -120,10 +119,26 @@ assert(
   "--start записал owner_started_at"
 );
 
-// --- 3. Имитация перезапуска плагина ------------------------------------
+// --- 3. Recovery не трогает живой прогон (B1.3) -------------------------
 closeDb();
 initDb();
-recoverInterruptedRuns();
+let outcome = recoverInterrupted();
+assert(
+  outcome.keptAlive === 1 && outcome.recovered === 0,
+  `живой владелец: recovery оставил запись (${JSON.stringify(outcome)})`
+);
+
+record = getHistory("Crash Task", 10)[0];
+assert(record.status === "running", "живой прогон остался running");
+assert(record.finishedAt == null, "у живого прогона finished_at = NULL");
+
+// --- 3b. Мёртвый владелец: recovery финализирует ------------------------
+const dead = spawnSync(process.execPath, ["-e", "0"]);
+getDb()
+  .prepare("UPDATE history SET owner_pid = ? WHERE id = ?")
+  .run(Number(dead.pid), crashedId);
+outcome = recoverInterrupted();
+assert(outcome.recovered === 1, `мёртвый владелец: запись восстановлена (${JSON.stringify(outcome)})`);
 
 record = getHistory("Crash Task", 10)[0];
 assert(record.status === "error", "после recovery запись помечена как error");

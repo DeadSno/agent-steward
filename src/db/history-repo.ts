@@ -1,6 +1,7 @@
 import { getDb, withTransaction } from "./index.js";
 import { incrementMetricsUnsafe } from "./metrics-repo.js";
 import { appendStructuredLog } from "../core/structured-log.js";
+import os from "node:os";
 import type { TaskStatus } from "../history.js";
 
 /**
@@ -384,29 +385,110 @@ export function getHistorySince(
 }
 
 /**
- * Crash recovery: все незавершённые записи (finished_at IS NULL) помечаются
- * как error. Длительность считается от started_at до текущего момента.
- * Возвращает количество восстановленных записей.
+ * Crash recovery для истории.
+ *
+ * Незавершённая запись (finished_at IS NULL) финализируется как error, только
+ * если её владелец больше не может её завершить:
+ *  - владелец известен, жив и на этом же хосте → запись оставляем (B1);
+ *  - владелец известен и мёртв → финализируем сразу;
+ *  - владелец неизвестен (legacy-строка или другой хост) → финализируем,
+ *    только когда запись старше `maxUnverifiableAgeMs`.
  */
-export function recoverInterrupted(): number {
-  const now = new Date().toISOString();
-  const result = getDb()
+
+/** Возраст, после которого запись с непроверяемым владельцем считается осиротевшей. */
+export const UNVERIFIABLE_OWNER_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+export interface RecoverInterruptedResult {
+  /** Сколько записей финализировано как error. */
+  recovered: number;
+  /** Сколько записей оставлено живым владельцам. */
+  keptAlive: number;
+}
+
+export interface RecoverInterruptedOptions {
+  /** Текущий момент (для тестов). */
+  now?: Date;
+  /** Порог возраста для записей с непроверяемым владельцем. */
+  maxUnverifiableAgeMs?: number;
+  /** Имя текущего хоста (для тестов). */
+  hostname?: string;
+  /** Проверка живости PID (для тестов). */
+  isAlive?: (pid: number) => boolean;
+}
+
+/** Проверяет существование процесса: signal 0 не убивает, только пробует. */
+export function isProcessAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    // EPERM — процесс существует, но сигнал запрещён; ESRCH — процесса нет.
+    return (error as NodeJS.ErrnoException)?.code === "EPERM";
+  }
+}
+
+export function recoverInterrupted(
+  options: RecoverInterruptedOptions = {},
+): RecoverInterruptedResult {
+  const now = options.now ?? new Date();
+  const nowIso = now.toISOString();
+  const maxAge =
+    typeof options.maxUnverifiableAgeMs === "number" &&
+    Number.isFinite(options.maxUnverifiableAgeMs)
+      ? Math.max(0, options.maxUnverifiableAgeMs)
+      : UNVERIFIABLE_OWNER_MAX_AGE_MS;
+  const hostname = options.hostname ?? os.hostname();
+  const isAlive = options.isAlive ?? isProcessAlive;
+  const db = getDb();
+  const rows = db
     .prepare(
-      `UPDATE history SET
-         status = 'error',
-         error = CASE
-           WHEN error IS NULL OR error = '' THEN 'Прервано (сбой/перезагрузка)'
-           ELSE error
-         END,
-         finished_at = COALESCE(finished_at, ?),
-         duration_ms = COALESCE(
-           duration_ms,
-           CAST((julianday(?) - julianday(started_at)) * 86400000 AS INTEGER)
-         )
-       WHERE finished_at IS NULL`,
+      `SELECT id, started_at, owner_pid, owner_host, owner_started_at
+       FROM history WHERE finished_at IS NULL`,
     )
-    .run(now, now);
-  return Number(result.changes) || 0;
+    .all();
+  const update = db.prepare(
+    `UPDATE history SET
+       status = 'error',
+       error = CASE
+         WHEN error IS NULL OR error = '' THEN 'Прервано (сбой/перезагрузка)'
+         ELSE error
+       END,
+       finished_at = COALESCE(finished_at, ?),
+       duration_ms = COALESCE(
+         duration_ms,
+         CAST((julianday(?) - julianday(started_at)) * 86400000 AS INTEGER)
+       )
+     WHERE id = ? AND finished_at IS NULL`,
+  );
+
+  let recovered = 0;
+  let keptAlive = 0;
+  withTransaction(() => {
+    for (const row of rows) {
+      const ownerPid = row.owner_pid == null ? null : Number(row.owner_pid);
+      const ownerHost = row.owner_host == null ? null : String(row.owner_host);
+      const verifiable =
+        ownerPid != null && ownerPid > 0 && ownerHost != null && ownerHost === hostname;
+
+      if (verifiable && isAlive(ownerPid as number)) {
+        keptAlive += 1;
+        continue;
+      }
+      if (!verifiable) {
+        const since = Date.parse(String(row.owner_started_at ?? row.started_at ?? ""));
+        const age = Number.isFinite(since) ? now.getTime() - since : Infinity;
+        if (age < maxAge) {
+          keptAlive += 1;
+          continue;
+        }
+      }
+
+      const result = update.run(nowIso, nowIso, row.id);
+      if (Number(result.changes) > 0) recovered += 1;
+    }
+  });
+  return { recovered, keptAlive };
 }
 
 /** Количество записей истории (для миграции и тестов). */

@@ -12,13 +12,14 @@ const JSON_FILES = ["tasks.json", "history.json", "metrics.json", "templates.jso
  * Вызывается при setup() до запуска catch-up и файловых триггеров.
  */
 export function recoverInterruptedRuns(): number {
-  const count = recoverInterrupted();
-  if (count > 0) {
+  const { recovered, keptAlive } = recoverInterrupted();
+  if (recovered > 0 || keptAlive > 0) {
     console.log(
-      `[recovery] Восстановлено ${count} незавершённых записей истории — помечены как error.`,
+      `[recovery] Восстановлено ${recovered} незавершённых записей истории — помечены как error.` +
+        (keptAlive > 0 ? ` Оставлено живым владельцам: ${keptAlive}.` : ""),
     );
   }
-  return count;
+  return recovered;
 }
 
 /**

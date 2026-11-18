@@ -10,6 +10,12 @@ All notable changes to this project are documented here. Format follows [Keep a 
 - **Pipeline-as-code: CLI и агентские поверхности:** `src/cli.ts` — `agent-steward pipeline validate|apply|export` (точка входа объявлена в `bin`); 3 новых агент-инструмента `pipeline_validate` / `pipeline_apply` / `pipeline_export` (26 → 29) и 3 RPC-метода (53 → 56) с теми же фасадами.
 - **Схема БД v8 — владелец незавершённого запуска (B1.1):** в `history` добавлены `owner_pid`, `owner_host`, `owner_started_at`; миграция аддитивная и идемпотентная (`PRAGMA table_info` перед `ALTER TABLE`). Колонки нужны recovery, чтобы отличать живой прогон от осиротевшего.
 - **Владелец записывается при старте запуска (B1.2):** `record-history --start` фиксирует `owner_pid` процесса-обёртки (`process.ppid` — powershell/bash живут дольше короткоживущего recorder'а), `owner_host` (`os.hostname()`) и `owner_started_at`; поля проведены через `startRun` → `insertHistory` → `rowToRecord`, а `recordRun` пишет `NULL` (завершённым строкам владелец не нужен). `test-crash-recovery.mjs` проверяет все три поля.
+- **Recovery учитывает владельца запуска (B1.3, B1.4):** `recoverInterrupted()` больше не финализирует всё подряд. Строка с верифицируемым владельцем (`owner_pid` + совпадающий `owner_host`) остаётся `running`, если процесс жив (`process.kill(pid, 0)`, `EPERM` считается живым). Legacy-строки без владельца и строки с чужого хоста остаются живыми, пока возраст (`owner_started_at ?? started_at`) меньше `UNVERIFIABLE_OWNER_MAX_AGE_MS` (24 ч); старше — помечаются `error` с сообщением «Прервано (сбой/перезагрузка)». Функция возвращает `{recovered, keptAlive}`; startup-лог `recoverInterruptedRuns()` пишет оба числа.
+
+### Fixed
+
+- **CI: `test-docs` после переименования раздела ARCHITECTURE:** проверка «4 типа процессов» искала `| Recorder |`, а в новой «Execution model» строка называется `| recorder |`; заменена на проверку входов (ad-hoc / internal orchestration / registered triggers) и таблицы процессов. Из-за неё падали все джобы `Test`, `V1 SDK` и `V2 SDK`.
+- **`test-crash-recovery`: семантика recovery:** сценарий разделён на живой владелец (запись остаётся `running`, `{recovered:0,keptAlive:1}`) и мёртвый (PID завершённого процесса → `{recovered:1}`, статус `error`, сообщение, `finished_at`, `duration_ms`).
 
 ### Verified
 
@@ -18,7 +24,7 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Known issues
 
-- **B1:** `recoverInterrupted()` (`src/db/history-repo.ts`) при старте плагина помечает `error` все строки `finished_at IS NULL` без проверки PID/владельца/возраста — убивает живые длительные запуски при рестарте плагина.
+- **B1:** закрыт в Unreleased — recovery проверяет живого владельца и возраст (B1.1–B1.4).
 - **B2:** Двойные ретраи на Windows — PS-обёртка ретраит сама (`$maxAttempts = 1 + RetryCount`) и recorder добавляет свои = `(1+N)²` вместо `1+N`.
 - **B3:** XSS через атрибуты дашборда — `esc()` не экранирует кавычки, результат вставляется в `title=`/`style=`/`data-*`.
 - **B16:** `release.yml` `workflow_dispatch` публикует в npm без проверки тега; `id-token: write` выдан всем job'ам.

@@ -27,7 +27,15 @@ for (const file of files) {
 }
 
 const arch = fs.readFileSync(path.join(docs, "ARCHITECTURE.md"), "utf8");
-check("ARCHITECTURE: описывает 4 типа процессов", arch.includes("| Plugin host |") && arch.includes("| Recorder |"));
+check(
+  "ARCHITECTURE: описывает модель исполнения (входы → ядро → обёртка)",
+  arch.includes("## Execution model") &&
+    arch.includes("| ad-hoc (no OS registration) |") &&
+    arch.includes("| internal orchestration (core-driven, no OS) |") &&
+    arch.includes("| registered triggers |") &&
+    arch.includes("| Plugin host |") &&
+    arch.includes("| recorder |"),
+);
 check("ARCHITECTURE: Linux-бэкенд — crontab (не systemd)", arch.includes("| Linux | `crontab` |"));
 check("ARCHITECTURE: модули index/gui/server/matrix/record-history", ["src/index.ts", "gui.tsx", "server.ts", "core/matrix.ts", "record-history.ts"].every((m) => arch.includes(m)));
 check("ARCHITECTURE: пути плагина %APPDATA% и XDG", arch.includes("%APPDATA%") && arch.includes("XDG_CONFIG_HOME"));
