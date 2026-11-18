@@ -1,7 +1,7 @@
 // Спринт 36.3: идемпотентные ключи шагов.
 //
 // Проверяем:
-//  - схема v4 и частичный UNIQUE-индекс по (run_id, idempotency_key);
+//  - схема v5 (уникальность ключей появилась в v4) и частичный UNIQUE-индекс по (run_id, idempotency_key);
 //  - повторный вызов с тем же ключом не выполняет тело второй раз;
 //  - результат берётся из output_json, attempt не растёт;
 //  - ключ уникален в пределах запуска, но переиспользуем между запусками;
@@ -48,9 +48,9 @@ const DatabaseSync = createRequire(import.meta.url)("node:sqlite").DatabaseSync;
 
 initDb(dbPath);
 
-// --- 1. Схема v4 и уникальный индекс ---------------------------------------
-assert(SCHEMA_VERSION === 4, "SCHEMA_VERSION = 4");
-assert(getSchemaVersion(getDb()) === 4, "user_version = 4");
+// --- 1. Схема v5 и уникальный индекс ---------------------------------------
+assert(SCHEMA_VERSION === 5, "SCHEMA_VERSION = 5");
+assert(getSchemaVersion(getDb()) === SCHEMA_VERSION, `user_version = ${SCHEMA_VERSION}`);
 
 const indexes = getDb()
   .prepare("SELECT name, sql FROM sqlite_master WHERE type = 'index' AND tbl_name = 'run_steps'")
@@ -266,7 +266,7 @@ legacy.exec(`
 legacy.close();
 
 initDb(legacyPath);
-assert(getSchemaVersion(getDb()) === 4, "старая БД v3 поднята до user_version = 4");
+assert(getSchemaVersion(getDb()) === SCHEMA_VERSION, "старая БД v3 поднята до текущей версии");
 const legacySteps = repo.listRunSteps("legacy-run");
 assert(legacySteps.length === 2, "шаги старой БД на месте");
 assert(legacySteps[0].idempotencyKey === "dup", "первый дубль ключа сохранён");

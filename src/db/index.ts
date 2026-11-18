@@ -55,6 +55,8 @@ const DEFAULT_DB_FILE = process.env.OPENCODE_SCHEDULER_DB?.trim()
 
 let dbFile = DEFAULT_DB_FILE;
 let db: SqliteDatabase | null = null;
+/** Глубина вложенности withTransaction: 0 — транзакции нет, >0 — SAVEPOINT. */
+let transactionDepth = 0;
 
 /** Открывает (или переоткрывает) соединение и применяет схему. */
 export function initDb(file: string = dbFile): SqliteDatabase {
@@ -88,6 +90,7 @@ export function getDb(): SqliteDatabase {
 
 /** Закрывает соединение (вызывается при выгрузке плагина). */
 export function closeDb(): void {
+  transactionDepth = 0;
   if (!db) return;
   try {
     db.exec("PRAGMA wal_checkpoint(TRUNCATE);");
@@ -143,10 +146,37 @@ export function getDbStatus(): {
 /**
  * Выполняет функцию в транзакции BEGIN IMMEDIATE.
  * При любой ошибке откатывает изменения и пробрасывает исключение дальше.
+ *
+ * Вложенный вызов не открывает вторую транзакцию (SQLite это запрещает), а
+ * создаёт SAVEPOINT: так композиция вроде «retry из DLQ → reopenRun → retryStep»
+ * остаётся атомарной, а внутренний откат не рушит внешнюю транзакцию.
  */
 export function withTransaction<T>(fn: () => T): T {
   const instance = getDb();
+
+  if (transactionDepth > 0) {
+    const savepoint = `sp_nested_${transactionDepth}`;
+    instance.exec(`SAVEPOINT ${savepoint};`);
+    transactionDepth += 1;
+    try {
+      const result = fn();
+      instance.exec(`RELEASE ${savepoint};`);
+      return result;
+    } catch (err) {
+      try {
+        instance.exec(`ROLLBACK TO ${savepoint};`);
+        instance.exec(`RELEASE ${savepoint};`);
+      } catch {
+        // SAVEPOINT уже снят вместе с внешней транзакцией.
+      }
+      throw err;
+    } finally {
+      transactionDepth -= 1;
+    }
+  }
+
   instance.exec("BEGIN IMMEDIATE;");
+  transactionDepth = 1;
   try {
     const result = fn();
     instance.exec("COMMIT;");
@@ -158,6 +188,8 @@ export function withTransaction<T>(fn: () => T): T {
       // Откат мог не понадобиться (например, SQLite уже откатил сам).
     }
     throw err;
+  } finally {
+    transactionDepth = 0;
   }
 }
 

@@ -1,7 +1,7 @@
 // Спринт 36.1.a: durable-состояние запуска.
 //
 // Проверяем:
-//  - схема v4 создаёт runs/run_steps на свежей и на старой БД (user_version = 1);
+//  - схема v5 создаёт runs/run_steps/run_dlq на свежей и на старой БД (user_version = 1);
 //  - шаг хранит status, attempt, position, idempotency_key и timestamps;
 //  - переход pending → running → passed/failed;
 //  - недопустимые переходы отсекаются;
@@ -61,9 +61,9 @@ const indexNames = (table) =>
     .all()
     .map((row) => String(row.name));
 
-// --- 1. Свежая БД: схема v4 и таблицы durable DAG -----------------------
+// --- 1. Свежая БД: схема v5 и таблицы durable DAG -----------------------
 initDb(dbPath);
-assert(SCHEMA_VERSION === 4, "SCHEMA_VERSION = 4");
+assert(SCHEMA_VERSION === 5, "SCHEMA_VERSION = 5");
 assert(
   getSchemaVersion(getDb()) === SCHEMA_VERSION,
   `свежая БД: user_version = ${SCHEMA_VERSION}`,
@@ -218,7 +218,7 @@ const reopenedStep = repo.getStep(durable.id, "step-1");
 assert(reopenedStep?.status === "running", "статус шага пережил переоткрытие БД");
 assert(reopenedStep?.startedAt != null, "started_at шага пережил переоткрытие БД");
 
-// --- 9. Старая БД (user_version = 1) догоняет миграцию v4 ---------------
+// --- 9. Старая БД (user_version = 1) догоняет миграцию v5 ---------------
 closeDb();
 
 const legacyPath = path.join(tempRoot, "legacy-v1", "scheduler.db");
@@ -261,7 +261,7 @@ repo.finishStep(repo.getStep(legacyRun.id, "only").id, "passed");
 assert(
   repo.getRun(legacyRun.id)?.status === "pending" &&
     repo.getStep(legacyRun.id, "only")?.status === "passed",
-  "после миграции v4 переходы шагов работают",
+  "после миграции v5 переходы шагов работают",
 );
 
 // --- 10. БД v2 с существующей run_steps без position ----------------------
@@ -312,7 +312,7 @@ v2.close();
 initDb(v2Path);
 assert(
   getSchemaVersion(getDb()) === SCHEMA_VERSION,
-  "БД v2 с run_steps без position открылась и поднялась до v4",
+  "БД v2 с run_steps без position открылась и поднялась до v5",
 );
 assert(
   columnsOf("run_steps").includes("position"),

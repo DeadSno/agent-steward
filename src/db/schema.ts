@@ -165,6 +165,27 @@ CREATE TABLE IF NOT EXISTS run_steps (
 
 CREATE INDEX IF NOT EXISTS idx_run_steps_run ON run_steps(run_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_run_steps_status ON run_steps(status);
+
+-- Спринт 36.4 (DLQ): шаги, которые упали детерминированно (исчерпали попытки),
+-- ждут ручного retry или отказа. Открытая запись на шаг может быть только одна,
+-- поэтому ручной retry не создаёт дублей.
+CREATE TABLE IF NOT EXISTS run_dlq (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+  step_name TEXT NOT NULL,
+  status TEXT NOT NULL,
+  reason TEXT,
+  error TEXT,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  resolved_at TEXT,
+  resolution TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_run_dlq_status ON run_dlq(status, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_run_dlq_open_unique
+  ON run_dlq(run_id, step_name) WHERE status = 'open';
 `;
 
 interface SchemaDb {
@@ -180,7 +201,7 @@ interface SchemaDb {
  * миграций. Увеличивайте при добавлении новой ступени в {@link MIGRATIONS}
  * и добавляйте соответствующую запись в массив.
  */
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 /** Возвращает сохранённую версию схемы (0 у legacy-БД без user_version). */
 export function getSchemaVersion(db: SchemaDb): number {
@@ -324,6 +345,32 @@ const MIGRATIONS: { to: number; migrate: (db: SchemaDb) => void }[] = [
       db.exec("DROP INDEX IF EXISTS idx_run_steps_key");
       db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_run_steps_key_unique
         ON run_steps(run_id, idempotency_key) WHERE idempotency_key IS NOT NULL`);
+    },
+  },
+  {
+    // Ступень 5 — Спринт 36.4: DLQ для детерминированно упавших шагов.
+    // Таблица и индексы идемпотентны; уникальный открытый индекс не даёт
+    // завести вторую запись на тот же шаг после ручного retry.
+    to: 5,
+    migrate(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS run_dlq (
+          id TEXT PRIMARY KEY,
+          run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+          step_name TEXT NOT NULL,
+          status TEXT NOT NULL,
+          reason TEXT,
+          error TEXT,
+          attempts INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          resolved_at TEXT,
+          resolution TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_run_dlq_status ON run_dlq(status, created_at DESC);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_run_dlq_open_unique
+          ON run_dlq(run_id, step_name) WHERE status = 'open';
+      `);
     },
   },
 ];

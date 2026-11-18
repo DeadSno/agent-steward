@@ -202,7 +202,7 @@ last_10_runs`. Обучается на исходах гейта (CONCEPT §9 le
 | `src/core/cron-to-schtasks.ts` | Cron → Task Scheduler translation |
 | `src/core/schedule-v2.ts` | Extended cron parser/matcher, timezone math, launch windows, poll-mode decisions |
 | `src/core/schedule-gate.ts` | Wrapper-side gate: cron re-check (poll mode), window postpone, defer-file |
-| `src/db/` | SQLite access: schema, migrations, repositories, recovery; `runs-repo.ts` keeps durable `runs`/`run_steps` state, `run-journal.ts` writes transitions around each step, `run-resume.ts` continues a crashed chain, `step-idempotency.ts` replays steps by key |
+| `src/db/` | SQLite access: schema, migrations, repositories, recovery; `runs-repo.ts` keeps durable `runs`/`run_steps` state, `run-journal.ts` writes transitions around each step, `run-resume.ts` continues a crashed chain, `step-idempotency.ts` replays steps by key, `run-dlq.ts` parks deterministically failed steps |
 | `src/shared/jobs-view.ts` | Task view shared by the GUI and dashboard |
 
 ## Scheduling backends
@@ -355,7 +355,7 @@ the whole plugin directory (database, logs, locks, wrappers, prompts) with
 
 Schema evolution is additive: `applySchema` runs `CREATE TABLE IF NOT EXISTS` on every
 connection and adds missing columns after `PRAGMA table_info`, so upgrading the plugin
-never requires a manual migration. `SCHEMA_VERSION` (currently `4`) is stored in
+never requires a manual migration. `SCHEMA_VERSION` (currently `5`) is stored in
 `PRAGMA user_version`; incremental steps live in `MIGRATIONS`.
 
 ### Durable run state (Sprint 36.1)
@@ -371,8 +371,8 @@ execution:
 `src/db/runs-repo.ts` owns the transitions and rejects invalid ones
 (`InvalidTransitionError`). A failed step can be retried explicitly (`retryStep`),
 which increments `attempt` and returns it to `running`. The tables survive process
-crashes and reconnects, which is the prerequisite for resume (36.2) and
-idempotent steps (36.3).
+crashes and reconnects, which is the prerequisite for resume (36.2),
+idempotent steps (36.3) and the dead letter queue (36.4).
 
 `src/db/run-journal.ts` (Sprint 36.1.b) writes every transition to disk before
 and after executing the step body: `beginStepAttempt` commits `running` + `started_at`
@@ -438,6 +438,43 @@ created in the migration, after the dedupe — the same ordering trap as
 The same key is allowed in different runs; `test-step-idempotency.mjs` covers
 first execution, replay from cache (including after reconnect), conflicts,
 retry and parallel deduplication.
+
+### Dead letter queue (Sprint 36.4)
+
+A step that fails on every attempt is not transient: resuming the run again just
+burns another attempt and hides the real problem. Schema v5 adds `run_dlq`, the
+durable queue of deterministically failed steps:
+
+| Column | Purpose |
+| --- | --- |
+| `run_id`, `step_name` | Which step dead-lettered; cascade-deleted with the run |
+| `status` | `open → retried` or `open → discarded` |
+| `reason` | `attempts-exhausted` (automatic scan) or `manual` |
+| `error`, `attempts` | Snapshot of the failure at the moment of enqueue |
+| `resolved_at`, `resolution` | When and how the entry was closed (`manual-retry`, `discarded`) |
+
+`src/db/run-dlq.ts` provides:
+
+1. `scanDeadLetters({ runId?, minAttempts = 3, limit })` selects steps with
+   `status = failed` and `attempt >= threshold` and enqueues only new ones. The
+   partial unique index `idx_run_dlq_open_unique (run_id, step_name) WHERE
+   status = 'open'` makes enqueue idempotent, so a repeated scan does not create
+   duplicates.
+2. `retryDeadLetter(id)` is the manual retry: it reopens the failed run, calls
+   `retryStep` (attempt + 1, step back to `running`) and closes the entry as
+   `retried` with `resolution = manual-retry`. Closed entries cannot be retried
+   or discarded twice.
+3. `discardDeadLetter(id, resolution = "discarded")` closes the entry without
+   touching the step — the run stays failed.
+4. `listDeadLetters` / `countDeadLetters` filter `open` or `all` for dashboards
+   (36.6) and metrics.
+
+`retryDeadLetter` calls `reopenRun` and `retryStep`, which each open their own
+transaction. `withTransaction` therefore nests through `SAVEPOINT` when a
+transaction is already active, keeping the whole retry atomic instead of failing
+with `cannot start a transaction within a transaction`. `test-run-dlq.mjs`
+covers the threshold, idempotent scans, manual retry, discard, cascade delete,
+reconnect and the v4 → v5 migration.
 
 ## Interfaces
 
