@@ -19,15 +19,12 @@ All notable changes to this project are documented here. Format follows [Keep a 
 - **`test-sqlite`: recovery после B1.3:** строка без владельца моложе 24 ч теперь законно остаётся `running`, поэтому тест заводит просроченную запись (`started_at` 25 ч назад) и проверяет её финализацию.
 - **CI: жёсткая схема v7 в тестах durable-слоя:** `test-run-state`, `test-run-dlq`, `test-run-context`, `test-step-idempotency`, `test-capability-map` требовали ровно `SCHEMA_VERSION === 7` и падали после появления v8. Теперь проверяется минимальная версия, в которой появилась нужная возможность (v3/v4/v5/v6/v7), а фактический `PRAGMA user_version` сверяется с константой `SCHEMA_VERSION` — тест не ломается от следующей миграции.
 - **`test-crash-recovery`: семантика recovery:** сценарий разделён на живой владелец (запись остаётся `running`, `{recovered:0,keptAlive:1}`) и мёртвый (PID завершённого процесса → `{recovered:1}`, статус `error`, сообщение, `finished_at`, `duration_ms`); добавлена матрица «legacy без владельца / чужой хост × свежая / просроченная строка» с внедрёнными `now` и `maxUnverifiableAgeMs` (B1.5).
+- **B2 — Один слой ретраев на Windows:** ретраи убираются из PS-обёртки (`src/core/ps-wrapper.ts`: параметры `-RetryCount`/`-RetryDelaySeconds` принимаются для обратной совместимости, но игнорируются; цикл `while ($attempt -lt $maxAttempts)` удалён — обёртка делает ровно одну попытку). Единственный владелец повторов — recorder (`src/core/record-history.ts`: `retryCount`/`retryDelay` из БД, атомарный `decrementCounterSetting`, detached-процесс `--retry`). Тесты обновлены: `test-execution-hardening.mjs` проверяет absence `-RetryCount` в `.cmd` и одну попытку обёртки; `test-posix-e2e.mjs` проверяет что POSIX-обёртка не содержит retry-цикла и делает один `exec opencode run`.
+- **CI: eslint-ошибка в `recoverInterrupted`:** строки выборки `recoverInterrupted` не были типизированы (`any[]`), из-за чего `ownerPid as number` считался лишним assertion (`@typescript-eslint/no-unnecessary-type-assertion`, 1 error — падала джоба Lint на Ubuntu). Добавлен локальный интерфейс `InterruptedHistoryRow`, проверка стала `ownerPid != null && isAlive(ownerPid)`; заодно ушли предупреждения о небезопасном доступе к `owner_*`.
 
 ### Verified
 
 - **B15 (`at`-fallback) — дефекта нет:** маркер присутствует в командной строке на всём жизненном цикле (`src/core/at-fallback.ts:111,143-146`), удаление идёт через локальный реестр (`registry.save`, строка 296). Пункт снят с бэклога.
-
-
-### Fixed
-
-- **B2 — Один слой ретраев на Windows:** ретраи убираются из PS-обёртки (`src/core/ps-wrapper.ts`: параметры `-RetryCount`/`-RetryDelaySeconds` принимаются для обратной совместимости, но игнорируются; цикл `while ($attempt -lt $maxAttempts)` удалён — обёртка делает ровно одну попытку). Единственный владелец повторов — recorder (`src/core/record-history.ts`: `retryCount`/`retryDelay` из БД, атомарный `decrementCounterSetting`, detached-процесс `--retry`). Тесты обновлены: `test-execution-hardening.mjs` проверяет absence `-RetryCount` в `.cmd` и одну попытку обёртки; `test-posix-e2e.mjs` проверяет что POSIX-обёртка не содержит retry-цикла и делает один `exec opencode run`.
 
 ### Known issues
 

@@ -441,12 +441,19 @@ export function recoverInterrupted(
   const hostname = options.hostname ?? os.hostname();
   const isAlive = options.isAlive ?? isProcessAlive;
   const db = getDb();
+  interface InterruptedHistoryRow {
+    id: number;
+    started_at: string | null;
+    owner_pid: number | null;
+    owner_host: string | null;
+    owner_started_at: string | null;
+  }
   const rows = db
     .prepare(
       `SELECT id, started_at, owner_pid, owner_host, owner_started_at
        FROM history WHERE finished_at IS NULL`,
     )
-    .all();
+    .all() as unknown as InterruptedHistoryRow[];
   const update = db.prepare(
     `UPDATE history SET
        status = 'error',
@@ -471,7 +478,7 @@ export function recoverInterrupted(
       const verifiable =
         ownerPid != null && ownerPid > 0 && ownerHost != null && ownerHost === hostname;
 
-      if (verifiable && isAlive(ownerPid as number)) {
+      if (verifiable && ownerPid != null && isAlive(ownerPid)) {
         keptAlive += 1;
         continue;
       }
