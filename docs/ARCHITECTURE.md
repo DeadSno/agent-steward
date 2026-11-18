@@ -737,3 +737,47 @@ after the agent with the user's privileges and are not filtered by tool policy.
 | New agent tool | Add a zod schema + execute function, register in `ctx.tool.transform`, add an RPC contract |
 | New dashboard panel | Extend `server.ts` routes and the HTML template |
 | New matrix policy | Extend `MatrixConfig` in `task-transfer.ts` and the logic in `core/matrix.ts` |
+
+## Mission runtime и гибридные входы (план 38–40)
+
+> Статус: спека. Что уже в коде, а что нет — [ROADMAP.md](../ROADMAP.md) §1.
+
+Система гибридная: ядро (**mission runtime**) не знает про планировщик ОС.
+Планировщик — адаптер входа, регистрация опциональна.
+
+### Классы входа
+
+| Класс | Вход | Регистрация в ОС | Реализация |
+|---|---|---|---|
+| Ad-hoc | `run_mission` / CLI / GUI / RPC | нет | план 38 |
+| Внутренний | chain / DAG / retry / escalation | нет | сейчас через `backend.runTask` + force-маркер; план 40 — напрямую в runtime |
+| Registered | cron / once / file / git / mcp-event / webhook | да (cron/once) | есть: `core/scheduler/*`, `file-watcher`, `git-trigger`, `integrations` |
+
+### Объекты
+
+| Объект | Содержимое | Таблица |
+|---|---|---|
+| Миссия | цель + scope + gate-спека + safety + бюджет | `missions` (план 38, опциональный шаблон) |
+| Задача | миссия-шаблон + триггер | `tasks` (есть) |
+| Запуск | durable-исполнение: шаги, попытки, вердикты | `runs` / `run_steps` (есть, SCHEMA_VERSION 7) |
+| Исход гейта | вердикт + provenance + экономика | `gate_outcomes` (план 40) |
+
+### Путь исполнения (целевой)
+
+```
+вход → intake (gate + safety → политика + бюджет) → createRun(trigger_kind)
+     → planner → [route → context compile → execute → GATE]* → artifact → report
+```
+
+Существующий путь планировщика (`wrapper → opencode run → record-history → history`)
+сохраняется для обратной совместимости; в 40 он подключается к runtime и создаёт
+durable-run, а исходы гейта пишутся в ledger.
+
+### Что переиспользуется
+
+- Durable state: `db/runs-repo`, `run-journal`, `run-resume`, `step-idempotency`, `run-context`.
+- Роутинг: `core/router/rules|dispatch|escalation|planner`, `db/capability-repo`.
+- Права и секреты: `core/permissions`, `core/secrets` (scoped-инъекция).
+- Телеметрия: `core/otel`, `core/prometheus`, `core/structured-log`.
+- Пауза с инъекциями: `db/run-context` + `core/run-panel-api` → основа approval-гейта.
+- Retrieval для scaffolding: подход bag-of-words из `notification_embeddings`.
