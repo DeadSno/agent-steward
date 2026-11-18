@@ -7,7 +7,8 @@ import fs from "node:fs";
 import crypto from "node:crypto";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
 
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ws-scheduler-secrets-"));
 process.env.APPDATA = tempRoot;
@@ -251,7 +252,70 @@ check("битый secrets.json отложен в .corrupt-*", quarantined.length
 setSecret("after_corruption", "value12345");
 check("после повреждения запись снова работает", getSecret("after_corruption") === "value12345");
 
-// --- 9. Итог -----------------------------------------------------------------
+// --- 9. P2-20: запись без окна потери и параллельный RMW --------------------
+// Раньше writeFileSafe делал rmSync(secrets.json) перед rename: при краше
+// между ними файл исчезал. Проверяем, что rm больше нет.
+const secretsSource = fs.readFileSync(
+  path.join(process.cwd(), "src", "core", "secrets.ts"),
+  "utf8",
+);
+check(
+  "writeFileSafe не удаляет secrets.json перед rename",
+  !/fs\.rmSync\(SECRETS_FILE/.test(secretsSource),
+);
+
+// Каждый setSecret — отдельный процесс (как завершение задачи). Без лока
+// параллельные RMW теряли записи.
+const childScript = path.join(tempRoot, "set-secret-child.mjs");
+const secretsModuleUrl = pathToFileURL(
+  path.join(process.cwd(), "dist", "core", "secrets.js"),
+).href;
+fs.writeFileSync(
+  childScript,
+  `import { setSecret } from ${JSON.stringify(secretsModuleUrl)};\n` +
+    `const [name, value] = process.argv.slice(2);\n` +
+    `setSecret(name, value);\n`,
+  "utf8",
+);
+
+function spawnSetSecret(name, value) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [childScript, name, value], {
+      env: {
+        ...process.env,
+        APPDATA: tempRoot,
+        OPENCODE_SCHEDULER_HOME: process.env.OPENCODE_SCHEDULER_HOME,
+      },
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    child.on("error", reject);
+    child.on("exit", (code) =>
+      code === 0 ? resolve() : reject(new Error(`child exit ${code}`)),
+    );
+  });
+}
+
+const parallelNames = Array.from({ length: 6 }, (_, index) => `parallel_${index}`);
+await Promise.all(
+  parallelNames.map((name, index) => spawnSetSecret(name, `value-${index}-xyz`)),
+);
+resetSecretsCache();
+const listedNames = new Set(listSecrets().map((item) => item.name));
+check(
+  "6 параллельных setSecret: все записи сохранены",
+  parallelNames.every((name) => listedNames.has(name)),
+);
+check(
+  "параллельные setSecret: значения расшифровываются",
+  parallelNames.every((name, index) => getSecret(name) === `value-${index}-xyz`),
+);
+check(
+  "после параллельной записи нет .lock-файла",
+  !fs.existsSync(path.join(pluginDir, "secrets.json.lock")),
+);
+
+// --- 10. Итог ----------------------------------------------------------------
 const failures = results.filter((item) => !item.ok);
 console.log(`\nSecrets: ${results.length - failures.length}/${results.length} проверок пройдено.`);
 if (failures.length > 0) {

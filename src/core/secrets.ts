@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { PLUGIN_DIR } from "../types.js";
+import { isProcessAlive } from "./lock.js";
 
 /**
  * Зашифрованное хранилище секретов (Спринт 26).
@@ -25,6 +26,85 @@ export const SECRETS_KEY_FILE = path.join(PLUGIN_DIR, "secrets.key");
 export const SECRET_REF_RE = /\$\{secret:([A-Za-z0-9_.-]{1,64})\}/g;
 const SECRET_NAME_RE = /^[A-Za-z0-9_.-]{1,64}$/;
 const KEY_BYTES = 32;
+
+/**
+ * P2-20: межпроцессная блокировка записи секретов.
+ *
+ * setSecret/deleteSecret — это read-modify-write одного JSON. Каждое завершение
+ * задачи может быть отдельным процессом, поэтому без лока параллельные записи
+ * теряли секреты. Лок синхронный: API setSecret/deleteSecret синхронный и
+ * используется из CLI/GUI/плагина, переписывать его на async нельзя.
+ */
+const SECRETS_LOCK_FILE = `${SECRETS_FILE}.lock`;
+const SECRETS_LOCK_STALE_MS = 10_000;
+const SECRETS_LOCK_TIMEOUT_MS = 5_000;
+let secretsLockDepth = 0;
+
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function withSecretsLock<T>(fn: () => T): T {
+  // Реентерабельность: loadKey()/readFileSafe() вызываются внутри setSecret.
+  if (secretsLockDepth > 0) {
+    secretsLockDepth += 1;
+    try {
+      return fn();
+    } finally {
+      secretsLockDepth -= 1;
+    }
+  }
+
+  ensureDir();
+  const deadline = Date.now() + SECRETS_LOCK_TIMEOUT_MS;
+  for (;;) {
+    try {
+      const fd = fs.openSync(SECRETS_LOCK_FILE, "wx");
+      try {
+        fs.writeFileSync(fd, String(process.pid));
+      } finally {
+        fs.closeSync(fd);
+      }
+      secretsLockDepth = 1;
+      break;
+    } catch (err: any) {
+      if (err?.code !== "EEXIST") throw err;
+      try {
+        const stat = fs.statSync(SECRETS_LOCK_FILE);
+        if (Date.now() - stat.mtimeMs > SECRETS_LOCK_STALE_MS) {
+          const owner = Number.parseInt(
+            fs.readFileSync(SECRETS_LOCK_FILE, "utf8").trim(),
+            10,
+          );
+          if (!Number.isInteger(owner) || !isProcessAlive(owner)) {
+            fs.rmSync(SECRETS_LOCK_FILE, { force: true });
+            continue;
+          }
+        }
+      } catch {
+        // Лок исчез между stat и read — повторяем попытку.
+      }
+      if (Date.now() >= deadline) {
+        throw new Error(
+          "Не удалось получить блокировку хранилища секретов за " +
+            `${SECRETS_LOCK_TIMEOUT_MS} мс.`,
+        );
+      }
+      sleepSync(25);
+    }
+  }
+
+  try {
+    return fn();
+  } finally {
+    secretsLockDepth = 0;
+    try {
+      fs.rmSync(SECRETS_LOCK_FILE, { force: true });
+    } catch {
+      // Не критично: лок всё равно станет stale.
+    }
+  }
+}
 
 interface StoredSecret {
   /** IV в base64 (12 байт). */
@@ -161,11 +241,28 @@ function loadKey(): Buffer {
     return raw;
   } catch (err: any) {
     if (err?.code !== "ENOENT") throw err;
-    const key = crypto.randomBytes(KEY_BYTES);
-    fs.writeFileSync(SECRETS_KEY_FILE, key, { mode: 0o600 });
-    chmodPrivate(SECRETS_KEY_FILE);
-    keyCache = { stamp: `${fs.statSync(SECRETS_KEY_FILE).mtimeMs}:${KEY_BYTES}`, key };
-    return key;
+    // Два процесса могли одновременно не найти ключ и сгенерировать разный.
+    // Под локом перечитываем файл: побеждает первый, остальные используют его ключ.
+    return withSecretsLock(() => {
+      try {
+        const raw = fs.readFileSync(SECRETS_KEY_FILE);
+        if (raw.length !== KEY_BYTES) {
+          throw new Error("повреждён файл ключа секретов");
+        }
+        keyCache = {
+          stamp: `${fs.statSync(SECRETS_KEY_FILE).mtimeMs}:${raw.length}`,
+          key: raw,
+        };
+        return raw;
+      } catch (readErr: any) {
+        if (readErr?.code !== "ENOENT") throw readErr;
+      }
+      const key = crypto.randomBytes(KEY_BYTES);
+      fs.writeFileSync(SECRETS_KEY_FILE, key, { mode: 0o600 });
+      chmodPrivate(SECRETS_KEY_FILE);
+      keyCache = { stamp: `${fs.statSync(SECRETS_KEY_FILE).mtimeMs}:${KEY_BYTES}`, key };
+      return key;
+    });
   }
 }
 
@@ -251,13 +348,11 @@ function readFileSafe(): SecretsFile {
 /** Атомарная запись: temp + rename, права 0600. */
 function writeFileSafe(file: SecretsFile): void {
   ensureDir();
-  const tmp = `${SECRETS_FILE}.tmp`;
+  // Уникальный temp: два процесса не должны писать в один и тот же файл.
+  const tmp = `${SECRETS_FILE}.${process.pid}.${Date.now()}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(file, null, 2), { encoding: "utf8", mode: 0o600 });
-  try {
-    fs.rmSync(SECRETS_FILE, { force: true });
-  } catch {
-    // файла нет — не ошибка
-  }
+  // Без предварительного rm: rename на POSIX и Windows атомарно заменяет файл,
+  // а rm открывал окно, в котором secrets.json отсутствовал при краше.
   fs.renameSync(tmp, SECRETS_FILE);
   chmodPrivate(SECRETS_FILE);
   try {
@@ -305,15 +400,17 @@ export function setSecret(name: string, value: string): SecretListItem {
   }
   const secretName = validateSecretName(name);
   const text = String(value ?? "");
-  const key = loadKey();
-  const file = readFileSafe();
-  file.secrets[secretName] = encryptValue(secretName, text, key);
-  writeFileSafe(file);
-  return {
-    name: secretName,
-    preview: previewOf(text),
-    updatedAt: file.secrets[secretName].updatedAt,
-  };
+  return withSecretsLock(() => {
+    const key = loadKey();
+    const file = readFileSafe();
+    file.secrets[secretName] = encryptValue(secretName, text, key);
+    writeFileSafe(file);
+    return {
+      name: secretName,
+      preview: previewOf(text),
+      updatedAt: file.secrets[secretName].updatedAt,
+    };
+  });
 }
 
 /** Читает секрет; undefined, если его нет или он не расшифровывается. */
@@ -338,11 +435,13 @@ export function hasSecret(name: string): boolean {
 /** Удаляет секрет; true — запись была. */
 export function deleteSecret(name: string): boolean {
   const secretName = validateSecretName(name);
-  const file = readFileSafe();
-  if (!(secretName in file.secrets)) return false;
-  delete file.secrets[secretName];
-  writeFileSafe(file);
-  return true;
+  return withSecretsLock(() => {
+    const file = readFileSafe();
+    if (!(secretName in file.secrets)) return false;
+    delete file.secrets[secretName];
+    writeFileSafe(file);
+    return true;
+  });
 }
 
 function previewOf(value: string): string {
