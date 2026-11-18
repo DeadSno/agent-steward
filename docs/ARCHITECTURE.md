@@ -513,6 +513,21 @@ with `cannot start a transaction within a transaction`. `test-run-dlq.mjs`
 covers the threshold, idempotent scans, manual retry, discard, cascade delete,
 reconnect and the v4 → v5 migration.
 
+### Dead letter queue in the GUI (Sprint 36.6)
+
+The side panel exposes the queue through `src/core/dlq-api.ts`, a thin facade
+that normalises the filter (`open` by default, plus `all`/`retried`/`discarded`)
+and clamps the limit, then calls `listDeadLetters` / `retryDeadLetter` /
+`discardDeadLetter`. RPC methods `list_dlq`, `retry_dlq` and `discard_dlq` are
+declared in `src/rpc.ts` and handled in `src/index.ts`; the two mutations are
+audited as `dlq.retry` and `dlq.discard`. `retry_dlq` only prepares the step
+(reopen + `attempt + 1` + entry closed) — the handler itself is executed by a
+later resume, so the panel never claims a step has already run. The UI section
+shows the open count, status filter, creation time, run/step, reason, attempts,
+error and status-aware actions; retry and discard ask for confirmation and
+refresh the list through the same facade. `test-dlq-gui.mjs` checks the RPC/GUI
+wiring, locale parity and the facade behaviour on a temporary SQLite database.
+
 ## Interfaces
 
 | Interface | Audience | Entry point |

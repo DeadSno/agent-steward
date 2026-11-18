@@ -78,6 +78,7 @@ import { buildAnalytics } from "./core/analytics.js";
 import { generateSelfAnalysisReport } from "./core/self-analysis.js";
 import { getHistory, listRunningRecords } from "./db/history-repo.js";
 import { getAllMetrics } from "./db/metrics-repo.js";
+import { discardDlq, listDlq, retryDlq } from "./core/dlq-api.js";
 import {
   findStuckMatrixClones,
   maybeSendDigest,
@@ -3227,6 +3228,8 @@ const RPC_AUDIT_RULES: Record<
     targetType: "history",
     target: () => "runs",
   },
+  retry_dlq: { action: "dlq.retry", targetType: "dlq", target: (i) => i.id ?? "" },
+  discard_dlq: { action: "dlq.discard", targetType: "dlq", target: (i) => i.id ?? "" },
   emit_event: { action: "event.emit", targetType: "event", target: (i) => i.eventName ?? "" },
   add_workspace: {
     action: "workspace.add",
@@ -5024,6 +5027,20 @@ const v2Plugin = Plugin.define({
           limit: source.limit,
         });
         return { success: true, ...result };
+      },
+      list_dlq: async (input: unknown) => {
+        const source = (input ?? {}) as { status?: string; limit?: number };
+        return listDlq({ status: source.status, limit: source.limit });
+      },
+      retry_dlq: async (input: unknown) => {
+        const source = (input ?? {}) as { id?: string };
+        if (!source.id) return { success: false, error: "id is required" };
+        return retryDlq(source.id);
+      },
+      discard_dlq: async (input: unknown) => {
+        const source = (input ?? {}) as { id?: string; resolution?: string };
+        if (!source.id) return { success: false, error: "id is required" };
+        return discardDlq(source.id, source.resolution);
       },
       get_templates: async () => {
         try {

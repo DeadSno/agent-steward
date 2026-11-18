@@ -239,7 +239,7 @@ Tasks are **interactive only** by default: Task Scheduler starts them only while
 npm install
 npm run build        # tsc
 npm run build:gui    # vite
-npm test             # 80 test suites, 600+ checks
+npm test             # 81 test suites, 600+ checks
 npm run test:en      # same suites with the English locale
 ```
 

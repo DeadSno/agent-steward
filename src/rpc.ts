@@ -899,6 +899,105 @@ const GetAuditOutput = {
   required: ["success", "records", "total"],
 } as const;
 
+/** Запись dead-letter queue (Спринт 36.6). */
+const DlqEntrySchema = {
+  type: "object" as const,
+  properties: {
+    id: { type: "string" },
+    runId: { type: "string" },
+    stepName: { type: "string" },
+    status: { type: "string" },
+    reason: { type: ["string", "null"] },
+    error: { type: ["string", "null"] },
+    attempts: { type: "number" },
+    createdAt: { type: "string" },
+    updatedAt: { type: "string" },
+    resolvedAt: { type: ["string", "null"] },
+    resolution: { type: ["string", "null"] },
+  },
+  required: [
+    "id",
+    "runId",
+    "stepName",
+    "status",
+    "reason",
+    "error",
+    "attempts",
+    "createdAt",
+    "updatedAt",
+    "resolvedAt",
+    "resolution",
+  ],
+} as const;
+
+const ListDlqInput = {
+  type: "object" as const,
+  properties: {
+    /** open (по умолчанию) | retried | discarded | all. */
+    status: { type: "string" },
+    /** Сколько записей вернуть (по умолчанию 100, максимум 500). */
+    limit: { type: "number" },
+  },
+  additionalProperties: false,
+} as const;
+
+const ListDlqOutput = {
+  type: "object" as const,
+  properties: {
+    success: { type: "boolean" },
+    entries: { type: "array", items: DlqEntrySchema },
+    open: { type: "number" },
+    error: { type: "string" },
+  },
+  required: ["success", "entries", "open"],
+  additionalProperties: false,
+} as const;
+
+const RetryDlqInput = {
+  type: "object" as const,
+  properties: {
+    id: { type: "string" },
+  },
+  required: ["id"],
+  additionalProperties: false,
+} as const;
+
+const RetryDlqOutput = {
+  type: "object" as const,
+  properties: {
+    success: { type: "boolean" },
+    error: { type: "string" },
+    entry: DlqEntrySchema,
+    runId: { type: "string" },
+    stepName: { type: "string" },
+    runReopened: { type: "boolean" },
+  },
+  required: ["success"],
+  additionalProperties: false,
+} as const;
+
+const DiscardDlqInput = {
+  type: "object" as const,
+  properties: {
+    id: { type: "string" },
+    /** Причина отказа для журнала (по умолчанию discarded). */
+    resolution: { type: "string" },
+  },
+  required: ["id"],
+  additionalProperties: false,
+} as const;
+
+const DiscardDlqOutput = {
+  type: "object" as const,
+  properties: {
+    success: { type: "boolean" },
+    error: { type: "string" },
+    entry: DlqEntrySchema,
+  },
+  required: ["success"],
+  additionalProperties: false,
+} as const;
+
 /** Сравнение триажа «до/после» (Спринт 31.5). */
 const CompareTriageInput = {
   type: "object" as const,
@@ -1681,6 +1780,9 @@ export const SchedulerRpc = Rpc.define({
     save_secret: { input: SaveSecretInput, output: SaveSecretOutput },
     delete_secret: { input: DeleteSecretInput, output: DeleteSecretOutput },
     get_audit: { input: GetAuditInput, output: GetAuditOutput },
+    list_dlq: { input: ListDlqInput, output: ListDlqOutput },
+    retry_dlq: { input: RetryDlqInput, output: RetryDlqOutput },
+    discard_dlq: { input: DiscardDlqInput, output: DiscardDlqOutput },
     compare_triage: {
       input: CompareTriageInput,
       output: CompareTriageOutput,

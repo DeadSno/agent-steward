@@ -258,6 +258,21 @@ interface ProfileInfo {
   active: boolean
 }
 
+/** Запись dead-letter queue (Спринт 36.6). */
+interface DlqEntry {
+  id: string
+  runId: string
+  stepName: string
+  status: "open" | "retried" | "discarded" | string
+  reason: string | null
+  error: string | null
+  attempts: number
+  createdAt: string
+  updatedAt: string
+  resolvedAt: string | null
+  resolution: string | null
+}
+
 function statusColor(status: JobStatus): string {
   switch (status) {
     case "running": return "#f5a623"
@@ -548,6 +563,11 @@ export default Plugin.define({
     const [secretValue, setSecretValue] = createSignal("")
 
     // Аудит (Спринт 26): журнал мутаций.
+    const [dlqEntries, setDlqEntries] = createSignal<DlqEntry[]>([])
+    const [dlqOpen, setDlqOpen] = createSignal(0)
+    const [dlqBusy, setDlqBusy] = createSignal(false)
+    const [dlqCollapsed, setDlqCollapsed] = createSignal(true)
+    const [dlqFilter, setDlqFilter] = createSignal<"open" | "all" | "retried" | "discarded">("open")
     const [auditRecords, setAuditRecords] = createSignal<{ id: number; ts: string; action: string; targetType: string | null; target: string | null; actor: string; source: string | null; details: unknown; remote: string | null }[]>([])
     const [auditBusy, setAuditBusy] = createSignal(false)
     const [auditCollapsed, setAuditCollapsed] = createSignal(true)
@@ -676,6 +696,7 @@ export default Plugin.define({
 
       void loadSecretsGui()
       void loadAuditGui()
+      void loadDlqGui()
     }
 
     /** Текущие настройки уведомлений из сигналов формы. */
@@ -928,6 +949,80 @@ export default Plugin.define({
     /** Сохраняет настройки аудита. */
     async function saveAuditSettings() {
       await persistSettings({ audit: { enabled: auditRetentionEnabled(), retentionDays: auditRetentionDays(), maxRecords: auditMaxRecords() } })
+    }
+
+    /** Загрузка dead-letter queue (Спринт 36.6). */
+    async function loadDlqGui() {
+      setDlqBusy(true)
+      try {
+        const result = await rpc.list_dlq({ status: dlqFilter(), limit: 100 })
+        if (result?.success) {
+          setDlqEntries(result.entries ?? [])
+          setDlqOpen(Number(result.open ?? 0))
+        } else if (result?.error) {
+          console.error("RPC Error (list_dlq):", result.error)
+        }
+      } catch (err: any) {
+        console.error("RPC Error (list_dlq):", err)
+      } finally {
+        setDlqBusy(false)
+      }
+    }
+
+    /** Ручной retry записи DLQ: шаг вернётся в запуск, выполнение подхватит resume. */
+    async function handleRetryDlq(entry: DlqEntry) {
+      if (!window.confirm(gt("gui.dlqRetryConfirm", { step: entry.stepName, run: entry.runId }))) return
+      setDlqBusy(true)
+      try {
+        const result = await rpc.retry_dlq({ id: entry.id })
+        if (result?.success) {
+          ctx.toast.show({
+            title: gt("gui.dlqRetried"),
+            variant: "success",
+            description: gt("gui.dlqRetriedDescription", { step: entry.stepName }),
+          })
+        } else {
+          ctx.toast.show({
+            title: gt("gui.dlqRetryFailed"),
+            variant: "error",
+            description: result?.error ?? gt("gui.dlqUnknownError"),
+          })
+        }
+        await loadDlqGui()
+      } catch (err: any) {
+        console.error("RPC Error (retry_dlq):", err)
+        ctx.toast.show({ title: gt("gui.dlqRetryFailed"), variant: "error", description: errorMessage(err) })
+      } finally {
+        setDlqBusy(false)
+      }
+    }
+
+    /** Осознанный отказ от повтора: запись закрывается, шаг остаётся failed. */
+    async function handleDiscardDlq(entry: DlqEntry) {
+      if (!window.confirm(gt("gui.dlqDiscardConfirm", { step: entry.stepName, run: entry.runId }))) return
+      setDlqBusy(true)
+      try {
+        const result = await rpc.discard_dlq({ id: entry.id })
+        if (result?.success) {
+          ctx.toast.show({
+            title: gt("gui.dlqDiscarded"),
+            variant: "success",
+            description: gt("gui.dlqDiscardedDescription", { step: entry.stepName }),
+          })
+        } else {
+          ctx.toast.show({
+            title: gt("gui.dlqDiscardFailed"),
+            variant: "error",
+            description: result?.error ?? gt("gui.dlqUnknownError"),
+          })
+        }
+        await loadDlqGui()
+      } catch (err: any) {
+        console.error("RPC Error (discard_dlq):", err)
+        ctx.toast.show({ title: gt("gui.dlqDiscardFailed"), variant: "error", description: errorMessage(err) })
+      } finally {
+        setDlqBusy(false)
+      }
     }
 
     /** Кнопка «🧪 Тестовое уведомление». */
@@ -3684,6 +3779,114 @@ export default Plugin.define({
                     <span style="font-size:11px;color:#8e8e93">
                       {gt("gui.historyCleanupHint")}
                     </span>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* ♻️ Dead-letter queue (Спринт 36.6) */}
+            <div style="width:100%;max-width:900px;box-sizing:border-box;margin-top:8px;background:#1e1e1e;border:1px solid #333;border-radius:10px;overflow:hidden">
+              <button
+                onClick={() => setDlqCollapsed(!dlqCollapsed())}
+                style="display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;box-sizing:border-box;padding:10px 14px;background:transparent;border:none;color:#e0e0e0;font-size:12px;font-weight:600;cursor:pointer;text-align:left"
+              >
+                <span>{gt("gui.dlqHeading")}</span>
+                <span style="display:flex;align-items:center;gap:8px;font-size:11px;font-weight:400;color:#8e8e93">
+                  {gt("gui.dlqOpenCount", { count: dlqOpen() })}
+                  <span>{dlqCollapsed() ? "▾" : "▴"}</span>
+                </span>
+              </button>
+
+              {!dlqCollapsed() && (
+                <div style="padding:0 14px 14px;display:flex;flex-direction:column;gap:10px">
+                  <div style="font-size:11px;color:#8e8e93">{gt("gui.dlqHint")}</div>
+                  <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                    <label style="font-size:12px;color:#e0e0e0;white-space:nowrap">{gt("gui.dlqFilter")}</label>
+                    <select
+                      value={dlqFilter()}
+                      onChange={(e) => {
+                        setDlqFilter(e.currentTarget.value as "open" | "all" | "retried" | "discarded")
+                        void loadDlqGui()
+                      }}
+                      style="padding:4px 6px;background:#1e1e1e;border:1px solid #333;border-radius:4px;color:#fff;font-size:12px;outline:none"
+                    >
+                      <option value="open">{gt("gui.dlqFilterOpen")}</option>
+                      <option value="all">{gt("gui.dlqFilterAll")}</option>
+                      <option value="retried">{gt("gui.dlqFilterRetried")}</option>
+                      <option value="discarded">{gt("gui.dlqFilterDiscarded")}</option>
+                    </select>
+                    <button
+                      onClick={() => void loadDlqGui()}
+                      disabled={dlqBusy()}
+                      style={dlqBusy()
+                        ? "padding:6px 12px;background:#666;color:white;border:none;border-radius:6px;cursor:not-allowed;font-size:12px;font-weight:500;opacity:0.6"
+                        : "padding:6px 12px;background:#007acc;color:white;border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:500;opacity:1"}
+                    >
+                      {dlqBusy() ? gt("gui.loading") : gt("gui.refresh")}
+                    </button>
+                  </div>
+                  <div style="width:100%;overflow:auto;border:1px solid #333;border-radius:6px;background:#0f0f0f">
+                    <table style="width:100%;border-collapse:collapse;font-size:11px">
+                      <thead>
+                        <tr style="border-bottom:1px solid #333">
+                          <th style="text-align:left;padding:6px 8px;color:#8e8e93">{gt("gui.dlqCreated")}</th>
+                          <th style="text-align:left;padding:6px 8px;color:#8e8e93">{gt("gui.dlqRun")}</th>
+                          <th style="text-align:left;padding:6px 8px;color:#8e8e93">{gt("gui.dlqReason")}</th>
+                          <th style="text-align:left;padding:6px 8px;color:#8e8e93">{gt("gui.dlqAttempts")}</th>
+                          <th style="text-align:left;padding:6px 8px;color:#8e8e93">{gt("gui.dlqError")}</th>
+                          <th style="text-align:left;padding:6px 8px;color:#8e8e93">{gt("gui.dlqActions")}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {dlqEntries().map((entry) => (
+                          <tr key={entry.id} style="border-bottom:1px solid #222">
+                            <td style="padding:5px 8px;color:#8e8e93;white-space:nowrap">{new Date(entry.createdAt).toLocaleString()}</td>
+                            <td style="padding:5px 8px;color:#e0e0e0">
+                              <div style="color:#5ac8fa">{entry.stepName}</div>
+                              <div style="color:#8e8e93;font-size:10px">run: {entry.runId}</div>
+                            </td>
+                            <td style="padding:5px 8px;color:#e0e0e0;white-space:nowrap">
+                              {entry.reason === "attempts-exhausted"
+                                ? gt("gui.dlqReasonAttempts")
+                                : entry.reason === "manual"
+                                  ? gt("gui.dlqReasonManual")
+                                  : (entry.reason ?? "—")}
+                            </td>
+                            <td style="padding:5px 8px;color:#e0e0e0">{entry.attempts}</td>
+                            <td style="padding:5px 8px;color:#ff9f0a;max-width:280px;overflow-wrap:anywhere" title={entry.error ?? ""}>{entry.error ? shortError(entry.error) : "—"}</td>
+                            <td style="padding:5px 8px;white-space:nowrap">
+                              {entry.status === "open" ? (
+                                <div style="display:flex;align-items:center;gap:6px">
+                                  <button
+                                    onClick={() => void handleRetryDlq(entry)}
+                                    disabled={dlqBusy()}
+                                    title={gt("gui.dlqRetryTitle")}
+                                    style="padding:3px 8px;background:#007acc;color:white;border:none;border-radius:5px;cursor:pointer;font-size:11px"
+                                  >
+                                    ↻ {gt("gui.dlqRetry")}
+                                  </button>
+                                  <button
+                                    onClick={() => void handleDiscardDlq(entry)}
+                                    disabled={dlqBusy()}
+                                    title={gt("gui.dlqDiscardTitle")}
+                                    style="padding:3px 8px;background:#3a3a3c;color:#e0e0e0;border:none;border-radius:5px;cursor:pointer;font-size:11px"
+                                  >
+                                    ✕ {gt("gui.dlqDiscard")}
+                                  </button>
+                                </div>
+                              ) : (
+                                <span style="color:#8e8e93">{entry.status}{entry.resolution ? ` · ${entry.resolution}` : ""}</span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                        {dlqEntries().length === 0 && (
+                          <tr>
+                            <td colspan="6" style="padding:8px;color:#8e8e93">{gt("gui.dlqEmpty")}</td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
                   </div>
                 </div>
               )}
