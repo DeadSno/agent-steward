@@ -179,6 +179,10 @@ last_10_runs`. Обучается на исходах гейта (CONCEPT §9 le
 
 **Реализация (Спринт 36.5.c):** `src/core/router/planner.ts`. `planMission(mission, { decomposer, maxSteps })` вызывает декомпозер — локальную модель — один раз на миссию и нормализует типы через `normalizeTaskType`; без декомпозера работает `decomposeHeuristically` по ключевым словам, без сети и модели. `planMissionSync` — вариант для синхронных мест. Шаг плана содержит только `stepName` и `taskType`, маршрут по-прежнему выбирают слои 1–2; типы вне статических правил собираются в `ambiguousTaskTypes` для `decideCapabilityRoute`. Пустая миссия, пустой или битый план модели — ошибка, а не молчаливый план. Покрытие — `test-planner.mjs`.
 
+**Реализация (Спринт 36.5.d):** `escalateAfterGate(current, gate)` в `src/core/router/escalation.ts` решает судьбу шага по одному флагу `passed` и таблице переходов `local → cloud → review → blocked`. Модуль не импортирует ни БД, ни модель, ни сеть: это чистые функции (`nextGateTarget`, `isEscalationExhausted`, `escalationChain`), поэтому 1000 решений стоят доли миллисекунды. Переход в `blocked` означает, что автоматических уровней больше нет и нужен человек.
+
+Слои 1–2 собираются в `routeStep(taskType, thresholds)` из `src/core/router/dispatch.ts`: сначала статическое правило (0 токенов), затем Capability Map. Для `review` и `explore` маршрут возвращается без транспорта и исполнителя — исполнять пока нечего. Модуль не импортирует `planner`, поэтому известный тип задачи не может случайно дойти до модели; это закреплено тестом `test-router-dispatch.mjs`, который также проверяет, что статика не оставляет записей в `capability_map` и работает ещё до инициализации БД.
+
 ### Эскалация
 
 При провале гейта роутер эскалирует в облако **по правилу**, без участия модели.
@@ -225,6 +229,8 @@ last_10_runs`. Обучается на исходах гейта (CONCEPT §9 le
 | `src/core/router/rules.ts` | Router layer 1: static rules task type → transport + executor, normalization, no imports (0 tokens) |
 | `src/db/capability-repo.ts` | Router layer 2: Capability Map - gate outcomes per task type, success_rate, moving averages, last 10 runs, threshold decision |
 | `src/core/router/planner.ts` | Router layer 3: mission decomposition (model once per mission) and heuristic fallback, steps carry type only, routing stays in layers 1-2 |
+| `src/core/router/dispatch.ts` | Router assembly: `routeStep` runs layer 1 then layer 2 and returns transport/executor, never imports the planner |
+| `src/core/router/escalation.ts` | Gate failure escalation `local → cloud → review → blocked` by pure transition table, no DB, no model |
 | `src/shared/jobs-view.ts` | Task view shared by the GUI and dashboard |
 
 ## Scheduling backends

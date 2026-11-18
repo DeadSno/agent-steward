@@ -11,6 +11,8 @@ All notable changes to this project are documented here. Format follows [Keep a 
 - **Роутер, слой 1 (Sprint 36.5.a):** `src/core/router/rules.ts` — таблица «тип задачи → транспорт + исполнитель» с нормализацией типа (`Run Tests` → `run_tests`). Модуль не импортирует ни БД, ни модель, ни транспорт: горячий путь стоит 0 токенов, неизвестный тип передаётся слоям 2–3.
 - **Роутер, слой 2 (Sprint 36.5.b):** `SCHEMA_VERSION = 6` и таблица `capability_map`; `src/db/capability-repo.ts` учится на исходах гейта (`success_rate`, скользящие средние стоимости/времени, последние 10 исходов) и выбирает `local` / `cloud` / `review` по порогам без модели. Данных меньше трёх исходов — решение `explore`, его принимает слой 3.
 - **Роутер, слой 3 (Sprint 36.5.c):** `src/core/router/planner.ts` — декомпозиция миссии: модель вызывается один раз на миссию и только чтобы вернуть шаги с типами, без модели работает эвристика по ключевым словам. Шаг несёт `stepName` и `taskType`, маршрут по-прежнему выбирают слои 1–2; незнакомые типы собираются в `ambiguousTaskTypes`.
+- **Эскалация при провале гейта (Sprint 36.5.d):** `src/core/router/escalation.ts` — `escalateAfterGate` поднимает шаг по таблице `local → cloud → review → blocked` по одному флагу `passed`, без БД и модели; `escalationChain` и `isEscalationExhausted` описывают всю цепочку. Сборка маршрута — `src/core/router/dispatch.ts` (`routeStep`: слой 1 → слой 2, `review`/`explore` без транспорта).
+- **Маршрутизация без модели (Sprint 36.5.e):** `test-router-dispatch.mjs` доказывает, что известные типы решаются статикой до инициализации БД, статика не пишет в `capability_map`, а `dispatch.ts` не импортирует `planner`; 1000 маршрутов укладываются в миллисекунды.
 
 ## [0.0.3] - 2026-11-17
 
