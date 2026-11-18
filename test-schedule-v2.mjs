@@ -49,6 +49,21 @@ check("normalizeCron '@every 2h' → '0 */2 * * *'", normalizeCron("@every 2h") 
 check("normalizeCron '@every 1d' → '0 0 */1 * *'", normalizeCron("@every 1d") === "0 0 */1 * *");
 check("'@every 0m' отклоняется", throws(() => parseCron("@every 0m")));
 check("минута 61 отклоняется", throws(() => parseCron("61 * * * *")));
+check(
+  "шаг у одиночного значения '5/15' отклоняется с понятной ошибкой",
+  (() => {
+    try {
+      parseCron("5/15 * * * *");
+      return false;
+    } catch (err) {
+      return /только для диапазона|range|\*/.test(String(err?.message ?? err));
+    }
+  })(),
+);
+check(
+  "'5-59/15' → минуты 5,20,35,50",
+  JSON.stringify([...parseCron("5-59/15 * * * *").minute].sort((a, b) => a - b)) === "[5,20,35,50]",
+);
 check("имена дней 'MON-FRI' принимаются", parseCron("0 9 * * MON-FRI").dayOfWeek !== null);
 check("'L' в дне месяца → lastDom", parseCron("0 0 L * *").lastDom === true);
 check("'15,L' — список с L", parseCron("0 0 15,L * *").lastDom === true);

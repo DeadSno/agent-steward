@@ -694,6 +694,7 @@
   "schedule.error.cronRangeInvalid": "无效范围 “{item}”。",
   "schedule.error.cronStepInvalid": "“{raw}” 中的无效步长 “/{step}”。",
   "schedule.error.cronStepMissing": "“{raw}” 中的步长无效：“/” 前无内容。",
+  "schedule.error.cronStepNeedsRange": "步长 “/{step}” 只能与范围或 “*” 一起使用：“{raw}”。请使用 “5-59/15” 或 “*/15”。",
   "schedule.error.cronValueBounds": "值 “{raw}” 超出 {min}..{max}。",
   "schedule.error.everyInterval": "不支持的间隔 “@every {value}”（m: 1..59, h: 1..23, d: 1..31）。",
   "schedule.error.lastDomOnly": "“L” 仅在“日”字段中受支持。",

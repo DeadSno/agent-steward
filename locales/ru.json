@@ -694,6 +694,7 @@
   "schedule.error.cronRangeInvalid": "Недопустимый диапазон «{item}».",
   "schedule.error.cronStepInvalid": "Недопустимый шаг «/{step}» в «{raw}».",
   "schedule.error.cronStepMissing": "Некорректный шаг в «{raw}»: перед «/» ничего нет.",
+  "schedule.error.cronStepNeedsRange": "Шаг «/{step}» допустим только для диапазона или «*»: «{raw}». Используйте, например, «5-59/15» или «*/15».",
   "schedule.error.cronValueBounds": "Значение «{raw}» вне границ {min}..{max}.",
   "schedule.error.everyInterval": "Неподдерживаемый интервал «@every {value}» (m: 1..59, h: 1..23, d: 1..31).",
   "schedule.error.lastDomOnly": "«L» поддерживается только в поле дня месяца.",

@@ -694,6 +694,7 @@
   "schedule.error.cronRangeInvalid": "Invalid range \"{item}\".",
   "schedule.error.cronStepInvalid": "Invalid step \"/{step}\" in \"{raw}\".",
   "schedule.error.cronStepMissing": "Invalid step in \"{raw}\": nothing before \"/\".",
+  "schedule.error.cronStepNeedsRange": "Step \"/{step}\" is only allowed with a range or \"*\": \"{raw}\". Use e.g. \"5-59/15\" or \"*/15\".",
   "schedule.error.cronValueBounds": "Value \"{raw}\" is outside {min}..{max}.",
   "schedule.error.everyInterval": "Unsupported interval \"@every {value}\" (m: 1..59, h: 1..23, d: 1..31).",
   "schedule.error.lastDomOnly": "\"L\" is supported only in the day-of-month field.",

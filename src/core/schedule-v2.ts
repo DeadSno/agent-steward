@@ -183,6 +183,17 @@ function expandField(token: string, min: number, max: number, names?: Record<str
       for (let v = a; v <= b; v += step) result.add(v);
       continue;
     }
+    if (stepMatch) {
+      // Шаг для одиночного значения Vixie-совместимый cron не поддерживает:
+      // раньше «5/15» молча превращалось в «только минута 5». Лучше явная
+      // ошибка, чем тихо другая семантика.
+      throw new Error(
+        t("schedule.error.cronStepNeedsRange", {
+          raw,
+          step: stepMatch[2],
+        }),
+      );
+    }
     const num = Number(item);
     if (!Number.isInteger(num) || num < min || num > max) {
       throw new Error(
