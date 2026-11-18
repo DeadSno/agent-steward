@@ -11,10 +11,12 @@ import {
   buildScheduleGate,
   cronMatches,
   isInWindow,
+  isNativePosixCronExpr,
   isNativeSchtasksExpr,
   isValidDailyTime,
   isValidIanaTimeZone,
   needsPollMode,
+  needsPosixPollMode,
   nextRun,
   normalizeCron,
   parseCron,
@@ -151,6 +153,32 @@ check("isNativeSchtasksExpr '0 0 L * *' — нет", !isNativeSchtasksExpr("0 0 
 check("needsPollMode для 'L'", needsPollMode("0 0 L * *"));
 const systemZone = systemTimeZone();
 check("needsPollMode для чужой IANA-зоны", needsPollMode("0 9 * * *", "Pacific/Kiritimati"));
+
+// P3-31: crontab (POSIX) понимает списки/диапазоны/шаги/имена — в отличие
+// от schtasks. Проверяем, что они идут напрямую в crontab, а Quartz L/#,
+// @-макросы и чужая таймзона по-прежнему требуют poll-режима.
+check("isNativePosixCronExpr '*/15 * * * *'", isNativePosixCronExpr("*/15 * * * *"));
+check(
+  "isNativePosixCronExpr '0,12 8-10 * JAN,MAR 1-5'",
+  isNativePosixCronExpr("0,12 8-10 * JAN,MAR 1-5")
+);
+check("isNativePosixCronExpr '0 0 * * MON'", isNativePosixCronExpr("0 0 * * MON"));
+check("isNativePosixCronExpr '0 0 L * *' — нет", !isNativePosixCronExpr("0 0 L * *"));
+check("isNativePosixCronExpr '0 0 * * 5#3' — нет", !isNativePosixCronExpr("0 0 * * 5#3"));
+check("isNativePosixCronExpr '@daily' — нет", !isNativePosixCronExpr("@daily"));
+check("needsPosixPollMode: список — native", !needsPosixPollMode("0,12 8-10 * JAN,MAR 1-5"));
+check("needsPosixPollMode: 'L' — poll", needsPosixPollMode("0 0 L * *"));
+check("needsPosixPollMode: '@daily' — poll", needsPosixPollMode("@daily"));
+check(
+  "needsPosixPollMode: чужой IANA-зоны — poll",
+  needsPosixPollMode("0 9 * * *", "Pacific/Kiritimati")
+);
+check(
+  "needsPosixPollMode: системная зона + простой cron — native",
+  !needsPosixPollMode("0 9 * * *", systemZone)
+);
+// Windows-поведение не менялось: список для schtasks всё ещё poll.
+check("needsPollMode: список остаётся poll (Windows)", needsPollMode("0,12 8-10 * JAN,MAR 1-5"));
 check("buildScheduleGate: native без окна → undefined", buildScheduleGate("0 9 * * *") === undefined);
 const windowGate = buildScheduleGate("0 9 * * *", undefined, "22:00", "06:00");
 check("buildScheduleGate: окно → шлюз без cron", !!windowGate && !windowGate.cron && windowGate.notBefore === "22:00");

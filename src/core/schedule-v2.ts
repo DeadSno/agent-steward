@@ -2,11 +2,13 @@
  * Расширенный cron и окна запуска (Спринт 19).
  *
  * Два режима регистрации в ОС:
- *  - «родной» (флаги schtasks / строки crontab / plist launchd) — только для
- *    простых выражений и системной таймзоны;
- *  - «опрос раз в минуту» (MINUTE /mo 1 + node-gate в обёртке) — для всего
- *    остального (timezone != system, списки, L, #, комбинации). Обёртка
- *    вызывает dist/core/schedule-gate.js, который сам решает, пора ли запускать.
+ *  - «родной» — системная таймзона и выражение, понятное адаптеру ОС:
+ *    для Windows — подмножество флагов schtasks, для POSIX (crontab) —
+ *    Vixie-совместимый cron (списки, диапазоны, шаги, имена месяцев/дней);
+ *  - «опрос раз в минуту» (MINUTE /mo 1 или "* * * * *" + node-gate во
+ *    враппере) — для чужой таймзоны, Quartz-расширений L/# и прочего, что
+ *    адаптер ОС не понимает. Обёртка вызывает dist/core/schedule-gate.js,
+ *    который сам решает, пора ли запускать.
  *
  * Здесь живёт только чистая математика: парсинг, совпадение, ближайший запуск.
  * Никакого I/O и обращения к ОС.
@@ -688,6 +690,22 @@ export function convertForSchtasks(expr: string): CronConversion {
   return convertCronToSchTasks(normalizeCron(expr));
 }
 
+/**
+ * true, если выражение можно записать в crontab как есть (Vixie-совместимый
+ * 5-полевой cron). В отличие от schtasks, crontab понимает списки, диапазоны,
+ * шаги и имена месяцев/дней недели — их не нужно загонять в минутный опрос.
+ * Quartz-расширения `L` / `d#n` и макросы вроде `@daily` (не 5 полей) crontab
+ * не понимает: для них нужен poll-режим с gate во враппере.
+ */
+export function isNativePosixCronExpr(expr: string): boolean {
+  try {
+    const spec = parseCron(expr);
+    return !spec.lastDom && spec.nthWeekday.length === 0;
+  } catch {
+    return false;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Политика планирования одной задачи (общий код для Windows-бека и index.ts).
 
@@ -716,6 +734,17 @@ export function needsPollMode(expr: string, timezone?: string | null): boolean {
   const tz = (timezone || "").trim();
   if (tz && tz !== systemTimeZone()) return true;
   return !isNativeSchtasksExpr(expr);
+}
+
+/**
+ * Аналог needsPollMode для POSIX-бэков (crontab): чужой IANA-таймзона или
+ * не-Vixie-синтаксис заставляет опрашивать каждую минуту, остальное crontab
+ * выполняет сам. Списки/диапазоны/шаги/имена здесь родные.
+ */
+export function needsPosixPollMode(expr: string, timezone?: string | null): boolean {
+  const tz = (timezone || "").trim();
+  if (tz && tz !== systemTimeZone()) return true;
+  return !isNativePosixCronExpr(expr);
 }
 
 /**

@@ -10,7 +10,7 @@ import {
   scheduleAtFallback,
   type PruneAtFallbackReport,
 } from "./at-fallback.js";
-import { needsPollMode } from "../schedule-v2.js";
+import { needsPosixPollMode } from "../schedule-v2.js";
 import { LockManager, withLockWait } from "../lock.js";
 import { getBasePluginDir, getProfileName } from "../../profiles.js";
 import { taskFolderNameForProfile, legacyTaskFolderNameForProfile } from "../../types.js";
@@ -59,12 +59,12 @@ export class LinuxScheduler extends PosixSchedulerBase {
     }
     const log = entry.logFile ? ` >> ${shellQuote(entry.logFile)} 2>&1` : "";
     const cmd = `/bin/bash ${shellQuote(entry.command)}${log}`;
-    // crontab понимает только 5-полевой cron. Расширенные выражения (L, #,
-    // списки, @daily и т.п.) нельзя писать в crontab как есть — опрашиваем
-    // каждую минуту, а решение о запуске принимает gate во враппере.
-    // Задачи с чужой IANA-таймзоной (не системной) тоже уходят в poll-режим,
-    // иначе crontab сработает по системному времени, а не по таймзоне задачи.
-    const schedule = needsPollMode(entry.schedule, entry.timezone)
+    // Vixie-совместимый 5-полевой cron crontab выполняет сам: списки,
+    // диапазоны, шаги и имена месяцев/дней недели писать как есть можно.
+    // Quartz-расширения (L, d#n) и @-макросы (не 5 полей) crontab не понимает —
+    // для них "* * * * *" + gate во враппере. Чужая IANA-таймзона тоже уходит
+    // в poll: иначе crontab сработает по системному времени задачи.
+    const schedule = needsPosixPollMode(entry.schedule, entry.timezone)
       ? "* * * * *"
       : entry.schedule;
     return `${schedule} ${cmd}`;
