@@ -68,12 +68,14 @@ assert.ok("name" in sample.args, "schedule_task: args содержит name");
 assert.ok("schedule" in sample.args, "schedule_task: args содержит schedule");
 
 // 2.2. Схемы из корневого zod (4.6.7) читаются zod-копией V1 SDK (4.1.8).
-const v1ZodPath = fileURLToPath(
-  new URL(
-    "./node_modules/@opencode-ai/plugin/node_modules/zod/index.cjs",
-    import.meta.url
-  )
+// Путь к zod не хардкодим: он зависит от того, как npm разложил зависимо-
+// сти (вложенная копия или hoist). Разрешаем zod из пакета V1 SDK через
+// createRequire от его package.json — так тест живёт и после npm update.
+const rootDir = fileURLToPath(new URL(".", import.meta.url));
+const v1PluginRequire = createRequire(
+  join(rootDir, "node_modules", "@opencode-ai", "plugin", "package.json")
 );
+const v1ZodPath = v1PluginRequire.resolve("zod");
 assert.ok(existsSync(v1ZodPath), "найдена zod-копия V1 SDK");
 const v1Zod = createRequire(import.meta.url)(v1ZodPath);
 const v1ScheduleArgs = v1Zod.object(sample.args);

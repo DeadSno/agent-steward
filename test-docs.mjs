@@ -320,11 +320,16 @@ check(
     /OPENCODE_SCHEDULER_PORT/.test(integrationSrc) &&
     /hooks\.dispose\(\)/.test(integrationSrc)
 );
+const dualEntrySrc = fs.readFileSync(path.join(root, "test-dual-entry.mjs"), "utf8");
 check(
   "test-dual-entry: наборы имён V1 и V2 сверяются",
-  /createToolHandlers/.test(
-    fs.readFileSync(path.join(root, "test-dual-entry.mjs"), "utf8")
-  )
+  /createToolHandlers/.test(dualEntrySrc)
+);
+check(
+  "test-dual-entry: zod разрешается через createRequire от V1 SDK, а не хардкодом пути",
+  /v1PluginRequire\.resolve\("zod"\)/.test(dualEntrySrc) &&
+    /@opencode-ai", "plugin", "package\.json"/.test(dualEntrySrc) &&
+    !/plugin\/node_modules\/zod\/index\.cjs/.test(dualEntrySrc)
 );
 const ciPath = path.join(root, ".github", "workflows", "ci.yml");
 const ciSrc = fs.existsSync(ciPath) ? fs.readFileSync(ciPath, "utf8") : "";
