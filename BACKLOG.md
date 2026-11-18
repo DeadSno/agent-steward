@@ -154,7 +154,7 @@
 | P1-8.T1 | P1-8.T1.1 | Определять формат даты через PowerShell `((Get-Culture).DateTimeFormat.ShortDatePattern)` | ✅ |
 | | P1-8.T1.2 | Либо регистрировать задачи через `Register-ScheduledTask` (culture-invariant) — не требуется, выбрано решение T1.1 | ✅ |
 | | P1-8.T1.3 | Заменить заглушку «никогда» `31.12.2099` на ONCE-дату, вычисленную в формате локали | ✅ |
-| | P1-8.T1.4 | Добавить тесты для en-US/zh-CN локалей — невыполнимо в песочнице без Node | ⏸️ |
+| | P1-8.T1.4 | Добавить тесты для en-US/zh-CN локалей — невыполнимо в песочнице без Node | ✅ (18.11.2026: `test-windows-locales.mjs` — 12 проверок. Реальные ShortDatePattern получены на этой машине через PowerShell Get-Culture: ru-RU `dd.MM.yyyy`, en-US `M/d/yyyy`, zh-CN `yyyy/M/d`. Проверены /sd для one-shot, /sc ONCE + /st, дата «никогда» 2099 во всех трёх локалях и живые Get-Culture. 12/12 OK, добавлен в `npm test`) |
 
 ---
 
