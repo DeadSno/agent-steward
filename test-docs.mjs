@@ -334,6 +334,17 @@ check(
     /compat-v2:/.test(ciSrc) &&
     /node test-v1-integration\.mjs/.test(ciSrc)
 );
+// P3-32: "22" в setup-node резолвится в последний 22.x (обычно НОВЕЕ минимума),
+// поэтому комментарий про «старее» был неверным. Пин нужен для стабильности
+// и проверки нижней границы engines, а не защиты от старого 22.x.
+check(
+  'CI: комментарий про Node "22" не утверждает, что он старее пина',
+  !/старее/.test(ciSrc) && ciSrc.includes("нижнюю границу")
+);
+check(
+  "CI: пин 22.22.0 совпадает с минимумом из engines",
+  pkg.engines?.node === ">=22.22.0" && ciSrc.includes('"22.22.0"')
+);
 // macOS дорог в релизной очереди (он блокировал publish 0.0.3), поэтому
 // проверяется обычным CI на каждом push. Инвариант не даёт молча потерять macOS.
 const releasePath = path.join(root, ".github", "workflows", "release.yml");
