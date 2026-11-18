@@ -4,7 +4,7 @@ import { pathToFileURL } from "node:url";
 import { runTaskNow } from "./scheduler/run-now.js";
 import { createSchedulerBackend } from "./scheduler/index.js";
 import { notifyTaskCompletion } from "../notifications.js";
-import { finishRun, getHistory, recordRun, startRun } from "../db/history-repo.js";
+import { finishRun, getLatestHistoryByTask, recordRun, startRun } from "../db/history-repo.js";
 import { getSetting, setSetting } from "../db/settings-repo.js";
 import { getTask, listTasks } from "../db/tasks-repo.js";
 import { rotateSessionIfNeeded } from "./session.js";
@@ -595,7 +595,8 @@ async function handleCompletion(
     // зависимостей. Запускаем только если ВСЕ зависимости уже успешны и
     // зависимая задача ещё не запускалась после их завершения.
     try {
-      const history = getHistory(null, 200) as HistoryRecord[];
+      // P2-29: по одной последней записи на задачу, а не «последние 200 строк».
+      const history = getLatestHistoryByTask() as HistoryRecord[];
       const definitions = listTasks();
       const dependents = selectDependentsToTrigger(taskName, definitions, history);
       for (const dependent of dependents) {

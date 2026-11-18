@@ -326,6 +326,28 @@ export function getHistory(
   return rows.map(rowToRecord);
 }
 
+/**
+ * Последняя запись по каждой задаче (P2-29).
+ *
+ * DAG-зависимости нельзя проверять по «последним N записям»: на частой задаче
+ * успех зависимости вымывается из окна, и зависимая задача не стартует.
+ * Здесь SQL сам выбирает по одной самой свежей записи на задачу.
+ */
+export function getLatestHistoryByTask(limit = 5000): StoredHistoryRecord[] {
+  const safeLimit = Math.max(1, Math.min(100000, Math.floor(limit) || 1));
+  const rows = getDb()
+    .prepare(
+      `SELECT * FROM history
+       WHERE id IN (
+         SELECT MAX(id) FROM history GROUP BY lower(task_name)
+       )
+       ORDER BY started_at DESC, id DESC
+       LIMIT ?`,
+    )
+    .all(safeLimit);
+  return rows.map(rowToRecord);
+}
+
 /** История запусков, начатых не раньше timestamp (ISO-строка). */
 export function getHistorySince(
   timestamp: string,
