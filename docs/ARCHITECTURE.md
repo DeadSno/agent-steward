@@ -373,6 +373,12 @@ from templates so the policy stays identical across platforms.
 pre/post-flight results, the chained next task, workspace and tool restrictions.
 `metrics` holds per-task counters and totals.
 
+Usage (tokens/cost) resolves in both recorder modes: explicit wrapper arguments win,
+and when they are `-` the recorder parses the log tail (`parseUsageFromLog`) using the
+log path passed as the last argument. This applies to `--finish` (12th argument) and to
+the legacy pre-`--start` mode (11th argument, B10); a missing/unreadable log degrades to
+"no usage" without failing the record.
+
 If the host or the machine dies mid-run, the row stays in `running`. On the next
 plugin activation, `db/recovery.ts` marks stale `running` rows as `error`, so the UI
 never shows a permanently running task.

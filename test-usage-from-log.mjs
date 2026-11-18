@@ -2,8 +2,13 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 
-import { parseUsageFromLog } from "./dist/core/record-history.js";
+const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "usage-log-test-"));
+// B10: legacy-режим пишет в БД, поэтому база теста изолирована во временной
+// папке. Env выставляется до импорта модулей — путь БД читается при импорте.
+process.env.OPENCODE_SCHEDULER_DB = path.join(tmpDir, "usage.db");
+const { parseUsageFromLog } = await import("./dist/core/record-history.js");
 
 let passed = 0;
 let failed = 0;
@@ -18,8 +23,6 @@ function check(name, fn) {
     failed++;
   }
 }
-
-const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "usage-log-test-"));
 
 function writeLog(name, content) {
   const p = path.join(tmpDir, name);
@@ -130,7 +133,82 @@ check("только стоимость → tokens остаётся undefined", (
   assert.strictEqual(u.costUsd, 7.77);
 });
 
-fs.rmSync(tmpDir, { recursive: true, force: true });
+// --- B10: legacy-режим (без --start/--finish) читает usage из 11-го аргумента ---
+{
+  const recorder = path.resolve("dist/core/record-history.js");
+  const runLegacy = (taskName, logFile, tokens = "-", cost = "-") => {
+    const result = spawnSync(
+      process.execPath,
+      [
+        recorder,
+        taskName,
+        "success",
+        new Date().toISOString(),
+        "1000",
+        "-", // error
+        tokens,
+        cost,
+        "-", // model
+        "-", // pre-flight
+        "-", // post-flight
+        logFile,
+      ],
+      { encoding: "utf8", env: { ...process.env }, timeout: 30000 },
+    );
+    return result;
+  };
+
+  try {
+    const legacyLog = writeLog("legacy.log", `[2026-11-18 10:00:00] Tokens: 4321\ncost: $0.21\n`);
+    const res = runLegacy("Legacy Usage", legacyLog);
+    assert.strictEqual(res.status, 0, `recorder exit ${res.status}: ${res.stderr}`);
+
+    // Путь к несуществующему логу — graceful fallback, запись не падает.
+    const missing = runLegacy("Legacy NoLog", path.join(tmpDir, "missing.log"));
+    assert.strictEqual(missing.status, 0, `recorder exit ${missing.status}: ${missing.stderr}`);
+
+    const { initDb, getDb } = await import("./dist/db/index.js");
+    initDb();
+    const row = getDb()
+      .prepare("SELECT tokens, cost_usd FROM history WHERE task_name = ? ORDER BY id DESC LIMIT 1")
+      .get("Legacy Usage");
+    assert.strictEqual(Number(row.tokens), 4321);
+    assert.strictEqual(Number(row.cost_usd), 0.21);
+
+    const noLogRow = getDb()
+      .prepare("SELECT tokens, cost_usd FROM history WHERE task_name = ? ORDER BY id DESC LIMIT 1")
+      .get("Legacy NoLog");
+    assert.strictEqual(noLogRow.tokens, null);
+    assert.strictEqual(noLogRow.cost_usd, null);
+
+    // Явно переданные значения сильнее лога.
+    const explicit = runLegacy("Legacy Explicit", legacyLog, "50", "0.1");
+    assert.strictEqual(explicit.status, 0, `recorder exit ${explicit.status}: ${explicit.stderr}`);
+    const explicitRow = getDb()
+      .prepare("SELECT tokens, cost_usd FROM history WHERE task_name = ? ORDER BY id DESC LIMIT 1")
+      .get("Legacy Explicit");
+    assert.strictEqual(Number(explicitRow.tokens), 50);
+    assert.strictEqual(Number(explicitRow.cost_usd), 0.1);
+
+    console.log("  ✅ B10: legacy-режим пишет usage из лога и не падает без него");
+    passed++;
+  } catch (err) {
+    console.log(`  ❌ B10: legacy-режим usage: ${err instanceof Error ? err.message : String(err)}`);
+    failed++;
+  }
+}
+
+try {
+  const { closeDb } = await import("./dist/db/index.js");
+  closeDb();
+} catch {
+  // БД могла не открыться — не мешает уборке.
+}
+try {
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+} catch {
+  // Windows может держать файл БД — тест уже завершён.
+}
 
 console.log(`\nИтого: ${passed} пройдено, ${failed} провалено из ${passed + failed}`);
 process.exit(failed > 0 ? 1 : 0);

@@ -23,18 +23,6 @@ Legacy: `opencode-windows-scheduler@1.5.8`.
 
 # 1. Бэклог (аудит 18.11)
 
-## Деталь 1.8 — Legacy recorder
-`src/core/record-history.ts`
-
-**Задача B10 — Legacy-режим парсит usage из лога** · P2 · ⬜
-
-Legacy-ветка не парсит `usage` из 11-го аргумента (`$LOG_FILE`) → токены и стоимость теряются.
-
-- [ ] B10.1 Парсить usage из лог-файла
-- [ ] B10.2 Graceful fallback, если usage нет
-- [ ] B10.3 Тест на legacy-запись с usage
-- [ ] B10.4 Docs
-
 ## Деталь 1.9 — Prompt / argv
 `src/core/ps-wrapper.ts` (Windows и POSIX)
 

@@ -457,6 +457,22 @@ async function main() {
   // "-" означает «данных нет» (openCode не печатал usage в лог).
   const tokens = parseOptionalNumber(sixth);
   const costUsd = parseOptionalNumber(seventh);
+  // B10: 11-й аргумент — лог-файл задачи. Раньше legacy-режим его не читал,
+  // поэтому при "-" в токенах/стоимости usage терялся. Парсим лог так же,
+  // как режим --finish; отсутствие файла — graceful fallback (parseUsageFromLog
+  // возвращает пустой объект и не бросает).
+  const logFile = eleventh && eleventh !== "-" ? eleventh : undefined;
+  let tokensResolved = tokens;
+  let costResolved = costUsd;
+  if ((tokensResolved === undefined || costResolved === undefined) && logFile) {
+    const usage = parseUsageFromLog(logFile);
+    if (tokensResolved === undefined && usage.tokens !== undefined) {
+      tokensResolved = usage.tokens;
+    }
+    if (costResolved === undefined && usage.costUsd !== undefined) {
+      costResolved = usage.costUsd;
+    }
+  }
   // Восьмой аргумент — модель; "-" означает, что модель не задана.
   const model = eighth && eighth !== "-" ? eighth.trim() || undefined : undefined;
   // Девятый и десятый — итоги pre/post-flight хуков.
@@ -479,8 +495,8 @@ async function main() {
     durationMs,
     error,
     chainTarget,
-    tokens,
-    costUsd,
+    tokensResolved,
+    costResolved,
     model,
     preFlightStatus,
     postFlightStatus,
@@ -490,7 +506,7 @@ async function main() {
     definition?.deniedTools ?? null,
   );
 
-  await handleCompletion(taskName, st, chainTarget, error, durationMs, tokens, costUsd);
+  await handleCompletion(taskName, st, chainTarget, error, durationMs, tokensResolved, costResolved);
 }
 
 /** Зависимости для тестируемой очистки one-shot (P2-27). */
