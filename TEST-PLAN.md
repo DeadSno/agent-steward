@@ -595,6 +595,7 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 | `test-agent-tools.mjs` | D02, D04 |
 | `test-task-status.mjs` | D02 |
 | `test-crash-recovery.mjs` | D03, D15 |
+| `test-prompt-argv.mjs` | D03 (промпт после `--`, лимит argv) |
 | `test-session-continuity.mjs` | D03.9 |
 | `test-sqlite.mjs` | D15 |
 | `test-dag.mjs` | D05 |

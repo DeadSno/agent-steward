@@ -23,18 +23,6 @@ Legacy: `opencode-windows-scheduler@1.5.8`.
 
 # 1. Бэклог (аудит 18.11)
 
-## Деталь 1.9 — Prompt / argv
-`src/core/ps-wrapper.ts` (Windows и POSIX)
-
-**Задача B11 — Промпт через `--` и off-by-one `131072`** · P2 · ⬜
-
-Промпт передаётся без `--`; промпт с `-` парсится как флаг `opencode`. Проверка `-gt` вместо `>=`.
-
-- [ ] B11.1 Вставить `--` перед промптом
-- [ ] B11.2 `-ge` вместо `-gt` для лимита argv
-- [ ] B11.3 Тест: промпт, начинающийся с `-`
-- [ ] B11.4 Docs
-
 ## Деталь 1.10 — Durable runs / lease
 `src/db/run-journal.ts`, `src/db/schema.ts`
 

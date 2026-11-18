@@ -54,6 +54,9 @@ The factory picks an implementation from `process.platform`:
 - Wrapper: `run-task.ps1` plus a per-task `run-<name>.cmd` in `%APPDATA%\opencode\agent-steward\wrapper`. The legacy `%APPDATA%\opencode\windows-scheduler` directory is migrated on first start.
 - Logs: `%APPDATA%\opencode\agent-steward\logs\<name>.log`.
 - cron is converted to schtasks (`convertCronToSchTasks`) — the same pattern set as before.
+- The prompt is passed to `opencode run` after `--`, so a prompt beginning with `-`
+  cannot be mistaken for a flag. The wrapper rejects prompts longer than 30 000
+  characters before `CreateProcess` (32 767-char command-line limit).
 
 ### Linux
 - Tasks live in a managed `crontab` block:
@@ -86,6 +89,9 @@ The factory picks an implementation from `process.platform`:
 
 ### Shared POSIX wrapper (`.sh`)
 - `cd` into the working directory, `opencode run` with the prompt read from a file.
+  The prompt follows `--`, so a leading `-` is not treated as an option.
+- The argv backstop rejects `PROMPT_BYTES >= 131072`: Linux `MAX_ARG_STRLEN`
+  includes the trailing NUL, so at most 131 071 payload bytes fit.
 - Logs are appended with `>>` and prefixed with timestamps.
 - Locking via atomic `mkdir` — protects against parallel runs.
 - Lock owner is written as `<pid>-<iso>` by Node/PS/bash; legacy `<iso>|<pid>` (PS)

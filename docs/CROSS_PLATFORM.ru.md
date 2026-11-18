@@ -54,6 +54,9 @@ interface SchedulerBackend {
 - Обёртка: `run-task.ps1` + персональный `run-<name>.cmd` в `%APPDATA%\opencode\agent-steward\wrapper`. Legacy-каталог `%APPDATA%\opencode\windows-scheduler` переносится при первом запуске.
 - Логи: `%APPDATA%\opencode\agent-steward\logs\<name>.log`.
 - cron конвертируется в schtasks (`convertCronToSchTasks`) — поддерживается тот же набор шаблонов.
+- Промпт передаётся в `opencode run` после `--`, поэтому промпт, начинающийся с `-`,
+  не может быть принят за флаг. Обёртка отклоняет промпты длиннее 30 000 символов
+  до `CreateProcess` (лимит командной строки — 32 767 символов).
 
 ### Linux
 - Задачи живут в управляемом блоке `crontab`:
@@ -86,6 +89,9 @@ interface SchedulerBackend {
 
 ### Общая POSIX-обёртка (`.sh`)
 - `cd` в рабочую директорию, `opencode run` с промптом из файла.
+  Промпт идёт после `--`, поэтому ведущий `-` не считается опцией.
+- Backstop argv отклоняет `PROMPT_BYTES >= 131072`: `MAX_ARG_STRLEN` в Linux
+  включает завершающий NUL, поэтому полезных данных помещается максимум 131 071 байт.
 - Логи пишутся в файл через `>>` и дублируются метками времени.
 - Блокировка через атомарный `mkdir` — защита от параллельных запусков.
 - Node, PS и bash пишут владельца lock как `<pid>-<iso>`; старые форматы

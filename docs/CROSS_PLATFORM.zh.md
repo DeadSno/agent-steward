@@ -53,6 +53,9 @@ interface SchedulerBackend {
 - 包装脚本：`run-task.ps1` 加每个任务专属的 `run-<name>.cmd`，位于 `%APPDATA%\opencode\agent-steward\wrapper`。旧的 `%APPDATA%\opencode\windows-scheduler` 目录会在首次启动时迁移。
 - 日志：`%APPDATA%\opencode\agent-steward\logs\<name>.log`。
 - cron 会转换成 schtasks（`convertCronToSchTasks`）——支持与之前相同的模板集合。
+- 提示词在 `--` 之后传给 `opencode run`，因此以 `-` 开头的提示词不会被当成选项。
+  包装脚本会在 `CreateProcess` 之前拒绝超过 30 000 字符的提示词
+  （命令行上限为 32 767 字符）。
 
 ### Linux
 - 任务保存在受管 `crontab` 块中：
@@ -85,6 +88,9 @@ interface SchedulerBackend {
 
 ### 共享 POSIX 包装脚本（`.sh`）
 - `cd` 到工作目录，用文件中的提示词执行 `opencode run`。
+  提示词位于 `--` 之后，因此开头的 `-` 不会被当作选项。
+- argv 保护会在 `PROMPT_BYTES >= 131072` 时拒绝运行：Linux 的 `MAX_ARG_STRLEN`
+  包含结尾 NUL，因此最多只有 131 071 字节的有效负载。
 - 日志通过 `>>` 追加，并带时间戳。
 - 通过原子 `mkdir` 加锁——防止并行运行。
 - Node、PS 和 bash 都将锁持有者写为 `<pid>-<iso>`；旧格式 `<iso>|<pid>`（PS）和

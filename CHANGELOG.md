@@ -14,6 +14,9 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Fixed
 
+- **B11.4 — документация prompt/argv:** `docs/ARCHITECTURE.md` («Execution model»), `CROSS_PLATFORM.md` и переводы (`ru`, `zh`) описывают `--` перед промптом (ведущий `-` не считается флагом) и лимит argv POSIX: `>= 131072` байт отклоняется, полезных данных — максимум 131 071 байт.
+- **B11.3 — тест prompt/argv:** `test-prompt-argv.mjs` (7 проверок) сверяет все 8 веток `exec opencode run` (промпт после `--`), отсутствие варианта без `--`, строгое `-ge 131072` в bash-обёртке и `$opencodeArgs += @("--", $prompt)` в PowerShell-обёртке.
+- **B11.1/B11.2 — промпт после `--`, строгий лимит argv:** `src/core/ps-wrapper.ts` и `src/core/wrappers/bash.ts` передают промпт последним аргументом после `--`, поэтому промпт, начинающийся с `-`, больше не разбирается CLI как флаг. POSIX-обёртка проверяет `PROMPT_BYTES -ge 131072` (раньше `-gt`, из-за чего ровно 131 072 байта проходили проверку и падали на `exec`: `MAX_ARG_STRLEN` включает завершающий NUL).
 - **B10.4 — документация usage в recorder:** `docs/ARCHITECTURE.md` (History) описывает разрешение tokens/cost: явные аргументы обёртки сильнее, при `-` парсится хвост лога; правило одно для `--finish` (12-й аргумент) и legacy-режима (11-й).
 - **B10.3 — тест legacy usage:** `test-usage-from-log.mjs` (14 проверок) запускает recorder в legacy-режиме с логом и проверяет запись `tokens`/`cost_usd` в БД, отсутствие падения при несуществующем логе (`NULL`) и приоритет явных аргументов над логом.
 - **B10.1/B10.2 — legacy-режим парсит usage:** в `src/core/record-history.ts` legacy-ветка (без `--start`/`--finish`) читает лог из 11-го аргумента через `parseUsageFromLog`, если токены/стоимость пришли как `-`. Отсутствующий или нечитаемый лог — graceful fallback: запись создаётся без usage, ошибки нет.

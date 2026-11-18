@@ -739,7 +739,9 @@ try {
         $opencodeArgs += @("--continue")
     }
     if ($prompt) {
-        $opencodeArgs += $prompt
+        # B11.1: «--» завершает разбор флагов opencode. Без него промпт,
+        # начинающийся с «-», CLI принял бы за неизвестный флаг.
+        $opencodeArgs += @("--", $prompt)
     }
 
     # Запускаем opencode и НАПРЯМУЮ направляем весь вывод (stdout + stderr) в лог.

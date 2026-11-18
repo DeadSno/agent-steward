@@ -180,7 +180,8 @@ applied through `PRAGMA user_version` on open.
 3. The wrapper acquires the lock (`locks/<task>.lock`), writes the log
    (`logs/<task>.log`), loads workspace env from `<PLUGIN_DIR>/env/<sanitized>.env`
    (Windows `-EnvFile`, POSIX `set -a; . "$ENV_FILE"; set +a`) before starting
-   `opencode run` with the prompt file. Output is streamed to the log.
+   `opencode run` with the prompt file. The prompt is passed after `--`, so a
+   prompt starting with `-` is never parsed as an option. Output is streamed to the log.
 4. When the process ends, the wrapper enforces the timeout result, runs the Quality
    Gate and the post-flight hook.
 5. The wrapper calls `node dist/core/record-history.js --finish ...` with status,
