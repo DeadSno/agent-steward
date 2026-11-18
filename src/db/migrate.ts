@@ -90,7 +90,9 @@ function normalizeHistoryRow(raw: any): any | null {
   if (!taskName || !startedAt) return null;
 
   const status =
-    raw.status === "success" || raw.status === "timeout" ? raw.status : "error";
+    raw.status === "success" || raw.status === "partial" || raw.status === "timeout"
+      ? raw.status
+      : "error";
 
   return {
     taskName,
