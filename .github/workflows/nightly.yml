@@ -44,5 +44,5 @@ jobs:
       - name: Build backend
         run: npm run build
 
-      - name: Chaos: kill -9 mid-DAG
+      - name: "Chaos: kill -9 mid-DAG"
         run: node test-chaos-dag.mjs
