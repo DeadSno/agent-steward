@@ -565,13 +565,39 @@ validation errors (missing/completed/running target, terminal run, no unfinished
 path, artifact without content, oversized content), async resume and cascade delete on run
 removal.
 
+### Pause and resume in the GUI (Sprint 36.8)
+
+`src/core/run-panel-api.ts` is the GUI-facing facade over durable runs. `listRunPanel({ filter, limit })`
+accepts `active` (pending/running/paused/failed), `all`, or a concrete run status, normalizes the
+limit to 1..100 and returns compact `RunPanelRun` entries: status, progress (`doneSteps` /
+`totalSteps`), first unfinished `currentStep` with a stable `anchor`, up to 20 context injections
+(content preview capped at 500 characters, author, timestamps, consumer) and the count of pending
+injections. `active` is also reported for the panel badge.
+
+`pauseRunPanel(runId, { comment, author, stepName? })` delegates to `pauseRun`, returning
+`{ success: false, error }` instead of throwing, so the GUI can show the database error next to the
+button. `resumeRunPanel(runId)` only prepares the run: it accepts `paused` or `failed`, calls
+`reopenRun` (status becomes `running`), and returns the next unfinished step from `findResumeStep`.
+Actual step execution remains with `resumeRun` / the DAG executor; the facade never pretends that a
+step ran.
+
+RPC methods `list_durable_runs`, `pause_durable_run` and `resume_durable_run` are declared in
+`src/rpc.ts`, implemented in `src/index.ts`, and audited as `run.pause` / `run.resume` (target is the
+run id). The GUI section «⏯️ Запуски DAG» in `src/gui.tsx` renders the run list with status filter,
+progress, current-step anchor link, a comment field, pause/resume buttons with confirmation, a
+blocked pause plus warning while the current step is `running`, and the context history with author
+and consumer. Locales ru/en/zh stay in sync. `test-pause-gui.mjs` verifies the RPC contract, locale
+parity, current-step/progress output, pause with masked comment and author, active/paused filters,
+resume preparation, rejection of a repeated resume, end-to-end comment delivery through
+`resumeRun`, running-step rejection, failed-run resume and list limits.
+
 ## Interfaces
 
 | Interface | Audience | Entry point |
 | --- | --- | --- |
 | Agent tools | AI agent | 26 tools registered via `ctx.tool.transform` |
 | Agent skill | AI agent | `skills/scheduled-job-best-practices` |
-| RPC | Sidebar GUI | `src/rpc.ts` contracts, 44 methods |
+| RPC | Sidebar GUI | `src/rpc.ts` contracts, 47 methods |
 | Sidebar GUI | Human | `gui-experimental.cjs` |
 | Web dashboard | Human | `startDashboardServer` (localhost, random/fixed port) |
 

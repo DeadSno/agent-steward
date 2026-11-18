@@ -998,6 +998,152 @@ const DiscardDlqOutput = {
   additionalProperties: false,
 } as const;
 
+/** Шаг durable-запуска для панели (Спринт 36.8). */
+const RunPanelStepSchema = {
+  type: "object" as const,
+  properties: {
+    stepName: { type: "string" },
+    position: { type: "number" },
+    status: { type: "string" },
+    attempt: { type: "number" },
+    error: { type: ["string", "null"] },
+    anchor: { type: "string" },
+  },
+  required: ["stepName", "position", "status", "attempt", "error", "anchor"],
+} as const;
+
+/** Вставка контекста в истории запуска. */
+const RunPanelInjectionSchema = {
+  type: "object" as const,
+  properties: {
+    id: { type: "string" },
+    kind: { type: "string" },
+    content: { type: "string" },
+    contentLength: { type: "number" },
+    author: { type: "string" },
+    createdAt: { type: "string" },
+    consumedAt: { type: ["string", "null"] },
+    consumedByStep: { type: ["string", "null"] },
+  },
+  required: [
+    "id",
+    "kind",
+    "content",
+    "contentLength",
+    "author",
+    "createdAt",
+    "consumedAt",
+    "consumedByStep",
+  ],
+} as const;
+
+/** Durable-запуск в панели паузы/resume. */
+const RunPanelRunSchema = {
+  type: "object" as const,
+  properties: {
+    id: { type: "string" },
+    taskName: { type: "string" },
+    status: { type: "string" },
+    createdAt: { type: "string" },
+    startedAt: { type: ["string", "null"] },
+    finishedAt: { type: ["string", "null"] },
+    error: { type: ["string", "null"] },
+    steps: { type: "array", items: RunPanelStepSchema },
+    currentStep: { type: ["object", "null"], properties: RunPanelStepSchema.properties },
+    doneSteps: { type: "number" },
+    totalSteps: { type: "number" },
+    injections: { type: "array", items: RunPanelInjectionSchema },
+    pendingInjections: { type: "number" },
+  },
+  required: [
+    "id",
+    "taskName",
+    "status",
+    "createdAt",
+    "startedAt",
+    "finishedAt",
+    "error",
+    "steps",
+    "currentStep",
+    "doneSteps",
+    "totalSteps",
+    "injections",
+    "pendingInjections",
+  ],
+} as const;
+
+const ListDurableRunsInput = {
+  type: "object" as const,
+  properties: {
+    /** active (по умолчанию) | all | pending | running | paused | passed | failed | cancelled. */
+    filter: { type: "string" },
+    /** Сколько запусков вернуть (по умолчанию 20, максимум 100). */
+    limit: { type: "number" },
+  },
+  additionalProperties: false,
+} as const;
+
+const ListDurableRunsOutput = {
+  type: "object" as const,
+  properties: {
+    success: { type: "boolean" },
+    runs: { type: "array", items: RunPanelRunSchema },
+    active: { type: "number" },
+    error: { type: "string" },
+  },
+  required: ["success", "runs", "active"],
+  additionalProperties: false,
+} as const;
+
+const PauseDurableRunInput = {
+  type: "object" as const,
+  properties: {
+    runId: { type: "string" },
+    /** Явный шаг-получатель; по умолчанию первый незавершённый. */
+    stepName: { type: "string" },
+    /** Комментарий, который получит шаг при resume. */
+    comment: { type: "string" },
+    /** Автор комментария (по умолчанию local-user). */
+    author: { type: "string" },
+  },
+  required: ["runId"],
+  additionalProperties: false,
+} as const;
+
+const PauseDurableRunOutput = {
+  type: "object" as const,
+  properties: {
+    success: { type: "boolean" },
+    error: { type: "string" },
+    run: RunPanelRunSchema,
+    stepName: { type: ["string", "null"] },
+  },
+  required: ["success"],
+  additionalProperties: false,
+} as const;
+
+const ResumeDurableRunInput = {
+  type: "object" as const,
+  properties: {
+    runId: { type: "string" },
+  },
+  required: ["runId"],
+  additionalProperties: false,
+} as const;
+
+const ResumeDurableRunOutput = {
+  type: "object" as const,
+  properties: {
+    success: { type: "boolean" },
+    error: { type: "string" },
+    run: RunPanelRunSchema,
+    stepName: { type: ["string", "null"] },
+    prepared: { type: "boolean" },
+  },
+  required: ["success"],
+  additionalProperties: false,
+} as const;
+
 /** Сравнение триажа «до/после» (Спринт 31.5). */
 const CompareTriageInput = {
   type: "object" as const,
@@ -1783,6 +1929,9 @@ export const SchedulerRpc = Rpc.define({
     list_dlq: { input: ListDlqInput, output: ListDlqOutput },
     retry_dlq: { input: RetryDlqInput, output: RetryDlqOutput },
     discard_dlq: { input: DiscardDlqInput, output: DiscardDlqOutput },
+    list_durable_runs: { input: ListDurableRunsInput, output: ListDurableRunsOutput },
+    pause_durable_run: { input: PauseDurableRunInput, output: PauseDurableRunOutput },
+    resume_durable_run: { input: ResumeDurableRunInput, output: ResumeDurableRunOutput },
     compare_triage: {
       input: CompareTriageInput,
       output: CompareTriageOutput,

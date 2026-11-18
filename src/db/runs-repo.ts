@@ -357,10 +357,10 @@ export function finishRun(
 }
 
 /**
- * failed → running: возобновление прогона после краха (36.2).
+ * failed/paused → running: возобновление прогона после краха или паузы (36.2, 36.7).
  *
- * Разрешено только из failed и не сбрасывает номера попыток шагов —
- * они растут через `retryStep` при повторе конкретного шага.
+ * Не сбрасывает номера попыток шагов — они растут через `retryStep` при
+ * повторе конкретного шага.
  */
 export function reopenRun(id: string, startedAt = nowIso()): boolean {
   return withTransaction(() => {

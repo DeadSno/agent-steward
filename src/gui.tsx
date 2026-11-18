@@ -273,6 +273,45 @@ interface DlqEntry {
   resolution: string | null
 }
 
+/** Шаг durable-запуска в панели pause/resume (Спринт 36.8). */
+interface RunPanelStep {
+  stepName: string
+  position: number
+  status: string
+  attempt: number
+  error: string | null
+  anchor: string
+}
+
+/** Вставка контекста в истории запуска. */
+interface RunPanelInjection {
+  id: string
+  kind: string
+  content: string
+  contentLength: number
+  author: string
+  createdAt: string
+  consumedAt: string | null
+  consumedByStep: string | null
+}
+
+/** Durable-запуск в панели pause/resume. */
+interface RunPanelRun {
+  id: string
+  taskName: string
+  status: "pending" | "running" | "paused" | "passed" | "failed" | "cancelled"
+  createdAt: string
+  startedAt: string | null
+  finishedAt: string | null
+  error: string | null
+  steps: RunPanelStep[]
+  currentStep: RunPanelStep | null
+  doneSteps: number
+  totalSteps: number
+  injections: RunPanelInjection[]
+  pendingInjections: number
+}
+
 function statusColor(status: JobStatus): string {
   switch (status) {
     case "running": return "#f5a623"
@@ -562,6 +601,14 @@ export default Plugin.define({
     const [secretName, setSecretName] = createSignal("")
     const [secretValue, setSecretValue] = createSignal("")
 
+    // Durable-запуски (Спринт 36.8): пауза, комментарий и resume в GUI.
+    const [runPanelRuns, setRunPanelRuns] = createSignal<RunPanelRun[]>([])
+    const [runPanelActive, setRunPanelActive] = createSignal(0)
+    const [runPanelBusy, setRunPanelBusy] = createSignal(false)
+    const [runPanelCollapsed, setRunPanelCollapsed] = createSignal(true)
+    const [runPanelFilter, setRunPanelFilter] = createSignal<"active" | "all" | "running" | "paused" | "failed">("active")
+    const [runPanelComments, setRunPanelComments] = createSignal<Record<string, string>>({})
+
     // Аудит (Спринт 26): журнал мутаций.
     const [dlqEntries, setDlqEntries] = createSignal<DlqEntry[]>([])
     const [dlqOpen, setDlqOpen] = createSignal(0)
@@ -697,6 +744,7 @@ export default Plugin.define({
       void loadSecretsGui()
       void loadAuditGui()
       void loadDlqGui()
+      void loadRunPanel()
     }
 
     /** Текущие настройки уведомлений из сигналов формы. */
@@ -949,6 +997,86 @@ export default Plugin.define({
     /** Сохраняет настройки аудита. */
     async function saveAuditSettings() {
       await persistSettings({ audit: { enabled: auditRetentionEnabled(), retentionDays: auditRetentionDays(), maxRecords: auditMaxRecords() } })
+    }
+
+    /** Загрузка durable-запусков (Спринт 36.8). */
+    async function loadRunPanel() {
+      setRunPanelBusy(true)
+      try {
+        const result = await rpc.list_durable_runs({ filter: runPanelFilter(), limit: 20 })
+        if (result?.success) {
+          setRunPanelRuns(result.runs ?? [])
+          setRunPanelActive(Number(result.active ?? 0))
+        } else if (result?.error) {
+          console.error("RPC Error (list_durable_runs):", result.error)
+        }
+      } catch (err: any) {
+        console.error("RPC Error (list_durable_runs):", err)
+      } finally {
+        setRunPanelBusy(false)
+      }
+    }
+
+    /** Пауза с комментарием: следующий шаг получит его при resume. */
+    async function handlePauseRun(run: RunPanelRun) {
+      const comment = (runPanelComments()[run.id] ?? "").trim()
+      if (!window.confirm(gt("gui.runsPauseConfirm", { task: run.taskName }))) return
+      setRunPanelBusy(true)
+      try {
+        const result = await rpc.pause_durable_run({
+          runId: run.id,
+          comment: comment || undefined,
+          author: "gui",
+        })
+        if (result?.success) {
+          setRunPanelComments((prev) => ({ ...prev, [run.id]: "" }))
+          ctx.toast.show({
+            title: gt("gui.runsPaused"),
+            variant: "success",
+            description: gt("gui.runsPausedDescription", { step: result.stepName ?? "—" }),
+          })
+        } else {
+          ctx.toast.show({
+            title: gt("gui.runsPauseFailed"),
+            variant: "error",
+            description: result?.error ?? gt("gui.runsUnknownError"),
+          })
+        }
+        await loadRunPanel()
+      } catch (err: any) {
+        console.error("RPC Error (pause_durable_run):", err)
+        ctx.toast.show({ title: gt("gui.runsPauseFailed"), variant: "error", description: errorMessage(err) })
+      } finally {
+        setRunPanelBusy(false)
+      }
+    }
+
+    /** Resume только готовит запуск: снимает паузу и выбирает следующий шаг. */
+    async function handleResumeRun(run: RunPanelRun) {
+      if (!window.confirm(gt("gui.runsResumeConfirm", { task: run.taskName }))) return
+      setRunPanelBusy(true)
+      try {
+        const result = await rpc.resume_durable_run({ runId: run.id })
+        if (result?.success) {
+          ctx.toast.show({
+            title: gt("gui.runsResumed"),
+            variant: "success",
+            description: gt("gui.runsResumedDescription", { step: result.stepName ?? "—" }),
+          })
+        } else {
+          ctx.toast.show({
+            title: gt("gui.runsResumeFailed"),
+            variant: "error",
+            description: result?.error ?? gt("gui.runsUnknownError"),
+          })
+        }
+        await loadRunPanel()
+      } catch (err: any) {
+        console.error("RPC Error (resume_durable_run):", err)
+        ctx.toast.show({ title: gt("gui.runsResumeFailed"), variant: "error", description: errorMessage(err) })
+      } finally {
+        setRunPanelBusy(false)
+      }
     }
 
     /** Загрузка dead-letter queue (Спринт 36.6). */
@@ -3780,6 +3908,190 @@ export default Plugin.define({
                       {gt("gui.historyCleanupHint")}
                     </span>
                   </div>
+                </div>
+              )}
+            </div>
+
+            {/* ⏯️ Durable-запуски: пауза и resume (Спринт 36.8) */}
+            <div style="width:100%;max-width:900px;box-sizing:border-box;margin-top:8px;background:#1e1e1e;border:1px solid #333;border-radius:10px;overflow:hidden">
+              <button
+                onClick={() => setRunPanelCollapsed(!runPanelCollapsed())}
+                style="display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;box-sizing:border-box;padding:10px 14px;background:transparent;border:none;color:#e0e0e0;font-size:12px;font-weight:600;cursor:pointer;text-align:left"
+              >
+                <span>{gt("gui.runsHeading")}</span>
+                <span style="display:flex;align-items:center;gap:8px;font-size:11px;font-weight:400;color:#8e8e93">
+                  {gt("gui.runsActiveCount", { count: runPanelActive() })}
+                  <span>{runPanelCollapsed() ? "▾" : "▴"}</span>
+                </span>
+              </button>
+
+              {!runPanelCollapsed() && (
+                <div style="padding:0 14px 14px;display:flex;flex-direction:column;gap:10px">
+                  <div style="font-size:11px;color:#8e8e93">{gt("gui.runsHint")}</div>
+                  <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                    <label style="font-size:12px;color:#e0e0e0;white-space:nowrap">{gt("gui.runsFilter")}</label>
+                    <select
+                      value={runPanelFilter()}
+                      onChange={(e) => {
+                        setRunPanelFilter(e.currentTarget.value as "active" | "all" | "running" | "paused" | "failed")
+                        void loadRunPanel()
+                      }}
+                      style="padding:4px 6px;background:#1e1e1e;border:1px solid #333;border-radius:4px;color:#fff;font-size:12px;outline:none"
+                    >
+                      <option value="active">{gt("gui.runsFilterActive")}</option>
+                      <option value="all">{gt("gui.runsFilterAll")}</option>
+                      <option value="running">{gt("gui.runsFilterRunning")}</option>
+                      <option value="paused">{gt("gui.runsFilterPaused")}</option>
+                      <option value="failed">{gt("gui.runsFilterFailed")}</option>
+                    </select>
+                    <button
+                      onClick={() => void loadRunPanel()}
+                      disabled={runPanelBusy()}
+                      style={runPanelBusy()
+                        ? "padding:6px 12px;background:#666;color:white;border:none;border-radius:6px;cursor:not-allowed;font-size:12px;font-weight:500;opacity:0.6"
+                        : "padding:6px 12px;background:#007acc;color:white;border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:500;opacity:1"}
+                    >
+                      {runPanelBusy() ? gt("gui.loading") : gt("gui.refresh")}
+                    </button>
+                  </div>
+
+                  {runPanelRuns().map((run) => (
+                    <div style="border:1px solid #333;border-radius:8px;background:#0f0f0f;padding:10px;display:flex;flex-direction:column;gap:8px">
+                      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
+                        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                          <span style="color:#5ac8fa;font-weight:600;font-size:12px">{run.taskName}</span>
+                          <span style="font-size:10px;color:#8e8e93">run: {run.id.slice(0, 8)}</span>
+                          <span
+                            style={`font-size:10px;font-weight:600;padding:2px 7px;border-radius:999px;border:1px solid ${
+                              run.status === "paused"
+                                ? "#ff9f0a"
+                                : run.status === "running"
+                                  ? "#f5a623"
+                                  : run.status === "failed"
+                                    ? "#ff3b30"
+                                    : run.status === "passed"
+                                      ? "#34c759"
+                                      : "#555"
+                            };color:#e0e0e0`}
+                          >
+                            {run.status}
+                          </span>
+                        </div>
+                        <span style="font-size:10px;color:#8e8e93">
+                          {gt("gui.runsProgress", { done: run.doneSteps, total: run.totalSteps })}
+                        </span>
+                      </div>
+
+                      <div style="font-size:11px;color:#e0e0e0">
+                        {run.currentStep ? (
+                          <span>
+                            {gt("gui.runsCurrentStep")}{" "}
+                            <a href={`#${run.currentStep.anchor}`} style="color:#5ac8fa;text-decoration:none">
+                              {run.currentStep.stepName}
+                            </a>{" "}
+                            <span style="color:#8e8e93">
+                              · {run.currentStep.status} · attempt {run.currentStep.attempt}
+                            </span>
+                          </span>
+                        ) : (
+                          <span style="color:#8e8e93">{gt("gui.runsNoCurrentStep")}</span>
+                        )}
+                      </div>
+
+                      {run.currentStep?.status === "running" && (
+                        <div style="font-size:11px;color:#ff9f0a;background:#2a1f00;border:1px solid #5a3d00;border-radius:6px;padding:6px 8px">
+                          {gt("gui.runsRunningWarning")}
+                        </div>
+                      )}
+
+                      {(run.status === "pending" || run.status === "running") && (
+                        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+                          <input
+                            type="text"
+                            value={runPanelComments()[run.id] ?? ""}
+                            placeholder={gt("gui.runsCommentPlaceholder")}
+                            onInput={(e) =>
+                              setRunPanelComments((prev) => ({ ...prev, [run.id]: e.currentTarget.value }))
+                            }
+                            style="flex:1;min-width:180px;padding:5px 7px;background:#1e1e1e;border:1px solid #333;border-radius:5px;color:#fff;font-size:11px;outline:none"
+                          />
+                          <button
+                            onClick={() => void handlePauseRun(run)}
+                            disabled={runPanelBusy() || run.currentStep?.status === "running"}
+                            title={run.currentStep?.status === "running"
+                              ? gt("gui.runsRunningWarning")
+                              : gt("gui.runsPauseTitle")}
+                            style={runPanelBusy() || run.currentStep?.status === "running"
+                              ? "padding:5px 10px;background:#666;color:white;border:none;border-radius:5px;cursor:not-allowed;font-size:11px;opacity:0.6"
+                              : "padding:5px 10px;background:#ff9f0a;color:#1a1a1a;border:none;border-radius:5px;cursor:pointer;font-size:11px;font-weight:600"}
+                          >
+                            ⏸ {gt("gui.runsPause")}
+                          </button>
+                        </div>
+                      )}
+
+                      {(run.status === "paused" || run.status === "failed") && (
+                        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                          <button
+                            onClick={() => void handleResumeRun(run)}
+                            disabled={runPanelBusy()}
+                            title={gt("gui.runsResumeTitle")}
+                            style="padding:5px 10px;background:#34c759;color:#0a1a0a;border:none;border-radius:5px;cursor:pointer;font-size:11px;font-weight:600"
+                          >
+                            ▶ {gt("gui.runsResume")}
+                          </button>
+                          <span style="font-size:10px;color:#8e8e93">{gt("gui.runsResumeHint")}</span>
+                        </div>
+                      )}
+
+                      {run.error && (
+                        <div style="font-size:11px;color:#ff9f0a;overflow-wrap:anywhere">{shortError(run.error)}</div>
+                      )}
+
+                      <div style="display:flex;flex-direction:column;gap:3px">
+                        {run.steps.map((step) => (
+                          <div
+                            id={step.anchor}
+                            style="display:flex;align-items:center;gap:8px;font-size:11px;padding:3px 5px;border-radius:4px;background:#161616"
+                          >
+                            <span style="width:18px;color:#8e8e93;text-align:right">{step.position}</span>
+                            <span style="flex:1;color:#e0e0e0;overflow-wrap:anywhere">{step.stepName}</span>
+                            <span style="color:#8e8e93">{step.status}</span>
+                            <span style="color:#8e8e93">#{step.attempt}</span>
+                            {step.error && (
+                              <span style="color:#ff9f0a;max-width:260px;overflow-wrap:anywhere" title={step.error}>
+                                {shortError(step.error, 80)}
+                              </span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+
+                      {run.injections.length > 0 && (
+                        <div style="border-top:1px solid #222;padding-top:6px;display:flex;flex-direction:column;gap:4px">
+                          <div style="font-size:10px;color:#8e8e93">
+                            {gt("gui.runsContextHistory", { count: run.injections.length })}
+                          </div>
+                          {run.injections.slice(-3).map((injection) => (
+                            <div style="font-size:10px;color:#c7c7cc">
+                              <span style="color:#5ac8fa">{injection.author}</span>
+                              <span style="color:#8e8e93"> · {injection.kind} · {new Date(injection.createdAt).toLocaleString()}</span>
+                              {injection.consumedAt ? (
+                                <span style="color:#34c759"> · {gt("gui.runsConsumedBy", { step: injection.consumedByStep ?? "—" })}</span>
+                              ) : (
+                                <span style="color:#ff9f0a"> · {gt("gui.runsPending")}</span>
+                              )}
+                              <div style="color:#e0e0e0;overflow-wrap:anywhere">{injection.content}</div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+
+                  {runPanelRuns().length === 0 && (
+                    <div style="font-size:11px;color:#8e8e93;padding:6px 0">{gt("gui.runsEmpty")}</div>
+                  )}
                 </div>
               )}
             </div>

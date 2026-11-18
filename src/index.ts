@@ -80,6 +80,11 @@ import { getHistory, listRunningRecords } from "./db/history-repo.js";
 import { getAllMetrics } from "./db/metrics-repo.js";
 import { discardDlq, listDlq, retryDlq } from "./core/dlq-api.js";
 import {
+  listRunPanel,
+  pauseRunPanel,
+  resumeRunPanel,
+} from "./core/run-panel-api.js";
+import {
   findStuckMatrixClones,
   maybeSendDigest,
   notifyStuckMatrix,
@@ -3230,6 +3235,16 @@ const RPC_AUDIT_RULES: Record<
   },
   retry_dlq: { action: "dlq.retry", targetType: "dlq", target: (i) => i.id ?? "" },
   discard_dlq: { action: "dlq.discard", targetType: "dlq", target: (i) => i.id ?? "" },
+  pause_durable_run: {
+    action: "run.pause",
+    targetType: "run",
+    target: (i) => i.runId ?? "",
+  },
+  resume_durable_run: {
+    action: "run.resume",
+    targetType: "run",
+    target: (i) => i.runId ?? "",
+  },
   emit_event: { action: "event.emit", targetType: "event", target: (i) => i.eventName ?? "" },
   add_workspace: {
     action: "workspace.add",
@@ -5041,6 +5056,29 @@ const v2Plugin = Plugin.define({
         const source = (input ?? {}) as { id?: string; resolution?: string };
         if (!source.id) return { success: false, error: "id is required" };
         return discardDlq(source.id, source.resolution);
+      },
+      list_durable_runs: async (input: unknown) => {
+        const source = (input ?? {}) as { filter?: string; limit?: number };
+        return listRunPanel({ filter: source.filter, limit: source.limit });
+      },
+      pause_durable_run: async (input: unknown) => {
+        const source = (input ?? {}) as {
+          runId?: string;
+          stepName?: string;
+          comment?: string;
+          author?: string;
+        };
+        if (!source.runId) return { success: false, error: "runId is required" };
+        return pauseRunPanel(source.runId, {
+          stepName: source.stepName,
+          comment: source.comment,
+          author: source.author,
+        });
+      },
+      resume_durable_run: async (input: unknown) => {
+        const source = (input ?? {}) as { runId?: string };
+        if (!source.runId) return { success: false, error: "runId is required" };
+        return resumeRunPanel(source.runId);
       },
       get_templates: async () => {
         try {
