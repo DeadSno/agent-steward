@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import { pathToFileURL } from "node:url";
 import { runTaskNow } from "./scheduler/run-now.js";
+import { createSchedulerBackend } from "./scheduler/index.js";
 import { notifyTaskCompletion } from "../notifications.js";
 import { finishRun, getHistory, recordRun, startRun } from "../db/history-repo.js";
 import { getSetting, setSetting } from "../db/settings-repo.js";
@@ -497,6 +498,51 @@ async function main() {
   await handleCompletion(taskName, st, chainTarget, error, durationMs, tokens, costUsd);
 }
 
+/** Зависимости для тестируемой очистки one-shot (P2-27). */
+export interface OneShotCleanupDeps {
+  platform?: NodeJS.Platform;
+  getDefinition?: (name: string) => TaskDefinition | undefined;
+  deleteTask?: (name: string) => Promise<void>;
+}
+
+/**
+ * Удаляет отработавшую ONCE-задачу из Планировщика Windows.
+ *
+ * `schtasks /create ... /z` должен был делать это сам, но на Win10/11
+ * возвращает «The task XML is missing a required element ... EndBoundary»
+ * и задача вообще не создаётся. Поэтому чистим после запуска вручную.
+ * На Linux/macOS очистка не нужна: `at` и launchd убирают one-shot сами.
+ */
+export async function cleanupWindowsOneShotTask(
+  taskName: string,
+  deps: OneShotCleanupDeps = {},
+): Promise<boolean> {
+  const platform = deps.platform ?? process.platform;
+  if (platform !== "win32") return false;
+
+  const getDefinition = deps.getDefinition ?? getTask;
+  const definition = getDefinition(taskName);
+  if (!definition || definition.triggerType !== "once") return false;
+
+  const deleteTask =
+    deps.deleteTask ??
+    ((name: string) => createSchedulerBackend().deleteTask(name));
+  try {
+    await deleteTask(taskName);
+    console.log(
+      `[agent-steward] One-shot "${taskName}": задача удалена из Планировщика Windows.`,
+    );
+    return true;
+  } catch (err: any) {
+    console.warn(
+      `[agent-steward] One-shot "${taskName}": не удалось удалить задачу из Планировщика Windows: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+    return false;
+  }
+}
+
 /**
  * Общая пост-обработка завершённого запуска: уведомление, цепочки задач,
  * DAG-зависимости и повторы. Используется и legacy-режимом, и --finish.
@@ -515,6 +561,11 @@ async function handleCompletion(
   await notifyTaskCompletion(taskName, st, durationMs, error, tokens, costUsd, {
     asyncTriage: true,
   });
+
+  // P2-27: Windows не удаляет ONCE-задачи сам, а флаг schtasks `/z` на
+  // практике ломает создание задачи («task XML ... EndBoundary»).
+  // Поэтому снимаем отработавшую one-shot задачу из Планировщика здесь.
+  await cleanupWindowsOneShotTask(taskName);
 
   // Matrix (Спринт 15): клон завершился — двигаем sequential-цепочку или
   // очередь concurrency-лимита (Спринт 17), а когда все клоны готовы —

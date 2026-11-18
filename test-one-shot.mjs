@@ -18,6 +18,7 @@ const {
   buildLaunchdOneShotCleanup,
   buildOneShotGuardCommand,
 } = await import("./dist/core/one-shot.js");
+const { cleanupWindowsOneShotTask } = await import("./dist/core/record-history.js");
 const { initDb, closeDb } = await import("./dist/db/index.js");
 const {
   saveTaskDefinition,
@@ -133,6 +134,52 @@ try {
     check("cleanup вызывает bootout", cleanup.includes("bootout"));
     check("cleanup содержит имя санитизированной задачи", cleanup.includes("com.opencode.scheduler.My-Task_1.plist"));
     check("cleanup не прерывает обёртку при отсутствии агента", cleanup.includes("|| true"));
+
+    // P2-27: /z ломает schtasks на Win10/11, поэтому ONCE чистится вручную.
+    check(
+      "P2-27: флаг /z не передаётся в schtasks",
+      !buildWindowsOneShotFlags(sample, "dd.MM.yyyy").includes("/z"),
+    );
+    const deletedOneShots = [];
+    const onceCleanup = await cleanupWindowsOneShotTask("My-Task_1", {
+      platform: "win32",
+      getDefinition: () => ({ triggerType: "once" }),
+      deleteTask: async (name) => {
+        deletedOneShots.push(name);
+      },
+    });
+    check("P2-27: ONCE удаляется из Планировщика на Windows", onceCleanup === true);
+    check("P2-27: удаляется именно эта задача", deletedOneShots[0] === "My-Task_1");
+    check(
+      "P2-27: cron-задача не удаляется",
+      (await cleanupWindowsOneShotTask("cron-task", {
+        platform: "win32",
+        getDefinition: () => ({ triggerType: "cron" }),
+        deleteTask: async () => {
+          throw new Error("deleteTask не должен вызываться");
+        },
+      })) === false,
+    );
+    check(
+      "P2-27: на Linux очистка не выполняется",
+      (await cleanupWindowsOneShotTask("My-Task_1", {
+        platform: "linux",
+        getDefinition: () => ({ triggerType: "once" }),
+        deleteTask: async () => {
+          throw new Error("deleteTask не должен вызываться");
+        },
+      })) === false,
+    );
+    check(
+      "P2-27: ошибка удаления не ломает завершение",
+      (await cleanupWindowsOneShotTask("My-Task_1", {
+        platform: "win32",
+        getDefinition: () => ({ triggerType: "once" }),
+        deleteTask: async () => {
+          throw new Error("schtasks недоступен");
+        },
+      })) === false,
+    );
 
     // P2-12.T2: guard от раннего запуска и повторной годовщины launchd.
     const guard = buildOneShotGuardCommand(

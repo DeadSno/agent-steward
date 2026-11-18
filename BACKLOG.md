@@ -525,10 +525,17 @@
 
 | Задача | Подзадача | Описание | Статус |
 |--------|-----------|----------|--------|
-| P2-27.T1 | P2-27.T1.1 | Добавить `/z` в `buildWindowsOneShotFlags` (проверить на Win10/11) | ☐ |
-| | P2-27.T1.2 | Либо явная очистка в `record-history` по `triggerType=once` | ☐ |
+| P2-27.T1 | P2-27.T1.1 | Добавить `/z` в `buildWindowsOneShotFlags` (проверить на Win10/11) | ✅ (проверено: `/z` ломает schtasks — EndBoundary, не используем) |
+| | P2-27.T1.2 | Либо явная очистка в `record-history` по `triggerType=once` | ✅ (выбран этот вариант) |
 
 **Проверено запуском (18.11.2026):** `buildWindowsOneShotFlags("2030-01-02T09:30:00", "dd.MM.yyyy")` → `["/sc","ONCE","/sd","02.01.2030","/st","09:30"]` — флага `/z` нет.
+
+**Проверено запуском (18.11.2026, реальный schtasks):** `/z` на этой машине (Win10/11, ru) не работает:
+`schtasks /create ... /sc ONCE /sd <дата> /st 23:59 /z /f` → `ERROR: The task XML is missing a required element or attribute. (41,4):EndBoundary`, код 1, задача не создаётся. То же без `/sd`, с `/ed` (→ «/ED is not applicable for the scheduled type ONCE») и с `/sc DAILY` — та же ошибка. Без `/z` задача создаётся и `schtasks /query` показывает `Ready`, после проверки удалена. Поэтому `/z` в код не добавляем.
+
+**Реализовано (18.11.2026):** явная очистка после завершения. В `record-history.ts` добавлена `cleanupWindowsOneShotTask(taskName, deps?)`: на не-Windows возвращает `false`; берёт определение через `getTask`; удаляет через `createSchedulerBackend().deleteTask(name)` только при `triggerType === "once"`; логирует успех или предупреждение, никогда не бросает. Вызывается из `handleCompletion()` сразу после `notifyTaskCompletion()`. Linux (`at`) и macOS (`oneShotCleanupCommand`) убирают задачи сами.
+
+**Проверено запуском (после фикса):** `buildWindowsOneShotFlags(...)` снова возвращает `["/sc","ONCE","/sd","02.01.2030","/st","09:30"]` без `/z`. `node test-one-shot.mjs` — **57/57** (включая: `/z` отсутствует; win32+once → deleteTask вызван; win32+cron → не вызван; linux+once → false; ошибка deleteTask проглатывается), `npm run build` — OK.
 
 ---
 
