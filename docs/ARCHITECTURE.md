@@ -132,13 +132,13 @@ core.
 Each profile has its own plugin directory, its own SQLite database, its own OS-task
 namespace and its own dashboard port (3782 + N).
 
-`SCHEMA_VERSION` is currently **7**; migrations are additive and idempotent,
+`SCHEMA_VERSION` is currently **8**; migrations are additive and idempotent,
 applied through `PRAGMA user_version` on open.
 
 | Tables | Purpose |
 | --- | --- |
 | `tasks`, `workspaces`, `templates`, `settings` | definitions and configuration |
-| `history`, `metrics` | run outcomes, duration / tokens / cost, analytics |
+| `history`, `metrics` | run outcomes, duration / tokens / cost, analytics; v8 adds `owner_pid` / `owner_host` / `owner_started_at` so recovery can keep live runs |
 | `audit_log` | mutation journal (who / what / when / which interface) |
 | `git_state` | git-trigger heads and polling state |
 | `notification_dedup`, `notification_embeddings` | rule-based and embedding dedup |
@@ -232,7 +232,7 @@ last_10_runs`. Обучается на исходах гейта (CONCEPT §9 le
 токенов на само решение.
 
 Реализация (Спринт 36.5.b): `src/db/capability-repo.ts`, таблица `capability_map`
-(`SCHEMA_VERSION = 7`). `recordCapabilityOutcome` обновляет счётчики, считает
+(`SCHEMA_VERSION = 8`). `recordCapabilityOutcome` обновляет счётчики, считает
 `success_rate` и скользящие средние стоимости/времени, хранит `last_10_runs`
 (JSON, новые справа). `decideCapabilityRoute` решает по правилам:
 меньше `MIN_RUNS_FOR_DECISION = 3` исходов → `explore` (решает слой 3),
@@ -454,7 +454,7 @@ the whole plugin directory (database, logs, locks, wrappers, prompts) with
 
 Schema evolution is additive: `applySchema` runs `CREATE TABLE IF NOT EXISTS` on every
 connection and adds missing columns after `PRAGMA table_info`, so upgrading the plugin
-never requires a manual migration. `SCHEMA_VERSION` (currently `7`) is stored in
+never requires a manual migration. `SCHEMA_VERSION` (currently `8`) is stored in
 `PRAGMA user_version`; incremental steps live in `MIGRATIONS`.
 
 ### Durable run state (Sprint 36.1)
@@ -830,7 +830,7 @@ after the agent with the user's privileges and are not filtered by tool policy.
 |---|---|---|
 | Миссия | цель + scope + gate-спека + safety + бюджет | `missions` (план 38, опциональный шаблон) |
 | Задача | миссия-шаблон + триггер | `tasks` (есть) |
-| Запуск | durable-исполнение: шаги, попытки, вердикты | `runs` / `run_steps` (есть, SCHEMA_VERSION 7) |
+| Запуск | durable-исполнение: шаги, попытки, вердикты | `runs` / `run_steps` (есть, SCHEMA_VERSION 8) |
 | Исход гейта | вердикт + provenance + экономика | `gate_outcomes` (план 40) |
 
 ### Путь исполнения (целевой)

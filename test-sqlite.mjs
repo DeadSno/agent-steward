@@ -187,7 +187,12 @@ assert(
 );
 
 // --- 4. Crash recovery --------------------------------------------------
-const unfinishedId = historyRepo.startRun("Nightly Build", new Date(Date.now() - 5000).toISOString());
+// B1.3: строка без владельца считается осиротевшей только после 24 ч,
+// поэтому для проверки финализации заводим её просроченной.
+const unfinishedId = historyRepo.startRun(
+  "Nightly Build",
+  new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString()
+);
 assert(
   historyRepo.getHistory("Nightly Build", 10).some((r) => r.id === unfinishedId && r.finishedAt === null),
   "startRun создаёт незавершённую запись (finished_at IS NULL)"

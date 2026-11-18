@@ -36,6 +36,14 @@ check(
     arch.includes("| Plugin host |") &&
     arch.includes("| recorder |"),
 );
+const schemaSrc = fs.readFileSync(path.join(root, "src/db/schema.ts"), "utf8");
+const schemaVersion = Number(/export const SCHEMA_VERSION = (\d+)/.exec(schemaSrc)?.[1]);
+check(
+  `ARCHITECTURE: SCHEMA_VERSION совпадает с кодом (${schemaVersion})`,
+  Number.isInteger(schemaVersion) &&
+    arch.includes(`\`SCHEMA_VERSION\` is currently **${schemaVersion}**`) &&
+    arch.includes(`\`SCHEMA_VERSION\` (currently \`${schemaVersion}\`)`),
+);
 check("ARCHITECTURE: Linux-бэкенд — crontab (не systemd)", arch.includes("| Linux | `crontab` |"));
 check("ARCHITECTURE: модули index/gui/server/matrix/record-history", ["src/index.ts", "gui.tsx", "server.ts", "core/matrix.ts", "record-history.ts"].every((m) => arch.includes(m)));
 check("ARCHITECTURE: пути плагина %APPDATA% и XDG", arch.includes("%APPDATA%") && arch.includes("XDG_CONFIG_HOME"));

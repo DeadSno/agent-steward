@@ -31,12 +31,17 @@ const freePort = await new Promise((resolve, reject) => {
 });
 process.env.OPENCODE_SCHEDULER_PORT = String(freePort);
 
-const { default: pluginModule } = await import("./dist/index.js");
+const { default: pluginModule, createToolSpecs } = await import("./dist/index.js");
 
 const hooks = await pluginModule.server({ directory: process.cwd() });
 assert.equal(typeof hooks.tool, "object", "server() вернул tool");
 assert.equal(typeof hooks.dispose, "function", "server() вернул dispose");
-assert.equal(Object.keys(hooks.tool).length, 26, "V1 получает 26 инструментов");
+const toolSpecCount = createToolSpecs(null).length;
+assert.equal(
+  Object.keys(hooks.tool).length,
+  toolSpecCount,
+  `V1 получает все инструменты (${toolSpecCount})`,
+);
 
 const context = {};
 const call = async (name, args = {}) => {

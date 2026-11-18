@@ -23,16 +23,7 @@ Legacy: `opencode-windows-scheduler@1.5.8`.
 
 # 1. Бэклог (аудит 18.11)
 
-## Деталь 1.1 — Recovery и жизненный цикл запуска
-`src/db/history-repo.ts`, `src/db/run-journal.ts`, `src/core/record-history.ts`, `src/db/schema.ts`
-
-**Задача B1 — Recovery не трогает живые запуски** · P1 · 🔄
-
-`recoverInterrupted()` помечает все `finished_at IS NULL` как `error` без проверки PID/владельца/возраста. Перезапуск плагина во время живого прогона финализирует его досрочно.
-
-- [ ] B1.6 Docs/CHANGELOG, счётчик schema в `test-docs`
-
-## Деталь 1.2 — Ретраи
+## Деталь 1.1 — Ретраи
 `src/core/ps-wrapper.ts`, `src/core/record-history.ts`
 
 **Задача B2 — Один слой ретраев на Windows** · P1 · ⬜
@@ -44,7 +35,7 @@ PS-обёртка ретраит сама, recorder добавляет свои 
 - [ ] B2.3 Тест: N ретраев = ровно N+1 запуск на Windows и POSIX
 - [ ] B2.4 Docs: поведение ретраев на обеих полосах
 
-## Деталь 1.3 — Dashboard HTTP
+## Деталь 1.2 — Dashboard HTTP
 `src/server.ts`
 
 **Задача B3 — XSS через атрибуты дашборда** · P1 · ⬜
@@ -56,7 +47,7 @@ PS-обёртка ретраит сама, recorder добавляет свои 
 - [ ] B3.3 Тест: payload с кавычками не ломает разметку и не исполняется
 - [ ] B3.4 CSP-заголовок дашборда (defense in depth)
 
-## Деталь 1.4 — Release CI
+## Деталь 1.3 — Release CI
 `.github/workflows/release.yml`
 
 **Задача B16 — Publish только по тегу, permissions ужать** · P1 · ⬜
@@ -68,7 +59,7 @@ PS-обёртка ретраит сама, recorder добавляет свои 
 - [ ] B16.3 Guard: `package.json` version == тег
 - [ ] B16.4 `workflow_dispatch` = dry-run без публикации
 
-## Деталь 1.5 — Профили и порты
+## Деталь 1.4 — Профили и порты
 `src/server.ts`, `src/core/profile*.ts`
 
 **Задача B4 — Порт профиля не пересекается с default** · P2 · ⬜
@@ -80,7 +71,7 @@ PS-обёртка ретраит сама, recorder добавляет свои 
 - [ ] B4.3 Тест: два профиля одновременно, данные не смешиваются
 - [ ] B4.4 Docs: нумерация портов профилей
 
-## Деталь 1.6 — macOS launchd
+## Деталь 1.5 — macOS launchd
 `src/core/*launchd*`, `src/core/install-entry*`
 
 **Задача B5 — `installEntry` уважает `paused` и пробрасывает ошибки `load`** · P2 · ⬜
@@ -92,7 +83,7 @@ PS-обёртка ретраит сама, recorder добавляет свои 
 - [ ] B5.3 Тест/ручная проверка: paused остаётся paused, битый plist даёт ошибку
 - [ ] B5.4 Docs
 
-## Деталь 1.7 — Lock-файлы
+## Деталь 1.6 — Lock-файлы
 `src/core/lock.ts`, `src/core/ps-wrapper.ts`, POSIX-обёртка
 
 **Задача B6 — Единый формат lock-токена Node ↔ PS ↔ bash** · P2 · ⬜
@@ -114,7 +105,7 @@ PS пишет `ISO|PID`, Node парсит `^(\d+)-` → год принимае
 - [ ] B7.3 Тест: живой PID не вытесняется, мёртвый вытесняется
 - [ ] B7.4 Docs
 
-## Деталь 1.8 — POSIX crontab
+## Деталь 1.7 — POSIX crontab
 `src/core/*cron*` (`stripBlock`)
 
 **Задача B9 — `stripBlock` не режет чужой crontab** · P2 · ⬜
@@ -126,7 +117,7 @@ PS пишет `ISO|PID`, Node парсит `^(\d+)-` → год принимае
 - [ ] B9.3 Тест: чужие cron-строки после блока сохраняются
 - [ ] B9.4 Docs
 
-## Деталь 1.9 — Legacy recorder
+## Деталь 1.8 — Legacy recorder
 `src/core/record-history.ts`
 
 **Задача B10 — Legacy-режим парсит usage из лога** · P2 · ⬜
@@ -138,7 +129,7 @@ Legacy-ветка не парсит `usage` из 11-го аргумента (`$L
 - [ ] B10.3 Тест на legacy-запись с usage
 - [ ] B10.4 Docs
 
-## Деталь 1.10 — Prompt / argv
+## Деталь 1.9 — Prompt / argv
 `src/core/ps-wrapper.ts` (Windows и POSIX)
 
 **Задача B11 — Промпт через `--` и off-by-one `131072`** · P2 · ⬜
@@ -150,7 +141,7 @@ Legacy-ветка не парсит `usage` из 11-го аргумента (`$L
 - [ ] B11.3 Тест: промпт, начинающийся с `-`
 - [ ] B11.4 Docs
 
-## Деталь 1.11 — Durable runs / lease
+## Деталь 1.10 — Durable runs / lease
 `src/db/run-journal.ts`, `src/db/schema.ts`
 
 **Задача B12 — Lease/owner на `run_steps`** · P2 · ⬜
@@ -163,7 +154,7 @@ Legacy-ветка не парсит `usage` из 11-го аргумента (`$L
 - [ ] B12.4 Тест: два процесса, живой шаг не убивается
 - [ ] B12.5 Docs
 
-## Деталь 1.12 — Capability map (router)
+## Деталь 1.11 — Capability map (router)
 `src/db/capability-repo.ts`
 
 **Задача B13 — Decay + `first_pass_rate`** · P2 · ⬜
@@ -176,7 +167,7 @@ Legacy-ветка не парсит `usage` из 11-го аргумента (`$L
 - [ ] B13.4 Тест: старые успехи не перевешивают свежие провалы
 - [ ] B13.5 Docs
 
-## Деталь 1.13 — Дедуп уведомлений
+## Деталь 1.12 — Дедуп уведомлений
 `src/notifications.ts` (`tokenize`)
 
 **Задача B14 — CJK-токенизатор дедупа** · P2 · ⬜
@@ -187,7 +178,7 @@ Regex вырезает CJK → китайские сообщения дают н
 - [ ] B14.2 Тест: zh-сообщения дают ненулевой вектор и дедупятся
 - [ ] B14.3 Docs
 
-## Деталь 1.14 — PS watchdog
+## Деталь 1.13 — PS watchdog
 `src/core/ps-wrapper.ts`
 
 **Задача B8 — WMI-фолбэк таймаута** · P3 · ⬜

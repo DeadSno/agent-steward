@@ -3,7 +3,7 @@
 // Проверяет:
 //  1. default export содержит и V2-поля (id, setup), и V1-поле (server).
 //  2. V1-адаптер экспортирован и возвращает Hooks с tool/dispose.
-//  3. Все 26 инструментов замаплены в V1, схемы — raw shape, читаемые zod V1.
+//  3. Все инструменты замаплены в V1, схемы — raw shape, читаемые zod V1.
 //  4. Конвертация результата V2 → V1 сохраняет текст и metadata.
 //
 // Запуск: node test-dual-entry.mjs (после npm run build).
@@ -48,9 +48,9 @@ assert.equal(typeof sample.execute, "function", "у инструмента ес�
 
 // 2.1. Все инструменты V2 попали в V1 и схемы отданы как raw shape, а не как ZodObject.
 const toolNames = Object.keys(hooks.tool).sort();
-assert.equal(toolNames.length, 26, "V1 получает все 26 инструментов");
 // З5.1: набор имён V1 совпадает с реестром, который использует V2.
 const v2ToolNames = Object.keys(createToolHandlers(null)).sort();
+assert.equal(toolNames.length, v2ToolNames.length, `V1 получает все инструменты (${v2ToolNames.length})`);
 assert.deepEqual(toolNames, v2ToolNames, "V1 и V2 видят один набор инструментов");
 for (const name of toolNames) {
   const item = hooks.tool[name];
