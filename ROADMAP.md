@@ -23,18 +23,6 @@ Legacy: `opencode-windows-scheduler@1.5.8`.
 
 # 1. Бэклог (аудит 18.11)
 
-## Деталь 1.13 — PS watchdog
-`src/core/ps-wrapper.ts`
-
-**Задача B8 — WMI-фолбэк таймаута** · P3 · ⬜
-
-При сбое `Get-CimInstance` список процессов пуст → нет маркера и нет kill, таймаут fail-open; внуки теряются.
-
-- [ ] B8.1 Фолбэк через `Get-Process`/`tasklist` при сбое CIM
-- [ ] B8.2 Нет данных → fail-closed: kill по дереву процессов
-- [ ] B8.3 Тест
-- [ ] B8.4 Docs
-
 ---
 
 # 2. Задачи согласно архитектуре (Execution model)

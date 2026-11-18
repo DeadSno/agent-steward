@@ -57,6 +57,10 @@ The factory picks an implementation from `process.platform`:
 - The prompt is passed to `opencode run` after `--`, so a prompt beginning with `-`
   cannot be mistaken for a flag. The wrapper rejects prompts longer than 30 000
   characters before `CreateProcess` (32 767-char command-line limit).
+- Timeout watchdog: the process tree is read with `Get-CimInstance`; if CIM fails or
+  returns nothing, the wrapper falls back to `Get-WmiObject`, then checks
+  `tasklist`/`Get-Process`. If no tree data is available it fails closed and runs
+  `taskkill /F /T /PID <root>`, so grandchildren are not left running.
 
 ### Linux
 - Tasks live in a managed `crontab` block:

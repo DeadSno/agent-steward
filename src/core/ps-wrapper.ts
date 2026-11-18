@@ -338,6 +338,10 @@ function Invoke-HookScript {
 # до конца, а статус 'timeout' не выставлялся никогда. Теперь параллельно
 # стартует сторожевой job: по истечении лимита он помечает маркер и убивает
 # дерево процессов задачи (taskkill /T), а обёртка переводит статус в 'timeout'.
+# B8: снимок дерева процессов. CIM — основной источник; при его сбое
+# пробуем старый WMI, а если и он недоступен — Get-Process/tasklist.
+# Иерархию Get-Process и tasklist не отдают, поэтому при отсутствии данных
+# сторож переходит в fail-closed и убивает дерево по корневому PID.
 function Invoke-OpenCodeOnce {
     param([string]$CommandPath, [string[]]$Arguments)
 
@@ -350,19 +354,25 @@ function Invoke-OpenCodeOnce {
             Start-Sleep -Seconds $Seconds
             $selfId = $PID
             $all = @()
-            try { $all = @(Get-CimInstance Win32_Process -Property ProcessId, ParentProcessId) } catch { $all = @() }
+            try { $all = @(Get-CimInstance Win32_Process -Property ProcessId, ParentProcessId -ErrorAction Stop) } catch { $all = @() }
+            if ($all.Count -eq 0) {
+                try { $all = @(Get-WmiObject Win32_Process -Property ProcessId, ParentProcessId -ErrorAction Stop) } catch { $all = @() }
+            }
+            $dataAvailable = $all.Count -gt 0
             $targets = New-Object System.Collections.Generic.List[int]
-            $queue = New-Object System.Collections.Generic.Queue[int]
-            $queue.Enqueue($RootId)
-            $guard = 0
-            while ($queue.Count -gt 0 -and $guard -lt 2000) {
-                $guard++
-                $current = $queue.Dequeue()
-                foreach ($p in $all) {
-                    $childId = [int]$p.ProcessId
-                    if ([int]$p.ParentProcessId -eq $current -and $childId -ne $selfId -and -not $targets.Contains($childId)) {
-                        $targets.Add($childId)
-                        $queue.Enqueue($childId)
+            if ($dataAvailable) {
+                $queue = New-Object System.Collections.Generic.Queue[int]
+                $queue.Enqueue($RootId)
+                $guard = 0
+                while ($queue.Count -gt 0 -and $guard -lt 2000) {
+                    $guard++
+                    $current = $queue.Dequeue()
+                    foreach ($p in $all) {
+                        $childId = [int]$p.ProcessId
+                        if ([int]$p.ParentProcessId -eq $current -and $childId -ne $selfId -and -not $targets.Contains($childId)) {
+                            $targets.Add($childId)
+                            $queue.Enqueue($childId)
+                        }
                     }
                 }
             }
@@ -370,6 +380,27 @@ function Invoke-OpenCodeOnce {
                 try { Set-Content -Path $Marker -Value "timeout" -Encoding UTF8 } catch {}
                 foreach ($targetId in @($targets)) {
                     try { & taskkill.exe /F /T /PID $targetId 2>$null | Out-Null } catch {}
+                }
+            } elseif (-not $dataAvailable) {
+                # Fail-closed: дерево построить нельзя (CIM/WMI упали, Get-Process
+                # и tasklist не дают родительских связей). Помечаем таймаут и
+                # убиваем всё дерево от корня, иначе задача переживёт лимит.
+                try { Set-Content -Path $Marker -Value "timeout" -Encoding UTF8 } catch {}
+                $listing = $false
+                try {
+                    if (@(tasklist.exe /FO CSV /NH 2>$null).Count -gt 0) { $listing = $true }
+                } catch {}
+                if (-not $listing) {
+                    try {
+                        if (@(Get-Process -ErrorAction Stop).Count -gt 0) { $listing = $true }
+                    } catch {}
+                }
+                try {
+                    Start-Process -FilePath "taskkill.exe" -ArgumentList @("/F", "/T", "/PID", [string]$RootId) -WindowStyle Hidden -ErrorAction Stop
+                } catch {
+                    if ($listing) {
+                        try { & taskkill.exe /F /T /PID $RootId 2>$null | Out-Null } catch {}
+                    }
                 }
             }
         } -ArgumentList $PID, $TimeoutSeconds, $timeoutMarker

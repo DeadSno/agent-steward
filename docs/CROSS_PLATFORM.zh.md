@@ -56,6 +56,9 @@ interface SchedulerBackend {
 - 提示词在 `--` 之后传给 `opencode run`，因此以 `-` 开头的提示词不会被当成选项。
   包装脚本会在 `CreateProcess` 之前拒绝超过 30 000 字符的提示词
   （命令行上限为 32 767 字符）。
+- 超时看门狗：通过 `Get-CimInstance` 读取进程树；如果 CIM 失败或为空，则回退到
+  `Get-WmiObject`，再检查 `tasklist`/`Get-Process`。如果完全拿不到树数据，则
+  故障关闭并执行 `taskkill /F /T /PID <root>`，避免孙进程继续运行。
 
 ### Linux
 - 任务保存在受管 `crontab` 块中：

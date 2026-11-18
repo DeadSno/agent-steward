@@ -183,7 +183,10 @@ applied through `PRAGMA user_version` on open.
    `opencode run` with the prompt file. The prompt is passed after `--`, so a
    prompt starting with `-` is never parsed as an option. Output is streamed to the log.
 4. When the process ends, the wrapper enforces the timeout result, runs the Quality
-   Gate and the post-flight hook.
+   Gate and the post-flight hook. On Windows the watchdog snapshots the process tree
+   via CIM and falls back to WMI, then to `tasklist`/`Get-Process`; when no tree data
+   is available at all it fails closed and kills the root process tree with
+   `taskkill /F /T`.
 5. The wrapper calls `node dist/core/record-history.js --finish ...` with status,
    duration, tokens, cost, model and hook results.
 6. The recorder writes `history` and updates `metrics`, then evaluates retries, task
@@ -346,7 +349,7 @@ enforced:
 | --- | --- |
 | Working directory | Task `workingDirectory`, or the workspace path, or the plugin directory |
 | Prompt | Written to a prompt file, passed to `opencode run` |
-| Timeout | `timeoutSeconds`; on expiry the child process tree is stopped and the run is marked `timeout` |
+| Timeout | `timeoutSeconds`; on expiry the child process tree is stopped and the run is marked `timeout` (Windows: CIM → WMI → `tasklist`/`Get-Process`, fail-closed tree kill) |
 | Workspace env | Variables from the workspace's `.env` file and explicit pairs are injected before `opencode run` (wrapper `env:` / `export`); secret-looking keys are masked in logs |
 | No overlap | Lock file per task; a second start exits immediately and records `skipped` |
 | Pre-flight | `beforeScript`; non-zero exit marks `preFlight` as failed |

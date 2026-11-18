@@ -14,6 +14,10 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Fixed
 
+- **B8.4 — документация watchdog-фолбэка:** `docs/ARCHITECTURE.md` (Execution model и таблица Timeout) и `CROSS_PLATFORM.md` с переводами `ru`/`zh` описывают порядок CIM → WMI → `tasklist`/`Get-Process` и fail-closed `taskkill /F /T` по корню дерева.
+- **B8.3 — тест watchdog:** `test-ps-watchdog.mjs` проверяет статическую структуру обёртки (CIM в try/catch, WMI, tasklist/Get-Process, `dataAvailable`, fail-closed kill, маркер до kill) и разбирает сгенерированный PowerShell-скрипт настоящим парсером (с BOM, как пишет `ensureWrapper`); тест добавлен в `npm test`.
+- **B8.2 — fail-closed при отсутствии данных:** если CIM и WMI не вернули процессов, обёртка всё равно ставит маркер таймаута и убивает дерево по корневому PID через `taskkill /F /T`, а не оставляет внуков работать.
+- **B8.1 — фолбэк WMI/watchdog:** при сбое `Get-CimInstance` снимок процессов берётся через `Get-WmiObject`; доступность листинга проверяется через `tasklist.exe /FO CSV /NH` и `Get-Process` перед kill.
 - **B14.3 — документация CJK-дедупа:** `docs/FEATURES.md` и `docs/FEATURES.zh.md` описывают биграммную токенизацию CJK: иероглифы без пробелов режутся на перекрывающиеся биграммы, поэтому сообщения на `zh`/`ja`/`ko` дают ненулевой вектор и участвуют в семантическом дедупе; `docs/ARCHITECTURE.md` отмечает это в таблице хранилищ.
 - **B14.2 — тест zh-дедупа:** `test-notifications-embedding.mjs` проверяет, что `tokenize("任务执行失败")` даёт биграммы «任务»/«失败», вектор ненулевой, повторное китайское уведомление подавляется, а другое — доставляется.
 - **B14.1 — CJK-токенизатор:** `tokenize` в `src/notifications.ts` больше не вырезает CJK: блоки хань/каны/хангыля режутся на перекрывающиеся биграммы (одиночный символ — униграмма). Вектор строится тем же feature hashing без новых зависимостей и словарей.
