@@ -83,6 +83,14 @@ assert(
   bashScript.includes("WORKSPACE_NAME") && bashScript.includes("[workspace]"),
   "bash-обёртка логирует workspace"
 );
+assert(
+  (bashScript.match(/WD_SLEEP_PID=/g) || []).length >= 2,
+  "bash-обёртка отслеживает pid sleep в обоих watchdog"
+);
+assert(
+  (bashScript.match(/trap 'if \[ -n "\$WD_SLEEP_PID" \]/g) || []).length >= 2,
+  "watchdog убивает собственный sleep по TERM и не оставляет сирот"
+);
 
 // --- 2. --start создаёт незавершённую запись ----------------------------
 const start = runRecorder(["--start", "Crash Task", "2026-03-01T10:00:00.000Z"]);
