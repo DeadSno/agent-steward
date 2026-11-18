@@ -308,7 +308,7 @@ export function buildBashWrapperScript(options: BashWrapperOptions): string {
     // P2-21: неразрешённая ссылка означает, что секрет удалён/переименован.
     // Запускать агента с литералом "${secret:NAME}" нельзя — fail closed.
     '    case "$env_value" in',
-    '      *\'${secret:\'*)',
+    "      *'${secret:'*)",
     '        log "[scheduler] ОШИБКА: переменная $env_key содержит неразрешённый секрет (\\${secret:...}). Запуск отменён."',
     "        exit 78",
     "        ;;",

@@ -199,7 +199,9 @@ export function cancelAtFallback(
   const isAlive = deps.isAlive ?? isFallbackProcessAlive;
   if (!isAlive(pid, taskName)) return false;
 
-  const kill = deps.kill ?? process.kill;
+  const kill =
+    deps.kill ??
+    ((target: number, signal: NodeJS.Signals) => process.kill(target, signal));
   try {
     kill(-pid, "SIGTERM");
     return true;
