@@ -76,6 +76,10 @@ interface SchedulerBackend {
 - Расписание: `StartInterval` для `* * * * *` и `*/N`, `StartCalendarInterval` для `M * * * *`,
   `M H * * *`, `M H * * D`.
 - Пауза = `launchctl unload -w`, возобновление = `launchctl load -w`.
+- Установка приостановленной задачи пишет plist, но не вызывает `load -w`
+  (он снял бы паузу); `unload -w` оставляет агент выключенным и после входа.
+- Ошибки `launchctl load` не глотаются: ошибка установки/возобновления содержит
+  команду, exit code и stderr (например, `Invalid property list` у битого plist).
 - Обёртка — тот же `.sh`, что и на Linux; пути конфигов:
   `~/.config/opencode/agent-steward/` (или `$XDG_CONFIG_HOME`).
 
@@ -83,6 +87,9 @@ interface SchedulerBackend {
 - `cd` в рабочую директорию, `opencode run` с промптом из файла.
 - Логи пишутся в файл через `>>` и дублируются метками времени.
 - Блокировка через атомарный `mkdir` — защита от параллельных запусков.
+- Node, PS и bash пишут владельца lock как `<pid>-<iso>`; старые форматы
+  `<iso>|<pid>` (PS) и голый `<pid>` тоже читаются, поэтому живой lock не
+  вытесняется другой средой исполнения.
 - Таймаут: дочерний процесс + watchdog (`TERM`, затем `KILL`).
 - Quality Gate: `bash -lc "<команда>"` (аналог `cmd.exe /c` на Windows).
 - Метрики: `node "<record-history.js>" <task> <status> <started> <duration> <error> "-" "-"` —

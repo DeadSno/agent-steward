@@ -253,16 +253,38 @@ export function listProfiles(): ProfileInfo[] {
     });
 }
 
-/** Свободный порт для нового профиля: 3782+N, занятые profile.json пропускаются. */
+/**
+ * Порты, зарезервированные за профилем default: основной (PREFERRED_PORT
+ * в server.ts) и запасной. У default может не быть profile.json, поэтому
+ * в listProfiles() его порт — null, и раньше аллокатор выдавал 3782 второму
+ * профилю: два дашборда дрались за один порт.
+ */
+const DEFAULT_PROFILE_PORTS = new Set([3782, 4782]);
+const FIRST_PROFILE_PORT = 3783;
+const LAST_PORT = 65535;
+
+/**
+ * Свободный порт для нового профиля (B4.2).
+ *
+ * Исключает зарезервированные порты default, порты из profile.json всех
+ * профилей и порт, заданный через OPENCODE_SCHEDULER_PORT. Сканирует диапазон
+ * от 3783 до 65535 и берёт первый не занятый — прежняя формула
+ * `3782 + used.size` могла выдать уже занятый порт (например, при
+ * зарезервированном 3783 и одном профиле).
+ */
 function allocateProfilePort(): number {
-  const used = new Set<number>();
+  const used = new Set<number>(DEFAULT_PROFILE_PORTS);
   for (const profile of listProfiles()) {
     if (profile.port) used.add(profile.port);
   }
-  for (let port = 3782; port < 3882; port += 1) {
+  const fromEnv = Number(process.env.OPENCODE_SCHEDULER_PORT);
+  if (Number.isFinite(fromEnv) && fromEnv >= 1 && fromEnv <= LAST_PORT) {
+    used.add(Math.floor(fromEnv));
+  }
+  for (let port = FIRST_PROFILE_PORT; port <= LAST_PORT; port += 1) {
     if (!used.has(port)) return port;
   }
-  return 3782 + used.size;
+  throw new Error("Не удалось выделить порт профилю: свободных портов не осталось.");
 }
 
 /**

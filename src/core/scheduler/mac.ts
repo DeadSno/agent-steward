@@ -247,12 +247,87 @@ function buildPlist(label: string, entry: RegistryEntry): string {
   ].join("\n");
 }
 
+/** Ошибка запуска launchctl с командой, кодом выхода и stderr. */
+export function describeLaunchctlError(args: string[], err: unknown): string {
+  const error = err as {
+    code?: number | string;
+    signal?: string;
+    stderr?: string | Buffer;
+    stdout?: string | Buffer;
+    message?: string;
+  };
+  const stderr = String(error.stderr ?? "").trim();
+  const stdout = String(error.stdout ?? "").trim();
+  const detail = stderr || stdout || error.message || "вывод пуст";
+  const status =
+    error.code !== undefined
+      ? `код ${String(error.code)}`
+      : error.signal
+        ? `сигнал ${error.signal}`
+        : "без кода выхода";
+  return `launchctl ${args.join(" ")}: ${status}: ${detail}`;
+}
+
+/**
+ * Запускает launchctl и либо пробрасывает ошибку с stderr/exit code,
+ * либо глотает её (unload незагруженного агента — штатная ситуация).
+ */
+export async function runLaunchctl(
+  runner: (args: string[]) => Promise<unknown>,
+  args: string[],
+  options: { tolerateFailure?: boolean } = {},
+): Promise<void> {
+  try {
+    await runner(args);
+  } catch (err) {
+    if (options.tolerateFailure) return;
+    const failure = new Error(describeLaunchctlError(args, err)) as Error & {
+      cause?: unknown;
+    };
+    // target/lib проекта не включает ErrorOptions, поэтому cause ставим вручную.
+    failure.cause = err;
+    throw failure;
+  }
+}
+
+/** Команды launchctl при установке записи. */
+export interface LaunchctlInstallPlan {
+  /** unload перед перезаписью plist (best effort: агент мог быть не загружен). */
+  beforeWrite: string[];
+  /** load после записи; null — задача на паузе, загружать её нельзя. */
+  afterWrite: string[] | null;
+}
+
+/**
+ * B5: `load -w` не только загружает агент, но и снимает Disabled,
+ * поэтому для приостановленной задачи его вызывать нельзя — иначе
+ * установка молча возобновляет задачу. Вместо этого `unload -w`
+ * фиксирует Disabled, чтобы launchd не загрузил агент при следующем входе.
+ */
+export function planLaunchctlInstall(
+  paused: boolean,
+  plistPath: string,
+): LaunchctlInstallPlan {
+  if (paused) {
+    return {
+      beforeWrite: ["unload", "-w", plistPath],
+      afterWrite: null,
+    };
+  }
+  return {
+    beforeWrite: ["unload", plistPath],
+    afterWrite: ["load", "-w", plistPath],
+  };
+}
+
 /**
  * Бэкенд планировщика macOS на основе launchd.
  *
  * Каждая задача — отдельный LaunchAgent:
  *   ~/Library/LaunchAgents/com.opencode.scheduler.<name>.plist
- * Управление — через launchctl load/unload -w.
+ * Управление — через launchctl load/unload -w. Ошибки load не глотаются:
+ * битый plist должен вернуть ошибку установки, а не оставить задачу
+ * молча незапланированной.
  */
 export class MacScheduler extends PosixSchedulerBase {
   readonly platform: NodeJS.Platform = "darwin";
@@ -288,34 +363,42 @@ export class MacScheduler extends PosixSchedulerBase {
     return path.join(LAUNCH_AGENTS_DIR, `${this.label(name)}.plist`);
   }
 
-  /** Выполняет launchctl, не считая ошибку фатальной (unload несуществующего). */
-  private async launchctl(args: string[]): Promise<void> {
-    try {
-      await execFileAsync("launchctl", args, { maxBuffer: 1024 * 1024 });
-    } catch {
-      // launchctl возвращает ошибку, если агент ещё не загружен — это нормально.
-    }
+  /** Выполняет launchctl; tolerateFailure оставлен только для unload. */
+  private async launchctl(
+    args: string[],
+    options: { tolerateFailure?: boolean } = {},
+  ): Promise<void> {
+    await runLaunchctl(
+      (call) => execFileAsync("launchctl", call, { maxBuffer: 1024 * 1024 }),
+      args,
+      options,
+    );
   }
 
   protected async installEntry(entry: RegistryEntry): Promise<void> {
     await fs.mkdir(LAUNCH_AGENTS_DIR, { recursive: true });
     const plistPath = this.plistPath(entry.name);
-    await this.launchctl(["unload", plistPath]);
+    const plan = planLaunchctlInstall(entry.paused, plistPath);
+    // Агент мог быть не загружен — это не ошибка.
+    await this.launchctl(plan.beforeWrite, { tolerateFailure: true });
     await fs.writeFile(plistPath, buildPlist(this.label(entry.name), entry), "utf8");
-    await this.launchctl(["load", "-w", plistPath]);
+    if (plan.afterWrite) {
+      await this.launchctl(plan.afterWrite);
+    }
   }
 
   protected async uninstallEntry(entry: RegistryEntry): Promise<void> {
     const plistPath = this.plistPath(entry.name);
-    await this.launchctl(["unload", "-w", plistPath]);
+    await this.launchctl(["unload", "-w", plistPath], { tolerateFailure: true });
     await fs.unlink(plistPath).catch(() => {});
   }
 
   protected async applyPause(entry: RegistryEntry, paused: boolean): Promise<void> {
     const plistPath = this.plistPath(entry.name);
     if (paused) {
-      await this.launchctl(["unload", "-w", plistPath]);
+      await this.launchctl(["unload", "-w", plistPath], { tolerateFailure: true });
     } else {
+      // Возобновление не должно «удаваться» молча при битом plist.
       await this.launchctl(["load", "-w", plistPath]);
     }
   }

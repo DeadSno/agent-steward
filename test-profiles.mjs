@@ -79,7 +79,9 @@ check("validateProfileName: кириллица — ошибка", validateProfil
 // --- 3. Создание, список, порты ------------------------------------------
 const work = createProfile("work");
 check("createProfile: профиль work создан", work.name === "work");
-check("createProfile: первому профилю достаётся порт 3782", work.port === 3782);
+check("createProfile: первому профилю достаётся 3783, а не порт default", work.port === 3783);
+check("createProfile: порт default (3782) не выдан", work.port !== 3782);
+check("createProfile: запасной порт default (4782) не выдан", work.port !== 4782);
 check("createProfile: директория профиля существует", fs.existsSync(path.join(base, "profiles", "work")));
 check(
   "createProfile: profile.json записан",
@@ -87,8 +89,21 @@ check(
 );
 
 const second = createProfile("second");
-check("createProfile: второму профилю достаётся свободный порт", second.port === 3783);
-check("readProfileMeta: читает имя и порт", readProfileMeta("work")?.port === 3782);
+check("createProfile: второму профилю достаётся свободный порт", second.port === 3784);
+check("readProfileMeta: читает имя и порт", readProfileMeta("work")?.port === 3783);
+
+// B4.2: занятый другим профилем порт пропускается, даже если он дальше по диапазону.
+const pinned = createProfile("pinned", 3786);
+check("createProfile: явный порт сохраняется", pinned.port === 3786);
+const third = createProfile("third");
+check("allocateProfilePort: порт, занятый другим профилем, пропускается", third.port === 3785);
+
+// B4.2: OPENCODE_SCHEDULER_PORT тоже резервируется.
+process.env.OPENCODE_SCHEDULER_PORT = "3787";
+const fourth = createProfile("fourth");
+check("allocateProfilePort: порт из OPENCODE_SCHEDULER_PORT пропускается", fourth.port === 3788);
+delete process.env.OPENCODE_SCHEDULER_PORT;
+
 check("readProfileMeta: неизвестный профиль → null", readProfileMeta("nope") === null);
 
 const all = listProfiles();
@@ -97,9 +112,9 @@ check("listProfiles: созданные профили видны", all.some((p)
 check("listProfiles: default первый", all[0]?.name === "default");
 check("listProfiles: default активен по умолчанию", all.find((p) => p.name === "default")?.active === true);
 check("listProfiles: work не активен", all.find((p) => p.name === "work")?.active === false);
-check("listProfiles: порт work из profile.json", all.find((p) => p.name === "work")?.port === 3782);
+check("listProfiles: порт work из profile.json", all.find((p) => p.name === "work")?.port === 3783);
 
-check("getProfilePort: порт из profile.json", getProfilePort("work") === 3782);
+check("getProfilePort: порт из profile.json", getProfilePort("work") === 3783);
 process.env.OPENCODE_SCHEDULER_PORT = "5555";
 check("getProfilePort: OPENCODE_SCHEDULER_PORT важнее profile.json", getProfilePort("work") === 5555);
 delete process.env.OPENCODE_SCHEDULER_PORT;
@@ -179,6 +194,9 @@ check("deleteProfile: директория work исчезла", !fs.existsSync(
 check("deleteProfile: маркер вернулся на default", getProfileName() === DEFAULT_PROFILE);
 check("deleteProfile: повторное удаление → false", (await deleteProfile("work")) === false);
 check("deleteProfile: second удалён", (await deleteProfile("second")) === true);
+check("deleteProfile: pinned удалён", (await deleteProfile("pinned")) === true);
+check("deleteProfile: third удалён", (await deleteProfile("third")) === true);
+check("deleteProfile: fourth удалён", (await deleteProfile("fourth")) === true);
 check("listProfiles: остался только default", listProfiles().length === 1 && listProfiles()[0].name === "default");
 
 // --- Итог ----------------------------------------------------------------

@@ -1,4 +1,5 @@
 import http from "node:http";
+import { randomBytes } from "node:crypto";
 import fs from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -9,7 +10,7 @@ import { getSchedulerTitle } from "./core/scheduler/index.js";
 import { getPluginVersion } from "./version.js";
 import { checkpointDb, getDbFile, getDbStatus } from "./db/index.js";
 import { listWorkspaces } from "./workspaces.js";
-import { getProfileName, getProfilePort } from "./profiles.js";
+import { DEFAULT_PROFILE, getProfileName, getProfilePort } from "./profiles.js";
 import { simulatePipeline } from "./core/dry-run.js";
 import { loadSettings } from "./settings.js";
 import {
@@ -68,6 +69,14 @@ function normalizeProcessName(name: string): string {
 /** Маркер-заголовок: по нему узнаём «свой» дашборд, уже слушающий порт. */
 const DASHBOARD_HEADER = "x-plugin-dashboard";
 const DASHBOARD_MARKER = "agent-steward";
+
+/**
+ * Профиль, которому принадлежит ответившее приложение (B4).
+ * Маркер DASHBOARD_MARKER одинаков у всех профилей, поэтому без этого
+ * заголовка второй профиль принимал чужой дашборд за свой: переиспользовал
+ * чужой порт и показывал данные другого профиля.
+ */
+const PROFILE_HEADER = "x-plugin-profile";
 
 /** Переопределение портов (используется в тестах; по умолчанию 3782/4782). */
 export interface DashboardPorts {
@@ -426,13 +435,22 @@ export async function startDashboardServer(
           return null;
         }
 
-        // Порт занят: если это уже наш дашборд (другой экземпляр плагина
-        // в том же процессе/сессии), переиспользуем его, а не вешаем второй порт.
-        if (port !== 0 && (await isOwnDashboardOn(port))) {
+        // Порт занят: если это уже наш дашборд того же профиля (другой
+        // экземпляр плагина в том же процессе/сессии), переиспользуем его,
+        // а не вешаем второй порт. Дашборд другого профиля не наш: его нельзя
+        // ни переиспользовать (покажет чужие данные), ни снимать как зомби.
+        const probe = port !== 0 ? await probeDashboardOn(port) : null;
+        if (probe?.dashboard && probe.profile === getProfileName()) {
           console.log(
             `[agent-steward] Дашборд уже запущен на http://localhost:${port} — переиспользуем его.`,
           );
           return { port };
+        }
+        if (probe?.dashboard && probe.profile !== getProfileName()) {
+          console.warn(
+            `[agent-steward] Порт ${port} занят дашбордом профиля "${probe.profile}" — не трогаем, пробуем другой порт.`,
+          );
+          continue;
         }
 
         // Порт занят чужим или старым процессом: пробуем снять зомби
@@ -669,16 +687,34 @@ async function getProcessInfoPosix(
   }
 }
 
-/** Проверяет по маркер-заголовку, что на порту отвечает наш дашборд. */
-async function isOwnDashboardOn(port: number): Promise<boolean> {
+export interface DashboardProbe {
+  /** На порту отвечает наш дашборд (маркер-заголовок совпал). */
+  dashboard: boolean;
+  /** Профиль ответившего дашборда; null, если это не дашборд. */
+  profile: string | null;
+}
+
+/**
+ * Проверяет по маркер-заголовку, что на порту отвечает наш дашборд,
+ * и определяет его профиль (B4.1).
+ *
+ * Заголовок профиля появился в B4.1. Более старые сборки его не отдают —
+ * таких считаем профилем `default`: до появления профилей база была одна,
+ * а значит старый процесс работал именно с default.
+ */
+export async function probeDashboardOn(port: number): Promise<DashboardProbe> {
   try {
     const res = await fetch(`http://127.0.0.1:${port}/`, {
       method: "GET",
       signal: AbortSignal.timeout(1500),
     });
-    return res.headers.get(DASHBOARD_HEADER) === DASHBOARD_MARKER;
+    if (res.headers.get(DASHBOARD_HEADER) !== DASHBOARD_MARKER) {
+      return { dashboard: false, profile: null };
+    }
+    const profile = res.headers.get(PROFILE_HEADER)?.trim() || DEFAULT_PROFILE;
+    return { dashboard: true, profile };
   } catch {
-    return false;
+    return { dashboard: false, profile: null };
   }
 }
 
@@ -789,7 +825,10 @@ async function handleRequest(
 
     // Статический HTML-файл — страница дашборда.
     if (req.method === "GET" && (pathname === "/" || pathname === "/index.html")) {
-      send(res, 200, "text/html; charset=utf-8", renderPage());
+      const nonce = randomBytes(16).toString("base64");
+      send(res, 200, "text/html; charset=utf-8", renderPage(nonce), {
+        "Content-Security-Policy": dashboardCsp(nonce),
+      });
       return;
     }
 
@@ -1380,14 +1419,41 @@ function sanitizeError(err: any): string {
 }
 
 /** Отправляет ответ с телом и закрывает соединение. */
-function send(res: http.ServerResponse, status: number, contentType: string, body: string): void {
+function send(
+  res: http.ServerResponse,
+  status: number,
+  contentType: string,
+  body: string,
+  extraHeaders?: Record<string, string>,
+): void {
   res.writeHead(status, {
     "Content-Type": contentType,
     "Cache-Control": "no-store",
     "X-Content-Type-Options": "nosniff",
     [DASHBOARD_HEADER]: DASHBOARD_MARKER,
+    [PROFILE_HEADER]: getProfileName(),
+    ...extraHeaders,
   });
   res.end(body);
+}
+
+/**
+ * CSP страницы дашборда: defense in depth к экранированию (B3.4).
+ * Единственный инлайн-скрипт помечается nonce, внешние скрипты запрещены;
+ * инлайн-стили остаются разрешёнными, потому что разметка использует style="…".
+ */
+function dashboardCsp(nonce: string): string {
+  return [
+    "default-src 'none'",
+    `script-src 'nonce-${nonce}'`,
+    "style-src 'unsafe-inline'",
+    "connect-src 'self'",
+    "img-src 'self' data:",
+    "base-uri 'none'",
+    "form-action 'none'",
+    "frame-ancestors 'none'",
+    "object-src 'none'",
+  ].join("; ");
 }
 
 /** Отправляет бинарный файл (скачивание .db-бэкапа). */
@@ -1409,6 +1475,7 @@ function sendBuffer(
     "Cache-Control": "no-store",
     "X-Content-Type-Options": "nosniff",
     [DASHBOARD_HEADER]: DASHBOARD_MARKER,
+    [PROFILE_HEADER]: getProfileName(),
   });
   res.end(body);
 }
@@ -1432,6 +1499,7 @@ function sendAttachment(
     "Cache-Control": "no-store",
     "X-Content-Type-Options": "nosniff",
     [DASHBOARD_HEADER]: DASHBOARD_MARKER,
+    [PROFILE_HEADER]: getProfileName(),
   });
   res.end(body);
 }
@@ -1471,7 +1539,7 @@ async function collectTasksWithMetrics(deps: DashboardDeps) {
  * Данные тянутся fetch'ем с JSON-API и перерисовываются каждые 5 секунд.
  * Внутри строковой константы не используются бэктики и ${}, чтобы не экранировать.
  */
-function renderPage(): string {
+function renderPage(nonce: string): string {
   return `<!DOCTYPE html>
 <html lang="${getLocale()}">
 <head>
@@ -1756,7 +1824,7 @@ function renderPage(): string {
   </div>
   <div id="toast" role="status" aria-live="polite"></div>
 
-<script>
+<script nonce="${nonce}">
 (function () {
   'use strict';
 
@@ -1779,10 +1847,17 @@ function renderPage(): string {
   // P3-29: тяжёлая аналитика обновляется реже остальных блоков.
   var ANALYTICS_INTERVAL_MS = 60000;
 
+  // Экранирование для текстового и атрибутного контекста.
+  // Раньше использовался div.innerHTML: он превращает & < > в сущности,
+  // но оставляет кавычки как есть, а результат подставляется в
+  // title="…", style="…", data-*="…" и href="…" — это и был вектор XSS.
   function esc(s) {
-    var d = document.createElement('div');
-    d.textContent = s == null ? '' : String(s);
-    return d.innerHTML;
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   }
 
   function toast(msg, kind) {
@@ -2232,8 +2307,9 @@ function renderPage(): string {
       var text = String(value == null ? '' : value);
       return text.length > max ? text.slice(0, max - 1) + '…' : text;
     }
+    // esc() уже экранирует кавычки, отдельная подмена " больше не нужна.
     function attr(value) {
-      return esc(String(value == null ? '' : value)).replace(/"/g, '&quot;');
+      return esc(value);
     }
     function statusClass(status) {
       if (status === 'success') return ' okg';
@@ -2719,7 +2795,7 @@ function renderPage(): string {
 })();
 </script>
 
-<script>
+<script nonce="${nonce}">
 (function () {
   var flakes = ['❄', '❅', '❆'];
   for (var i = 0; i < 18; i++) {

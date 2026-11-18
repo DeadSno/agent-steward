@@ -77,6 +77,8 @@ CI runs build, GUI build and tests on Windows, Ubuntu and macOS for every pull r
 3. Publishes to npm via OIDC trusted publishing with `--provenance` (no `NPM_TOKEN` secret required).
 4. Creates a GitHub release.
 
+Publishing is gated on two conditions: the event must be a `push` and the ref must be a `v*` tag. A manual `workflow_dispatch` run therefore never publishes: it executes the same verify matrix followed by `npm pack --dry-run` (dry-run job), which checks the manifest and the packaged tarball without touching the registry. Write permissions (`contents: write`, `id-token: write`) are granted only to the publish job; every other job runs with `contents: read`.
+
 Use `npm version patch|minor|major` to bump the version before tagging.
 
 ## License

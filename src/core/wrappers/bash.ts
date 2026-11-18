@@ -79,6 +79,24 @@ export interface BashWrapperOptions {
 }
 
 /**
+ * B6: разбор PID из lock-токена для bash-обёртки.
+ *
+ * Понимает единый `<pid>-<iso>` (Node и PS), legacy PS `<iso>|<pid>`
+ * и голый `<pid>` (pid-файл самой bash-обёртки). Legacy PS проверяется
+ * первым: иначе год из ISO был бы принят за PID.
+ */
+export const BASH_LOCK_PID_FUNCTION = `parse_lock_pid() {
+  local text="$1"
+  case "$text" in
+    *"|"*) printf '%s' "\${text##*|}" ;;
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T*) printf '' ;;
+    [0-9]*-*) printf '%s' "\${text%%-*}" ;;
+    [0-9]*) printf '%s' "$text" ;;
+    *) printf '' ;;
+  esac
+}`;
+
+/**
  * Собирает текст bash-обёртки.
  *
  * Скрипт:
@@ -188,6 +206,8 @@ export function buildBashWrapperScript(options: BashWrapperOptions): string {
     '  printf \'[%s] %s\\n\' "$(date \'+%Y-%m-%d %H:%M:%S\')" "$*" >> "$LOG_FILE" 2>/dev/null || true',
     "}",
     "",
+    BASH_LOCK_PID_FUNCTION,
+    "",
     'log "[role-scoped] opencode config passed via OPENCODE_CONFIG_CONTENT"',
     `log ${shellQuote(`[policy] ${formatPolicyLog(effectivePermissions)}`)}`,
     ...effectivePermissions.deniedByPolicy.map(
@@ -254,8 +274,35 @@ export function buildBashWrapperScript(options: BashWrapperOptions): string {
     "fi",
     "",
     "# Атомарная блокировка: mkdir завершается ошибкой, если каталог уже есть.",
-    "# В каталог пишем PID: после kill -9 осиротевший lock снимается, а не",
-    "# блокирует задачу до истечения STALE_LOCK_MAX_AGE_MS.",
+    "# B6: перед своим каталогом проверяем файловый lock Node/PS (<lock>):",
+    "# они держат файл, а bash — каталог. Без этой проверки Node-процесс и",
+    "# bash-обёртка могли выполнять одну задачу одновременно.",
+    'if [ -f "$LOCK_FILE" ]; then',
+    '  LOCK_OWNER_RAW="$(cat "$LOCK_FILE" 2>/dev/null || true)"',
+    '  LOCK_FILE_PID="$(parse_lock_pid "$LOCK_OWNER_RAW")"',
+    '  if [ -z "$LOCK_FILE_PID" ]; then',
+    '    log "[scheduler] Не удалось определить владельца lock — пропуск запуска."',
+    "    exit 0",
+    "  fi",
+    '  if kill -0 "$LOCK_FILE_PID" 2>/dev/null; then',
+    '    log "[scheduler] Задача \'$TASK_NAME\' уже выполняется (pid $LOCK_FILE_PID) — пропуск запуска."',
+    "    exit 0",
+    "  fi",
+    "  # Владелец мёртв: атомарно уводим файл, чтобы не удалить lock, который",
+    "  # другой воркер успел пересоздать.",
+    '  STALE_LOCK_FILE="$LOCK_FILE.stale-$$-$(date +%s)"',
+    '  if ! mv "$LOCK_FILE" "$STALE_LOCK_FILE" 2>/dev/null; then',
+    '    if [ -f "$LOCK_FILE" ]; then',
+    '      log "[scheduler] Не удалось вытеснить осиротевший lock \'$LOCK_FILE\' — пропуск запуска."',
+    "      exit 0",
+    "    fi",
+    "  else",
+    '    rm -f "$STALE_LOCK_FILE" 2>/dev/null || true',
+    "  fi",
+    "fi",
+    "",
+    "# B6: в pid-файл пишем `<pid>-<iso>`, а не голый PID — так его читают",
+    "# Node и PS общим парсером. После kill -9 lock снимается по мёртвому PID.",
     'if ! mkdir "$LOCK_FILE.d" 2>/dev/null; then',
     '  if [ ! -d "$LOCK_FILE.d" ]; then',
     '    log "[scheduler] Не удалось создать lock \'$LOCK_FILE.d\' — запуск отменён."',
@@ -263,7 +310,7 @@ export function buildBashWrapperScript(options: BashWrapperOptions): string {
     "  fi",
     '  LOCK_PID=""',
     '  if [ -f "$LOCK_FILE.d/pid" ]; then',
-    '    LOCK_PID="$(cat "$LOCK_FILE.d/pid" 2>/dev/null || true)"',
+    '    LOCK_PID="$(parse_lock_pid "$(cat "$LOCK_FILE.d/pid" 2>/dev/null || true)")"',
     "  fi",
     "  LOCK_ALIVE=1",
     '  if [ -n "$LOCK_PID" ]; then',
@@ -288,7 +335,7 @@ export function buildBashWrapperScript(options: BashWrapperOptions): string {
     "    exit 0",
     "  fi",
     "fi",
-    'printf \'%s\\n\' "$$" > "$LOCK_FILE.d/pid" 2>/dev/null || true',
+    'printf \'%s\\n\' "$$-$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$LOCK_FILE.d/pid" 2>/dev/null || true',
     'cleanup() { rmdir "$LOCK_FILE.d" 2>/dev/null || rm -rf "$LOCK_FILE.d" 2>/dev/null; }',
     "trap cleanup EXIT INT TERM",
     "",

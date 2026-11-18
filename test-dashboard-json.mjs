@@ -124,7 +124,8 @@ assert(html.includes('id="m-partial"'), "на странице есть отде
 
 // Клиентский JS должен быть синтаксически валиден (ловит незаэкранированные
 // переводы строк внутри строковых литералов, ломающие весь скрипт).
-const scripts = Array.from(html.matchAll(/<script>([\s\S]*?)<\/script>/g)).map((m) => m[1]);
+// Тег может нести nonce (CSP B3.4), поэтому атрибуты допускаются.
+const scripts = Array.from(html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)).map((m) => m[1]);
 assert(scripts.length >= 2, "страница содержит клиентские скрипты");
 scripts.forEach((code, index) => {
   try {

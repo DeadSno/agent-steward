@@ -75,6 +75,10 @@ interface SchedulerBackend {
 - 调度：`* * * * *` 和 `*/N` 使用 `StartInterval`，`M * * * *`、`M H * * *`、`M H * * D`
   使用 `StartCalendarInterval`。
 - 暂停 = `launchctl unload -w`，恢复 = `launchctl load -w`。
+- 安装已暂停的任务只写入 plist，不调用 `load -w`（它会清除暂停）；
+  `unload -w` 保证代理在下次登录后仍保持禁用。
+- `launchctl load` 的错误不会被吞掉：安装/恢复失败会带上命令、退出码和
+  stderr（例如损坏的 plist 返回 `Invalid property list`）。
 - 包装脚本与 Linux 相同的 `.sh`；配置路径：
   `~/.config/opencode/agent-steward/`（或 `$XDG_CONFIG_HOME`）。
 
@@ -82,6 +86,8 @@ interface SchedulerBackend {
 - `cd` 到工作目录，用文件中的提示词执行 `opencode run`。
 - 日志通过 `>>` 追加，并带时间戳。
 - 通过原子 `mkdir` 加锁——防止并行运行。
+- Node、PS 和 bash 都将锁持有者写为 `<pid>-<iso>`；旧格式 `<iso>|<pid>`（PS）和
+  裸 `<pid>` 仍可读取，因此运行中的锁不会被另一种运行时误判为过期。
 - 超时：子进程 + 看门狗（先 `TERM`，再 `KILL`）。
 - Quality Gate：`bash -lc "<命令>"`（相当于 Windows 上的 `cmd.exe /c`）。
 - 指标：`node "<record-history.js>" <task> <status> <started> <duration> <error> "-" "-"`——

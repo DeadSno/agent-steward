@@ -308,7 +308,9 @@ OpenCode 动作的 `effect: "deny"` 规则，而 `allowedTools`（一旦设置�
   `active-profile` 文件 → `default`。切换配置档案会写入标记文件，并且需要
   重启 OpenCode，因为插件目录在模块加载时解析。
 - 每个配置档案的仪表板端口：`OPENCODE_SCHEDULER_PORT` 环境变量 → 来自
-  `profile.json` 的端口 → 服务器默认值（3782，其次 4782/5782 回退）。
+  `profile.json` 的端口 → 服务器默认值（3782，其次 4782/5782 回退）。新配置档案
+  会分配 3783 起的第一个空闲端口，跳过 3782/4782、其他配置档案 `profile.json`
+  中已记录的端口以及 `OPENCODE_SCHEDULER_PORT`。
 - RPC：`get_profiles` 列出配置档案及其目录、端口和活动标志；
   `set_profile` 切换活动配置档案（会提示重启）；`create_profile` /
   `delete_profile` 管理命名配置档案（`default` 不能被删除）。

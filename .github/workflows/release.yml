@@ -6,9 +6,11 @@ on:
       - "v*"
   workflow_dispatch:
 
+# B16: workflow по умолчанию только читает репозиторий. Права на запись
+# (contents) и на OIDC-подпись (id-token) выдаются точечно — только job'у,
+# который реально публикует релиз. Verify и dry-run в них не нуждаются.
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 
 jobs:
   # P3-5: тег не проходит через обычный CI (он слушает только ветки и PR),
@@ -70,7 +72,17 @@ jobs:
   publish:
     name: Publish to npm
     needs: verify
+    # B16.1: публикация — только из push по тегу v*. Проверка event_name
+    # обязательна: workflow_dispatch тоже умеет запускаться на ref тега, и без
+    # неё ручной запуск мог бы опубликовать пакет.
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
     runs-on: ubuntu-latest
+    # B16.2: единственная job с правом записи в репозиторий (GitHub Release)
+    # и с правом на OIDC-токен для npm Trusted Publishing. Job-level
+    # permissions заменяют workflow-level, поэтому contents перечислен снова.
+    permissions:
+      contents: write
+      id-token: write
     # Публикация после зелёной матрицы: сборка + npm publish, без повторного
     # прогона всех сюит (он уже выполнен в verify).
     timeout-minutes: 20
@@ -113,3 +125,41 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
+
+  # B16.4: ручной запуск — это проверка релиза, а не релиз. Job собирает пакет
+  # и проверяет упаковку через `npm pack --dry-run`: ошибки манифеста и состава
+  # files видны, в npm ничего не уходит. Прав на запись у неё нет.
+  dry-run:
+    name: Dry-run npm publish
+    needs: verify
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build backend
+        run: npm run build
+
+      - name: Build GUI
+        run: npm run build:gui
+
+      # `npm publish --dry-run` не годится для повторяемой ручной проверки: он
+      # тоже ходит в реестр и падает, если версия уже опубликована. `npm pack
+      # --dry-run` проверяет ровно то, что нужно перед тегом, — манифест,
+      # `files`, размеры и итоговый tarball, — не обращаясь к npm.
+      - name: Pack dry-run
+        run: npm pack --dry-run

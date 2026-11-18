@@ -348,7 +348,9 @@ This is useful for separating projects, clients or environments (e.g. `default` 
   in the base directory → `default`. Switching profiles writes the marker and requires
   an OpenCode restart because plugin directories are resolved at module load time.
 - Dashboard port per profile: `OPENCODE_SCHEDULER_PORT` env var → port from
-  `profile.json` → server default (3782, then 4782/5782 fallback).
+  `profile.json` → server default (3782, then 4782/5782 fallback). A new profile is
+  allocated the first free port from 3783 up, skipping 3782/4782, ports already
+  recorded in other profiles' `profile.json`, and `OPENCODE_SCHEDULER_PORT`.
 - RPC: `get_profiles` lists profiles with dirs, ports and the active flag;
   `set_profile` switches the active profile (restart hint); `create_profile` /
   `delete_profile` manage named profiles (`default` cannot be deleted).

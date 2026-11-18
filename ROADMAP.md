@@ -23,66 +23,8 @@ Legacy: `opencode-windows-scheduler@1.5.8`.
 
 # 1. Бэклог (аудит 18.11)
 
-## Деталь 1.1 — Dashboard HTTP
-`src/server.ts`
-
-**Задача B3 — XSS через атрибуты дашборда** · P1 · ⬜
-
-`esc()` не экранирует кавычки, значения вставляются в `title=`/`style=`/`data-*` → скрипт в контексте дашборда с доступом к API.
-
-- [ ] B3.1 `esc()` экранирует `"` и `'` для текстового и атрибутного контекста
-- [ ] B3.2 Пройти все интерполяции в атрибуты (`title`, `style`, `data-*`, `href`)
-- [ ] B3.3 Тест: payload с кавычками не ломает разметку и не исполняется
-- [ ] B3.4 CSP-заголовок дашборда (defense in depth)
-
-## Деталь 1.2 — Release CI
-`.github/workflows/release.yml`
-
-**Задача B16 — Publish только по тегу, permissions ужать** · P1 · ⬜
-
-`workflow_dispatch` публикует в npm без проверки тега; `id-token: write` выдан всем job'ам.
-
-- [ ] B16.1 Публикация только если ref — тег `v*`
-- [ ] B16.2 `id-token: write` / `contents: write` только у publish-job
-- [ ] B16.3 Guard: `package.json` version == тег
-- [ ] B16.4 `workflow_dispatch` = dry-run без публикации
-
-## Деталь 1.3 — Профили и порты
-`src/server.ts`, `src/core/profile*.ts`
-
-**Задача B4 — Порт профиля не пересекается с default** · P2 · ⬜
-
-`allocateProfilePort()` начинает с 3782; `isOwnDashboardOn()` не сверяет профиль → второй профиль показывает данные чужого профиля.
-
-- [ ] B4.1 `isOwnDashboardOn()` сверяет профиль/идентификатор инстанса
-- [ ] B4.2 Аллокатор порта исключает порты всех профилей
-- [ ] B4.3 Тест: два профиля одновременно, данные не смешиваются
-- [ ] B4.4 Docs: нумерация портов профилей
-
-## Деталь 1.4 — macOS launchd
-`src/core/*launchd*`, `src/core/install-entry*`
-
-**Задача B5 — `installEntry` уважает `paused` и пробрасывает ошибки `load`** · P2 · ⬜
-
-`launchctl load -w` снимает паузу (гонка); ошибки `launchctl` глотаются → битый plist = задача молча не запланирована.
-
-- [ ] B5.1 Не вызывать `load -w` для приостановленной задачи
-- [ ] B5.2 Пробрасывать stderr/exit code `launchctl` в результат установки
-- [ ] B5.3 Тест/ручная проверка: paused остаётся paused, битый plist даёт ошибку
-- [ ] B5.4 Docs
-
 ## Деталь 1.6 — Lock-файлы
 `src/core/lock.ts`, `src/core/ps-wrapper.ts`, POSIX-обёртка
-
-**Задача B6 — Единый формат lock-токена Node ↔ PS ↔ bash** · P2 · ⬜
-
-PS пишет `ISO|PID`, Node парсит `^(\d+)-` → год принимается за PID. PS не распознаёт Node-токен → вытесняет живой Node-лок.
-
-- [ ] B6.1 Единый формат `<pid>-<iso>` + общий парсер
-- [ ] B6.2 PS читает и Node-, и legacy-токен
-- [ ] B6.3 bash читает оба формата
-- [ ] B6.4 Тест interop: Node-лок не вытесняется PS, и наоборот
-- [ ] B6.5 Docs
 
 **Задача B7 — `.lock.d` вытесняется только по мёртвому PID** · P2 · ⬜
 

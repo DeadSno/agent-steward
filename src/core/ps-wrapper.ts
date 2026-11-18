@@ -31,6 +31,43 @@ const WRAPPER_FILENAME = "run-task.ps1";
  *   5. При таймауте — убивает процесс и дочерние процессы.
  *   6. В finally выполняет post-flight и удаляет lock-файл.
  */
+
+/**
+ * B6: разбор PID из lock-файла для PowerShell-обёртки.
+ *
+ * Формат общий с Node: `<pid>-<iso>`. Legacy-файлы тоже читаются:
+ * `<iso>|<pid>` (прошлый PS) и голый `<pid>` (pid-файл bash-обёртки).
+ * Обратные слэши в regex удвоены — так же, как в остальном WRAPPER_SCRIPT.
+ */
+export const PS_LOCK_PID_FUNCTION = `# B6: PID владельца lock-файла в любом формате (Node/PS/bash).
+function Get-LockOwnerPid {
+    param([string]$Content)
+    $text = "$Content".Trim()
+    if (-not $text) { return 0 }
+    # Legacy PS: <iso>|<pid>. Проверяем ДО разбора по дефису, иначе год
+    # из ISO (2026) был бы принят за PID.
+    if ($text.Contains("|")) {
+        $parts = $text.Split([char]124)
+        $parsed = 0
+        if ($parts.Count -ge 2 -and [int]::TryParse($parts[1].Trim(), [ref]$parsed) -and $parsed -gt 0) {
+            return $parsed
+        }
+        return 0
+    }
+    # Голый ISO без PID (старый чужой lock) не должен давать год как PID:
+    # для свежего файла это означало бы вытеснение активной блокировки.
+    if ($text -match '^\\d{4}-\\d{2}-\\d{2}T') { return 0 }
+    # Единый формат <pid>-<iso> и старый Node <pid>-<epoch>-<uuid>.
+    if ($text -match '^(\\d+)-') { return [int]$matches[1] }
+    # Голый PID (pid-файл bash-обёртки).
+    if ($text -match '^\\d+$') {
+        $parsed = 0
+        if ([int]::TryParse($text, [ref]$parsed) -and $parsed -gt 0) { return $parsed }
+        return 0
+    }
+    return 0
+}`;
+
 export const WRAPPER_SCRIPT = `param(
     [string]$TaskName,
     [string]$PromptFile,
@@ -112,6 +149,8 @@ function Test-ProcessAlive {
     }
 }
 
+${PS_LOCK_PID_FUNCTION}
+
 # Гарантируем существование папки для лога (на случай прямого вызова обёртки).
 if ($LogFile) {
     try {
@@ -148,9 +187,9 @@ if ($LockFile) {
         }
         $lockStream = [System.IO.File]::Open($LockFile, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
         try {
-            # Внутри lock храним время старта и PID владельца: по PID можно
-            # отличить живой долгий запуск от осиротевшего после kill -9.
-            $lockBytes = [System.Text.Encoding]::UTF8.GetBytes("$startedAtIso|$PID")
+            # B6: единый формат <pid>-<iso> — его читают Node и bash.
+            # По PID отличаем живой долгий запуск от осиротевшего после kill -9.
+            $lockBytes = [System.Text.Encoding]::UTF8.GetBytes("$PID-$startedAtIso")
             $lockStream.Write($lockBytes, 0, $lockBytes.Length)
         } finally {
             $lockStream.Dispose()
@@ -163,10 +202,9 @@ if ($LockFile) {
         $holderPid = 0
         try {
             $holderRaw = "$(Get-Content -LiteralPath $LockFile -Raw -ErrorAction Stop)".Trim()
-            $holderParts = $holderRaw.Split([char]124)
-            if ($holderParts.Count -ge 2) {
-                [void][int]::TryParse($holderParts[1], [ref]$holderPid)
-            }
+            # B6: понимаем и новый <pid>-<iso>, и legacy <iso>|<pid>,
+            # и голый PID — иначе живой чужой lock вытеснялся по возрасту.
+            $holderPid = Get-LockOwnerPid -Content $holderRaw
         } catch {}
         if ($holderPid -gt 0) {
             $stale = -not (Test-ProcessAlive -ProcessId $holderPid)
@@ -191,7 +229,7 @@ if ($LockFile) {
                 try {
                     $lockStream = [System.IO.File]::Open($LockFile, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
                     try {
-                        $lockBytes = [System.Text.Encoding]::UTF8.GetBytes("$startedAtIso|$PID")
+                        $lockBytes = [System.Text.Encoding]::UTF8.GetBytes("$PID-$startedAtIso")
                         $lockStream.Write($lockBytes, 0, $lockBytes.Length)
                     } finally {
                         $lockStream.Dispose()

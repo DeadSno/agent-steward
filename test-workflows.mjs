@@ -80,6 +80,75 @@ for (const file of files) {
   }
 }
 
+// B16: политика релиза. Проверки структурные — YAML уже разобран выше, поэтому
+// регрессия в release.yml падает здесь, а не на реальном `npm publish`.
+const releaseName = files.find((name) => name === "release.yml" || name === "release.yaml");
+check(Boolean(releaseName), "release: файл .github/workflows/release.yml существует");
+if (releaseName) {
+  const releaseDoc = parse(fs.readFileSync(path.join(workflowsDir, releaseName), "utf8"));
+  const releaseJobs = releaseDoc.jobs ?? {};
+  const jobIf = (job) => String(job?.if ?? "");
+  const runsOf = (job) =>
+    (Array.isArray(job?.steps) ? job.steps : []).filter((step) => typeof step?.run === "string");
+  const realPublish = (step) => /\bnpm publish\b/.test(step.run) && !/--dry-run/.test(step.run);
+  const publishJob = releaseJobs.publish;
+  const dryRunJob = releaseJobs["dry-run"] ?? releaseJobs.dry_run;
+
+  check(
+    !releaseDoc.permissions ||
+      !Object.values(releaseDoc.permissions).some((level) => level === "write"),
+    "release: workflow-level permissions без write",
+  );
+  check(
+    publishJob?.permissions?.["id-token"] === "write" &&
+      publishJob?.permissions?.contents === "write",
+    "release: publish-job получает id-token: write и contents: write",
+  );
+  check(
+    Object.entries(releaseJobs).every(
+      ([id, job]) => id === "publish" || job?.permissions?.["id-token"] !== "write",
+    ),
+    "release: id-token: write только у publish-job",
+  );
+  check(
+    jobIf(publishJob).includes("github.event_name == 'push'") &&
+      jobIf(publishJob).includes("startsWith(github.ref, 'refs/tags/v')"),
+    "release: publish-job только для push по тегу v*",
+  );
+  check(
+    runsOf(publishJob).filter(realPublish).length === 1,
+    "release: ровно один реальный npm publish — в publish-job",
+  );
+  check(Boolean(dryRunJob), "release: есть dry-run job для workflow_dispatch");
+  if (dryRunJob) {
+    check(
+      jobIf(dryRunJob).includes("github.event_name == 'workflow_dispatch'"),
+      "release: dry-run запускается только вручную",
+    );
+    check(
+      dryRunJob?.permissions?.["id-token"] !== "write",
+      "release: dry-run без id-token: write",
+    );
+    check(
+      runsOf(dryRunJob).some((step) => /npm pack --dry-run/.test(step.run)),
+      "release: dry-run проверяет упаковку через npm pack --dry-run",
+    );
+    check(
+      runsOf(dryRunJob).every((step) => !/\bnpm publish\b/.test(step.run)),
+      "release: dry-run не вызывает npm publish (не трогает реестр)",
+    );
+  }
+  const guardStep = runsOf(releaseJobs.verify).find((step) =>
+    /version/i.test(String(step.name ?? "")),
+  );
+  check(
+    Boolean(guardStep) &&
+      /package\.json/.test(guardStep.run) &&
+      /GITHUB_REF_NAME/.test(guardStep.run),
+    "release: guard сверяет version из package.json с тегом",
+  );
+}
+
 if (failed > 0) {
   console.error(`\nПровалено проверок: ${failed} из ${checks}`);
   process.exit(1);

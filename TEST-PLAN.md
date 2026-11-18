@@ -612,7 +612,10 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 | `test-integrations.mjs` | D07.4, D12, D13 |
 | `test-retention.mjs` | D08.5, D10.8 |
 | `test-metrics.mjs` | D08.3–08.4 |
-| `test-dashboard*.mjs` (3) | D08, D14.2 |
+| `test-dashboard*.mjs` (4) | D08, D14.2 (XSS в атрибутах — `test-dashboard-xss`) |
+| `test-profile-isolation.mjs` | B4.1, B4.3 |
+| `test-mac-launchctl.mjs` | B5.1, B5.2 |
+| `test-lock-format.mjs` | B6.1, B6.2, B6.3, B6.4 |
 | `test-jobs-view.mjs` | D14.3 |
 | `test-i18n.mjs` | D14.1 |
 | `test-docs.mjs` | D16 |

@@ -130,7 +130,11 @@ core.
 ### Data: one SQLite per profile
 
 Each profile has its own plugin directory, its own SQLite database, its own OS-task
-namespace and its own dashboard port (3782 + N).
+namespace and its own dashboard port. `default` keeps 3782 (fallback 4782); a named
+profile gets the first free port from 3783 upward when it is created, recorded in its
+`profile.json`, and never one already reserved by `default` or another profile. Every
+dashboard response carries `x-plugin-profile`, so a second profile neither reuses
+another profile's server nor treats it as a zombie.
 
 `SCHEMA_VERSION` is currently **8**; migrations are additive and idempotent,
 applied through `PRAGMA user_version` on open.
@@ -338,6 +342,18 @@ enforced:
 | Post-flight | `afterScript`; non-zero exit is reported but does not rewrite a success |
 | Logging | Append-only log per task under `logs/` |
 | History | Calls the recorder with `--start` and `--finish` |
+
+**Единый формат lock-токена (B6).** Node (`src/core/lock.ts`), PowerShell
+(`src/core/ps-wrapper.ts`) и bash (`src/core/wrappers/bash.ts`) используют один
+формат записи владельца: `<pid>-<iso>` (Node добавляет `-<uuid>` для
+уникальности токена). Все три стороны понимают и старые варианты:
+`<iso>|<pid>` (legacy PowerShell), `<pid>-<epoch>-<uuid>` (legacy Node) и
+голый `<pid>` из pid-файла bash. Общий парсер — `parseLockToken()` в Node,
+`Get-LockOwnerPid` в PS и `parse_lock_pid` в bash — разбирает legacy
+`<iso>|<pid>` до проверки `<pid>-…`: раньше год из ISO принимался за PID,
+из-за чего живой lock вытеснялся. Перед своим каталогом `<lock>.d` bash
+проверяет файловый lock Node/PS и не запускает задачу, если его владелец жив.
+`test-lock-format.mjs` проверяет парсеры и interop в обе стороны.
 
 Windows uses PowerShell and `.cmd` shims; POSIX uses bash. Both wrappers are generated
 from templates so the policy stays identical across platforms.
@@ -712,6 +728,15 @@ Rules:
 ## Security model
 
 - The dashboard has **no authentication** and binds to localhost. Do not expose it.
+- **Dashboard XSS hardening (B3):** every dynamic value passes through `esc()` before
+  reaching text or attribute context; it escapes `&`, `<`, `>`, `"` and `'` (the old
+  `div.innerHTML` trick left quotes intact). `GET /` also sends
+  `Content-Security-Policy: default-src 'none'; script-src 'nonce-…'; style-src
+  'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none';
+  form-action 'none'; frame-ancestors 'none'; object-src 'none'`. Both inline scripts
+  carry a per-response nonce (16 random bytes, base64). `test-dashboard-xss.mjs`
+  extracts the shipped `esc()` from the served page and checks quote/angle-bracket
+  payloads in text, `title=` and `data-*=` contexts, plus nonce/CSP consistency.
 - A job definition is **code**: prompts, hooks, Quality Gates and wrappers all execute
   with your user privileges. Treat task creation like granting shell access.
 - `allowedTools` / `deniedTools` are **enforced at the run-wrapper level** (Sprint 29.2).

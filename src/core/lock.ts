@@ -22,12 +22,83 @@ export function isProcessAlive(pid: number): boolean {
   }
 }
 
-/** PID владельца из токена lock-файла (`<pid>-<timestamp>-<uuid>`). */
-function ownerPidFromToken(content: string): number | null {
-  const match = /^(\d+)-/.exec(content.trim());
-  if (!match) return null;
-  const pid = Number.parseInt(match[1], 10);
-  return Number.isInteger(pid) ? pid : null;
+/** Разобранный lock-токен: PID владельца и формат записи. */
+export interface LockToken {
+  pid: number | null;
+  createdAt: string | null;
+  format: "unified" | "node-legacy" | "ps-legacy" | "pid" | "unknown";
+}
+
+/** Достаёт ISO-время из первой части legacy PS-токена (`ISO|PID`). */
+function parseIsoOrNull(value: string | undefined): string | null {
+  const text = String(value ?? "").trim();
+  return /^\d{4}-\d{2}-\d{2}T/.test(text) ? text : null;
+}
+
+/**
+ * Разбирает содержимое lock-файла в едином для Node/PS/bash виде.
+ *
+ * Поддерживаемые форматы:
+ *   `<pid>-<iso>`          — единый формат (Node и PS, B6);
+ *   `<pid>-<epoch>-<uuid>` — старый Node-токен;
+ *   `<iso>|<pid>`          — старый PS-токен (ISO|PID);
+ *   `<pid>`                — голый PID (pid-файл bash-обёртки).
+ *
+ * Порядок важен: legacy PS проверяется до `<pid>-…`, иначе год из ISO
+ * (`2026`) принимался за PID — именно это ломало межпроцессную совместимость.
+ */
+export function parseLockToken(content: string): LockToken {
+  const text = String(content ?? "").trim();
+  if (!text) return { pid: null, createdAt: null, format: "unknown" };
+
+  const withPipe = text.indexOf("|");
+  if (withPipe !== -1) {
+    const pid = Number.parseInt(text.slice(withPipe + 1).trim(), 10);
+    return {
+      pid: Number.isInteger(pid) && pid > 0 ? pid : null,
+      createdAt: parseIsoOrNull(text.slice(0, withPipe)),
+      format: "ps-legacy",
+    };
+  }
+
+  const unified = /^(\d+)-(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)(?:-.*)?$/i.exec(text);
+  if (unified) {
+    const pid = Number.parseInt(unified[1], 10);
+    return {
+      pid: Number.isInteger(pid) && pid > 0 ? pid : null,
+      createdAt: unified[2],
+      format: "unified",
+    };
+  }
+
+  // Старый Node мог добавить любой суффикс после epoch (`-live-owner`, uuid).
+  const legacyNode = /^(\d+)-(\d{10,})(?:-.*)?$/i.exec(text);
+  if (legacyNode) {
+    const pid = Number.parseInt(legacyNode[1], 10);
+    return {
+      pid: Number.isInteger(pid) && pid > 0 ? pid : null,
+      createdAt: null,
+      format: "node-legacy",
+    };
+  }
+
+  if (/^\d+$/.test(text)) {
+    const pid = Number.parseInt(text, 10);
+    // Голое число — PID (pid-файл bash), но не epoch из старого тестового
+    // lock: 1.7e12 не может быть PID и раньше не распознавалось владельцем.
+    return {
+      pid: Number.isInteger(pid) && pid > 0 && pid <= 2_147_483_647 ? pid : null,
+      createdAt: null,
+      format: "pid",
+    };
+  }
+
+  return { pid: null, createdAt: null, format: "unknown" };
+}
+
+/** PID владельца из токена lock-файла (любой поддерживаемый формат). */
+export function ownerPidFromToken(content: string): number | null {
+  return parseLockToken(content).pid;
 }
 
 
@@ -140,7 +211,10 @@ export class LockManager {
   async acquire(taskName: string): Promise<string | null> {
     await fs.mkdir(this.lockDir, { recursive: true });
     const lockPath = this.lockFilePath(taskName);
-    const token = `${process.pid}-${Date.now()}-${randomUUID()}`;
+    // B6: единый формат `<pid>-<iso>` (+ uuid для уникальности токена).
+    // PS-обёртка пишет тот же префикс, поэтому её stale-проверка видит PID,
+    // а не год из даты, и не вытесняет живой Node-лок.
+    const token = `${process.pid}-${new Date().toISOString()}-${randomUUID()}`;
 
     try {
       // 'wx' — exclusive create: ошибка если файл уже существует.

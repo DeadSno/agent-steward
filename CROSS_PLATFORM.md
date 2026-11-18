@@ -76,6 +76,10 @@ The factory picks an implementation from `process.platform`:
 - Schedule: `StartInterval` for `* * * * *` and `*/N`, `StartCalendarInterval` for `M * * * *`,
   `M H * * *`, `M H * * D`.
 - Pause = `launchctl unload -w`, resume = `launchctl load -w`.
+- Installing a paused task writes the plist but never calls `load -w` (it would
+  clear the pause); `unload -w` keeps the agent disabled after the next login.
+- `launchctl load` failures are not swallowed: the install/resume error carries
+  the command, exit code and stderr (e.g. `Invalid property list` for a broken plist).
 - Wrapper is the same `.sh` as on Linux; config paths:
   `~/.config/opencode/agent-steward/` (or `$XDG_CONFIG_HOME`).
 
@@ -83,6 +87,8 @@ The factory picks an implementation from `process.platform`:
 - `cd` into the working directory, `opencode run` with the prompt read from a file.
 - Logs are appended with `>>` and prefixed with timestamps.
 - Locking via atomic `mkdir` — protects against parallel runs.
+- Lock owner is written as `<pid>-<iso>` by Node/PS/bash; legacy `<iso>|<pid>` (PS)
+  and bare `<pid>` are still read, so a live lock is never evicted by another runtime.
 - Timeout: child process + watchdog (`TERM`, then `KILL`).
 - Quality Gate: `bash -lc "<command>"` (the `cmd.exe /c` equivalent on Windows).
 - Metrics: `node "<record-history.js>" <task> <status> <started> <duration> <error> "-" "-"` —
