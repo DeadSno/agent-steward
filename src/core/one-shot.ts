@@ -143,17 +143,45 @@ export function buildWindowsOneShotFlags(
 /**
  * Форматирует Date по шаблону локали Windows (.NET-формат, как возвращает
  * (Get-Culture).DateTimeFormat.ShortDatePattern). Поддерживает d/dd, M/MM,
- * y/yy/yyyy. Неизвестные символы копируются как есть.
+ * MMM/MMMM (название месяца), y/yy/yyyy. Неизвестные символы копируются как есть.
+ *
+ * P2-26: раньше последовательные replace(/MM/) и replace(/M/) превращали
+ * «MMM» в число месяца («2030. 011 2.»). Теперь разбор идёт одним проходом
+ * по токенам, поэтому MMM/MMMM не пересекаются с MM/M.
  */
 export function formatDateByLocalePattern(date: Date, pattern: string): string {
   const pad2 = (v: number) => String(v).padStart(2, "0");
-  return pattern
-    .replace(/yyyy/g, String(date.getFullYear()))
-    .replace(/yy/g, String(date.getFullYear()).slice(-2))
-    .replace(/MM/g, pad2(date.getMonth() + 1))
-    .replace(/M/g, String(date.getMonth() + 1))
-    .replace(/dd/g, pad2(date.getDate()))
-    .replace(/d/g, String(date.getDate()));
+  const monthShort = new Intl.DateTimeFormat(undefined, {
+    month: "short",
+  }).format(date);
+  const monthLong = new Intl.DateTimeFormat(undefined, {
+    month: "long",
+  }).format(date);
+  return pattern.replace(
+    /yyyy|yy|MMMM|MMM|MM|M|dd|d/g,
+    (token) => {
+      switch (token) {
+        case "yyyy":
+          return String(date.getFullYear());
+        case "yy":
+          return String(date.getFullYear()).slice(-2);
+        case "MMMM":
+          return monthLong;
+        case "MMM":
+          return monthShort;
+        case "MM":
+          return pad2(date.getMonth() + 1);
+        case "M":
+          return String(date.getMonth() + 1);
+        case "dd":
+          return pad2(date.getDate());
+        case "d":
+          return String(date.getDate());
+        default:
+          return token;
+      }
+    },
+  );
 }
 
 /** Формат `at -t`: YYYYMMDDHHMM в локальном времени системы. */

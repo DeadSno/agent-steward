@@ -12,6 +12,7 @@ const {
   MAX_ONESHOT_DELAY_SECONDS,
   normalizeOneShotRunAt,
   buildWindowsOneShotFlags,
+  formatDateByLocalePattern,
   buildAtTimestamp,
   buildLaunchdCalendar,
   buildLaunchdOneShotCleanup,
@@ -95,6 +96,27 @@ try {
     check("Windows ONCE использует /sc ONCE", JSON.stringify(windows) === JSON.stringify(expected));
     check("Windows ONCE дата DD.MM.YYYY", /^\d{2}\.\d{2}\.\d{4}$/.test(windows[3]));
     check("Windows ONCE время HH:MM", /^\d{2}:\d{2}$/.test(windows[5]));
+
+    // P2-26: названия месяцев (MMM/MMMM) не должны превращаться в цифры.
+    const p226 = new Date(2030, 0, 2, 9, 30);
+    const shortMonth = new Intl.DateTimeFormat(undefined, { month: "short" }).format(p226);
+    const longMonth = new Intl.DateTimeFormat(undefined, { month: "long" }).format(p226);
+    check(
+      "P2-26: MMM не превращается в цифры",
+      formatDateByLocalePattern(p226, "yyyy. MMM d.") === `2030. ${shortMonth} 2.`,
+    );
+    check(
+      "P2-26: MMMM даёт полное имя месяца",
+      formatDateByLocalePattern(p226, "yyyy MMMM d") === `2030 ${longMonth} 2`,
+    );
+    check(
+      "P2-26: нет мусорной даты из цифр",
+      !/2030\.\s*\d{3,}/.test(formatDateByLocalePattern(p226, "yyyy. MMM d.")),
+    );
+    check(
+      "P2-26: schtasks получает корректную дату",
+      buildWindowsOneShotFlags(p226.toISOString(), "yyyy. MMM d.")[3] === `2030. ${shortMonth} 2.`,
+    );
 
     const at = buildAtTimestamp(sample);
     check("Linux at -t использует 12 цифр", /^\d{12}$/.test(at));
