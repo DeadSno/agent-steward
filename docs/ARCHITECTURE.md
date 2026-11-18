@@ -38,50 +38,121 @@ model, the modules, the data model and the extension points.
    to localhost only. Local AI triage (Ollama) is optional and connects only when explicitly enabled
    via `manage_local_ai`.
 
-## Process model
+## Execution model
 
-```
-┌─────────────────────────────┐
-│ OpenCode (plugin host)      │
-│  • agent tools (26)         │
-│  • sidebar GUI (gui.tsx)    │
-│  • RPC ↔ sidebar            │
-│  • dashboard HTTP server    │
-│  • chokidar file watcher    │
-└──────────┬──────────────────┘
-           │ creates / updates
-           ▼
-┌─────────────────────────────┐        ┌──────────────────────────────┐
-│ OS scheduler                │        │ SQLite (scheduler.db)        │
-│ Windows Task Scheduler      │        │ tasks, history, metrics,     │
-│ launchd / crontab           │        │ templates, settings,         │
-└──────────┬──────────────────┘        │ workspaces                   │
-           │ fires                   │ └──────────────────────────────┘
-           ▼                         │            ▲
-┌─────────────────────────────┐      │            │ writes
-│ Run wrapper (.cmd / .sh)    │      │            │
-│  • lock                     │      │  ┌─────────┴──────────────┐
-│  • timeout                  │      └──│ recorder process       │
-│  • pre-flight hook          │         │ core/record-history.js │
-│  • opencode run ...         │────────▶│  • history / metrics   │
-│  • Quality Gate             │         │  • retries, chains     │
-│  • post-flight hook         │         │  • DAG dependents      │
-└─────────────────────────────┘         │  • matrix continuation │
-                                        └────────────────────────┘
-```
+agent-steward is an execution engine with optional trigger registration — not a
+scheduler with extras attached. Four kinds of entry lead into the same execution
+path, and the OS scheduler is only one of them (CONCEPT §5, §8):
 
-There are four kinds of processes:
-
-| Process | Lifetime | Responsibility |
+| Entry | Examples | Goes through the OS scheduler? |
 | --- | --- | --- |
-| Plugin host | OpenCode session | Register tools/skill, create OS entries, serve RPC and dashboard, watch files |
-| OS scheduler | Always | Fire jobs on schedule or on demand |
-| Run wrapper | Per run | Lock, timeout, hooks, Quality Gate, invoke `opencode run`, call the recorder |
-| Recorder | Per run (short) | Persist history/metrics, schedule retries, trigger chains and dependents, continue matrices |
+| ad-hoc (no OS registration) | agent tools · GUI · TUI · RPC · (`run_mission` — planned) | No |
+| internal orchestration (core-driven, no OS) | chains · DAG dependents · retries · matrix continuation · escalation · resume after pause/crash | No |
+| registered triggers | `cron` / `once` | Yes — registered with Task Scheduler / launchd / crontab |
+| registered, in-process | `file` / `git` / `mcp-event` / webhook | No — watched inside the plugin process |
 
-Because the recorder is a separate short-lived process, it cannot rely on in-memory
-state of the plugin host. Everything it needs (definitions, retry state, matrix queue)
-is read from the database or from files under the plugin directory.
+Orchestration (chains, DAG, retries, matrix, escalation) is performed by the core
+and the recorder through **direct wrapper launches**, never by the OS scheduler.
+The OS scheduler is responsible only for firing registered `cron`/`once` ticks.
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│ ENTRIES                                                             │
+│                                                                     │
+│  ad-hoc (no OS registration)                                        │
+│    agent tools · GUI · TUI · RPC · (CLI run_mission — planned)      │
+│                                                                     │
+│  internal orchestration (core-driven, no OS)                        │
+│    chains · DAG dependents · retries · matrix continuation ·        │
+│    escalation · resume after pause/crash                            │
+│                                                                     │
+│  registered triggers                                                │
+│    cron / once ────────────────▶ OS scheduler registration          │
+│    file / git / mcp-event / webhook ▶ in-process watchers           │
+└──────────────┬──────────────────────────────┬───────────────────────┘
+               │                              │
+               ▼                              ▼
+   ┌───────────────────────┐      ┌───────────────────────────────────┐
+   │ OS scheduler          │      │ Execution core                    │
+   │ optional lane —       │      │ createRun → plan → route →        │
+   │ cron/once ticks only  │      │ execute → GATE → ledger           │
+   │ schtasks / launchd /  │      │ (today: run journal, resume, DLQ, │
+   │ crontab (+ at;        │      │  router; full mission runtime —   │
+   │  sleep fallback when  │      │  sprints 32/38)                   │
+   │  at is unavailable)   │      └───────┬───────────────┬───────────┘
+   └──────────┬────────────┘              │ direct launch │ registered
+              │ fires                     │ (bypasses OS) │ tick
+              │                           ▼               ▼
+              │   ┌──────────────────────────────────────────────────┐
+              └──▶│ Run wrapper (.cmd+.ps1 / .sh) — ONE execution    │
+                  │ unit for BOTH lanes:                             │
+                  │  • schedule-gate (child node process): poll-mode │
+                  │    IANA timezone, launch window, defer/force     │
+                  │    markers — BEFORE the lock                     │
+                  │  • lock (.lock / .lock.d) + timeout watchdog     │
+                  │  • env/secrets + permission policy               │
+                  │    (OPENCODE_CONFIG_CONTENT)                     │
+                  │  • opencode run --auto → Quality Gate →          │
+                  │    before/after hooks → one-shot cleanup (POSIX) │
+                  └─────────────────────┬────────────────────────────┘
+                                        │ --start / --finish
+                                        ▼
+                  ┌──────────────────────────────────────────────────┐
+                  │ recorder process (core/record-history.js)        │
+                  │  • history / metrics → SQLite                    │
+                  │  • retries ─────────────────┐                    │
+                  │  • chains / DAG dependents ─┼─▶ direct wrapper   │
+                  │  • matrix aggregation ──────┘   launches (no OS) │
+                  │  • session rotation                              │
+                  │  • one-shot cleanup (Windows) ─▶ OS scheduler    │
+                  │  • notifications: webhook / Telegram / toasts    │
+                  │    (+ async triage, optional local model)        │
+                  └──────────────────────────────────────────────────┘
+```
+
+| Process | Lifetime | Notes |
+| --- | --- | --- |
+| Plugin host | OpenCode session | agent tools and RPC; sidebar GUI and TUI; dashboard HTTP server (UI, `/api/*` with origin guard, `/api/hooks` HMAC, `/metrics`); in-process triggers (chokidar file watcher, git polling, MCP events, webhook ingestion); durable-run executor (resume / pause / DLQ); startup recovery |
+| OS scheduler | system service | optional lane for `cron`/`once` ticks only: Task Scheduler (Windows), launchd (macOS), crontab + `at` (Linux; detached `sleep` fallback when `at` is unavailable) |
+| Run wrapper | one per run | the single execution unit; direct launches and registered ticks execute the same wrapper, so direct runs get the same gate, lock, timeout, hooks and policy |
+| schedule-gate | seconds, child of the wrapper | separate `node` process; exit 3 = "not now" (skip or postpone), fail-closed on invalid cron |
+| recorder | seconds, one per run | short-lived `node` process started by the wrapper with `--start` / `--finish`; independent of the plugin host |
+
+### Why direct launches are safe
+
+A common question: does `run_task_now` / chain continuation skip the safety
+machinery? No. Both lanes converge on the same wrapper, so every direct run still
+passes through the schedule gate, takes the lock, runs under the timeout watchdog,
+loads env/secrets with the task permission policy, and records history through the
+recorder. The only difference is *who starts the wrapper*: the OS scheduler or the
+core.
+
+### Data: one SQLite per profile
+
+Each profile has its own plugin directory, its own SQLite database, its own OS-task
+namespace and its own dashboard port (3782 + N).
+
+`SCHEMA_VERSION` is currently **7**; migrations are additive and idempotent,
+applied through `PRAGMA user_version` on open.
+
+| Tables | Purpose |
+| --- | --- |
+| `tasks`, `workspaces`, `templates`, `settings` | definitions and configuration |
+| `history`, `metrics` | run outcomes, duration / tokens / cost, analytics |
+| `audit_log` | mutation journal (who / what / when / which interface) |
+| `git_state` | git-trigger heads and polling state |
+| `notification_dedup`, `notification_embeddings` | rule-based and embedding dedup |
+| `runs`, `run_steps`, `run_dlq`, `run_injections` | durable runs: state machine, step journal, dead-letter queue, pause-time context injections |
+| `capability_map` | router layer 2: task type → model / success rate / costs / last runs |
+
+### Known limitations (execution)
+
+- Startup recovery (`recoverInterrupted*`) marks unfinished rows as `error`; it
+  does not yet check whether the wrapper process is still alive, so a plugin
+  restart during a live run finalizes that run early (tracked: Trust hotfix).
+- Durable steps currently execute through the same wrapper machinery; the
+  agent-executor abstraction (run missions without an OpenCode-specific
+  transport) is Stage 2 of the strategy (sprints 32/38).
 
 ## Data flow
 

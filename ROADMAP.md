@@ -15,31 +15,21 @@ Legacy: `opencode-windows-scheduler@1.5.8`.
 
 ---
 
-## 1. Досье по текущей точке (18.11.2026, сверено с кодом)
+## 1. Бэклог (Backlog) — аудит 18.11
 
-- Dual V1 (≥ 1.18.29) / V2 (≥ 2.2.7), общее ядро `createRuntime`, 26 инструментов / 53 RPC.
-- Durable DAG выпущен (0.0.3–0.0.4): journal, resume, идемпотентность, DLQ, роутер 3 слоя, chaos-nightly, GUI DLQ/запусков, пауза с инъекциями. `SCHEMA_VERSION = 7`.
-- i18n ru/en/zh — 846/846/846 ключей, паритет в CI. `npm test` — 97 сюит.
-- CI зелёный на Windows / macOS / Linux; релизы — OIDC + provenance.
-
-**Известный долг (аудит 18.11):** три критичных бага — recovery помечает живые запуска (B1), двойные ретраи на Windows (B2), XSS через атрибуты дашборда (B3). До их закрытия плагин не рекомендуется для длинных автономных прогонов.
-
----
-
-## 2. Канбан: задачи, которые будем делать
-
-Задачи ниже — то, что предстоит сделать. Нет спринтов, нет привязки к версиям.
+Найденные ошибки, баги и улучшения из аудита 18.11. Каждая задача проверена по коду.
 Приоритет: **P0** = сломано прямо сейчас, **P1** = реальный баг, **P2** = средняя проблема, **P3** = улучшение.
 
-### 🔴 P0 / P1 — критичные баги (блокируют рекомендацию для длинных автопрогонов)
+### 🔴 P0 / P1 — критичные (блокируют рекомендацию для длинных автопрогонов)
 
 | ID | Задача | Описание | P | Статус |
 |----|--------|----------|---|--------|
 | B1 | Recovery не трогает живые запуска | `recoverInterrupted()` помечает все `finished_at IS NULL` как error без проверки PID/владельца/возраста. Живые запуски умирают при перезапуске плагина. | P1 | ⬜ |
 | B2 | Один слой ретраев на Windows | PS-обёртка ретраит сама + recorder добавляет свои = `(1+N)²` вместо `1+N`. Денежные «ретрай-штормы» на Windows. | P1 | ⬜ |
 | B3 | XSS через атрибуты дашборда | `esc()` не экранирует кавычки, вставляется в `title=`/`style=`/`data-*`. Скрипт в контексте дашборда с доступом к API. | P1 | ⬜ |
+| B16 | Publish только по тегу, permissions ужать | `workflow_dispatch` публикует в npm без проверки тега; `id-token: write` выдан всем job'ам. | P1 | ⬜ |
 
-### 🟠 P2 — средние баги и риски (аудит 18.11)
+### 🟠 P2 — средние баги и риски
 
 | ID | Задача | Описание | P | Статус |
 |----|--------|----------|---|--------|
@@ -47,93 +37,179 @@ Legacy: `opencode-windows-scheduler@1.5.8`.
 | B5 | macOS `installEntry` уважает `paused`, пробрасывает `load`-ошибки | `launchctl load -w` снимает паузу (гонка); `launchctl()` глотает ошибки → битый plist = задача молча не запланирована. | P2 | ⬜ |
 | B6 | Единый формат lock-токена Node↔PS↔bash | PS пишет `ISO\|PID`, Node парсит `^(\d+)-` → год в PID. PS не распознаёт Node-токен → вытесняет живой Node-лок. | P2 | ⬜ |
 | B7 | `.lock.d` вытесняется только по мёртвому pid | POSIX `.lock.d` старше 24 ч вытесняется без чтения pid-файла внутри → дубль задачи после рестарта плагина. | P2 | ⬜ |
-| B8 | WMI-фолбэк таймаута (PS-watchdog) | При сбое `Get-CimInstance` список процессов пуст → нет маркера и нет kill, таймаут fail-open; внуки теряются. | P3 | ⬜ |
 | B9 | `stripBlock` не режет чужой crontab | Незакрытый блок → вырезаются все строки до EOF, включая пользовательские cron-задачи. | P2 | ⬜ |
 | B10 | Legacy-режим парсит usage из лога | `record-history` legacy-ветка не парсит `usage` из 11-го аргумента (`$LOG_FILE`) → токены/стоимость теряются. | P2 | ⬜ |
 | B11 | Промпт через `--` + off-by-one `131072` | Промпт передаётся в `argv` без `--`; промпт с `-` парсится как флаг `opencode`; проверка `-gt` вместо `>=`. | P2 | ⬜ |
 | B12 | Lease/owner на `run_steps` | `recoverInterruptedSteps()` помечает `failed` все `running`-шаги, в т.ч. живые другие процессы. `run_steps` без владельца/lease. Требуется CONCEPT §5. | P2 | ⬜ |
 | B13 | Decay + `first_pass_rate` в capability-map | `success_rate` кумулятивный без затухания; `last_10_runs` не участвует в решении. Требуется CONCEPT §5, §6.3. | P2 | ⬜ |
 | B14 | CJK-токенизатор дедупа | `tokenize()` regex вырезает CJK → китайские сообщения дают нулевой вектор → семантический дедуп для `zh` не работает. | P2 | ⬜ |
-| B15 | at-fallback: маркер-файл вместо cmdline | Анализ показал: маркер в cmdline есть на всём цикле, prune через локальный реестр — утверждение не подтверждено. Требуется повторная проверка. | P3 | ⬜ |
-| B16 | Publish только по тегу, permissions ужать | `workflow_dispatch` публикует в npm без проверки тега; `id-token: write` выдан всем job'ам. | P1 | ⬜ |
 
-### 📋 Pipeline-as-code (в работе, спринт 32 → 0.0.5)
+### 🟡 P3 — малые риски
 
 | ID | Задача | Описание | P | Статус |
 |----|--------|----------|---|--------|
-| PI-1 | Спецификация формата `opencode.pipeline.yaml` | DAG, matrix, QG, окна, политики, бюджеты — типы `PipelineSpec`/`PipelineStep`. | P2 | ✅ (закоммичено) |
-| PI-2 | Парсер + валидатор, интеграция с dry-run | YAML→spec, валидатор (циклы, needs, cron, matrix, имена, модели), `test-pipeline.mjs`. | P2 | ✅ (закоммичено) |
-| PI-3 | Идемпотентный diff/apply | `planPipelineApply`/`executePipelineApply`, маркеры `pipelineName`/`pipelineStepId`, без миграции БД. | P2 | ✅ (закоммичено) |
-| PI-4 | CLI `agent-steward pipeline validate\|apply\|export` | `bin` в package.json, точки входа, smoke-тест пройден. | P2 | 🔄 (не закоммичено) |
-| PI-5 | Агент-инструменты/RPC `pipeline_validate\|apply\|export` | 3 ToolSpec + 3 RPC метода, счётчики 26→29 инструментов, 53→56 RPC. | P2 | 🔄 (не закоммичено) |
-| PI-6 | Документация: `docs/PIPELINE.md`, пример, README ru/en/zh | Пример `opencode.pipeline.yaml`, раздел в README. | P2 | ⬜ |
-| PI-7 | Приёмка | Полный `npm test`, `npm run build`, `npm run lint` (0 ошибок), коммит в dev. | P2 | ⬜ |
+| B8 | WMI-фолбэк таймаута (PS-watchdog) | При сбое `Get-CimInstance` список процессов пуст → нет маркера и нет kill, таймаут fail-open; внуки теряются. | P3 | ⬜ |
+| B15 | at-fallback: маркер-файл вместо cmdline | Анализ показал: маркер в cmdline есть на всём цикле, prune через локальный реестр — утверждение не подтверждено. Требуется повторная проверка. | P3 | ⬜ |
+
+---
+
+## 2. Задачи согласно архитектуре (Execution model)
+
+agent-steward — это execution engine с опциональной регистрацией триггеров в ОС.
+Четыре входа ведут в один и тот же путь исполнения. Планировщик ОС — только один из них (полоса A), а не центральный маршрут.
+Оркестрация (цепочки, DAG, ретраи, матрицы, эскалации) выполняется ядром и рекордером прямыми запусками обёрток.
+
+### 2.1 Ядро исполнения (Execution core)
+
+| ID | Задача | Описание | P | Статус |
+|----|--------|----------|---|--------|
+| AC-1 | createRun → план → маршрут → исполнение → GATE → ledger | Единый путь для любого входа, без привязки к ОС-планировщику | P2 | ⬜ |
+| AC-2 | Quality Gate с before/after хуками | Проверка после прогона, поворот статуса при неудаче | P2 | ⬜ |
+| AC-3 | История, метрики и аудит всех мутаций | SQLite: tasks/history/metrics/settings/templates/workspaces/audit_log/… | P2 | ⬜ |
+| AC-4 | Durable DAG: journal, resume, идемпотентность, DLQ, пауза с инъекциями | SCHEMA_VERSION = 7, BEGIN IMMEDIATE + SAVEPOINT | P2 | ✅ (закоммищено) |
+| AC-5 | Router: 3 слоя (rules → capability-repo → planner/escalation/dispatch) | Известный тип не доходит до модели; закреплено тестом | P2 | ✅ (закоммищено) |
+
+### 2.2 Полоса A — Registered (ОС-планировщик, только cron/once)
+
+| ID | Задача | Описание | P | Статус |
+|----|--------|----------|---|--------|
+| RA-1 | schtasks (Windows), launchd (macOS), crontab (POSIX) | Регистрация и удаление OS-записей для cron/once | P2 | ✅ (есть в коде) |
+| RA-2 | legacy-алиасинг, one-shot: schtasks ONCE / at (+detached-fallback) | Совместимость со старыми записями | P2 | ✅ (есть в коде) |
+
+### 2.3 Полоса B — Direct / Ad-hoc (без регистрации в ОС)
+
+| ID | Задача | Описание | P | Статус |
+|----|--------|----------|---|--------|
+| AB-1 | `run_task_now` — прямой запуск обёртки минуя планировщик | Уже есть: posix.runTask → spawn("/bin/bash", [wrapper]) | P2 | ✅ (есть в коде) |
+| AB-2 | Цепочки (nextTaskOnSuccess / nextTaskOnError) | Рекурсия через рекордер, не через ОС | P2 | ✅ (есть в коде) |
+| AB-3 | DAG-зависимости (dependsOn) | Запуск только после успешных зависимостей | P2 | ✅ (есть в коде) |
+| AB-4 | Ретраи (retryCount / retryDelay) | retry-состояние, атомарный счётчик | P2 | ✅ (есть в коде) |
+| AB-5 | Матрицы: fan-out, агрегация, sync, cancel, orphan cleanup | expandMatrixTask → runMatrix → aggregateMatrixResults | P2 | ✅ (есть в коде) |
+| AB-6 | Пауза / резюме (resumeRun) | Выполнение в процессе хоста с инъекциями контекста | P2 | ✅ (есть в коде) |
+| AB-7 | Escalation (local → cloud → review → blocked) | Таблица переходов, без модели | P2 | ✅ (есть в коде) |
+| AB-8 | `run_mission` (CLI / GUI / RPC) | Ad-hoc миссия с гейтом и safety-контрактом без регистрации | P2 | ⬜ (план 38) |
+
+### 2.4 Run wrapper — единица исполнения для обеих полос
+
+| ID | Задача | Описание | P | Статус |
+|----|--------|----------|---|--------|
+| RW-1 | schedule-gate (node) — poll/tz/окна/дефер/форс-маркеры | До lock, fail-closed на невалидном cron | P2 | ✅ (есть в коде) |
+| RW-2 | Lock (.lock / .lock.d) + watchdog timeout | Единый формат токена Node↔PS↔bash (B6) | P2 | ⬜ (B6, B7) |
+| RW-3 | Env/secrets + политика (OPENCODE_CONFIG_CONTENT) | hybrid/secure/legacy, зашифрованные секреты | P2 | ✅ (есть в коде) |
+| RW-4 | opencode run --auto → Quality Gate → before/after хуки | Единый для прямого и зарегистрированного запуска | P2 | ✅ (есть в коде) |
+| RW-5 | One-shot cleanup | Windows: удаление через ОС-планировщик | P2 | ✅ (есть в коде) |
+
+### 2.5 Recorder process (record-history.js)
+
+| ID | Задача | Описание | P | Статус |
+|----|--------|----------|---|--------|
+| RC-1 | История / метрики → SQLite (на профиль, схема v7) | Атомарный retry-счётчик | P2 | ✅ (есть в коде) |
+| RC-2 | Ретраи → прямой запуск обёртки заново | Оркестрация в ядре, не в ОС | P2 | ✅ (есть в коде) |
+| RC-3 | Цепочки / DAG → прямой запуск обёртки заново | dependsOn, nextTaskOnSuccess/Error | P2 | ✅ (есть в коде) |
+| RC-4 | Матрицы: агрегация | runMatrix, finalizeMatrixIfComplete | P2 | ✅ (есть в коде) |
+| RC-5 | One-shot cleanup (Windows) | Удаление OS-записи | P2 | ✅ (есть в коде) |
+| RC-6 | Уведомления: webhook / Telegram / тосты (+ триаж) | Дедуп, 512-мерный FNV-1a, локальный триаж | P2 | ✅ (есть в коде) |
+
+### 2.6 Данные (Storage)
+
+| ID | Задача | Описание | P | Статус |
+|----|--------|----------|---|--------|
+| DA-1 | SQLite WAL (node:sqlite), SCHEMA_VERSION = 7 | Миграции через PRAGMA user_version | P2 | ✅ (есть в коде) |
+| DA-2 | Таблицы: tasks/history/metrics/settings/templates/workspaces/audit_log/git_state/notification_dedup/notification_embeddings | Durable-слой: runs/run_steps/run_dlq/run_injections/capability_map | P2 | ✅ (есть в коде) |
+| DA-3 | Секреты: AES-256-GCM (AAD=имя, 12-байт IV, key 0600/icacls, карантин, межпроцессный лок) | Защита секретов | P1 | ✅ (есть в коде) |
+
+### 2.7 Триггеры (в процессе, без ОС)
+
+| ID | Задача | Описание | P | Статус |
+|----|--------|----------|---|--------|
+| TR-1 | file — chokidar watch | Наблюдение внутри процесса хоста | P2 | ✅ (есть в коде) |
+| TR-2 | git — poll HEAD | Новые коммиты, ветка/путь/игнор | P2 | ✅ (есть в коде) |
+| TR-3 | mcp-event — emit_event | Совпадение server + event → запуск подписчиков | P2 | ✅ (есть в коде) |
+| TR-4 | webhook — /api/hooks | HMAC, timestamp, raw-body, лимит тела | P2 | ✅ (есть в коде) |
+
+---
+
+## 3. Остальные задачи (не бэклог, не архитектура)
+
+Задачи, не относящиеся к бэклогу аудита 18.11 и не входящие в структуру исполнения выше.
+
+### 📋 Pipeline-as-code
+
+| ID | Задача | Описание | P | Статус |
+|----|--------|----------|---|--------|
+| PI-1 | Спецификация формата `opencode.pipeline.yaml` | DAG, matrix, QG, окна, политики, бюджеты — типы `PipelineSpec`/`PipelineStep` | P2 | ✅ (закоммищено) |
+| PI-2 | Парсер + валидатор, интеграция с dry-run | YAML→spec, валидатор (циклы, needs, cron, matrix, имена, модели), `test-pipeline.mjs` | P2 | ✅ (закоммищено) |
+| PI-3 | Идемпотентный diff/apply | `planPipelineApply`/`executePipelineApply`, маркеры `pipelineName`/`pipelineStepId`, без миграции БД | P2 | ✅ (закоммищено) |
+| PI-4 | CLI `agent-steward pipeline validate\|apply\|export` | `bin` в package.json, точки входа, smoke-тест пройден | P2 | 🔄 (не закоммищено) |
+| PI-5 | Агент-инструменты/RPC `pipeline_validate\|apply\|export` | 3 ToolSpec + 3 RPC метода, счётчики 26→29 инструментов, 53→56 RPC | P2 | 🔄 (не закоммищено) |
+| PI-6 | Документация: `docs/PIPELINE.md`, пример, README ru/en/zh | Пример `opencode.pipeline.yaml`, раздел в README | P2 | ⬜ |
+| PI-7 | Приёмка | Полный `npm test`, `npm run build`, `npm run lint` (0 ошибок), коммит в dev | P2 | ⬜ |
 
 ### 🌿 Worktree-изоляция (после Pipeline-as-code)
 
 | ID | Задача | Описание | P | Статус |
 |----|--------|----------|---|--------|
-| W-1 | Одноразовый git worktree на запуск | Безопасный fan-out без Docker. | P2 | ⬜ |
-| W-2 | Политика очистки worktree | Удаление после прогона, защита от остатков. | P2 | ⬜ |
-| W-3 | Shell- и семантические guard-условия | Проверка перед запуском в worktree. | P2 | ⬜ |
-| W-4 | Статус `skipped` | Для задач, пропущенных guard'ами. | P2 | ⬜ |
+| W-1 | Одноразовый git worktree на запуск | Безопасный fan-out без Docker | P2 | ⬜ |
+| W-2 | Политика очистки worktree | Удаление после прогона, защита от остатков | P2 | ⬜ |
+| W-3 | Shell- и семантические guard-условия | Проверка перед запуском в worktree | P2 | ⬜ |
+| W-4 | Статус `skipped` | Для задач, пропущенных guard'ами | P2 | ⬜ |
 
 ### 💰 Экономика v2 (после Worktree)
 
 | ID | Задача | Описание | P | Статус |
 |----|--------|----------|---|--------|
-| E-1 | Бюджеты день/неделя с авто-паузой и алертом | Превышение бюджета останавливает миссию. | P2 | ⬜ |
-| E-2 | Per-task token budgets | Лимиты токенов на задачу. | P2 | ⬜ |
-| E-3 | Token efficiency score | Оценка эффективности токенов. | P3 | ⬜ |
-| E-4 | Прогноз, Grafana JSON | Прогноз затрат, экспорт в Grafana. | P3 | ⬜ |
-| E-5 | Local vs cloud разбивка | Доля локальных vs облачных запусков. | P3 | ⬜ |
+| E-1 | Бюджеты день/неделя с авто-паузой и алертом | Превышение бюджета останавливает миссию | P2 | ⬜ |
+| E-2 | Per-task token budgets | Лимиты токенов на задачу | P2 | ⬜ |
+| E-3 | Token efficiency score | Оценка эффективности токенов | P3 | ⬜ |
+| E-4 | Прогноз, Grafana JSON | Прогноз затрат, экспорт в Grafana | P3 | ⬜ |
+| E-5 | Local vs cloud разбивка | Доля локальных vs облачных запусков | P3 | ⬜ |
 
 ### 🐳 Docker runner (после Экономики)
 
 | ID | Задача | Описание | P | Статус |
 |----|--------|----------|---|--------|
-| D-1 | Runner local/docker/ssh | Opt-in изоляция для R2/R3. | P3 | ⬜ |
-| D-2 | Opt-in по умолчанию, без Docker работает как раньше | Backward-compatible. | P3 | ⬜ |
-| D-3 | Та же спека в Docker → тот же вердикт | Детерминизм между окружениями. | P3 | ⬜ |
+| D-1 | Runner local/docker/ssh | Opt-in изоляция для R2/R3 | P3 | ⬜ |
+| D-2 | Opt-in по умолчанию, без Docker работает как раньше | Backward-compatible | P3 | ⬜ |
+| D-3 | Та же спека в Docker → тот же вердикт | Детерминизм между окружениями | P3 | ⬜ |
 
 ### 🚦 Approvals и окружения (0.1.0, MAJOR)
 
 | ID | Задача | Описание | P | Статус |
 |----|--------|----------|---|--------|
-| A-1 | R2/R3 approval-гейт | Ручное подтверждение перед деплоем. | P2 | ⬜ |
-| A-2 | dev/staging/prod окружения | Изоляция сред. | P2 | ⬜ |
-| A-3 | Отчёты/coverage как артефакты запуска | Артефакты миссии. | P3 | ⬜ |
-| A-4 | Docs-сайт | Документационный сайт. | P3 | ⬜ |
-| A-5 | 4-я локаль (tr) | Турецкий язык. | P3 | ⬜ |
-| A-6 | Telegram pause/resume командами бота | Хвост спринта 36.8. | P3 | ⬜ |
+| A-1 | R2/R3 approval-гейт | Ручное подтверждение перед деплоем | P2 | ⬜ |
+| A-2 | dev/staging/prod окружения | Изоляция сред | P2 | ⬜ |
+| A-3 | Отчёты/coverage как артефакты запуска | Артефакты миссии | P3 | ⬜ |
+| A-4 | Docs-сайт | Документационный сайт | P3 | ⬜ |
+| A-5 | 4-я локаль (tr) | Турецкий язык | P3 | ⬜ |
+| A-6 | Telegram pause/resume командами бота | Хвост спринта 36.8 | P3 | ⬜ |
 
 ### 🌐 Мульти-агентная оркестрация (0.2.x+)
 
 | ID | Задача | Описание | P | Статус |
 |----|--------|----------|---|--------|
-| M-1 | Context artifacts (сквозной контекст) | CONCEPT §13.2. | P3 | ⬜ |
-| M-2 | Crew / роли (worker → reviewer) | Ролевая декомпозиция. | P3 | ⬜ |
-| M-3 | Self-correcting retry + post-mortem | Исправление ошибок с анализом. | P3 | ⬜ |
-| M-4 | Model fallback + confidence | Фолбэк между моделями. | P3 | ⬜ |
-| M-5 | Tournament: A/B моделей и промптов | Сравнение моделей. | P3 | ⬜ |
-| M-6 | CEP и входящие события | Complex Event Processing. | P3 | ⬜ |
-| M-7 | Cross-run memory | Память между прогонами. | P3 | ⬜ |
-| M-8 | Smart recipes / self-configuring pipelines | Самонастраивающиеся конвейеры. | P3 | ⬜ |
+| M-1 | Context artifacts (сквозной контекст) | CONCEPT §13.2 | P3 | ⬜ |
+| M-2 | Crew / роли (worker → reviewer) | Ролевая декомпозиция | P3 | ⬜ |
+| M-3 | Self-correcting retry + post-mortem | Исправление ошибок с анализом | P3 | ⬜ |
+| M-4 | Model fallback + confidence | Фолбэк между моделями | P3 | ⬜ |
+| M-5 | Tournament: A/B моделей и промптов | Сравнение моделей | P3 | ⬜ |
+| M-6 | CEP и входящие события | Complex Event Processing | P3 | ⬜ |
+| M-7 | Cross-run memory | Память между прогонами | P3 | ⬜ |
+| M-8 | Smart recipes / self-configuring pipelines | Самонастраивающиеся конвейеры | P3 | ⬜ |
 
 ### 🔧 Инфраструктура и релиз (внешние действия, требуют доступа к npm/GitHub)
 
 | ID | Задача | Описание | P | Статус |
 |----|--------|----------|---|--------|
-| X-1 | `npm deprecate opencode-windows-scheduler@1.5.8` | legacy-пакет не задепрекейчен в npm. | P1 | ⏸️ |
-| X-2 | Legacy 1.5.9 с upper bound `<0.1.0` | Будущий breaking 0.1.0 не должен прилететь в deprecated-пакет. | P1 | ⏸️ |
-| X-3 | `is_template: false` в package.json | Вероятно случайно включено. | P3 | ⏸️ |
-| X-4 | Dependabot: мерж #4 (plugin 2.3.0) + OpenTUI 0.9.0 | CI уже проверяет 2.3.0; OpenTUI с нативным markdown — перф для TUI. | P2 | ⏸️ |
-| X-5 | Приведение тегов/релизов/версий | v1.5.3 из ROADMAP не существует; теги без релизов; npm без тегов. | P2 | ⏸️ |
-| X-6 | Убрать `systemd` из `package.json` keywords | Бэкенда systemd нет. | P3 | ⏸️ |
+| X-1 | `npm deprecate opencode-windows-scheduler@1.5.8` | legacy-пакет не задепрекейчен в npm | P1 | ⏸️ |
+| X-2 | Legacy 1.5.9 с upper bound `<0.1.0` | Будущий breaking 0.1.0 не должен прилететь в deprecated-пакет | P1 | ⏸️ |
+| X-3 | `is_template: false` в package.json | Вероятно случайно включено | P3 | ⏸️ |
+| X-4 | Dependabot: мерж #4 (plugin 2.3.0) + OpenTUI 0.9.0 | CI уже проверяет 2.3.0; OpenTUI с нативным markdown — перф для TUI | P2 | ⏸️ |
+| X-5 | Приведение тегов/релизов/версий | v1.5.3 из ROADMAP не существует; теги безをリリース; npm без тегов | P2 | ⏸️ |
+| X-6 | Убрать `systemd` из `package.json` keywords | Бэкенда systemd нет | P3 | ⏸️ |
 
 ---
 
-## 3. Правила работы (канбан)
+## 4. Правила работы (канбан)
 
 1. **Одна задача за раз.** Не начинаем следующую, пока текущая не закрыта тестом и документацией.
 2. **Нет спринтов.** Задачи перетаскиваются между статусами ⬜ → 🔄 → ✅ независимо от релизов.
@@ -146,7 +222,7 @@ Legacy: `opencode-windows-scheduler@1.5.8`.
 
 ---
 
-## 4. Release-чеклист (обязателен для любого релиза)
+## 5. Release-чеклист (обязателен для любого релиза)
 
 - [ ] `package.json` version == tag; CI verify зелёный.
 - [ ] CHANGELOG обновлён; шапка ROADMAP и SECURITY.md supported versions в порядке.
@@ -154,9 +230,3 @@ Legacy: `opencode-windows-scheduler@1.5.8`.
 - [ ] GitHub release создан для тега.
 - [ ] Пока жив legacy: диапазон шим'а актуален, deprecation не снят.
 - [ ] Все критические баги из текущего аудита закрыты или документированы как known issues.
-
-
-
-<dcp-system-reminder>
-Continue with the next steps: update CHANGELOG.md, empty BACKLOG.md, fix documentation inconsistencies.
-</dcp-system-reminder>
