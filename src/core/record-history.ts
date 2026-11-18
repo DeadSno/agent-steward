@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import { pathToFileURL } from "node:url";
 import { runTaskNow } from "./scheduler/run-now.js";
 import { createSchedulerBackend } from "./scheduler/index.js";
@@ -357,12 +358,20 @@ async function main() {
     if (!taskName) process.exit(1);
     const startedAt = third ?? new Date().toISOString();
     const definition = getTask(taskName);
+    // Владелец — процесс-обёртка, запустивший recorder. Он живёт дольше
+    // короткоживущего recorder'а, поэтому именно его PID проверяет recovery.
+    const owner = {
+      pid: process.ppid && process.ppid > 0 ? process.ppid : null,
+      host: os.hostname(),
+      startedAt: new Date().toISOString(),
+    };
     const runId = startRun(
       taskName,
       startedAt,
       definition?.workspaceId ?? null,
       definition?.allowedTools ?? null,
       definition?.deniedTools ?? null,
+      owner,
     );
     console.log(String(runId));
     return;

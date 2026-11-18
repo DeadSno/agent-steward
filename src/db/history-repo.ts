@@ -30,6 +30,10 @@ export interface StoredHistoryRecord {
   workspaceId?: string | null;
   allowedTools?: string[] | null;
   deniedTools?: string[] | null;
+  /** Владелец незавершённого запуска (схема v8). */
+  ownerPid?: number | null;
+  ownerHost?: string | null;
+  ownerStartedAt?: string | null;
 }
 
 /** Поля, которые пишутся в history при завершении запуска. */
@@ -73,14 +77,17 @@ function rowToRecord(row: any): StoredHistoryRecord {
     workspaceId: row.workspace_id == null ? null : String(row.workspace_id),
     allowedTools: row.allowed_tools == null ? null : JSON.parse(String(row.allowed_tools)),
     deniedTools: row.denied_tools == null ? null : JSON.parse(String(row.denied_tools)),
+    ownerPid: row.owner_pid == null ? null : Number(row.owner_pid),
+    ownerHost: row.owner_host == null ? null : String(row.owner_host),
+    ownerStartedAt: row.owner_started_at == null ? null : String(row.owner_started_at),
   };
 }
 
 const INSERT_SQL = `INSERT INTO history (
   task_name, status, started_at, finished_at, duration_ms, error,
   tokens, cost_usd, model, pre_flight_status, post_flight_status, next_task,
-  workspace_id, allowed_tools, denied_tools
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+  workspace_id, allowed_tools, denied_tools, owner_pid, owner_host, owner_started_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
 function lastId(result: { lastInsertRowid: number | bigint }): number {
   return Number(result.lastInsertRowid) || 0;
@@ -106,6 +113,9 @@ export function insertHistory(record: StoredHistoryRecord): number {
       record.workspaceId ?? null,
       record.allowedTools == null ? null : JSON.stringify(record.allowedTools),
       record.deniedTools == null ? null : JSON.stringify(record.deniedTools),
+      record.ownerPid ?? null,
+      record.ownerHost ?? null,
+      record.ownerStartedAt ?? null,
     );
   return lastId(result);
 }
@@ -117,6 +127,7 @@ export function startRun(
   workspaceId?: string | null,
   allowedTools?: string[] | null,
   deniedTools?: string[] | null,
+  owner?: { pid?: number | null; host?: string | null; startedAt?: string | null },
 ): number {
   const id = insertHistory({
     taskName,
@@ -126,6 +137,9 @@ export function startRun(
     workspaceId,
     allowedTools,
     deniedTools,
+    ownerPid: owner?.pid ?? null,
+    ownerHost: owner?.host ?? null,
+    ownerStartedAt: owner?.startedAt ?? null,
   });
   appendStructuredLog({
     event: "run.started",
@@ -262,6 +276,10 @@ export function recordRun(
         workspaceId ?? null,
         allowedTools == null ? null : JSON.stringify(allowedTools),
         deniedTools == null ? null : JSON.stringify(deniedTools),
+        // owner-колонки относятся только к незавершённым запускам (startRun).
+        null,
+        null,
+        null,
       );
     incrementMetricsUnsafe(taskName, status, tokens, costUsd);
     return lastId(result);

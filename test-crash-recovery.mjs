@@ -24,7 +24,7 @@ const assert = (cond, msg) => {
   }
 };
 
-const { initDb, closeDb } = await import("./dist/db/index.js");
+const { initDb, closeDb, getDb } = await import("./dist/db/index.js");
 const { saveTask, getTask } = await import("./dist/db/tasks-repo.js");
 const { getHistory } = await import("./dist/db/history-repo.js");
 const { recoverInterruptedRuns } = await import("./dist/db/recovery.js");
@@ -102,6 +102,23 @@ let record = getHistory("Crash Task", 10)[0];
 assert(record && record.id === crashedId, "незавершённая запись присутствует в history");
 assert(record.status === "running", "статус незавершённой записи — running");
 assert(record.finishedAt == null, "у незавершённой записи finished_at = NULL");
+
+// B1.2: recorder пишет владельца — PID процесса-обёртки (здесь: этого теста).
+const ownerRow = getDb()
+  .prepare("SELECT owner_pid, owner_host, owner_started_at FROM history WHERE id = ?")
+  .get(crashedId);
+assert(
+  Number(ownerRow.owner_pid) === process.pid,
+  `--start записал owner_pid процесса-обёртки (${ownerRow.owner_pid})`
+);
+assert(
+  String(ownerRow.owner_host) === os.hostname(),
+  `--start записал owner_host (${ownerRow.owner_host})`
+);
+assert(
+  typeof ownerRow.owner_started_at === "string" && ownerRow.owner_started_at.length > 0,
+  "--start записал owner_started_at"
+);
 
 // --- 3. Имитация перезапуска плагина ------------------------------------
 closeDb();
