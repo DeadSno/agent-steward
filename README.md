@@ -19,7 +19,7 @@ Translations: [Russian](docs/README.ru.md) · [中文](docs/README.zh.md).
 
    > Schedule a task "morning-report" that runs every day at 09:00 with the prompt: "Summarize yesterday's git commits and write the report to ~/reports/".
 
-3. Open the dashboard to watch it run: the agent prints the URL when the task is created (default `http://localhost:4380`), or ask for it later with the `get_dashboard_info` tool. Prefer a preview without installing anything? `node scripts/demo-dashboard.mjs` starts a demo dashboard at `http://localhost:4380`.
+3. Open the dashboard to watch it run: the agent prints the URL when the task is created (default `http://localhost:3782`), or ask for it later with the `get_dashboard_info` tool. Prefer a preview without installing anything? `node scripts/demo-dashboard.mjs` starts a demo dashboard at `http://localhost:3782`.
 
 ## Why
 
@@ -35,7 +35,7 @@ Everything runs on your machine. No SaaS, no telemetry, no accounts.
 
 ![Local web dashboard: matrix builds, DAG graph, metrics and run history](docs/dashboard.png)
 
-Want to see it without installing OpenCode? `node scripts/demo-dashboard.mjs` starts the dashboard with demo data at http://localhost:4380.
+Want to see it without installing OpenCode? `node scripts/demo-dashboard.mjs` starts the dashboard with demo data at http://localhost:3782.
 
 ## Features
 

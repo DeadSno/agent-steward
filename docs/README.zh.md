@@ -19,7 +19,7 @@ Translations: [English](../README.md) · [Русский](README.ru.md).
 
    > 创建一个名为 "morning-report" 的任务，每天 09:00 运行，提示词为："Summarize yesterday's git commits and write the report to ~/reports/"。
 
-3. 打开仪表盘观察运行情况：创建任务时 agent 会打印 URL（默认 `http://localhost:4380`），之后也可以随时用 `get_dashboard_info` 工具获取。想不安装任何东西先看看效果？`node scripts/demo-dashboard.mjs` 会在 `http://localhost:4380` 启动一个演示仪表盘。
+3. 打开仪表盘观察运行情况：创建任务时 agent 会打印 URL（默认 `http://localhost:3782`），之后也可以随时用 `get_dashboard_info` 工具获取。想不安装任何东西先看看效果？`node scripts/demo-dashboard.mjs` 会在 `http://localhost:3782` 启动一个演示仪表盘。
 
 ## 为什么需要它
 
@@ -35,7 +35,7 @@ Translations: [English](../README.md) · [Русский](README.ru.md).
 
 ![本地 Web 仪表盘：矩阵构建、DAG 图、指标与运行历史](dashboard.png)
 
-不想安装 OpenCode 也想看看效果？`node scripts/demo-dashboard.mjs` 会用演示数据在 http://localhost:4380 启动仪表盘。
+不想安装 OpenCode 也想看看效果？`node scripts/demo-dashboard.mjs` 会用演示数据在 http://localhost:3782 启动仪表盘。
 
 ## 功能
 
