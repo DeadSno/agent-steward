@@ -305,6 +305,14 @@ export function buildBashWrapperScript(options: BashWrapperOptions): string {
     '    env_value="${env_line#*=}"',
     '    case "$env_key" in *[!A-Za-z0-9_]*) continue ;; esac',
     '    case "$env_key" in [A-Za-z_]*) ;; *) continue ;; esac',
+    // P2-21: неразрешённая ссылка означает, что секрет удалён/переименован.
+    // Запускать агента с литералом "${secret:NAME}" нельзя — fail closed.
+    '    case "$env_value" in',
+    '      *\'${secret:\'*)',
+    '        log "[scheduler] ОШИБКА: переменная $env_key содержит неразрешённый секрет (\\${secret:...}). Запуск отменён."',
+    "        exit 78",
+    "        ;;",
+    "    esac",
     '    export "$env_key=$env_value"',
     '  done < "$ENV_FILE"',
     '  log "[scheduler] Переменные окружения workspace загружены."',

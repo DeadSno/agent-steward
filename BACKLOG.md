@@ -433,8 +433,12 @@
 
 | Задача | Подзадача | Описание | Статус |
 |--------|-----------|----------|--------|
-| P2-21.T1 | P2-21.T1.1 | При `missing` фейлить запуск или слать громкое уведомление, а не подставлять литерал | ☐ |
-| | P2-21.T2.1 | Тест: потерян `secrets.key` → env не содержит `${secret:...}`, запуск отклонён | ☐ |
+| P2-21.T1 | P2-21.T1.1 | При `missing` фейлить запуск или слать громкое уведомление, а не подставлять литерал | ✅ |
+| | P2-21.T2.1 | Тест: потерян `secrets.key` → env не содержит `${secret:...}`, запуск отклонён | ✅ |
+
+**Реализовано (18.11.2026):** `workspaces.ts` получил `resolveWorkspaceEnvDetailed()` и `MissingWorkspaceSecretsError`; `writeWorkspaceEnvFile` при `missing` удаляет старый env-файл и бросает ошибку, поэтому задача не создаётся с литералом. `refreshWorkspaceEnvFiles()` логирует сбой и не считает файл обновлённым. Обе обёртки получили fail-closed проверку: bash — `case ... *'${secret:'*)` → `exit 78`, PowerShell — `-match '\$\{secret:[^}]+\}'` → `throw` (внутренний catch больше не глотает ошибку). Дополнительно исправлено экранирование `${secret:...}` в логе bash-обёртки: без `\$` при `set -u` был `secret: unbound variable` вместо понятного сообщения.
+
+**Проверено запуском (18.11.2026):** `test-env.mjs` 59/59 — `resolveWorkspaceEnvDetailed` возвращает `missing`, `writeWorkspaceEnvFile` бросает `MissingWorkspaceSecretsError`, env-файл не создан, обе обёртки содержат проверку. Реальный прогон сгенерированной bash-обёртки под Git Bash с `TOKEN=${secret:missing_p221}` → код **78**, в логе «переменная TOKEN содержит неразрешённый секрет … Запуск отменён». `test-secrets.mjs` 50/50, `test-execution-hardening.mjs` 23/23, `npm run build` — OK.
 
 ---
 

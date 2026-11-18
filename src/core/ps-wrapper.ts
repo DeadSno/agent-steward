@@ -651,12 +651,22 @@ try {
             Get-Content -Path $EnvFile -Encoding UTF8 | ForEach-Object {
                 $line = $_.Trim()
                 if ($line -and -not $line.StartsWith("#") -and $line -match "^([A-Za-z_][A-Za-z0-9_]*)=(.*)$") {
-                    Set-Item -Path ("env:" + $matches[1]) -Value $matches[2]
+                    $envKey = $matches[1]
+                    $envValue = $matches[2]
+                    # P2-21: секрет удалён/переименован — не подставляем литерал
+                    # \${secret:...} агенту, а прерываем запуск с понятной ошибкой.
+                    if ($envValue -match '\$\{secret:[^}]+\}') {
+                        throw "Workspace '$WorkspaceName': переменная $envKey содержит неразрешённый секрет. Запуск отменён."
+                    }
+                    Set-Item -Path ("env:" + $envKey) -Value $envValue
                 }
             }
             Write-Log "[agent-steward] Переменные окружения workspace загружены."
         } catch {
             Write-Log "[agent-steward] Не удалось загрузить env-файл workspace: $($_.Exception.Message)"
+            # P2-21: ошибка конфигурации секретов должна валить задачу,
+            # а не оставлять её работать без переменной окружения.
+            throw
         }
     }
 

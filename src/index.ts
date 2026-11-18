@@ -2455,8 +2455,17 @@ async function refreshWorkspaceEnvFiles(workspaceId: string): Promise<number> {
   let refreshed = 0;
   for (const task of await loadTaskDefinitions()) {
     if (task.workspaceId !== workspaceId) continue;
-    writeWorkspaceEnvFile(workspace, PLUGIN_DIR, sanitizeName(task.name));
-    refreshed += 1;
+    try {
+      writeWorkspaceEnvFile(workspace, PLUGIN_DIR, sanitizeName(task.name));
+      refreshed += 1;
+    } catch (err: any) {
+      // P2-21: не разрешаем задаче работать с литералом ${secret:...}.
+      console.error(
+        `[workspace] Задача "${task.name}": env-файл не обновлён — ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
   }
   return refreshed;
 }

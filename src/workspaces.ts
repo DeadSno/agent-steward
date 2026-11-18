@@ -133,25 +133,60 @@ export function readWorkspaceEnvFile(envFile?: string): Record<string, string> {
   }
 }
 
+/** Ошибка конфигурации: в env workspace остались неразрешённые `${secret:NAME}`. */
+export class MissingWorkspaceSecretsError extends Error {
+  readonly workspaceName: string;
+  readonly secrets: string[];
+
+  constructor(workspaceName: string, secrets: string[]) {
+    super(
+      `Workspace "${workspaceName}": не найдены секреты: ${secrets.join(", ")}. ` +
+        "Запуск отменён, чтобы не подставлять литералы ${secret:...} в окружение задачи.",
+    );
+    this.name = "MissingWorkspaceSecretsError";
+    this.workspaceName = workspaceName;
+    this.secrets = secrets;
+  }
+}
+
+interface ResolvedWorkspaceEnv {
+  env: Record<string, string>;
+  missing: string[];
+}
+
 /**
- * Итоговые env-переменные workspace: сначала .env-файл, затем явные пары
- * (пары важнее файла). Ссылки `${secret:NAME}` разворачиваются из
- * зашифрованного хранилища (Спринт 26); отсутствующий секрет даёт пустую
- * строку и предупреждение с именем — без значения. Никогда не бросает.
+ * Итоговые env-переменные workspace вместе со списком отсутствующих секретов.
+ * Ссылки `${secret:NAME}` не подменяются пустой строкой: имя попадает в
+ * `missing`, а сама ссылка остаётся в env — вызывающая сторона решает,
+ * прервать запуск или только предупредить.
  */
-export function resolveWorkspaceEnv(
+export function resolveWorkspaceEnvDetailed(
   workspace: Workspace | undefined,
   allowedSecretNames?: string[],
-): Record<string, string> {
-  if (!workspace) return {};
+): ResolvedWorkspaceEnv {
+  if (!workspace) return { env: {}, missing: [] };
   const merged = {
     ...readWorkspaceEnvFile(workspace.envFile),
     ...(workspace.env ?? {}),
   };
   const resolved = resolveSecretRefs(merged, allowedSecretNames);
+  return { env: resolved.env, missing: resolved.missing };
+}
+
+/**
+ * Итоговые env-переменные workspace: сначала .env-файл, затем явные пары
+ * (пары важнее файла). Отсутствующий секрет даёт предупреждение с именем,
+ * но не значение. Никогда не бросает — для запуска задачи используйте
+ * writeWorkspaceEnvFile(), который в этом случае отказывает.
+ */
+export function resolveWorkspaceEnv(
+  workspace: Workspace | undefined,
+  allowedSecretNames?: string[],
+): Record<string, string> {
+  const resolved = resolveWorkspaceEnvDetailed(workspace, allowedSecretNames);
   if (resolved.missing.length > 0) {
     console.warn(
-      `[workspace] "${workspace.name}": не найдены секреты: ${resolved.missing.join(", ")}`,
+      `[workspace] "${workspace?.name ?? ""}": не найдены секреты: ${resolved.missing.join(", ")}`,
     );
   }
   return resolved.env;
@@ -195,6 +230,10 @@ export function workspaceEnvDir(pluginDir: string): string {
  *
  * Возвращает путь к файлу или undefined, если у workspace нет переменных.
  * Пустой env удаляет ранее созданный файл. На POSIX права 0600.
+ *
+ * Если хотя бы один `${secret:NAME}` не разрешён, старый env-файл удаляется
+ * и бросается MissingWorkspaceSecretsError: задача не должна запускаться с
+ * литералом `${secret:...}` вместо значения (P2-21).
  */
 export function writeWorkspaceEnvFile(
   workspace: Workspace | undefined,
@@ -204,7 +243,17 @@ export function writeWorkspaceEnvFile(
 ): string | undefined {
   if (!workspace) return undefined;
   const file = join(workspaceEnvDir(pluginDir), `${sanitizedName}.env`);
-  const env = resolveWorkspaceEnv(workspace, allowedSecretNames);
+  const { env, missing } = resolveWorkspaceEnvDetailed(workspace, allowedSecretNames);
+  if (missing.length > 0) {
+    // Fail closed: не оставляем старый файл, иначе обёртка продолжит
+    // подхватывать устаревшие значения секретов.
+    try {
+      rmSync(file, { force: true });
+    } catch {
+      // файла нет — не ошибка
+    }
+    throw new MissingWorkspaceSecretsError(workspace.name, missing);
+  }
   const keys = Object.keys(env);
   if (!keys.length) {
     try {

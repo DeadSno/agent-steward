@@ -29,6 +29,8 @@ const {
   parseEnvFileContent,
   readWorkspaceEnvFile,
   resolveWorkspaceEnv,
+  resolveWorkspaceEnvDetailed,
+  MissingWorkspaceSecretsError,
   updateWorkspace,
   workspaceEnvDir,
   writeWorkspaceEnvFile,
@@ -156,6 +158,51 @@ const noEnvGenerated = writeWorkspaceEnvFile(
 );
 check("writeWorkspaceEnvFile: пустой env → undefined", noEnvGenerated === undefined);
 check("writeWorkspaceEnvFile: старый файл удалён", !fs.existsSync(path.join(workspaceEnvDir(pluginDir), "task-one.env")));
+
+// --- 5b. P2-21: неразрешённый секрет блокирует запуск --------------------
+const missingSecretName = "definitely_missing_p221";
+const missingWorkspace = {
+  ...fakeWorkspace,
+  env: { API_TOKEN: `\${secret:${missingSecretName}}` },
+  envFile: undefined,
+};
+const detailed = resolveWorkspaceEnvDetailed(missingWorkspace);
+check(
+  "resolveWorkspaceEnvDetailed: возвращает missing и оставляет литерал",
+  detailed.missing.includes(missingSecretName) && detailed.env.API_TOKEN === `\${secret:${missingSecretName}}`,
+);
+
+let missingError;
+try {
+  writeWorkspaceEnvFile(missingWorkspace, pluginDir, "task-missing");
+} catch (err) {
+  missingError = err;
+}
+check("writeWorkspaceEnvFile: бросает MissingWorkspaceSecretsError", missingError instanceof MissingWorkspaceSecretsError);
+check("writeWorkspaceEnvFile: ошибка содержит имя секрета", String(missingError?.message || "").includes(missingSecretName));
+check(
+  "writeWorkspaceEnvFile: env-файл не создан при missing",
+  !fs.existsSync(path.join(workspaceEnvDir(pluginDir), "task-missing.env")),
+);
+
+// P2-21: обёртки тоже обязаны падать, если литерал всё же попал в env-файл
+// (например, файл остался от старой версии или записан вручную).
+const bashWrapperSource = fs.readFileSync(
+  path.join(process.cwd(), "src", "core", "wrappers", "bash.ts"),
+  "utf8",
+);
+const psWrapperSource = fs.readFileSync(
+  path.join(process.cwd(), "src", "core", "ps-wrapper.ts"),
+  "utf8",
+);
+check(
+  "bash-обёртка содержит fail-closed проверку неразрешённого секрета",
+  bashWrapperSource.includes("неразрешённый секрет") && bashWrapperSource.includes("exit 78"),
+);
+check(
+  "PowerShell-обёртка содержит fail-closed проверку неразрешённого секрета",
+  psWrapperSource.includes("неразрешённый секрет") && psWrapperSource.includes("-match"),
+);
 
 // --- 6. Round-trip в SQLite ----------------------------------------------
 const repoDir = path.join(tempRoot, "repo-one");
