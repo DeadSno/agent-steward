@@ -167,6 +167,13 @@ check("redactSecretsInText маскирует api_secret=", redacted === "api_se
 redacted = redactSecretsInText("Без секретов здесь");
 check("redactSecretsInText без изменений", redacted === "Без секретов здесь");
 
+// JSON-ключи в кавычках: артефакты и файлы контекста паузы (36.7).
+redacted = redactSecretsInText('{"token":"abc123","password":"hunter2","keep":"value"}');
+check(
+  "redactSecretsInText маскирует JSON-ключи",
+  redacted === '{"token":"***","password":"***","keep":"value"}',
+);
+
 // ${secret:NAME} остаётся нетронутым (не маскируется как значение).
 redacted = redactSecretsInText("USE ${secret:telegram_token}");
 check("redactSecretsInText не трогает ${secret:NAME}", redacted === "USE ${secret:telegram_token}");

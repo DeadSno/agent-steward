@@ -1,7 +1,7 @@
 // Спринт 36.5.b: Capability Map — слой 2 роутера (0 токенов).
 //
 // Проверяем:
-//  - схема v6: таблица capability_map и индекс по success_rate;
+//  - схема v7: таблица capability_map и индекс по success_rate;
 //  - исходы гейта обновляют счётчики, success_rate и скользящие средние;
 //  - last_10_runs хранит ровно 10 последних исходов, новые справа;
 //  - решение по порогам: explore (мало данных) → review → local / cloud;
@@ -46,8 +46,8 @@ const DatabaseSync = createRequire(import.meta.url)("node:sqlite").DatabaseSync;
 
 initDb(dbPath);
 
-// 1. Схема v6
-assert(SCHEMA_VERSION === 6, `схема поднята до v6 (${SCHEMA_VERSION})`);
+// 1. Схема v7
+assert(SCHEMA_VERSION === 7, `схема поднята до v7 (${SCHEMA_VERSION})`);
 assert(getSchemaVersion(getDb()) === SCHEMA_VERSION, "PRAGMA user_version совпадает со SCHEMA_VERSION");
 assert(capability.isCapabilityMapReady(), "таблица capability_map создана");
 const columns = getDb()
@@ -224,10 +224,11 @@ const legacy = new DatabaseSync(legacyPath);
 legacy.exec("PRAGMA user_version = 5");
 legacy.close();
 initDb(legacyPath);
-assert(getSchemaVersion(getDb()) === 6, "legacy v5 поднялась до v6");
+assert(getSchemaVersion(getDb()) === 7, "legacy v5 поднялась до v7");
 assert(capability.isCapabilityMapReady(), "миграция создала capability_map");
 const legacyOutcome = capability.recordCapabilityOutcome({ taskType: "apply_diff", passed: true });
 assert(legacyOutcome.runsTotal === 1, "карта работает сразу после миграции");
 closeDb();
 
 console.log(process.exitCode ? "\nЕсть провалы." : "\nВсе проверки Capability Map пройдены.");
+

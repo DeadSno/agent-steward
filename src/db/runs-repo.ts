@@ -12,8 +12,8 @@ import { getDb, withTransaction } from "./index.js";
  * пришлось бы переписывать при каждом новом статусе (например, DLQ в 36.4).
  */
 
-/** Статусы запуска: pending → running → passed/failed; отмена возможна до финала. */
-export type RunStatus = "pending" | "running" | "passed" | "failed" | "cancelled";
+/** Статусы запуска: pending → running → passed/failed; paused — пауза с контекстом (36.7). */
+export type RunStatus = "pending" | "running" | "paused" | "passed" | "failed" | "cancelled";
 
 /** Статусы шага: pending → running → passed/failed; skipped — осознанный пропуск. */
 export type StepStatus = "pending" | "running" | "passed" | "failed" | "skipped";
@@ -26,8 +26,12 @@ const TERMINAL_STEP_STATUSES: ReadonlySet<StepStatus> = new Set([
 ]);
 
 const RUN_TRANSITIONS: Record<RunStatus, readonly RunStatus[]> = {
-  pending: ["running", "cancelled"],
-  running: ["passed", "failed", "cancelled"],
+  // Из pending можно как стартовать, так и сразу поставить на паузу (36.7).
+  pending: ["running", "paused", "cancelled"],
+  // paused → running — явное возобновление; paused → passed — пауза после
+  // последнего шага, когда продолжать уже нечего.
+  running: ["paused", "passed", "failed", "cancelled"],
+  paused: ["running", "passed", "cancelled"],
   passed: [],
   // failed → running — явное возобновление после краха (36.2), только через reopenRun.
   failed: ["running"],
@@ -311,6 +315,25 @@ export function startRun(id: string, startedAt = nowIso()): boolean {
         "UPDATE runs SET status = 'running', started_at = ?, updated_at = ? WHERE id = ?",
       )
       .run(startedAt, nowIso(), id);
+    return true;
+  });
+}
+
+/**
+ * pending/running → paused (Спринт 36.7).
+ *
+ * Пауза ставится только между шагами: если шаг уже выполняется, вызывающий
+ * код должен дождаться его завершения. `finished_at` не заполняется — запуск
+ * не завершён, а приостановлен.
+ */
+export function pauseRunRecord(id: string, pausedAt = nowIso()): boolean {
+  return withTransaction(() => {
+    const run = getRun(id);
+    if (!run) return false;
+    assertTransition("run", run.status, "paused", RUN_TRANSITIONS[run.status]);
+    getDb()
+      .prepare("UPDATE runs SET status = 'paused', updated_at = ? WHERE id = ?")
+      .run(pausedAt, id);
     return true;
   });
 }

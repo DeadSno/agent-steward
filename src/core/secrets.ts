@@ -465,8 +465,9 @@ export function redactSecretsInText(text: unknown): string {
   }
 
   result = result.replace(
-    /\b([A-Za-z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|APIKEY|CREDENTIAL|AUTH)[A-Za-z0-9_]*)\b(\s*[=:]\s*)(["']?)([^\s"',;]+)\3/gi,
-    (_match: string, key: string, sep: string, quote: string) => `${key}${sep}${quote}***${quote}`,
+    /(["']?)\b([A-Za-z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|APIKEY|CREDENTIAL|AUTH)[A-Za-z0-9_]*)\b\1(\s*[=:]\s*)(["']?)([^\s"',;]+)\4/gi,
+    (_match: string, openQuote: string, key: string, sep: string, quote: string) =>
+      `${openQuote}${key}${openQuote}${sep}${quote}***${quote}`,
   );
 
   // Восстанавливаем защищённые ссылки.

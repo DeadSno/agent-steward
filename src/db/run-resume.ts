@@ -13,6 +13,12 @@ import {
   runStepStatefully,
   runStepStatefullyAsync,
 } from "./run-journal.js";
+import {
+  consumeInjections,
+  consumeOrphanInjections,
+  pendingInjectionsForStep,
+  type StepContext,
+} from "./run-context.js";
 
 /**
  * Resume с середины (Sprint 36.2).
@@ -23,8 +29,8 @@ import {
  * Уже успешные шаги повторно не запускаются, а `attempt` упавших растёт.
  */
 
-/** Обработчик тела шага. Получает актуальную запись шага. */
-export type StepHandler = (step: RunStepRecord) => unknown;
+/** Обработчик тела шага. Получает актуальную запись шага и контекст паузы. */
+export type StepHandler = (step: RunStepRecord, context: StepContext) => unknown;
 
 /** Опции возобновления. */
 export interface ResumeOptions {
@@ -48,6 +54,8 @@ export interface ResumeResult {
   executed: string[];
   /** Шаги, пропущенные как уже завершённые. */
   skipped: string[];
+  /** Идентификаторы вставок контекста, переданных шагам в этот раз. */
+  injected: string[];
   /** Первый упавший шаг, если цепочка остановилась. */
   failedStep: string | null;
   /** Текст ошибки упавшего шага. */
@@ -89,7 +97,9 @@ function prepareResume(runId: string, options: ResumeOptions): ResumePlan {
       }
     }
     // Упавший запуск открываем заново: шаги можно перезапускать, attempt не сбрасывается.
-    if (requireRun(runId).status === "failed") reopenRun(runId);
+    // Паузу снимаем тем же переходом paused → running (36.7).
+    const current = requireRun(runId);
+    if (current.status === "failed" || current.status === "paused") reopenRun(runId);
   }
 
   return { steps, startIndex };
@@ -103,7 +113,7 @@ function prepareResume(runId: string, options: ResumeOptions): ResumePlan {
 export function resumeRunSync(runId: string, options: ResumeOptions): ResumeResult {
   const { steps, startIndex } = prepareResume(runId, options);
   if (startIndex === -1) {
-    return finalize(runId, null, null, [], steps.map((step) => step.stepName));
+    return finalize(runId, null, null, [], steps.map((step) => step.stepName), []);
   }
 
   const resumedFrom = steps[startIndex].stepName;
@@ -112,6 +122,7 @@ export function resumeRunSync(runId: string, options: ResumeOptions): ResumeResu
     .slice(0, startIndex)
     .filter((step) => isStepDone(step.status))
     .map((step) => step.stepName);
+  const injected: string[] = [];
   let resumedFromAttempt: number | null = null;
 
   for (let index = startIndex; index < steps.length; index += 1) {
@@ -122,18 +133,27 @@ export function resumeRunSync(runId: string, options: ResumeOptions): ResumeResu
     }
 
     executed.push(step.stepName);
+    const context = pendingInjectionsForStep(runId, step.stepName);
     try {
       const execution = runStepStatefully(runId, step.stepName, () =>
-        options.handlers[step.stepName](step),
+        options.handlers[step.stepName](step, { injections: context }),
       );
       if (resumedFromAttempt === null) resumedFromAttempt = execution.attempt;
+      if (context.length > 0) {
+        consumeInjections(
+          context.map((injection) => injection.id),
+          step.stepName,
+          execution.attempt,
+        );
+        injected.push(...context.map((injection) => injection.id));
+      }
     } catch {
       if (options.stopOnError === false) continue;
-      return finalize(runId, resumedFrom, resumedFromAttempt, executed, skipped);
+      return finalize(runId, resumedFrom, resumedFromAttempt, executed, skipped, injected);
     }
   }
 
-  return finalize(runId, resumedFrom, resumedFromAttempt, executed, skipped);
+  return finalize(runId, resumedFrom, resumedFromAttempt, executed, skipped, injected);
 }
 
 /** Асинхронный вариант `resumeRunSync` для шагов с I/O. */
@@ -143,7 +163,7 @@ export async function resumeRun(
 ): Promise<ResumeResult> {
   const { steps, startIndex } = prepareResume(runId, options);
   if (startIndex === -1) {
-    return finalize(runId, null, null, [], steps.map((step) => step.stepName));
+    return finalize(runId, null, null, [], steps.map((step) => step.stepName), []);
   }
 
   const resumedFrom = steps[startIndex].stepName;
@@ -152,6 +172,7 @@ export async function resumeRun(
     .slice(0, startIndex)
     .filter((step) => isStepDone(step.status))
     .map((step) => step.stepName);
+  const injected: string[] = [];
   let resumedFromAttempt: number | null = null;
 
   for (let index = startIndex; index < steps.length; index += 1) {
@@ -162,18 +183,27 @@ export async function resumeRun(
     }
 
     executed.push(step.stepName);
+    const context = pendingInjectionsForStep(runId, step.stepName);
     try {
       const execution = await runStepStatefullyAsync(runId, step.stepName, () =>
-        options.handlers[step.stepName](step),
+        options.handlers[step.stepName](step, { injections: context }),
       );
       if (resumedFromAttempt === null) resumedFromAttempt = execution.attempt;
+      if (context.length > 0) {
+        consumeInjections(
+          context.map((injection) => injection.id),
+          step.stepName,
+          execution.attempt,
+        );
+        injected.push(...context.map((injection) => injection.id));
+      }
     } catch {
       if (options.stopOnError === false) continue;
-      return finalize(runId, resumedFrom, resumedFromAttempt, executed, skipped);
+      return finalize(runId, resumedFrom, resumedFromAttempt, executed, skipped, injected);
     }
   }
 
-  return finalize(runId, resumedFrom, resumedFromAttempt, executed, skipped);
+  return finalize(runId, resumedFrom, resumedFromAttempt, executed, skipped, injected);
 }
 
 /** Закрывает прогон по фактическому состоянию шагов и собирает результат. */
@@ -183,7 +213,11 @@ function finalize(
   resumedFromAttempt: number | null,
   executed: string[],
   skipped: string[],
+  injected: string[],
 ): ResumeResult {
+  // Вставки, адресованные уже завершённым шагам, не должны висеть в истории.
+  consumeOrphanInjections(runId);
+
   let steps = listRunSteps(runId);
   const failed = steps.find((step) => step.status === "failed") ?? null;
   const unfinished = steps.some(
@@ -196,7 +230,8 @@ function finalize(
       startRun(runId);
       run = requireRun(runId);
     }
-    if (run.status === "running") {
+    // Пауза после последнего шага: продолжать нечего, запуск успешен.
+    if (run.status === "running" || run.status === "paused") {
       finishRun(runId, "passed");
       run = requireRun(runId);
     }
@@ -214,6 +249,7 @@ function finalize(
     resumedFromAttempt,
     executed,
     skipped,
+    injected,
     failedStep: failed?.stepName ?? null,
     error: failed?.error ?? null,
   };

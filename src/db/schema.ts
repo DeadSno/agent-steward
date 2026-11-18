@@ -187,6 +187,28 @@ CREATE INDEX IF NOT EXISTS idx_run_dlq_status ON run_dlq(status, created_at DESC
 CREATE UNIQUE INDEX IF NOT EXISTS idx_run_dlq_open_unique
   ON run_dlq(run_id, step_name) WHERE status = 'open';
 
+-- Спринт 36.7 (пауза с инъекцией контекста): комментарий, файл или
+-- структурированный артефакт, оставленный на паузе. Запись адресована
+-- конкретному шагу и передаётся ему при resume ровно один раз.
+CREATE TABLE IF NOT EXISTS run_injections (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+  step_name TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  content TEXT NOT NULL,
+  author TEXT NOT NULL,
+  metadata_json TEXT,
+  created_at TEXT NOT NULL,
+  consumed_at TEXT,
+  consumed_by_step TEXT,
+  consumed_attempt INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_run_injections_run
+  ON run_injections(run_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_run_injections_pending
+  ON run_injections(run_id, step_name) WHERE consumed_at IS NULL;
+
 -- Спринт 36.5.b (Capability Map): исходы гейта по типам задач.
 -- Слой 2 роутера читает success_rate и avg_* и выбирает local/cloud/review
 -- без вызова модели. last_10_runs — JSON-массив 1 (гейт пройден) / 0 (провал).
@@ -219,7 +241,7 @@ interface SchemaDb {
  * миграций. Увеличивайте при добавлении новой ступени в {@link MIGRATIONS}
  * и добавляйте соответствующую запись в массив.
  */
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 
 /** Возвращает сохранённую версию схемы (0 у legacy-БД без user_version). */
 export function getSchemaVersion(db: SchemaDb): number {
@@ -410,6 +432,32 @@ const MIGRATIONS: { to: number; migrate: (db: SchemaDb) => void }[] = [
           updated_at TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_capability_success ON capability_map(success_rate DESC);
+      `);
+    },
+  },
+  {
+    // Ступень 7 — Спринт 36.7: контекст паузы. Таблица только добавляется,
+    // поэтому ступень идемпотентна и безопасна для старых БД.
+    to: 7,
+    migrate(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS run_injections (
+          id TEXT PRIMARY KEY,
+          run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+          step_name TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          content TEXT NOT NULL,
+          author TEXT NOT NULL,
+          metadata_json TEXT,
+          created_at TEXT NOT NULL,
+          consumed_at TEXT,
+          consumed_by_step TEXT,
+          consumed_attempt INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_run_injections_run
+          ON run_injections(run_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_run_injections_pending
+          ON run_injections(run_id, step_name) WHERE consumed_at IS NULL;
       `);
     },
   },

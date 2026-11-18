@@ -528,6 +528,43 @@ error and status-aware actions; retry and discard ask for confirmation and
 refresh the list through the same facade. `test-dlq-gui.mjs` checks the RPC/GUI
 wiring, locale parity and the facade behaviour on a temporary SQLite database.
 
+### Pause with context injection (Sprint 36.7)
+
+The durable run model gains a new table `run_injections` (`SCHEMA_VERSION = 7`, migration step 7)
+with columns `id`, `run_id` (cascade delete from `runs`), `step_name`, `kind` (`comment` /
+`file` / `artifact`), `content`, `author`, `metadata_json`, `created_at`, `consumed_at`,
+`consumed_by_step`, `consumed_attempt`, plus indexes `idx_run_injections_run(run_id, created_at)`
+and a partial index `idx_run_injections_pending(run_id, step_name) WHERE consumed_at IS NULL`.
+
+A run can be paused between steps: `RunStatus` gains `paused` with transitions
+`pending → running/paused/cancelled`, `running → paused/passed/failed/cancelled`,
+`paused → running/passed/cancelled`. `pauseRunRecord(id)` sets `paused` without filling
+`finished_at`. `pauseRun(runId, input)` in `src/db/run-context.ts` requires an existing,
+non-terminal run with no step currently `running`, addresses the first unfinished step (or an
+explicit `stepName`), rejects completed/missing targets, and stores one injection per provided
+payload (`comment`, `file` with path/content/title, `artifact` with name/content). Secrets are
+masked on write: `redactSecretsInText` covers text/comment/file content, and a recursive
+`redactValue` with `SENSITIVE_KEY_RE` masks whole values of sensitive JSON keys
+(`*TOKEN*`, `*SECRET*`, `*PASSWORD*`, `*API_KEY*`, `*CREDENTIAL*`, `*AUTH*`, ...) to `***`.
+A single injection is capped at `MAX_INJECTION_CONTENT` (100 kB).
+
+`listRunInjections(runId, { pendingOnly })` returns history ordered by creation time, exposing
+author, masked content and consumption state. `pendingInjectionsForStep(runId, stepName)` returns
+the not-yet-consumed injections addressed to a step.
+
+`StepHandler` now receives `(step, context: StepContext)` where `StepContext.injections` holds
+the injections for that step. `resumeRunSync` / `resumeRun` pass them before executing each step,
+and after a successful step call `consumeInjections(ids, stepName, attempt)` to mark the
+injections consumed exactly once (retry keeps them for the next attempt). `finalize` calls
+`consumeOrphanInjections` so injections addressed to already-completed steps do not look pending
+in the history, and supports `paused → passed` when no steps remain. `ResumeResult` gains
+`injected: string[]`. `test-run-context.mjs` covers schema v7, pause-before-start / pause-between
+steps / explicit targeting, comment + file + artifact with secret masking and author visibility,
+single-consumption on resume, repeated resume without re-delivery, pause without context,
+validation errors (missing/completed/running target, terminal run, no unfinished steps, empty
+path, artifact without content, oversized content), async resume and cascade delete on run
+removal.
+
 ## Interfaces
 
 | Interface | Audience | Entry point |
