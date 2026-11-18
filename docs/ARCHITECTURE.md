@@ -161,7 +161,7 @@ last_10_runs`. Обучается на исходах гейта (CONCEPT §9 le
 токенов на само решение.
 
 Реализация (Спринт 36.5.b): `src/db/capability-repo.ts`, таблица `capability_map`
-(`SCHEMA_VERSION = 6`). `recordCapabilityOutcome` обновляет счётчики, считает
+(`SCHEMA_VERSION = 7`). `recordCapabilityOutcome` обновляет счётчики, считает
 `success_rate` и скользящие средние стоимости/времени, хранит `last_10_runs`
 (JSON, новые справа). `decideCapabilityRoute` решает по правилам:
 меньше `MIN_RUNS_FOR_DECISION = 3` исходов → `explore` (решает слой 3),
@@ -383,7 +383,7 @@ the whole plugin directory (database, logs, locks, wrappers, prompts) with
 
 Schema evolution is additive: `applySchema` runs `CREATE TABLE IF NOT EXISTS` on every
 connection and adds missing columns after `PRAGMA table_info`, so upgrading the plugin
-never requires a manual migration. `SCHEMA_VERSION` (currently `6`) is stored in
+never requires a manual migration. `SCHEMA_VERSION` (currently `7`) is stored in
 `PRAGMA user_version`; incremental steps live in `MIGRATIONS`.
 
 ### Durable run state (Sprint 36.1)
@@ -597,7 +597,7 @@ resume preparation, rejection of a repeated resume, end-to-end comment delivery 
 | --- | --- | --- |
 | Agent tools | AI agent | 26 tools registered via `ctx.tool.transform` |
 | Agent skill | AI agent | `skills/scheduled-job-best-practices` |
-| RPC | Sidebar GUI | `src/rpc.ts` contracts, 47 methods |
+| RPC | Sidebar GUI | `src/rpc.ts` contracts, 53 methods |
 | Sidebar GUI | Human | `gui-experimental.cjs` |
 | Web dashboard | Human | `startDashboardServer` (localhost, random/fixed port) |
 

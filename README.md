@@ -49,7 +49,7 @@ Want to see it without installing OpenCode? `node scripts/demo-dashboard.mjs` st
 | Multi-repo | workspaces with path validation, per-workspace runs, matrix over one parent task |
 | Observability | SQLite history (success / error / timeout / partial / running), metrics (duration, tokens, cost), JSONL run logs with `/api/logs`, Prometheus `/metrics`, OTLP export, per-task logs, local web dashboard with 14-day analytics, history retention and CSV/JSON export |
 | Operations | dry-run preview, export/import JSON, templates, multi-channel notifications (webhook, Telegram, native OS toasts), quiet hours, digest, encrypted secrets (`${secret:NAME}`), audit log, settings |
-| Interfaces | OpenCode GUI panel, web dashboard, 26 agent tools, built-in agent skill |
+| Interfaces | OpenCode GUI panel, web dashboard, 29 agent tools, built-in agent skill |
 
 ### Language
 
@@ -123,7 +123,7 @@ npm run build && npm run build:gui
 
 ## Agent tools
 
-The agent gets the full feature set — 26 tools covering scheduling, pipelines, operations, observability and administration:
+The agent gets the full feature set — 29 tools covering scheduling, pipelines, operations, observability and administration:
 
 | Tool | Arguments | What it does |
 |---|---|---|
@@ -239,7 +239,7 @@ Tasks are **interactive only** by default: Task Scheduler starts them only while
 npm install
 npm run build        # tsc
 npm run build:gui    # vite
-npm test             # 83 test suites, 600+ checks
+npm test             # 99 test suites, 600+ checks
 npm run test:en      # same suites with the English locale
 ```
 

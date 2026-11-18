@@ -1665,6 +1665,82 @@ const DryRunAllOutput = {
   required: ["success", "reports"],
 } as const;
 
+/* === Pipeline-as-code (спринт 32) === */
+
+const PipelineValidateInput = {
+  type: "object" as const,
+  properties: {
+    path: { type: "string" },
+    source: { type: "string" },
+    dryRun: { type: "boolean" },
+  },
+  additionalProperties: false,
+} as const;
+
+const PipelineIssue = {
+  type: "object" as const,
+  properties: {
+    path: { type: "string" },
+    message: { type: "string" },
+  },
+  required: ["path", "message"],
+} as const;
+
+const PipelineValidationOutput = {
+  type: "object" as const,
+  properties: {
+    ok: { type: "boolean" },
+    errors: { type: "array", items: PipelineIssue },
+    warnings: { type: "array", items: PipelineIssue },
+    spec: {},
+  },
+  required: ["ok", "errors", "warnings"],
+} as const;
+
+const PipelineApplyInput = {
+  type: "object" as const,
+  properties: {
+    path: { type: "string" },
+    source: { type: "string" },
+    dryRun: { type: "boolean" },
+  },
+  additionalProperties: false,
+} as const;
+
+const PipelineApplyOutput = {
+  type: "object" as const,
+  properties: {
+    created: { type: "number" },
+    updated: { type: "number" },
+    unchanged: { type: "number" },
+    stale: { type: "number" },
+    warnings: { type: "array", items: { type: "string" } },
+    errors: { type: "array", items: PipelineIssue },
+  },
+  required: ["created", "updated", "unchanged", "stale"],
+} as const;
+
+const PipelineExportInput = {
+  type: "object" as const,
+  properties: {
+    pipeline: { type: "string" },
+  },
+  required: ["pipeline"],
+  additionalProperties: false,
+} as const;
+
+const PipelineExportOutput = {
+  type: "object" as const,
+  properties: {
+    ok: { type: "boolean" },
+    spec: {},
+    error: { type: "string" },
+  },
+  required: ["ok"],
+} as const;
+
+/* === end Pipeline-as-code === */
+
 /** Детальный отчёт по одному клону матрицы. */
 const MatrixCloneResult = {
   type: "object" as const,
@@ -1882,6 +1958,9 @@ export const SchedulerRpc = Rpc.define({
     get_platform: { input: GetPlatformInput, output: GetPlatformOutput },
     dry_run: { input: DryRunInput, output: DryRunReportOutput },
     dry_run_all: { input: GetTasksInput, output: DryRunAllOutput },
+    pipeline_validate: { input: PipelineValidateInput, output: PipelineValidationOutput },
+    pipeline_apply: { input: PipelineApplyInput, output: PipelineApplyOutput },
+    pipeline_export: { input: PipelineExportInput, output: PipelineExportOutput },
     get_matrix_results: {
       input: GetMatrixResultsInput,
       output: GetMatrixResultsOutput,

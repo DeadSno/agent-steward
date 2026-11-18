@@ -16,7 +16,7 @@ const {
   PIPELINE_VERSION,
 } = await import("./dist/core/pipeline-spec.js");
 const { parsePipelineYaml, loadPipelineFile } = await import("./dist/core/pipeline-io.js");
-const { pipelineSpecToTasks } = await import("./dist/core/pipeline-map.js");
+const { pipelineSpecToTasks, tasksToPipelineSpec } = await import("./dist/core/pipeline-map.js");
 const { planPipelineApply, executePipelineApply } = await import("./dist/core/pipeline-apply.js");
 
 const results = [];
@@ -427,6 +427,57 @@ function hasError(result, pathFragment, textFragment) {
   check(
     "apply: execute вызывает update и считает",
     result.updated === 1 && calls.length === 1 && calls[0].startsWith("u:"),
+  );
+}
+
+// 45-48. Обратный маппинг tasks → PipelineSpec для CLI export (P2-33.T3).
+{
+  const original = pipeline([
+    step("lint"),
+    step("build", { needs: ["lint"], trigger: "dag", schedule: undefined }),
+    step("deploy", {
+      needs: ["build"],
+      trigger: "dag",
+      schedule: undefined,
+      matrix: { workspaces: ["api"], strategy: "parallel" },
+    }),
+  ]);
+  const { tasks } = pipelineSpecToTasks(original);
+  const exported = tasksToPipelineSpec(tasks, original.name);
+  const reparsed = validatePipelineSpec(exported.spec);
+  check(
+    "export: round-trip проходит валидатор",
+    reparsed.ok && exported.spec.steps.length === 3,
+  );
+  check(
+    "export: needs восстановлены",
+    exported.spec.steps[1].needs?.[0] === "lint" &&
+      exported.spec.steps[2].needs?.[0] === "build",
+  );
+  check(
+    "export: dag восстановлен по эвристике",
+    exported.spec.steps[1].trigger === "dag" &&
+      exported.spec.steps[2].trigger === "dag",
+  );
+  check(
+    "export: matrix.workspaces восстановлены",
+    exported.spec.steps[2].matrix?.workspaces[0] === "api",
+  );
+}
+
+{
+  const spec = pipeline([step("lint"), step("build", { needs: ["lint"], trigger: "dag" })]);
+  const { tasks } = pipelineSpecToTasks(spec);
+  const withForeign = tasks.map((task) =>
+    task.pipelineStepId === "build"
+      ? { ...task, dependsOn: [...(task.dependsOn ?? []), "external"] }
+      : task,
+  );
+  const exported = tasksToPipelineSpec(withForeign, spec.name);
+  check(
+    "export: внешняя зависимость → warning и опущена",
+    exported.warnings.some((warning) => warning.includes("external")) &&
+      exported.spec.steps[1].needs?.length === 1,
   );
 }
 

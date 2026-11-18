@@ -8,9 +8,13 @@
  */
 import type { MatrixConfig, TaskDefinition } from "../task-transfer.js";
 import {
+  PIPELINE_VERSION,
   pipelineStepTaskName,
   type PipelineMatrix,
   type PipelineSpec,
+  type PipelineStep,
+  type PipelineTrigger,
+  type PipelineWindowPolicy,
 } from "./pipeline-spec.js";
 
 export interface PipelineMapOptions {
@@ -139,4 +143,120 @@ function mapMatrix(
       ? { createAggregator: matrix.createAggregator }
       : {}),
   };
+}
+
+export interface PipelineExportResult {
+  spec: PipelineSpec;
+  warnings: string[];
+}
+
+/**
+ * Обратный маппинг: задачи одного pipeline из БД → `PipelineSpec` для export.
+ *
+ * Восстанавливает `needs` по `dependsOn`, `matrix.workspaces` по
+ * `matrix.workspaceIds`, trigger по `triggerType`. Шаг `dag` неотличим от
+ * ручного `file`-шага с зависимостями, поэтому восстанавливается эвристикой:
+ * `file`, без cron и watchPath, но с `dependsOn` → `dag`.
+ */
+export function tasksToPipelineSpec(
+  tasks: TaskDefinition[],
+  pipelineName: string,
+): PipelineExportResult {
+  const warnings: string[] = [];
+  const own = tasks.filter(
+    (task) =>
+      task.pipelineName?.toLowerCase() === pipelineName.toLowerCase() &&
+      Boolean(task.pipelineStepId),
+  );
+
+  const stepIdByTaskName = new Map<string, string>();
+  for (const task of own) {
+    const key = task.name.trim().toLowerCase();
+    if (key && !stepIdByTaskName.has(key)) {
+      stepIdByTaskName.set(key, task.pipelineStepId!);
+    }
+  }
+
+  const steps: PipelineStep[] = own.map((task) => {
+    const stepId = task.pipelineStepId!;
+    const trigger = inferTrigger(task);
+    const needs = task.dependsOn
+      ?.map((dep) => {
+        const id = stepIdByTaskName.get(dep.trim().toLowerCase());
+        if (!id) {
+          warnings.push(
+            `Шаг «${stepId}»: зависимость «${dep}» не входит в pipeline и опущена.`,
+          );
+        }
+        return id;
+      })
+      .filter((value): value is string => Boolean(value));
+
+    const defaultName = pipelineStepTaskName(pipelineName, stepId);
+    const step: PipelineStep = {
+      id: stepId,
+      ...(task.name.trim() !== defaultName ? { name: task.name } : {}),
+      prompt: task.prompt,
+      ...(needs?.length ? { needs } : {}),
+      ...(trigger === "cron" && task.schedule ? { schedule: task.schedule } : {}),
+      ...(trigger !== "cron" ? { trigger } : {}),
+      ...(trigger === "once" && task.runAt !== undefined ? { runAt: task.runAt } : {}),
+      ...(task.model !== undefined ? { model: task.model } : {}),
+      ...(task.priority !== undefined ? { priority: task.priority } : {}),
+      ...(task.timeoutSeconds !== undefined ? { timeoutSeconds: task.timeoutSeconds } : {}),
+      ...(task.workingDirectory !== undefined
+        ? { workingDirectory: task.workingDirectory }
+        : {}),
+      ...(task.workspaceId !== undefined ? { workspaceId: task.workspaceId } : {}),
+      ...(task.retryCount !== undefined ? { retryCount: task.retryCount } : {}),
+      ...(task.retryDelay !== undefined ? { retryDelay: task.retryDelay } : {}),
+      ...(task.qualityGate !== undefined ? { qualityGate: task.qualityGate } : {}),
+      ...(task.beforeScript !== undefined ? { beforeScript: task.beforeScript } : {}),
+      ...(task.afterScript !== undefined ? { afterScript: task.afterScript } : {}),
+      ...(task.allowedTools !== undefined ? { allowedTools: task.allowedTools } : {}),
+      ...(task.deniedTools !== undefined ? { deniedTools: task.deniedTools } : {}),
+      ...(task.matrix
+        ? {
+          matrix: {
+            workspaces: task.matrix.workspaceIds,
+            ...(task.matrix.strategy ? { strategy: task.matrix.strategy } : {}),
+            ...(task.matrix.failureMode ? { failureMode: task.matrix.failureMode } : {}),
+            ...(task.matrix.aggregation ? { aggregation: task.matrix.aggregation } : {}),
+            ...(task.matrix.concurrency !== undefined
+              ? { concurrency: task.matrix.concurrency }
+              : {}),
+            ...(task.matrix.createAggregator !== undefined
+              ? { createAggregator: task.matrix.createAggregator }
+              : {}),
+          },
+        }
+        : {}),
+      ...(task.timezone !== undefined ? { timezone: task.timezone } : {}),
+      ...(task.notBefore !== undefined ? { notBefore: task.notBefore } : {}),
+      ...(task.notAfter !== undefined ? { notAfter: task.notAfter } : {}),
+      ...(task.activeDays !== undefined ? { activeDays: task.activeDays } : {}),
+      ...(task.windowPolicy !== undefined
+        ? { windowPolicy: task.windowPolicy }
+        : {}),
+    };
+    return step;
+  });
+
+  return {
+    spec: { version: PIPELINE_VERSION, name: pipelineName, steps },
+    warnings,
+  };
+}
+
+function inferTrigger(task: TaskDefinition): PipelineTrigger {
+  const trigger = task.triggerType ?? "cron";
+  if (
+    trigger === "file" &&
+    !task.schedule &&
+    !task.watchPath &&
+    Boolean(task.dependsOn?.length)
+  ) {
+    return "dag";
+  }
+  return trigger;
 }

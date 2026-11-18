@@ -617,7 +617,8 @@ Twenty-six tools: `schedule_task`, `list_tasks`, `update_task`, `delete_task`,
 `manage_local_ai`, `manage_templates`, `manage_profiles`,
 `transfer_tasks`, `send_notification`, `get_dashboard_info`, `cleanup_history`,
 `manage_secrets`, `get_audit_log`,
-`emit_event`.
+`emit_event`,
+`pipeline_validate`, `pipeline_apply`, `pipeline_export`.
 
 A bundled skill, `scheduled-job-best-practices`, teaches the agent safe defaults:
 least privilege, Quality Gates, timeout, matrix concurrency, DAG rules and a

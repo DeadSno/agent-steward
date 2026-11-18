@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Pipeline-as-code (спецификация, парсер, валидатор, идемпотентный apply):** `src/core/pipeline-spec.ts` — типы `PipelineSpec`/`PipelineStep`/`PipelineDefaults`/`PipelineMatrix` и чистый валидатор `validatePipelineSpec` (version, имя ≤120, шаги 1..200, уникальные id, ссылки `needs`, циклы DFS, cron через `parseCron`/`normalizeCron`, `once`/`runAt`, matrix, `validateTaskName`, `validateModelId`, таймзоны, окна, `allowedTools`, лимит шагов), `pipelineStepTaskName`. `src/core/pipeline-io.ts` — `parsePipelineYaml`/`loadPipelineFile` (лимит 1 МБ, `maxAliasCount` только в `toJS`, не бросает). `src/core/pipeline-map.ts` — `pipelineSpecToTasks(spec)` → `TaskDefinition[]` (`needs`→`dependsOn`, `gate`→`qualityGate`, matrix→`workspaceIds`, dag-шаги как `triggerType: "file"` с пустым schedule), маркеры `pipelineName`/`pipelineStepId` в `definition_json`. `src/core/pipeline-apply.ts` — `planPipelineApply`/`executePipelineApply` со стабильной подписью 27 полей, матчинг по `pipelineName`+`pipelineStepId`, исчезнувшие шаги → `stale` (не удаляются). `test-pipeline.mjs` — 51 проверки (валидатор, YAML, маппинг, apply, round-trip export).
+
+### Known issues
+
+- **B1:** `recoverInterrupted()` (`src/db/history-repo.ts`) при старте плагина помечает `error` все строки `finished_at IS NULL` без проверки PID/владельца/возраста — убивает живые длительные запуски при рестарте плагина.
+- **B2:** Двойные ретраи на Windows — PS-обёртка ретраит сама (`$maxAttempts = 1 + RetryCount`) и recorder добавляет свои = `(1+N)²` вместо `1+N`.
+- **B3:** XSS через атрибуты дашборда — `esc()` не экранирует кавычки, результат вставляется в `title=`/`style=`/`data-*`.
+- **B16:** `release.yml` `workflow_dispatch` публикует в npm без проверки тега; `id-token: write` выдан всем job'ам.
+
 ## [0.0.4] - 2026-11-18
 
 ### Added

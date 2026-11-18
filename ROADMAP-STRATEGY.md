@@ -22,7 +22,7 @@ Scheduler, уведомления, аналитика — триггеры и о
 
 ---
 
-## Текущая точка (agent-steward 0.0.2, milestone Д7)
+## Текущая точка (agent-steward 0.0.4, milestone Д7 + Durable DAG)
 
 - Опубликован в npm, CI зелёный на Windows / macOS / Linux
 - `plugin id` не меняется: `opencode-windows-scheduler` — имена SQLite/логов и ID действий TUI без изменений; каталог данных — `agent-steward` (legacy мигрирует автоматически)
@@ -31,9 +31,10 @@ Scheduler, уведомления, аналитика — триггеры и о
 - Локальный триаж + shadow mode, `manage_local_ai`, блок настроек в GUI — есть
 - Одноразовые запуски, непрерывность сессий, профили, webhooks, Telegram и нативные toast, тихие часы, Prometheus и OTLP — есть
 - Зашифрованные секреты (`${secret:NAME}`) и журнал аудита — есть
+- Durable DAG (journal, resume, идемпотентность, DLQ, роутер 3 слоя, chaos-nightly, GUI) — выпущен (0.0.3–0.0.4)
 - Английский README и `docs/` — основные, русский синхронизирован в `docs/README.ru.md`
 
-**Чего ещё нет:** pipeline-as-code, Docker-runner, approvals, remote runners, capability-карта с LoRA-адаптерами, durable DAG.
+**Чего ещё нет:** pipeline-as-code, Docker-runner, approvals, remote runners, capability-карта с LoRA-адаптерами.
 
 ---
 
@@ -87,27 +88,27 @@ Enforced `allowedTools` / `deniedTools` вместо advisory, scoped-инъек
 
 Дедуп уведомлений (правила + эмбеддинги), саммари логов в 3 строки, GUI-wizard настройки триажа, счётчик «сэкономлено $» с пометкой «оценка», асинхронный триаж, persistent-аудит решений. Закрыто срезами 31.1–31.13.
 
-### 5. Pipeline-as-code (P2) — 0.0.5
+### 5. Pipeline-as-code (P2)
 
 `opencode.pipeline.yaml` в репозитории + CLI `opencode pipeline validate\|run\|export`. DAG, матрицы и Quality Gates описываются файлом, который можно ревьюить в PR.
 
-Это водораздел между «планировщиком» и «оркестратором» (CONCEPT §3: фреймворк-супервизор, а не просто таймер).
+Это водораздел между «планировщиком» и «оркестратором» (CONCEPT §3: фреймворк-супервизор, а не просто таймер). Версия присваивается по факту релиза.
 
-### 6. Worktree-изоляция и guard-условия (P2) — 0.0.6
+### 6. Worktree-изоляция и guard-условия (P2)
 
-Одноразовый `git worktree` на запуск, политика очистки, shell- и семантические guard-условия, статус `skipped`. 80% ценности безопасного fan-out без инфраструктуры Docker.
+Одноразовый `git worktree` на запуск, политика очистки, shell- и семантические guard-условия, статус `skipped`. 80% ценности безопасного fan-out без инфраструктуры Docker. Версия присваивается по факту релиза.
 
-### 7. Экономика v2 (P2) — 0.0.7
+### 7. Экономика v2 (P2)
 
-Бюджеты на день/неделю с авто-паузой и алертом, per-task token budgets, token efficiency score, прогноз, Grafana JSON, local vs cloud.
+Бюджеты на день/неделю с авто-паузой и алертом, per-task token budgets, token efficiency score, прогноз, Grafana JSON, local vs cloud. Версия присваивается по факту релиза.
 
 ---
 
 ## Горизонт 3–6 месяцев: масштаб и надёжность
 
-### 8. Docker runner (P3) — 0.0.8
+### 8. Docker runner (P3)
 
-Локальный процесс, Docker, SSH-хост. Задача описывает *что* делать, runner — *где*. Изоляцию не изобретаем: Docker / Landstrip. Opt-in, по умолчанию выключен.
+Локальный процесс, Docker, SSH-хост. Задача описывает *что* делать, runner — *где*. Изоляцию не изобретаем: Docker / Landstrip. Opt-in, по умолчанию выключен. Версия присваивается по факту релиза.
 
 ### 9. Durable DAG (P1 для 0.1.0) — 0.0.3–0.0.4 ✅
 
@@ -154,9 +155,9 @@ Enforced `allowedTools` / `deniedTools` вместо advisory, scoped-инъек
 
 ## Метрики успеха
 
-| Метрика | Сейчас (0.0.2) | Через 2 мес | Через 6 мес |
+| Метрика | Сейчас (0.0.4) | Через 2 мес | Через 6 мес |
 |---------|---------------|-------------|-------------|
-| npm latest | 0.0.2 | регулярные патчи | 0.1.x |
+| npm latest | 0.0.4 | регулярные патчи | 0.1.x |
 | CI на 3 ОС | ✅ | ✅ | ✅ |
 | Покрытие RPC инструментами агента | 100% | 100% | 100% |
 | Telegram / toast | ✅ | ✅ | ✅ |

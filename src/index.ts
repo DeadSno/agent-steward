@@ -57,6 +57,22 @@ import {
 import { normalizeWatchPath, validateWatchGlobs } from "./core/watch-paths.js";
 import { createShutdownGate } from "./core/shutdown.js";
 import { SchedulerRpc } from "./rpc.js";
+import {
+  validatePipelineSpec,
+  type PipelineValidationResult,
+} from "./core/pipeline-spec.js";
+import {
+  loadPipelineFile,
+  parsePipelineYaml,
+  type PipelineParseResult,
+} from "./core/pipeline-io.js";
+import {
+  planPipelineApply,
+  executePipelineApply,
+  type PipelineApplyPlan,
+} from "./core/pipeline-apply.js";
+import { pipelineSpecToTasks, tasksToPipelineSpec } from "./core/pipeline-map.js";
+import { stringify as yamlStringify } from "yaml";
 import { latestHistoryByTask, loadHistory, loadMetrics } from "./history.js";
 import { defaultNotifications, loadSettings, saveSettings } from "./settings.js";
 import { resolveLocale, setLocale, t, type Locale, type LocaleMode } from "./i18n.js";
@@ -765,6 +781,33 @@ const dryRunSchema = z.object({
     ),
 });
 
+/** pipeline_validate — проверить опencode.pipeline.yaml (путь или исходник). */
+export const pipelineValidateSchema = z.object({
+  path: z.string().optional().describe("Путь к файлу opencode.pipeline.yaml."),
+  source: z.string().optional().describe("Исходное содержимое YAML."),
+  dryRun: z
+    .boolean()
+    .optional()
+    .default(true)
+    .describe("Если true — только валидация без применения (по умолчанию true)."),
+});
+
+/** pipeline_apply — применить opencode.pipeline.yaml к текущему набору задач. */
+export const pipelineApplySchema = z.object({
+  path: z.string().optional().describe("Путь к файлу opencode.pipeline.yaml."),
+  source: z.string().optional().describe("Исходное содержимое YAML."),
+  dryRun: z
+    .boolean()
+    .optional()
+    .default(false)
+    .describe("Если true — прогон diff'а без применения изменений (по умолчанию false)."),
+});
+
+/** pipeline_export — выгрузить задачи конвейера как opencode.pipeline.yaml. */
+export const pipelineExportSchema = z.object({
+  pipeline: z.string().describe("Имя конвейера (pipelineName)."),
+});
+
 const manageWorkspacesSchema = z.object({
   action: z
     .enum(["list", "add", "update", "delete"])
@@ -1105,6 +1148,9 @@ type CleanupHistoryArgs = z.infer<typeof cleanupHistorySchema>;
 type EmitEventArgs = z.infer<typeof emitEventSchema>;
 type SecretsArgs = z.infer<typeof manageSecretsSchema>;
 type AuditLogArgs = z.infer<typeof getAuditLogSchema>;
+type PipelineValidateArgs = z.infer<typeof pipelineValidateSchema>;
+type PipelineApplyArgs = z.infer<typeof pipelineApplySchema>;
+type PipelineExportArgs = z.infer<typeof pipelineExportSchema>;
 
 /**
  * Директория проекта, в которой запущен OpenCode. Используется как рабочая
@@ -2445,6 +2491,235 @@ const dryRunExecute = wrapExecute<DryRunArgs>(async (args) => {
   };
 });
 
+/** pipeline_validate — проверить opencode.pipeline.yaml (путь или исходник). */
+const pipelineValidateExecute = wrapExecute<PipelineValidateArgs>(async (args) => {
+  const path = args.path ?? args.source ? undefined : undefined;
+  if (args.path === undefined && args.source === undefined) {
+    return {
+      content: JSON.stringify({
+        success: false,
+        pipeline: null,
+        errors: ["Укажите path к файлу или source с содержимым YAML"],
+        warnings: [],
+      }),
+    };
+  }
+  const parsed =
+    args.source !== undefined
+      ? validatePipelineSpecFromSource(args.source)
+      : await loadPipelineFile(args.path!);
+  if (!parsed.ok) {
+    return {
+      content: JSON.stringify({
+        success: false,
+        pipeline: null,
+        errors: parsed.errors,
+        warnings: parsed.warnings,
+      }),
+    };
+  }
+  const spec = parsed.spec!;
+  return {
+    content: JSON.stringify({
+      success: true,
+      pipeline: spec.name,
+      steps: spec.steps.length,
+      errors: [],
+      warnings: parsed.warnings,
+    }),
+  };
+});
+
+function validatePipelineSpecFromSource(source: string): PipelineParseResult {
+  const parsed = parsePipelineYaml(source);
+  return parsed;
+}
+
+/** pipeline_apply — применить opencode.pipeline.yaml к текущему набору задач. */
+const pipelineApplyExecute = wrapExecute<PipelineApplyArgs>(async (args) => {
+  const dryRun = args.dryRun !== false;
+  const parsed =
+    args.source !== undefined
+      ? validatePipelineSpecFromSource(args.source)
+      : await loadPipelineFile(args.path!);
+  if (!parsed.ok) {
+    return {
+      content: JSON.stringify({
+        success: false,
+        pipeline: null,
+        errors: parsed.errors,
+        warnings: parsed.warnings,
+      }),
+    };
+  }
+
+  const spec = parsed.spec!;
+  const existing = await listTaskDefinitions();
+  const plan = planPipelineApply(spec, existing, {
+    resolveWorkspaceId: (nameOrId: string) => {
+      const ws = getWorkspace(nameOrId);
+      return ws ? ws.id : undefined;
+    },
+  });
+
+  let created = 0;
+  let updated = 0;
+  const errors: string[] = [];
+
+  if (!dryRun) {
+    for (const task of plan.creates) {
+      try {
+        await schedulerCreateTask(
+          task.name,
+          task.schedule,
+          task.prompt,
+          task.timeoutSeconds,
+          task.workingDirectory ?? task.workdir ?? undefined,
+          task.retryCount,
+          task.retryDelay,
+          task.qualityGate,
+          task.nextTaskOnSuccess,
+          task.nextTaskOnError,
+          task.triggerType ?? "cron",
+          task.watchPath,
+          task.dependsOn,
+          task.model,
+          task.priority,
+          task.beforeScript,
+          task.afterScript,
+          task.mcpEvent,
+          task.workspaceId,
+          task.allowedTools,
+          task.deniedTools,
+          task.matrix,
+          task.matrixParentId,
+          "create",
+          task.timezone,
+          task.notBefore,
+          task.notAfter,
+          task.pausedUntil,
+          task.runAt,
+          task.session,
+          task.sessionId,
+          task.sessionMaxRuns,
+          {
+            activeDays: task.activeDays,
+            windowPolicy: task.windowPolicy,
+            watchGlobs: task.watchGlobs ?? [],
+            watchIgnore: task.watchIgnore ?? [],
+            gitBranch: task.gitBranch,
+            gitPaths: task.gitPaths,
+            gitIgnore: task.gitIgnore,
+            gitPollSeconds: task.gitPollSeconds,
+          },
+          task.runWhenLoggedOff ?? false,
+          task.paused ?? false,
+          task.legacyShell ?? false,
+        );
+        await saveTaskDefinition(task);
+        created++;
+      } catch (err: any) {
+        errors.push(`create ${task.name}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    for (const item of plan.updates) {
+      try {
+        await schedulerCreateTask(
+          item.task.name,
+          item.task.schedule,
+          item.task.prompt,
+          item.task.timeoutSeconds,
+          item.task.workingDirectory ?? item.task.workdir ?? undefined,
+          item.task.retryCount,
+          item.task.retryDelay,
+          item.task.qualityGate,
+          item.task.nextTaskOnSuccess,
+          item.task.nextTaskOnError,
+          item.task.triggerType ?? "cron",
+          item.task.watchPath,
+          item.task.dependsOn,
+          item.task.model,
+          item.task.priority,
+          item.task.beforeScript,
+          item.task.afterScript,
+          item.task.mcpEvent,
+          item.task.workspaceId,
+          item.task.allowedTools,
+          item.task.deniedTools,
+          item.task.matrix,
+          item.task.matrixParentId,
+          "sync",
+          item.task.timezone,
+          item.task.notBefore,
+          item.task.notAfter,
+          item.task.pausedUntil,
+          item.task.runAt,
+          item.task.session,
+          item.task.sessionId,
+          item.task.sessionMaxRuns,
+          {
+            activeDays: item.task.activeDays,
+            windowPolicy: item.task.windowPolicy,
+            watchGlobs: item.task.watchGlobs ?? [],
+            watchIgnore: item.task.watchIgnore ?? [],
+            gitBranch: item.task.gitBranch,
+            gitPaths: item.task.gitPaths,
+            gitIgnore: item.task.gitIgnore,
+            gitPollSeconds: item.task.gitPollSeconds,
+          },
+          item.task.runWhenLoggedOff ?? false,
+          item.task.paused ?? false,
+          item.task.legacyShell ?? false,
+        );
+        await saveTaskDefinition(item.task);
+        updated++;
+      } catch (err: any) {
+        errors.push(`update ${item.task.name}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    refreshTriggers();
+  }
+
+  return {
+    content: JSON.stringify({
+      success: errors.length === 0,
+      pipeline: spec.name,
+      dryRun,
+      created,
+      updated,
+      unchanged: plan.unchanged.length,
+      stale: plan.stale.length,
+      warnings: [...plan.warnings, ...errors],
+      errors,
+    }),
+  };
+});
+
+/** pipeline_export — выгрузить задачи конвейера как opencode.pipeline.yaml. */
+const pipelineExportExecute = wrapExecute<PipelineExportArgs>(async (args) => {
+  const allTasks = await listTaskDefinitions();
+  const result = tasksToPipelineSpec(allTasks, args.pipeline);
+  if (!result.spec) {
+    return {
+      content: JSON.stringify({
+        success: false,
+        error: `Конвейер "${args.pipeline}" не найден (не найдены задачи с pipelineName=${args.pipeline} и pipelineStepId).`,
+        warnings: result.warnings,
+      }),
+    };
+  }
+  const yamlText = yamlStringify(result.spec, { lineWidth: 0 });
+  return {
+    content: JSON.stringify({
+      success: true,
+      pipeline: args.pipeline,
+      steps: result.spec.steps.length,
+      yaml: yamlText,
+      warnings: result.warnings,
+    }),
+  };
+});
+
 /**
  * Перегенерирует env-файлы всех задач, привязанных к workspace (Спринт 21).
  * Обёртки читают env-файл при запуске, поэтому перезапуск задач не нужен.
@@ -3702,6 +3977,9 @@ export interface ToolHandlers {
   get_history: typeof getHistoryExecute;
   get_task_logs: typeof getTaskLogsExecute;
   dry_run: typeof dryRunExecute;
+  pipeline_validate: typeof pipelineValidateExecute;
+  pipeline_apply: typeof pipelineApplyExecute;
+  pipeline_export: typeof pipelineExportExecute;
   manage_workspaces: typeof manageWorkspacesExecute;
   matrix_control: typeof matrixControlExecute;
   get_metrics: typeof getMetricsExecute;
@@ -3739,6 +4017,9 @@ export function createToolHandlers(_runtime: SchedulerRuntime): ToolHandlers {
     get_history: getHistoryExecute,
     get_task_logs: getTaskLogsExecute,
     dry_run: dryRunExecute,
+    pipeline_validate: pipelineValidateExecute,
+    pipeline_apply: pipelineApplyExecute,
+    pipeline_export: pipelineExportExecute,
     manage_workspaces: manageWorkspacesExecute,
     matrix_control: matrixControlExecute,
     get_metrics: getMetricsExecute,
@@ -4077,6 +4358,32 @@ export function createToolSpecs(runtime: SchedulerRuntime): ToolSpec[] {
         "Returns the audit journal of task and settings mutations: who changed what, when and through which interface (mcp, gui, http). " +
         "Filter by action, target, actor, time range and limit. Secret values are redacted.",
       execute: handlers.get_audit_log as any,
+    },
+    {
+      name: "pipeline_validate",
+      input: pipelineValidateSchema,
+      description:
+        "Проверяет opencode.pipeline.yaml (путь к файлу или исходник): валидирует version, шаги, зависимости, циклы, cron-расписание, matrix, модель, окна запуска и другие инварианты конвейера. Не применяет изменения.",
+      execute: handlers.pipeline_validate as any,
+    },
+    {
+      name: "pipeline_apply",
+      input: pipelineApplySchema,
+      description:
+        "Применяет opencode.pipeline.yaml к текущему набору задач: создаёт новые, обновляет изменённые, пропускает без изменений (идемпотентно). Задачи без маркера pipelineName не трогаются. В режиме dryRun только отчитывает diff.",
+      audit: (args: PipelineApplyArgs) => ({
+        action: "pipeline.apply",
+        targetType: "pipeline",
+        target: args.source ?? args.path ?? "",
+      }),
+      execute: handlers.pipeline_apply as any,
+    },
+    {
+      name: "pipeline_export",
+      input: pipelineExportSchema,
+      description:
+        "Выгружает задачи указанного конвейера (pipelineName) как opencode.pipeline.yaml: шаги, зависимости, matrix, кастомные настройки шага.",
+      execute: handlers.pipeline_export as any,
     },
     {
       name: "emit_event",
@@ -4675,6 +4982,29 @@ const v2Plugin = Plugin.define({
           }
         }
         return { success: allSuccess, reports };
+      },
+      pipeline_validate: async (input: unknown) => {
+        const { path, source, dryRun } = input as {
+          path?: string;
+          source?: string;
+          dryRun?: boolean;
+        };
+        const result = await pipelineValidateExecute({ path, source, dryRun } as PipelineValidateArgs, {} as Tool.Context);
+        return JSON.parse(result.content as string);
+      },
+      pipeline_apply: async (input: unknown) => {
+        const { path, source, dryRun } = input as {
+          path?: string;
+          source?: string;
+          dryRun?: boolean;
+        };
+        const result = await pipelineApplyExecute({ path, source, dryRun } as PipelineApplyArgs, {} as Tool.Context);
+        return JSON.parse(result.content as string);
+      },
+      pipeline_export: async (input: unknown) => {
+        const { pipeline } = input as { pipeline?: string };
+        const result = await pipelineExportExecute({ pipeline } as PipelineExportArgs, {} as Tool.Context);
+        return JSON.parse(result.content as string);
       },
       get_matrix_results: async (input: unknown) => {
         const { parentId } = input as { parentId?: string; name?: string };
@@ -5472,7 +5802,7 @@ export interface TriggerExtras {
   gitPollSeconds?: number;
 }
 
-async function schedulerCreateTask(
+export async function schedulerCreateTask(
   name: string,
   schedule: string,
   prompt: string,
