@@ -179,10 +179,13 @@ export class LinuxScheduler extends PosixSchedulerBase {
     );
   }
 
-  /** Строка команды one-shot для stdin `at`. */
+  /** Строка команды one-shot для stdin `at`.
+   *  P1-7.T1.3: без `-c` bash трактует аргумент как ИМЯ ФАЙЛА скрипта
+   *  (exit 127 «No such file or directory»), поэтому at «выполнял» задание,
+   *  но команда на самом деле не запускалась. */
   private atCommand(entry: RegistryEntry): string {
     const log = entry.logFile ? ` >> ${shellQuote(entry.logFile)} 2>&1` : "";
-    return `/bin/bash ${shellQuote(entry.command)}${log}`;
+    return `/bin/bash -c ${shellQuote(entry.command)}${log}`;
   }
 
   /**
