@@ -101,7 +101,14 @@ export class LinuxScheduler extends PosixSchedulerBase {
     }
   }
 
-  /** Убирает управляемый блок плагина из текста crontab. */
+  /**
+   * Убирает управляемый блок плагина из текста crontab.
+   *
+   * B9: удаляются только строки между парными маркерами. Незакрытый блок
+   * (маркер начала без конца) — fail-closed: бросаем ошибку, чтобы вызывающий
+   * не записал crontab и пользовательские задания после маркера не пропали.
+   * Строки вне маркеров сохраняются байт-в-байт, включая пустые.
+   */
   private stripBlock(content: string): string {
     // Совместимость: до появления профилей блок назывался без суффикса.
     // Он принадлежит профилю default; другие профили его не трогают.
@@ -119,18 +126,36 @@ export class LinuxScheduler extends PosixSchedulerBase {
     const lines = content.split(/\r?\n/);
     const result: string[] = [];
     let inside = false;
-    for (const line of lines) {
-      if (isBegin(line.trim())) {
+    let openAt = 0;
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = lines[index];
+      const trimmed = line.trim();
+      if (isBegin(trimmed)) {
+        if (inside) {
+          throw new Error(
+            `crontab: вложенный маркер начала блока на строке ${index + 1} ` +
+              `(предыдущий блок открыт на строке ${openAt}). Файл не изменён.`,
+          );
+        }
         inside = true;
+        openAt = index + 1;
         continue;
       }
-      if (isEnd(line.trim())) {
+      if (inside && isEnd(trimmed)) {
         inside = false;
         continue;
       }
+      // Строки внутри блока удаляются; всё остальное (включая «сиротский»
+      // маркер конца) остаётся без изменений.
       if (!inside) result.push(line);
     }
-    return result.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd();
+    if (inside) {
+      throw new Error(
+        `crontab: незакрытый блок плагина с строки ${openAt} — ` +
+          "маркер конца не найден. Файл не изменён.",
+      );
+    }
+    return result.join("\n");
   }
 
   /** Записывает crontab через stdin: `crontab -`. */
@@ -165,7 +190,10 @@ export class LinuxScheduler extends PosixSchedulerBase {
       async () => {
         const entries = await this.registry.load();
         const current = await this.readCrontab();
-        const base = this.stripBlock(current);
+        // B9: stripBlock сохраняет содержимое вне маркеров. Отрезаем только
+        // хвостовые переводы строк, чтобы повторные rebuild не копили пустые
+        // строки; одна финальная добавляется ниже.
+        const base = this.stripBlock(current).replace(/\n+$/, "");
         const block = this.renderBlock(entries);
 
         // Пустой блок (нет задач) не пишем, чтобы не оставлять мусор в crontab.
@@ -173,7 +201,7 @@ export class LinuxScheduler extends PosixSchedulerBase {
           .split("\n")
           .some((line) => line.trim().startsWith("# task:"));
         const next = [base, hasTasks ? block : ""].filter(Boolean).join("\n");
-        await this.writeCrontab(next);
+        await this.writeCrontab(next ? `${next}\n` : "");
       },
       { timeoutMs: 15000, staleMs: 60000 },
     );

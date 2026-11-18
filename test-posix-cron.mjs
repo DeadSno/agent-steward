@@ -59,5 +59,74 @@ const local = cronLine("0 9 * * *", { timezone: systemTimeZone() });
 check("crontab: системная таймзона остаётся native", local.startsWith("0 9 * * * "), local);
 check("crontab: файловый триггер не даёт строки", cronLine("", { triggerType: "file" }) === "");
 
+// --- B9: stripBlock не режет чужие cron-строки ---
+const strip = Object.create(LinuxScheduler.prototype);
+strip.blockBegin = "# >>> opencode-scheduler:test >>>";
+strip.blockEnd = "# <<< opencode-scheduler:test <<<";
+strip.legacyBlockBegin = "# >>> opencode-scheduler:test-legacy >>>";
+strip.legacyBlockEnd = "# <<< opencode-scheduler:test-legacy <<<";
+strip.ownsLegacyBlock = true;
+
+{
+  const userBefore = "0 5 * * * /usr/local/bin/backup";
+  const userAfter = "*/10 * * * * /opt/monitor/ping.sh";
+  const content = [
+    userBefore,
+    "",
+    strip.blockBegin,
+    "# task: demo",
+    "*/5 * * * * /bin/bash /tmp/run-demo.sh",
+    strip.blockEnd,
+    "",
+    "",
+    "",
+    userAfter,
+  ].join("\n");
+
+  const stripped = strip.stripBlock(content);
+  check("B9: чужая строка до блока сохранена", stripped.includes(userBefore), stripped);
+  check("B9: чужая строка после блока сохранена", stripped.includes(userAfter), stripped);
+  check("B9: строки блока удалены", !stripped.includes("run-demo.sh") && !stripped.includes(strip.blockBegin));
+  check(
+    "B9: пустые строки вне блока не схлопываются",
+    stripped === [userBefore, "", "", "", "", userAfter].join("\n"),
+    JSON.stringify(stripped),
+  );
+}
+
+{
+  const userAfter = "0 3 * * * /usr/local/bin/report";
+  const unclosed = [
+    strip.blockBegin,
+    "# task: broken",
+    "*/5 * * * * /bin/bash /tmp/run-broken.sh",
+    userAfter,
+  ].join("\n");
+
+  let message = "";
+  try {
+    strip.stripBlock(unclosed);
+  } catch (err) {
+    message = String(err?.message ?? err);
+  }
+  check(
+    "B9: незакрытый блок → fail-closed с понятной ошибкой",
+    /незакрытый блок/.test(message) && /Файл не изменён/.test(message),
+    message,
+  );
+  check("B9: fail-closed не теряет чужую строку", unclosed.includes(userAfter));
+}
+
+{
+  const strayEnd = "0 1 * * * /usr/local/bin/cleanup";
+  const content = [strip.blockEnd, strayEnd].join("\n");
+  const stripped = strip.stripBlock(content);
+  check(
+    "B9: сиротский маркер конца не удаляет строки",
+    stripped.includes(strip.blockEnd) && stripped.includes(strayEnd),
+    stripped,
+  );
+}
+
 console.log(`\nPOSIX crontab: ${passed}/${passed + failed} проверок пройдено.`);
 process.exit(failed > 0 ? 1 : 0);

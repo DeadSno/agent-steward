@@ -69,6 +69,7 @@ interface SchedulerBackend {
 - 支持完整 cron 语法（与 Windows 不同），因为 crontab 原生支持。
 - 一次性任务（`once`）：使用 `at -t`；如果未安装 `at`，插件会退回到分离的 `sleep && 命令` 进程（注册表中为 `pid:<pid>`）。回退方案无法在重启后保留，建议安装 `at` 包。
 - 删除/重建只触及自己的块，`crontab` 的其他行不受影响。
+- 未闭合的插件块（只有开始标记）按 fail-closed 处理：插件报告错误且不重写 crontab，因此标记之后的用户行不会丢失。
 
 ### macOS
 - 任务是 LaunchAgent plist：`~/Library/LaunchAgents/com.opencode.scheduler.<name>.plist`。

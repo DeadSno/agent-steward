@@ -23,18 +23,6 @@ Legacy: `opencode-windows-scheduler@1.5.8`.
 
 # 1. Бэклог (аудит 18.11)
 
-## Деталь 1.7 — POSIX crontab
-`src/core/*cron*` (`stripBlock`)
-
-**Задача B9 — `stripBlock` не режет чужой crontab** · P2 · ⬜
-
-Незакрытый блок вырезает всё до EOF, включая пользовательские cron-задачи.
-
-- [ ] B9.1 Удалять только строки внутри маркеров
-- [ ] B9.2 Незакрытый блок → fail-closed, файл не трогаем
-- [ ] B9.3 Тест: чужие cron-строки после блока сохраняются
-- [ ] B9.4 Docs
-
 ## Деталь 1.8 — Legacy recorder
 `src/core/record-history.ts`
 

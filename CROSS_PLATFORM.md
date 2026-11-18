@@ -70,6 +70,7 @@ The factory picks an implementation from `process.platform`:
 - Full cron syntax (unlike Windows), because crontab understands it natively.
 - One-shot (`once`): `at -t`; if `at` is not installed, the plugin falls back to a detached `sleep && command` process (`pid:<pid>` in the registry). The fallback does not survive a reboot — install the `at` package for durable one-shot runs.
 - Delete/rebuild touches only its own block; other `crontab` lines are left alone.
+- An unclosed plugin block (begin marker without end) fails closed: the plugin reports an error and does not rewrite the crontab, so user lines after the marker are never lost.
 
 ### macOS
 - Tasks are LaunchAgent plists at `~/Library/LaunchAgents/com.opencode.scheduler.<name>.plist`.
