@@ -23,10 +23,26 @@ const run = (cmd, args) => {
   return { code: r.status, out: `${r.stdout || ""}${r.stderr || ""}` };
 };
 
-// ---前置条件: нужен реальный at -----------------------------------------
+// --- Предусловия: нужен реальный GNU at ----------------------------------
+// Проверяем только Linux: на Windows `which at` из Git Bash находит
+// C:\Windows\System32\at.exe — это ДРУГОЙ `at` (планировщик Windows), он
+// печатает usage и валит createTask. На macOS one-shot идёт через launchd,
+// а atrun выключен по умолчанию — задания висят в atq и никогда не срабатывают.
+if (process.platform !== "linux") {
+  console.log(
+    `SKIP: e2e с GNU at проверяется только на Linux (текущая платформа: ${process.platform}); ` +
+      "на Windows/macOS one-shot реализован через schtasks/launchd."
+  );
+  process.exit(0);
+}
 const whichAt = run("which", ["at"]);
 if (whichAt.code !== 0 || !whichAt.out.trim()) {
-  console.log("SKIP: реальный GNU `at` не найден (Windows без WSL / минимальный образ).");
+  console.log("SKIP: реальный GNU `at` не найден (минимальный образ).");
+  process.exit(0);
+}
+const atVersion = run("at", ["-V"]);
+if (!/at version/i.test(atVersion.out)) {
+  console.log(`SKIP: найден не GNU at (${atVersion.out.trim().split("\n")[0] || "нет вывода"}).`);
   process.exit(0);
 }
 // atd может не быть запущен в контейнере — стартуем, если есть права.
