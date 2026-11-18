@@ -1,6 +1,8 @@
 # P3-1: обновления зависимостей приходят PR-ами, а не «внезапным» дрейфом лока.
 # Группировка держит шум в разумных пределах: один PR на dev-зависимости,
-# один на OpenTelemetry, остальное — по одному.
+# один на OpenTelemetry, один на парные @opencode/* (plugin + schema),
+# остальное — по одному. Мажоры dev-инструментов игнорируются: они требуют
+# ручной миграции и не должны приезжать автоматически.
 version: 2
 updates:
   - package-ecosystem: npm
@@ -16,11 +18,24 @@ updates:
       prefix: "deps"
       include: scope
     groups:
+      opencode:
+        patterns:
+          - "@opencode/*"
       dev-dependencies:
         dependency-type: development
       opentelemetry:
         patterns:
           - "@opentelemetry/*"
+    ignore:
+      - dependency-name: "@types/node"
+        update-types:
+          - "version-update:semver-major"
+      - dependency-name: "vite"
+        update-types:
+          - "version-update:semver-major"
+      - dependency-name: "@opentui/*"
+        update-types:
+          - "version-update:semver-major"
 
   - package-ecosystem: github-actions
     directory: "/"
