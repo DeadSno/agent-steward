@@ -6,16 +6,18 @@
 > Модель работы — канбан. Каждая задача разложена слоями:
 > **Деталь** (подсистема/файлы) → **Задача** (что чиним/делаем) → **Подзадача** (атомарный шаг).
 > В работу берётся ровно одна подзадача: подзадача → отчёт → следующая подзадача.
-> Приоритеты P0/P1/P2/P3. Спринты и версии к задачам не привязаны.
+>
+> **В ROADMAP только открытые задачи.** Закрытые задачи и подзадачи удаляются отсюда
+> и фиксируются в [CHANGELOG.md](./CHANGELOG.md) — больше нигде.
 
 Текущая версия: **agent-steward 0.0.4** (18.11.2026).
 Legacy: `opencode-windows-scheduler@1.5.8`.
 
 - Стратегия и позиционирование — [ROADMAP-STRATEGY.md](./ROADMAP-STRATEGY.md).
-- Что уже выпущено — [CHANGELOG.md](./CHANGELOG.md).
+- Что уже сделано — [CHANGELOG.md](./CHANGELOG.md).
 - Устройство и возможности — [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md), [docs/FEATURES.md](./docs/FEATURES.md).
 
-Обозначения: ⬜ не начато · 🔄 в работе · ✅ готово · ⏸️ внешнее действие · ❌ опровергнуто.
+Обозначения: ⬜ не начато · 🔄 в работе · ⏸️ внешнее действие.
 
 ---
 
@@ -24,11 +26,10 @@ Legacy: `opencode-windows-scheduler@1.5.8`.
 ## Деталь 1.1 — Recovery и жизненный цикл запуска
 `src/db/history-repo.ts`, `src/db/run-journal.ts`, `src/core/record-history.ts`, `src/db/schema.ts`
 
-**Задача B1 — Recovery не трогает живые запуски** · P1 · ⬜
+**Задача B1 — Recovery не трогает живые запуски** · P1 · 🔄
 
 `recoverInterrupted()` помечает все `finished_at IS NULL` как `error` без проверки PID/владельца/возраста. Перезапуск плагина во время живого прогона финализирует его досрочно.
 
-- [x] B1.1 Миграция schema v8: `owner_pid`, `owner_host`, `owner_started_at` в `history` (аддитивно, идемпотентно)
 - [ ] B1.2 Recorder `--start` пишет владельца (PID процесса-обёртки, host id, время старта)
 - [ ] B1.3 `recoverInterrupted()`: пропускать живого владельца, добивать мёртвого или просроченного по возрасту
 - [ ] B1.4 Подключить в startup + лог «восстановлено N, оставлено живым M»
@@ -160,7 +161,7 @@ Legacy-ветка не парсит `usage` из 11-го аргумента (`$L
 
 `recoverInterruptedSteps()` помечает `failed` все `running`-шаги, включая живые чужие процессы. В `run_steps` нет владельца/lease (CONCEPT §5).
 
-- [ ] B12.1 Колонки `owner_id`, `lease_until` в `run_steps` (schema v8)
+- [ ] B12.1 Колонки `owner_id`, `lease_until` в `run_steps` (schema v9)
 - [ ] B12.2 Продление lease при выполнении шага
 - [ ] B12.3 Recovery: `failed` только при истёкшем lease
 - [ ] B12.4 Тест: два процесса, живой шаг не убивается
@@ -202,21 +203,13 @@ Regex вырезает CJK → китайские сообщения дают н
 - [ ] B8.3 Тест
 - [ ] B8.4 Docs
 
-## Деталь 1.15 — `at`-fallback
-`src/core/at-fallback.ts`
-
-**Задача B15 — маркер в cmdline (ложное срабатывание)** · P3 · ❌
-
-Проверено по коду: маркер присутствует в cmdline весь жизненный цикл (`at-fallback.ts:111,143-146`), prune идёт через локальный реестр (`registry.save`, строка 296). Дефекта нет.
-
-- [x] B15.1 Повторная проверка по коду — подтверждено, что маркер есть
-- [x] B15.2 Закрыть как «не баг», зафиксировать в CHANGELOG (Known issues не требуется)
-
 ---
 
 # 2. Задачи согласно архитектуре (Execution model)
 
 agent-steward — execution engine с опциональной регистрацией триггеров. Четыре входа ведут в один путь исполнения; планировщик ОС — только полоса A (cron/once), а не центральный маршрут. Оркестрация (цепочки, DAG, ретраи, матрицы, эскалации) выполняется ядром и рекордером прямыми запусками обёрток.
+
+> Реализованные части execution model (ядро, полосы A/B, wrapper, recorder, storage, in-process triggers) в ROADMAP не перечисляются — они в [CHANGELOG.md](./CHANGELOG.md). Здесь только открытые архитектурные задачи.
 
 ## Деталь 2.1 — Ядро исполнения
 `src/core/runtime.ts`, `src/core/run-*.ts`, `src/db/*`
@@ -229,94 +222,8 @@ agent-steward — execution engine с опциональной регистра�
 - [ ] AC-1.4 Тест: ad-hoc и registered проходят один путь
 - [ ] AC-1.5 Docs
 
-**Задача AC-2 — Quality Gate с before/after хуками** · ✅
-
-- [x] AC-2.1 Гейт после прогона, поворот статуса при неудаче
-- [x] AC-2.2 before/after хуки
-- [x] AC-2.3 Тест гейта
-
-**Задача AC-3 — История, метрики и аудит мутаций** · ✅
-
-- [x] AC-3.1 `history` / `metrics` / `audit_log`
-- [x] AC-3.2 Аудит через все интерфейсы (tools/RPC/GUI/CLI)
-- [x] AC-3.3 Тест счётчиков
-
-**Задача AC-4 — Durable DAG: journal, resume, идемпотентность, DLQ, пауза с инъекциями** · ✅
-
-- [x] AC-4.1 `runs` / `run_steps` / `run_dlq` / `run_injections`, schema v7
-- [x] AC-4.2 `BEGIN IMMEDIATE` + SAVEPOINT, идемпотентные ключи
-- [x] AC-4.3 resume/pause, DLQ retry
-- [x] AC-4.4 chaos-nightly
-- [ ] AC-4.5 Lease на шагах (→ B12)
-
-**Задача AC-5 — Router: 3 слоя (rules → capability-repo → planner/escalation/dispatch)** · ✅
-
-- [x] AC-5.1 Известный тип не доходит до модели
-- [x] AC-5.2 Capability-map из истории
-- [x] AC-5.3 Тест маршрутизации
-- [ ] AC-5.4 Decay и first_pass_rate (→ B13)
-
-## Деталь 2.2 — Полоса A: Registered (ОС-планировщик, только cron/once)
-`src/core/win-scheduler*`, `src/core/launchd*`, `src/core/posix*`
-
-**Задача RA-1 — schtasks / launchd / crontab: регистрация и удаление** · ✅
-
-- [x] RA-1.1 Windows Task Scheduler
-- [x] RA-1.2 launchd
-- [x] RA-1.3 crontab
-- [ ] RA-1.4 macOS paused/ошибки `load` (→ B5)
-- [ ] RA-1.5 Безопасный `stripBlock` (→ B9)
-
-**Задача RA-2 — Legacy-алиасинг и one-shot** · ✅
-
-- [x] RA-2.1 schtasks ONCE
-- [x] RA-2.2 `at` + detached `sleep` fallback
-- [x] RA-2.3 Совместимость со старыми записями
-
-## Деталь 2.3 — Полоса B: Direct / Ad-hoc (без регистрации в ОС)
-`src/core/*runtime*`, `src/core/chain*`, `src/core/matrix*`, `src/db/run-*`
-
-**Задача AB-1 — `run_task_now`: прямой запуск обёртки** · ✅
-
-- [x] AB-1.1 POSIX: `spawn("/bin/bash", [wrapper])`
-- [x] AB-1.2 Windows: run-now API планировщика, но прямой запуск
-- [x] AB-1.3 Тот же wrapper, что и у полосы A
-
-**Задача AB-2 — Цепочки `nextTaskOnSuccess` / `nextTaskOnError`** · ✅
-
-- [x] AB-2.1 Рекурсия через recorder
-- [x] AB-2.2 Защита от циклов
-- [x] AB-2.3 Тест
-
-**Задача AB-3 — DAG-зависимости (`dependsOn`)** · ✅
-
-- [x] AB-3.1 Запуск после успешных зависимостей
-- [x] AB-3.2 Обработка провала зависимости
-- [x] AB-3.3 Тест
-
-**Задача AB-4 — Ретраи (`retryCount` / `retryDelay`)** · ✅
-
-- [x] AB-4.1 Атомарный retry-счётчик
-- [x] AB-4.2 Задержка между попытками
-- [ ] AB-4.3 Убрать дубль на Windows (→ B2)
-
-**Задача AB-5 — Матрицы** · ✅
-
-- [x] AB-5.1 Fan-out `expandMatrixTask`
-- [x] AB-5.2 Агрегация и sync
-- [x] AB-5.3 Cancel и orphan cleanup
-
-**Задача AB-6 — Пауза / resume** · ✅
-
-- [x] AB-6.1 `resumeRun` в процессе хоста
-- [x] AB-6.2 Инъекции контекста
-- [x] AB-6.3 Тест
-
-**Задача AB-7 — Escalation** · ✅
-
-- [x] AB-7.1 Таблица переходов local → cloud → review → blocked
-- [x] AB-7.2 Без вызова модели
-- [x] AB-7.3 Тест
+## Деталь 2.2 — Полоса B: Direct / Ad-hoc
+`src/core/*runtime*`, `src/cli.ts`, `src/rpc.ts`
 
 **Задача AB-8 — `run_mission` (CLI / GUI / RPC)** · P2 · ⬜
 
@@ -326,140 +233,12 @@ agent-steward — execution engine с опциональной регистра�
 - [ ] AB-8.4 Тест без регистрации в ОС
 - [ ] AB-8.5 Docs
 
-## Деталь 2.4 — Run wrapper (единица исполнения обеих полос)
-`src/core/ps-wrapper.ts`, POSIX-обёртка
-
-**Задача RW-1 — schedule-gate** · ✅
-
-- [x] RW-1.1 poll-mode, IANA timezone
-- [x] RW-1.2 окна запуска, defer/force-маркеры
-- [x] RW-1.3 fail-closed на невалидном cron
-
-**Задача RW-2 — Lock + watchdog timeout** · ⬜ (B6, B7)
-
-- [ ] RW-2.1 Единый формат lock-токена (→ B6)
-- [ ] RW-2.2 `.lock.d` только по мёртвому PID (→ B7)
-- [ ] RW-2.3 Watchdog fail-closed (→ B8)
-
-**Задача RW-3 — Env/secrets + политика** · ✅
-
-- [x] RW-3.1 hybrid/secure/legacy
-- [x] RW-3.2 AES-256-GCM секреты
-- [x] RW-3.3 `OPENCODE_CONFIG_CONTENT` с правами задачи
-
-**Задача RW-4 — `opencode run --auto` → Quality Gate → хуки** · ✅
-
-- [x] RW-4.1 Единый для прямого и registered запуска
-- [ ] RW-4.2 Промпт через `--` (→ B11)
-
-**Задача RW-5 — One-shot cleanup** · ✅
-
-- [x] RW-5.1 Windows: удаление OS-записи
-- [x] RW-5.2 POSIX: удаление cron/at-записи
-
-## Деталь 2.5 — Recorder process
-`src/core/record-history.ts`
-
-**Задача RC-1 — История / метрики → SQLite** · ✅
-
-- [x] RC-1.1 На профиль, schema v7
-- [x] RC-1.2 Атомарный retry-счётчик
-
-**Задача RC-2 — Ретраи прямым запуском обёртки** · ✅
-
-- [x] RC-2.1 Оркестрация в ядре, не в ОС
-- [ ] RC-2.2 Единственный слой ретраев (→ B2)
-
-**Задача RC-3 — Цепочки / DAG прямым запуском** · ✅
-
-- [x] RC-3.1 `dependsOn`
-- [x] RC-3.2 `nextTaskOnSuccess/Error`
-
-**Задача RC-4 — Матрицы: агрегация** · ✅
-
-- [x] RC-4.1 `runMatrix`
-- [x] RC-4.2 `finalizeMatrixIfComplete`
-
-**Задача RC-5 — One-shot cleanup (Windows)** · ✅
-
-- [x] RC-5.1 Удаление OS-записи после прогона
-
-**Задача RC-6 — Уведомления** · ✅
-
-- [x] RC-6.1 webhook / Telegram / тосты
-- [x] RC-6.2 Дедуп, 512-мерный FNV-1a, локальный триаж
-- [ ] RC-6.3 CJK-токенизация (→ B14)
-
-## Деталь 2.6 — Данные
-`src/db/schema.ts`, `src/db/*-repo.ts`
-
-**Задача DA-1 — SQLite WAL, миграции** · ✅
-
-- [x] DA-1.1 `node:sqlite`, WAL
-- [x] DA-1.2 `PRAGMA user_version`, аддитивные миграции
-- [ ] DA-1.3 Schema v8 для owner/lease (→ B1, B12)
-
-**Задача DA-2 — Таблицы** · ✅
-
-- [x] DA-2.1 `tasks` / `history` / `metrics` / `settings` / `templates` / `workspaces`
-- [x] DA-2.2 `audit_log` / `git_state` / `notification_*`
-- [x] DA-2.3 `runs` / `run_steps` / `run_dlq` / `run_injections` / `capability_map`
-
-**Задача DA-3 — Секреты AES-256-GCM** · ✅
-
-- [x] DA-3.1 AAD=имя, 12-байт IV, ключ 0600/icacls
-- [x] DA-3.2 Карантин и межпроцессный лок
-
-## Деталь 2.7 — Триггеры в процессе (без ОС)
-`src/triggers.ts`, `src/server.ts`
-
-**Задача TR-1 — file (chokidar)** · ✅
-- [x] TR-1.1 Watch, debounce, игноры
-
-**Задача TR-2 — git (poll HEAD)** · ✅
-- [x] TR-2.1 Коммиты, ветка, путь, игнор
-
-**Задача TR-3 — mcp-event** · ✅
-- [x] TR-3.1 Совпадение server + event → подписчики
-
-**Задача TR-4 — webhook `/api/hooks`** · ✅
-- [x] TR-4.1 HMAC, timestamp, raw-body, лимит тела
-
 ---
 
 # 3. Остальные задачи (не бэклог и не архитектура)
 
-## Деталь 3.1 — Pipeline-as-code
-`src/core/pipeline-*.ts`, `src/cli.ts`, `docs/PIPELINE.md`
-
-**Задача PI-1 — Спецификация `opencode.pipeline.yaml`** · ✅
-
-- [x] PI-1.1 Типы `PipelineSpec` / `PipelineStep`
-- [x] PI-1.2 DAG, matrix, QG, окна, политики, бюджеты
-
-**Задача PI-2 — Парсер и валидатор** · ✅
-
-- [x] PI-2.1 YAML → spec
-- [x] PI-2.2 Валидатор: циклы, `needs`, cron, matrix, имена, модели
-- [x] PI-2.3 `test-pipeline.mjs`
-
-**Задача PI-3 — Идемпотентный diff/apply** · ✅
-
-- [x] PI-3.1 `planPipelineApply` / `executePipelineApply`
-- [x] PI-3.2 Маркеры `pipelineName` / `pipelineStepId`
-- [x] PI-3.3 Без миграции БД
-
-**Задача PI-4 — CLI `pipeline validate|apply|export`** · ✅ (`c55ecef`)
-
-- [x] PI-4.1 `bin` в `package.json`
-- [x] PI-4.2 Точки входа в `src/cli.ts`
-- [x] PI-4.3 Smoke-тест пройден
-
-**Задача PI-5 — Агент-инструменты/RPC** · ✅ (`c55ecef`)
-
-- [x] PI-5.1 3 ToolSpec (`pipeline_validate|apply|export`)
-- [x] PI-5.2 3 RPC-метода
-- [x] PI-5.3 Счётчики 26→29 инструментов, 53→56 RPC
+## Деталь 3.1 — Pipeline-as-code (документация и приёмка)
+`docs/PIPELINE.md`, `README.md`
 
 **Задача PI-6 — Документация** · P2 · ⬜
 
@@ -610,12 +389,13 @@ agent-steward — execution engine с опциональной регистра�
 
 1. **Одна подзадача за раз.** Взял → сделал → отчёт → следующая подзадача.
 2. **Слой не пропускается.** Деталь → задача → подзадача; подзадача закрывается только с тестом и документацией.
-3. **Нет спринтов.** Статусы ⬜ → 🔄 → ✅ независимо от релизов.
-4. **Версия — следствие релиза, а не обещание.** `npm version` в момент релиза.
-5. **Приоритет — по боли пользователя.** P1 = без этого нельзя рекомендовать плагин.
-6. **Fail-open по умолчанию.** Необязательная подсистема при отказе деградирует, а не блокирует.
-7. **Сверка с CONCEPT.md.** Четыре столпа (§4), без противоречий §8.
-8. **Честность в маркетинге.** Оценки — с методикой рядом.
+3. **Закрытое уходит из ROADMAP.** Выполненная задача/подзадача удаляется отсюда и попадает в CHANGELOG.
+4. **Нет спринтов.** Статусы ⬜ → 🔄 → ✅ независимо от релизов.
+5. **Версия — следствие релиза, а не обещание.** `npm version` в момент релиза.
+6. **Приоритет — по боли пользователя.** P1 = без этого нельзя рекомендовать плагин.
+7. **Fail-open по умолчанию.** Необязательная подсистема при отказе деградирует, а не блокирует.
+8. **Сверка с CONCEPT.md.** Четыре столпа (§4), без противоречий §8.
+9. **Честность в маркетинге.** Оценки — с методикой рядом.
 
 ---
 
