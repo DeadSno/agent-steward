@@ -22,6 +22,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { opencodeCommand } from "./opencode-cli.js";
 
 /** Цена за 1M токенов модели в каталоге models.dev. */
 export interface ModelCatalogEntry {
@@ -209,25 +210,18 @@ let cliCache: { at: number; models: string[] } | null = null;
 
 /** Запускает `opencode models` один раз (на Windows — через cmd.exe). */
 function runModelsCli(): string[] {
-  const attempts =
-    process.platform === "win32"
-      ? [{ file: "cmd.exe", args: ["/d", "/s", "/c", "opencode models"] }]
-      : [{ file: "opencode", args: ["models"] }];
-
-  for (const attempt of attempts) {
-    try {
-      const stdout = execFileSync(attempt.file, attempt.args, {
-        encoding: "utf8",
-        timeout: CLI_TIMEOUT_MS,
-        windowsHide: true,
-        stdio: ["ignore", "pipe", "ignore"],
-      });
-      return parseModelList(stdout);
-    } catch {
-      // Пробуем следующий вариант; если все упали — вернём пусто.
-    }
+  try {
+    const command = opencodeCommand(["models"]);
+    const stdout = execFileSync(command.file, command.args, {
+      encoding: "utf8",
+      timeout: CLI_TIMEOUT_MS,
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    return parseModelList(stdout);
+  } catch {
+    return [];
   }
-  return [];
 }
 
 /** Доступные пользователю модели (`opencode models`), кэш 10 минут. */

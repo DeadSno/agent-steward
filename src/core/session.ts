@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { execFile } from "node:child_process";
+import { runOpencode } from "./opencode-cli.js";
 import { getTask, saveTask } from "../db/tasks-repo.js";
 import { appendStructuredLog } from "./structured-log.js";
 import { WRAPPER_DIR, sanitizeName } from "../types.js";
@@ -119,16 +119,29 @@ export async function rotateSessionIfNeeded(taskName: string): Promise<void> {
     const count = (def.sessionRunCount ?? 0) + 1;
 
     if (shouldRotateSession(count, maxRuns)) {
-      const sessionId = def.sessionId;
-      if (sessionId && isValidSessionId(sessionId)) {
-        try {
-          await new Promise<void>((resolve) => {
-            execFile("opencode", ["session", "delete", sessionId], () => resolve());
-          });
-        } catch {
-          // Удаление не должно мешать: просто фиксируем в логе ниже.
+      const oldSessionId = def.sessionId;
+      const hasOldSession = Boolean(oldSessionId && isValidSessionId(oldSessionId));
+      let deleteError: string | undefined;
+
+      if (hasOldSession && oldSessionId) {
+        // На Windows `opencode` — это `opencode.cmd`, который Node не запускает
+        // напрямую через execFile (ENOENT/EINVAL). Общий модуль сам выбирает
+        // cmd.exe на Windows, поэтому удаление действительно выполняется.
+        const result = await runOpencode(["session", "delete", oldSessionId]);
+        if (!result.ok) {
+          deleteError = result.error ?? "неизвестная ошибка";
+          console.warn(
+            `[session] Не удалось удалить сессию ${oldSessionId} задачи "${taskName}": ${deleteError}`,
+          );
         }
       }
+
+      const rotationNote = !hasOldSession
+        ? "старой сессии не было"
+        : deleteError
+          ? `старую сессию удалить не удалось (${deleteError})`
+          : "сессия удалена";
+
       const newSessionId = generateSessionId();
       await saveTask({
         ...def,
@@ -139,7 +152,7 @@ export async function rotateSessionIfNeeded(taskName: string): Promise<void> {
       appendStructuredLog({
         event: "session.rotated",
         task: taskName,
-        reason: `maxRuns=${maxRuns} достигнут; сессия удалена, создана новая, счётчик сброшен`,
+        reason: `maxRuns=${maxRuns} достигнут; ${rotationNote}, создана новая, счётчик сброшен`,
       });
     } else {
       await saveTask({ ...def, sessionRunCount: count });
