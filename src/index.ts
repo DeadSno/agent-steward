@@ -36,7 +36,7 @@ import {
   type SessionMode,
 } from "./core/session.js";
 import { ensureWrapper, writePromptFile, writeWrapperCmd, lockFilePath, requestImmediateRun } from "./core/ps-wrapper.js";
-import { getSchedulerBackend } from "./core/scheduler/index.js";
+import { getSchedulerBackend, LinuxScheduler } from "./core/scheduler/index.js";
 import { SCHEDULER_SKILL_ID, loadSchedulerSkill } from "./skill.js";
 import { getTaskLogs } from "./core/scheduler/logs.js";
 import { findSanitizedNameConflict, sanitizedConflictMessage } from "./core/task-name.js";
@@ -3488,6 +3488,26 @@ export async function createRuntime(ctxLike: RuntimeContextLike): Promise<Schedu
         err instanceof Error ? err.message : String(err)
       }`,
     );
+  }
+  // P1-14: pid:-записи fallback'а не переживают перезагрузку. Чистим их и
+  // пересоздаём будущие one-shot, иначе после reboot можно убить чужой pid.
+  if (scheduler instanceof LinuxScheduler) {
+    try {
+      const report = await scheduler.pruneStaleFallbacks();
+      if (report.removed || report.rescheduled || report.missed) {
+        console.log(
+          `[scheduler] Fallback one-shot: удалено ${report.removed}, ` +
+            `пересоздано ${report.rescheduled}, пропущено ${report.missed}, ` +
+            `живо ${report.kept}.`,
+        );
+      }
+    } catch (err: any) {
+      console.error(
+        `[scheduler] Не удалось очистить fallback-записи: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
   }
   checkJsonBackups();
   void garbageCollectTaskArtifacts().catch((err) => {

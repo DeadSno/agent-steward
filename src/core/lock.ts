@@ -1,6 +1,35 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { LOCK_DIR, STALE_LOCK_MAX_AGE_MS } from "../types.js";
+
+/**
+ * Проверяет, жив ли процесс-владелец lock-файла.
+ *
+ * `process.kill(pid, 0)` не посылает сигнал, а только проверяет существование.
+ * EPERM означает, что процесс есть, но у нас нет прав на сигнал — считаем живым.
+ * Остальные ошибки трактуем консервативно как «жив», чтобы не вытеснить
+ * чужую критическую секцию.
+ */
+export function isProcessAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err: any) {
+    if (err?.code === "ESRCH") return false;
+    return true;
+  }
+}
+
+/** PID владельца из токена lock-файла (`<pid>-<timestamp>-<uuid>`). */
+function ownerPidFromToken(content: string): number | null {
+  const match = /^(\d+)-/.exec(content.trim());
+  if (!match) return null;
+  const pid = Number.parseInt(match[1], 10);
+  return Number.isInteger(pid) ? pid : null;
+}
+
 
 /**
  * Менеджер файловых блокировок для предотвращения наложения запусков одной задачи.
@@ -60,6 +89,21 @@ export class LockManager {
         const stat = await fs.stat(fullPath);
         const age = now - stat.mtimeMs;
         if (age > STALE_LOCK_MAX_AGE_MS) {
+          // P2-18: возраст — только повод проверить владельца. Задача может
+          // легально работать дольше 24 ч (timeoutSeconds: 0), поэтому живой
+          // процесс не вытесняем: иначе после рестарта плагина появится дубль.
+          if (isLockFile) {
+            const content = await fs.readFile(fullPath, "utf8").catch(() => "");
+            const ownerPid = ownerPidFromToken(content);
+            if (ownerPid !== null && isProcessAlive(ownerPid)) {
+              console.log(
+                `[agent-steward] Lock ${file} старше ${Math.round(
+                  age / 1000,
+                )} с, но процесс ${ownerPid} жив — оставляем.`,
+              );
+              continue;
+            }
+          }
           // T-03: не удаляем lock напрямую. Два воркера могли одновременно
           // снести один и тот же файл, после чего один из них удалял свежий
           // lock, созданный другим, и задача запускалась повторно. Атомарный
@@ -87,20 +131,24 @@ export class LockManager {
 
   /**
    * Пытается захватить блокировку для задачи.
-   * Возвращает true, если блокировка захвачена (файл создан).
-   * Возвращает false, если блокировка уже удерживается другим запуском.
+   * Возвращает уникальный токен владельца (он же содержимое lock-файла) или
+   * null, если блокировка уже удерживается другим запуском.
+   *
+   * Токен нужен release(): процесс, чей lock был вытеснен по stale-таймауту,
+   * не должен удалять файл нового владельца.
    */
-  async acquire(taskName: string): Promise<boolean> {
+  async acquire(taskName: string): Promise<string | null> {
     await fs.mkdir(this.lockDir, { recursive: true });
     const lockPath = this.lockFilePath(taskName);
+    const token = `${process.pid}-${Date.now()}-${randomUUID()}`;
 
     try {
       // 'wx' — exclusive create: ошибка если файл уже существует.
-      await fs.writeFile(lockPath, String(Date.now()), { flag: "wx" });
-      return true;
+      await fs.writeFile(lockPath, token, { flag: "wx" });
+      return token;
     } catch (err: any) {
       if (err.code === "EEXIST") {
-        return false;
+        return null;
       }
       throw err;
     }
@@ -108,14 +156,28 @@ export class LockManager {
 
   /**
    * Освобождает блокировку задачи (удаляет lock-файл).
+   *
+   * Удаляет файл только если в нём лежит токен этого владельца. Если lock
+   * успели вытеснить и перехватить, release ничего не трогает и возвращает
+   * false — иначе старый процесс снёс бы чужую критическую секцию.
    * Не выбрасывает ошибку, если файл уже удалён.
    */
-  async release(taskName: string): Promise<void> {
+  async release(taskName: string, token: string): Promise<boolean> {
     const lockPath = this.lockFilePath(taskName);
+    let current: string;
+    try {
+      current = await fs.readFile(lockPath, "utf8");
+    } catch (err: any) {
+      if (err.code === "ENOENT") return false;
+      throw err;
+    }
+    if (current !== token) return false;
     try {
       await fs.unlink(lockPath);
+      return true;
     } catch (err: any) {
-      if (err.code !== "ENOENT") throw err;
+      if (err.code === "ENOENT") return false;
+      throw err;
     }
   }
 
@@ -144,8 +206,8 @@ export async function withLock<T>(
   taskName: string,
   fn: () => Promise<T>,
 ): Promise<T | null> {
-  const acquired = await lockManager.acquire(taskName);
-  if (!acquired) {
+  const token = await lockManager.acquire(taskName);
+  if (!token) {
 
     console.log(
       `[agent-steward] Запуск задачи "${taskName}" пропущен: удерживается активная блокировка.`,
@@ -156,7 +218,7 @@ export async function withLock<T>(
   try {
     return await fn();
   } finally {
-    await lockManager.release(taskName);
+    await lockManager.release(taskName, token);
   }
 }
 
@@ -178,25 +240,36 @@ export async function withLockWait<T>(
   const staleMs = options.staleMs ?? 60000;
   const deadline = Date.now() + timeoutMs;
   const lockPath = lockManager.pathFor(taskName);
+  let token: string | null = null;
 
   for (;;) {
-    if (await lockManager.acquire(taskName)) break;
+    token = await lockManager.acquire(taskName);
+    if (token) break;
 
     // Осиротевший lock: короткая операция не может длиться дольше staleMs.
     if (staleMs > 0) {
       try {
         const stat = await fs.stat(lockPath);
         if (Date.now() - stat.mtimeMs > staleMs) {
-          // T-03-совместимое вытеснение: атомарный rename выигрывает ровно
-          // один процесс, остальные получают ENOENT и повторяют попытку.
-          const stalePath = `${lockPath}.stale-${process.pid}-${Date.now()}`;
-          try {
-            await fs.rename(lockPath, stalePath);
-            await fs.rm(stalePath, { force: true }).catch(() => {});
-          } catch {
-            // Кто-то успел раньше — просто повторяем acquire.
+          // P2-18: staleMs — не приговор. Если владелец ещё жив, его
+          // критическая секция может быть легально долгой (crontab RMW,
+          // длинная задача). Вытесняем только мёртвый/неизвестный lock.
+          const content = await fs.readFile(lockPath, "utf8").catch(() => "");
+          const ownerPid = ownerPidFromToken(content);
+          if (ownerPid !== null && isProcessAlive(ownerPid)) {
+            // Ждём дальше; по deadline вернём понятную ошибку.
+          } else {
+            // T-03-совместимое вытеснение: атомарный rename выигрывает ровно
+            // один процесс, остальные получают ENOENT и повторяют попытку.
+            const stalePath = `${lockPath}.stale-${process.pid}-${Date.now()}`;
+            try {
+              await fs.rename(lockPath, stalePath);
+              await fs.rm(stalePath, { force: true }).catch(() => {});
+            } catch {
+              // Кто-то успел раньше — просто повторяем acquire.
+            }
+            continue;
           }
-          continue;
         }
       } catch {
         // lock исчез — сразу пробуем acquire снова.
@@ -214,6 +287,6 @@ export async function withLockWait<T>(
   try {
     return await fn();
   } finally {
-    await lockManager.release(taskName);
+    if (token) await lockManager.release(taskName, token);
   }
 }

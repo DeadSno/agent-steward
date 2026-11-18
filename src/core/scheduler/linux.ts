@@ -6,7 +6,9 @@ import {
   cancelAtFallback,
   isAtMissingError,
   isPidJobId,
+  pruneStaleFallbackEntries,
   scheduleAtFallback,
+  type PruneAtFallbackReport,
 } from "./at-fallback.js";
 import { needsPollMode } from "../schedule-v2.js";
 import { LockManager, withLockWait } from "../lock.js";
@@ -263,7 +265,8 @@ export class LinuxScheduler extends PosixSchedulerBase {
     if (!entry.atJobId) return;
     if (isPidJobId(entry.atJobId)) {
       // P1-7.T1.2: снимаем fallback-процесс, а не at-задание.
-      cancelAtFallback(entry.atJobId);
+      // P1-14: передаём имя — без сверки маркера pid мог быть переиспользован.
+      cancelAtFallback(entry.atJobId, entry.name);
       delete entry.atJobId;
       return;
     }
@@ -273,6 +276,14 @@ export class LinuxScheduler extends PosixSchedulerBase {
       // Задание уже выполнилось или было удалено — это не ошибка.
     }
     delete entry.atJobId;
+  }
+
+  /**
+   * P1-14: чистит `pid:`-записи fallback'а, пережившие перезагрузку.
+   * Вызывается из старта плагина; на других платформах не используется.
+   */
+  async pruneStaleFallbacks(): Promise<PruneAtFallbackReport> {
+    return pruneStaleFallbackEntries(this.registry);
   }
 
   protected async installEntry(entry: RegistryEntry): Promise<void> {

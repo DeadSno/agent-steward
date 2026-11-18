@@ -14,7 +14,7 @@ process.env.OPENCODE_SCHEDULER_HOME = path.join(tempRoot, "opencode", "windows-s
 const lockDir = path.join(tempRoot, "locks");
 fs.mkdirSync(lockDir, { recursive: true });
 
-const { LockManager } = await import("./dist/core/lock.js");
+const { isProcessAlive, LockManager, withLock, withLockWait } = await import("./dist/core/lock.js");
 const { STALE_LOCK_MAX_AGE_MS } = await import("./dist/types.js");
 
 const results = [];
@@ -77,6 +77,179 @@ const OLD = new Date(Date.now() - STALE_LOCK_MAX_AGE_MS - 60_000);
   await a.initialize();
 
   check("осиротевший .stale-* артефакт удалён", !fs.existsSync(artifact));
+}
+
+// --- 5. Свой lock снимается только со своим токеном ---
+{
+  const a = new LockManager(lockDir);
+  const token = await a.acquire("owner");
+  check("acquire: возвращает непустой токен", typeof token === "string" && token.length > 10);
+  check(
+    "acquire: в файле лежит именно токен",
+    fs.readFileSync(path.join(lockDir, "owner.lock"), "utf8") === token
+  );
+
+  const released = await a.release("owner", token);
+  check("release: свой lock снят", released === true && !fs.existsSync(path.join(lockDir, "owner.lock")));
+}
+
+// --- 6. Чужой/поддельный токен не снимает lock ---
+{
+  const owner = new LockManager(lockDir);
+  const token = await owner.acquire("foreign");
+  const stranger = new LockManager(lockDir);
+  const released = await stranger.release("foreign", "not-my-token");
+  check(
+    "release: чужой токен не снимает lock",
+    released === false && fs.existsSync(path.join(lockDir, "foreign.lock"))
+  );
+  check(
+    "release: содержимое чужого lock не изменилось",
+    fs.readFileSync(path.join(lockDir, "foreign.lock"), "utf8") === token
+  );
+  await owner.release("foreign", token);
+}
+
+// --- 7. Вытесненный владелец не сносит lock нового владельца ---
+{
+  const oldOwner = new LockManager(lockDir);
+  const oldToken = await oldOwner.acquire("evicted");
+  const livePath = path.join(lockDir, "evicted.lock");
+
+  // Имитируем вытеснение по staleMs: старый файл унесли, новый владелец взял lock.
+  const stalePath = `${livePath}.stale-test`;
+  fs.renameSync(livePath, stalePath);
+  fs.rmSync(stalePath, { force: true });
+
+  const newOwner = new LockManager(lockDir);
+  const newToken = await newOwner.acquire("evicted");
+  const released = await oldOwner.release("evicted", oldToken);
+
+  check(
+    "вытеснение: старый владелец не снял новый lock",
+    released === false &&
+      fs.existsSync(livePath) &&
+      fs.readFileSync(livePath, "utf8") === newToken
+  );
+  await newOwner.release("evicted", newToken);
+}
+
+// --- 8. withLock / withLockWait снимают lock после работы ---
+{
+  const manager = new LockManager(lockDir);
+  let calls = 0;
+  const first = await withLock(manager, "with-lock", async () => {
+    calls += 1;
+    check("withLock: lock удерживается во время fn", fs.existsSync(path.join(lockDir, "with-lock.lock")));
+    return "ok";
+  });
+  check("withLock: результат возвращён и lock снят", first === "ok" && calls === 1 && !fs.existsSync(path.join(lockDir, "with-lock.lock")));
+
+  const second = await withLockWait(
+    manager,
+    "with-lock-wait",
+    async () => {
+      calls += 1;
+      return 42;
+    },
+    { timeoutMs: 500 }
+  );
+  check("withLockWait: результат возвращён и lock снят", second === 42 && calls === 2 && !fs.existsSync(path.join(lockDir, "with-lock-wait.lock")));
+}
+
+// --- 9. withLock пропускает запуск, если lock уже занят ---
+{
+  const manager = new LockManager(lockDir);
+  const token = await manager.acquire("busy");
+  let ran = false;
+  const result = await withLock(manager, "busy", async () => {
+    ran = true;
+    return "should-not-run";
+  });
+  check("withLock: занятый lock не запускает fn", result === null && ran === false);
+  await manager.release("busy", token);
+}
+
+// --- 10. P2-18: живой владелец старого lock не вытесняется при initialize ---
+{
+  check("liveness: текущий процесс жив", isProcessAlive(process.pid) === true);
+  check("liveness: заведомо мёртвый pid не жив", isProcessAlive(999999999) === false);
+
+  const liveOld = path.join(lockDir, "live-old.lock");
+  const liveToken = `${process.pid}-${Date.now()}-live-owner`;
+  fs.writeFileSync(liveOld, liveToken, "utf8");
+  fs.utimesSync(liveOld, OLD, OLD);
+
+  const a = new LockManager(lockDir);
+  await a.initialize();
+
+  check(
+    "P2-18: старый lock живого процесса не вытеснен",
+    fs.existsSync(liveOld) && fs.readFileSync(liveOld, "utf8") === liveToken
+  );
+  fs.rmSync(liveOld, { force: true });
+}
+
+// --- 11. P2-18: старый lock мёртвого процесса вытесняется при initialize ---
+{
+  const deadOld = path.join(lockDir, "dead-old.lock");
+  fs.writeFileSync(deadOld, `999999999-${Date.now()}-dead-owner`, "utf8");
+  fs.utimesSync(deadOld, OLD, OLD);
+
+  const a = new LockManager(lockDir);
+  await a.initialize();
+
+  check("P2-18: старый lock мёртвого процесса вытеснен", !fs.existsSync(deadOld));
+}
+
+// --- 12. P2-18: withLockWait не вытесняет живой старый lock и упирается в таймаут ---
+{
+  const manager = new LockManager(lockDir);
+  const token = await manager.acquire("wait-live");
+  const livePath = path.join(lockDir, "wait-live.lock");
+  fs.utimesSync(livePath, OLD, OLD);
+
+  let threw = false;
+  try {
+    await withLockWait(
+      manager,
+      "wait-live",
+      async () => "must-not-run",
+      { timeoutMs: 300, retryDelayMs: 20, staleMs: 60_000 }
+    );
+  } catch (err) {
+    threw = /Не удалось получить блокировку/.test(String(err?.message ?? err));
+  }
+
+  check(
+    "P2-18: withLockWait не забрал lock живого владельца",
+    threw && fs.existsSync(livePath) && fs.readFileSync(livePath, "utf8") === token
+  );
+  await manager.release("wait-live", token);
+}
+
+// --- 13. P2-18: withLockWait вытесняет старый lock мёртвого владельца и выполняет fn ---
+{
+  const manager = new LockManager(lockDir);
+  const deadPath = path.join(lockDir, "wait-dead.lock");
+  fs.writeFileSync(deadPath, `999999999-${Date.now()}-dead-owner`, "utf8");
+  fs.utimesSync(deadPath, OLD, OLD);
+
+  let ran = false;
+  const result = await withLockWait(
+    manager,
+    "wait-dead",
+    async () => {
+      ran = true;
+      return "ran";
+    },
+    { timeoutMs: 3000, retryDelayMs: 20, staleMs: 60_000 }
+  );
+
+  check(
+    "P2-18: withLockWait вытеснил мёртвый lock и выполнил fn",
+    result === "ran" && ran === true && !fs.existsSync(deadPath)
+  );
 }
 
 const failed = results.filter((r) => !r.ok);

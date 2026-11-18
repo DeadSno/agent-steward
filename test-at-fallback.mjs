@@ -6,8 +6,10 @@ import {
   buildDetachedOneShotScript,
   cancelAtFallback,
   computeDelaySeconds,
+  fallbackMarker,
   isAtMissingError,
   isPidJobId,
+  pruneStaleFallbackEntries,
   scheduleAtFallback,
 } from "./dist/core/scheduler/at-fallback.js";
 
@@ -72,9 +74,18 @@ check(!isAtMissingError(null), "null — не отсутствие at");
     "/bin/bash '/tmp/x y.sh' >> '/tmp/log file' 2>&1",
     now,
   );
+  const marker = fallbackMarker("at-fallback-test");
   check(
-    script === "sleep 5; /bin/bash '/tmp/x y.sh' >> '/tmp/log file' 2>&1",
-    "скрипт = sleep + команда с кавычками",
+    marker ===
+      "opencode-scheduler-at-fallback:" +
+        Buffer.from("at-fallback-test", "utf8").toString("base64url"),
+    "маркер содержит base64url имени задачи",
+    marker,
+  );
+  check(
+    script ===
+      `sleep 5; /bin/bash '/tmp/x y.sh' >> '/tmp/log file' 2>&1 # ${marker}`,
+    "скрипт = sleep + команда с кавычками + маркер",
     script,
   );
 
@@ -119,7 +130,7 @@ check(!isAtMissingError(null), "null — не отсутствие at");
     "процесс отвязан и не держит stdio",
     calls[0].options,
   );
-  check(/^sleep \d+; \/bin\/bash '\/tmp\/run\.sh'$/.test(calls[0].args[1]), "в скрипте есть sleep и команда", calls[0].args[1]);
+  check(/^sleep \d+; \/bin\/bash '\/tmp\/run\.sh' # opencode-scheduler-at-fallback:[A-Za-z0-9_-]+$/.test(calls[0].args[1]), "в скрипте есть sleep, команда и маркер", calls[0].args[1]);
   check(unrefCalled, "unref() вызван");
 }
 
@@ -147,6 +158,148 @@ check(!isPidJobId(undefined), "undefined — не fallback");
 check(cancelAtFallback("17") === false, "cancelAtFallback не трогает at-задания");
 check(cancelAtFallback("pid:0") === false, "pid:0 не снимается");
 check(cancelAtFallback("pid:999999999") === false, "несуществующий pid — false без исключения");
+check(cancelAtFallback("pid:4242") === false, "без имени задачи pid не снимается");
+
+// P1-14: личность процесса проверяется по маркеру в /proc/<pid>/cmdline.
+{
+  const killed = [];
+  const mismatch = cancelAtFallback("pid:4242", "at-fallback-test", {
+    isAlive: () => false,
+    kill: (pid, signal) => killed.push([pid, signal]),
+  });
+  check(
+    mismatch === false && killed.length === 0,
+    "чужой/мёртвый pid не убивается",
+    { mismatch, killed },
+  );
+
+  killed.length = 0;
+  const matched = cancelAtFallback("pid:4242", "at-fallback-test", {
+    isAlive: () => true,
+    kill: (pid, signal) => killed.push([pid, signal]),
+  });
+  check(
+    matched === true && killed[0]?.[0] === -4242 && killed[0]?.[1] === "SIGTERM",
+    "свой pid снимается группой процессов",
+    { matched, killed },
+  );
+
+  const attempts = [];
+  const fallback = cancelAtFallback("pid:4242", "at-fallback-test", {
+    isAlive: () => true,
+    kill: (pid) => {
+      attempts.push(pid);
+      if (pid < 0) throw new Error("EPERM");
+    },
+  });
+  check(
+    fallback === true && attempts.join(",") === "-4242,4242",
+    "если группа недоступна — kill по положительному pid",
+    { fallback, attempts },
+  );
+}
+
+// P1-14: очистка pid:-записей при старте.
+const makeRegistry = (entries) => {
+  const state = { entries, saves: 0 };
+  return {
+    state,
+    registry: {
+      load: async () => state.entries,
+      save: async (list) => {
+        state.saves += 1;
+        state.entries = list;
+      },
+    },
+  };
+};
+const pruneNow = Date.parse("2026-11-18T10:00:00Z");
+
+{
+  const alive = entry({
+    name: "alive",
+    atJobId: "pid:11",
+    runAt: "2026-11-18T10:10:00Z",
+  });
+  const { state, registry } = makeRegistry([alive]);
+  const report = await pruneStaleFallbackEntries(registry, {
+    now: () => pruneNow,
+    isAlive: (pid, name) => pid === 11 && name === "alive",
+  });
+  check(
+    report.kept === 1 && report.removed === 0 && state.saves === 0 && alive.atJobId === "pid:11",
+    "живой fallback сохраняется, реестр не перезаписывается",
+    report,
+  );
+}
+
+{
+  const future = entry({
+    name: "future",
+    command: "/tmp/run.sh",
+    atJobId: "pid:22",
+    runAt: "2026-11-18T10:10:00Z",
+  });
+  const { state, registry } = makeRegistry([future]);
+  const scheduled = [];
+  const report = await pruneStaleFallbackEntries(registry, {
+    now: () => pruneNow,
+    isAlive: () => false,
+    schedule: async (target, command, at) => {
+      scheduled.push({ name: target.name, command, at });
+      return "pid:99";
+    },
+  });
+  check(
+    report.removed === 1 &&
+      report.rescheduled === 1 &&
+      future.atJobId === "pid:99" &&
+      scheduled[0]?.command === "/bin/bash '/tmp/run.sh'" &&
+      scheduled[0]?.at === pruneNow,
+    "мёртвый будущий one-shot пересоздаётся",
+    { report, scheduled, atJobId: future.atJobId },
+  );
+  check(state.saves === 1, "после пересоздания реестр сохранён");
+}
+
+{
+  const past = entry({
+    name: "past",
+    atJobId: "pid:33",
+    runAt: "2026-11-18T09:00:00Z",
+  });
+  const { state, registry } = makeRegistry([past]);
+  const warnings = [];
+  const report = await pruneStaleFallbackEntries(registry, {
+    now: () => pruneNow,
+    isAlive: () => false,
+    warn: (message) => warnings.push(message),
+  });
+  check(
+    report.removed === 1 &&
+      report.missed === 1 &&
+      report.rescheduled === 0 &&
+      past.atJobId === undefined &&
+      warnings.some((message) => message.includes("время запуска уже прошло")),
+    "мёртвый прошедший one-shot помечается пропущенным",
+    { report, warnings, atJobId: past.atJobId },
+  );
+  check(state.saves === 1, "после удаления мёртвой записи реестр сохранён");
+}
+
+if (process.platform !== "linux") {
+  const report = await pruneStaleFallbackEntries({
+    load: async () => {
+      throw new Error("load не должен вызываться");
+    },
+    save: async () => {},
+  });
+  check(
+    report.skipped === true && report.removed === 0,
+    "без /proc и без isAlive prune безопасно пропускается",
+    report,
+  );
+}
 
 console.log(
   failures === 0

@@ -48,8 +48,27 @@ export abstract class PosixSchedulerBase implements SchedulerBackend {
       ...(options.timezone ? { timezone: options.timezone } : {}),
     };
 
+    // P2-17: запись нужна в реестре ДО installEntry — Linux пересобирает crontab
+    // из реестра. Но если установка упала, запись-призрак останется навсегда,
+    // поэтому откатываем реестр к предыдущему состоянию.
+    const previous = await this.registry.find(entry.name);
     await this.registry.upsert(entry);
-    await this.installEntry(entry);
+    try {
+      await this.installEntry(entry);
+    } catch (err) {
+      try {
+        if (previous) await this.registry.upsert(previous);
+        else await this.registry.remove(entry.name);
+      } catch {
+        // Не маскируем исходную ошибку установки ошибкой отката.
+      }
+      try {
+        await this.uninstallEntry(entry);
+      } catch {
+        // Частичная установка могла не создать запись — это не ошибка отката.
+      }
+      throw err;
+    }
     // installEntry может записать atJobId для Linux one-shot.
     await this.registry.upsert(entry);
   }
