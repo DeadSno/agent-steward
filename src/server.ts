@@ -159,10 +159,12 @@ export interface ModelAnalysis {
 }
 
 /**
- * Приблизительные цены моделей в USD за 1M токенов.
+ * Приблизительные цены моделей в USD за 1M токенов (значения по умолчанию).
  * Используются для What-If-анализа, когда в логе нет точной стоимости.
+ * Переопределяются переменной окружения OPENCODE_SCHEDULER_MODEL_PRICES (JSON:
+ * {"openai/gpt-4o": 10, "deepseek/deepseek-coder": 0.28, ...}).
  */
-const MODEL_PRICE_PER_MILLION: Record<string, number> = {
+const DEFAULT_MODEL_PRICE_PER_MILLION: Record<string, number> = {
   "openai/gpt-4o": 10,
   "openai/gpt-4o-mini": 0.6,
   "deepseek/deepseek-coder": 0.28,
@@ -173,8 +175,36 @@ const MODEL_PRICE_PER_MILLION: Record<string, number> = {
 };
 const DEFAULT_PRICE_PER_MILLION = 3;
 
+/** Модели для What-If-блока по умолчанию. */
+const DEFAULT_WHAT_IF_MODELS = ["openai/gpt-4o", "deepseek/deepseek-coder"];
+
+/** Чтение JSON из переменной окружения с фолбэком на значение по умолчанию. */
+function envJson<T>(name: string, fallback: T): T {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    console.warn(
+      `[scheduler] Неверный JSON в переменной ${name}, используются значения по умолчанию.`,
+    );
+    return fallback;
+  }
+}
+
+const envModelPrices = envJson<Record<string, number>>(
+  "OPENCODE_SCHEDULER_MODEL_PRICES",
+  {},
+);
+
+/** Цены моделей: дефолты + переопределение из окружения. */
+const MODEL_PRICE_PER_MILLION: Record<string, number> = {
+  ...DEFAULT_MODEL_PRICE_PER_MILLION,
+  ...envModelPrices,
+};
+
 /** Цена модели за 1M токенов (fallback — средняя оценка). */
-function modelPrice(model: string | undefined): number {
+export function modelPrice(model: string | undefined): number {
   const key = (model ?? "").trim().toLowerCase();
   return MODEL_PRICE_PER_MILLION[key] ?? DEFAULT_PRICE_PER_MILLION;
 }
@@ -188,7 +218,7 @@ function estimateCost(tokens: number, model: string | undefined): number {
  * Агрегирует историю по моделям и считает сценарии What-If.
  * Возвращает данные для GET /api/models-analysis и блока дашборда.
  */
-function aggregateModels(
+export function aggregateModels(
   history: {
     status: string;
     durationMs: number;
@@ -239,7 +269,13 @@ function aggregateModels(
     }))
     .sort((a, b) => b.totalRuns - a.totalRuns);
 
-  const whatIfModels = ["openai/gpt-4o", "deepseek/deepseek-coder"];
+  const envWhatIfModels = envJson<string[]>(
+    "OPENCODE_SCHEDULER_WHAT_IF_MODELS",
+    DEFAULT_WHAT_IF_MODELS,
+  );
+  const whatIfModels = Array.isArray(envWhatIfModels)
+    ? envWhatIfModels
+    : DEFAULT_WHAT_IF_MODELS;
   const whatIf = whatIfModels.map((model) => ({
     model,
     pricePerMillion: modelPrice(model),
@@ -2079,18 +2115,10 @@ function renderPage(): string {
     html += '</tbody></table>';
     box.innerHTML = html;
 
-    var gpt = null;
-    var deepseek = null;
-    for (var j = 0; j < whatIf.length; j++) {
-      if (whatIf[j].model === 'openai/gpt-4o') gpt = whatIf[j];
-      if (whatIf[j].model === 'deepseek/deepseek-coder') deepseek = whatIf[j];
-    }
     var parts = [];
-    if (gpt) {
-      parts.push('Если бы все запуски выполнялись через <b>openai/gpt-4o</b>, это стоило бы ~<b>' + money(gpt.cost) + '</b> (' + gpt.pricePerMillion + ' $/1M токенов).');
-    }
-    if (deepseek) {
-      parts.push('Если через <b>deepseek/deepseek-coder</b> — <b>' + money(deepseek.cost) + '</b> (' + deepseek.pricePerMillion + ' $/1M токенов).');
+    for (var j = 0; j < whatIf.length; j++) {
+      var w = whatIf[j];
+      parts.push('Если бы все запуски выполнялись через <b>' + esc(w.model) + '</b>, это стоило бы ~<b>' + money(w.cost) + '</b> (' + w.pricePerMillion + ' $/1M токенов).');
     }
     parts.push('Всего запусков: <b>' + totals.totalRuns + '</b>, токенов: <b>' + Number(totals.totalTokens || 0).toLocaleString('ru-RU') + '</b>, фактическая стоимость: <b>' + money(totals.totalCost) + '</b>.');
     text.innerHTML = parts.join(' ');
