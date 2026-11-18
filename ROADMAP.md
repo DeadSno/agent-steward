@@ -28,7 +28,7 @@ Legacy: `opencode-windows-scheduler@1.5.8`.
 
 `recoverInterrupted()` помечает все `finished_at IS NULL` как `error` без проверки PID/владельца/возраста. Перезапуск плагина во время живого прогона финализирует его досрочно.
 
-- [ ] B1.1 Миграция schema v8: `owner_pid`, `owner_host`, `owner_started_at` в `history` (аддитивно, идемпотентно)
+- [x] B1.1 Миграция schema v8: `owner_pid`, `owner_host`, `owner_started_at` в `history` (аддитивно, идемпотентно)
 - [ ] B1.2 Recorder `--start` пишет владельца (PID процесса-обёртки, host id, время старта)
 - [ ] B1.3 `recoverInterrupted()`: пропускать живого владельца, добивать мёртвого или просроченного по возрасту
 - [ ] B1.4 Подключить в startup + лог «восстановлено N, оставлено живым M»

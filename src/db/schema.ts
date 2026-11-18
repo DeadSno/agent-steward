@@ -31,7 +31,12 @@ CREATE TABLE IF NOT EXISTS history (
   next_task TEXT,
   workspace_id TEXT,
   allowed_tools TEXT,
-  denied_tools TEXT
+  denied_tools TEXT,
+  -- Схема v8: владелец незавершённого запуска. Нужен recovery, чтобы не
+  -- финализировать прогон, чей процесс ещё жив (B1).
+  owner_pid INTEGER,
+  owner_host TEXT,
+  owner_started_at TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_history_task ON history(task_name, started_at DESC);
@@ -241,7 +246,7 @@ interface SchemaDb {
  * миграций. Увеличивайте при добавлении новой ступени в {@link MIGRATIONS}
  * и добавляйте соответствующую запись в массив.
  */
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 8;
 
 /** Возвращает сохранённую версию схемы (0 у legacy-БД без user_version). */
 export function getSchemaVersion(db: SchemaDb): number {
@@ -459,6 +464,25 @@ const MIGRATIONS: { to: number; migrate: (db: SchemaDb) => void }[] = [
         CREATE INDEX IF NOT EXISTS idx_run_injections_pending
           ON run_injections(run_id, step_name) WHERE consumed_at IS NULL;
       `);
+    },
+  },
+  {
+    // Ступень 8 — владелец незавершённого запуска (B1). Recovery должен
+    // отличать живой прогон от осиротевшего: PID процесса-обёртки, метка
+    // хоста и время старта владельца. Колонки аддитивные, поэтому ступень
+    // идемпотентна и безопасна для старых БД.
+    to: 8,
+    migrate(db) {
+      const columnNames = tableColumns(db, "history");
+      if (!columnNames.includes("owner_pid")) {
+        db.exec("ALTER TABLE history ADD COLUMN owner_pid INTEGER");
+      }
+      if (!columnNames.includes("owner_host")) {
+        db.exec("ALTER TABLE history ADD COLUMN owner_host TEXT");
+      }
+      if (!columnNames.includes("owner_started_at")) {
+        db.exec("ALTER TABLE history ADD COLUMN owner_started_at TEXT");
+      }
     },
   },
 ];
