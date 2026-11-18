@@ -308,6 +308,10 @@ try {
     "lock: ошибка создания lock не выдаётся за «уже выполняется»",
     script.includes('[ ! -d "$LOCK_FILE.d" ]')
   );
+  // B2: повторы принадлежат recorder'у. POSIX-обёртка запускает opencode один
+  // раз (`exec`), своего retry-цикла у неё нет — иначе получилось бы (1+N)^2.
+  check("ретраи: POSIX-обёртка не содержит retry-цикла", !/retry/i.test(script));
+  check("ретраи: POSIX-обёртка делает один запуск через exec", script.includes("exec opencode run"));
 } catch (err) {
   console.log("[diag] section 4 THREW:", err instanceof Error ? err.stack : String(err));
   check("backstop: в обёртке есть проверка PROMPT_BYTES", false, "section threw");

@@ -2,7 +2,7 @@
 // Проверяем то, что раньше не работало:
 //   1. TimeoutSeconds реально убивает задачу, статус = "timeout"
 //   2. Повторный запуск при активной блокировке пропускается (нет второго запуска)
-//   3. retryCount из схемы действительно даёт N+1 попыток
+//   3. Ретраи: обёртка делает одну попытку, повторы планирует recorder (B2)
 //   4. Кавычки в before/after-скриптах (путь с пробелами) не ломают хук
 //   5. Recorder не сдвигает аргументы при пустом сообщении об ошибке
 //      (model не превращается в preFlight, postFlightStatus сохраняется)
@@ -67,6 +67,7 @@ const check = (name, ok, extra) => {
 const { initDb } = await import("./dist/db/index.js");
 const { saveTask } = await import("./dist/db/tasks-repo.js");
 const { getHistory } = await import("./dist/db/history-repo.js");
+const { getSetting, deleteSetting } = await import("./dist/db/settings-repo.js");
 const { writeWrapperCmd, writePromptFile, lockFilePath, ensureWrapper } = await import(
   "./dist/core/ps-wrapper.js"
 );
@@ -107,9 +108,7 @@ async function prepareTask(spec) {
     undefined,
     undefined,
     "new",
-    undefined,
-    spec.retryCount,
-    spec.retryDelay
+    undefined
   );
   return { wrapperPath, logFile };
 }
@@ -222,26 +221,44 @@ const readLog = (file) => (fs.existsSync(file) ? fs.readFileSync(file, "utf8") :
   fs.rmSync(lockFile, { force: true });
 }
 
-// --- 4. retryCount: N+1 попыток ---
+// --- 4. Ретраи: одна попытка у обёртки, повторы у recorder'а (B2) ---
 {
   const spec = {
     name: "Exec Hardening Retry",
     sanitized: "exec-hardening-retry",
     timeoutSeconds: 30,
     retryCount: 2,
-    retryDelay: 0,
+    retryDelay: 2,
   };
   fs.rmSync(counterFile, { force: true });
+  deleteSetting(`retry_state:${spec.name.toLowerCase()}`);
   const { wrapperPath } = await prepareTask(spec);
+
+  const wrapperCmd = fs.readFileSync(wrapperPath, "utf8");
+  check(
+    "ретраи: обёртка не получает -RetryCount (единственный слой)",
+    !wrapperCmd.includes("-RetryCount")
+  );
+
   const run = runWrapper(wrapperPath, { FAKE_MODE: "fail" });
 
   const calls = fs.existsSync(counterFile)
     ? fs.readFileSync(counterFile, "utf8").split(/\r?\n/).filter(Boolean).length
     : 0;
-  check("ретраи: ровно 3 попытки (1 + retryCount 2)", calls === 3, `calls=${calls}`);
+  check("ретраи: обёртка делает ровно одну попытку", calls === 1, `calls=${calls}`);
   check("ретраи: итоговый код не 0", run.status !== 0, `status=${run.status}`);
   const [record] = getHistory(spec.name, 5);
   check("ретраи: статус error", record?.status === "error", record?.status);
+
+  // Recorder — единственный владелец повторов: он декрементирует счётчик
+  // задачи (2 -> 1) и запускает detached-повтор с задержкой retryDelay.
+  const remaining = getSetting(`retry_state:${spec.name.toLowerCase()}`, null);
+  check(
+    "ретраи: recorder зарезервировал повтор (2 -> 1)",
+    remaining === 1,
+    `retry_state=${String(remaining)}`
+  );
+  deleteSetting(`retry_state:${spec.name.toLowerCase()}`);
 }
 
 // --- 5. list_tasks отдаёт timeoutSeconds ---

@@ -50,6 +50,8 @@ export const WRAPPER_SCRIPT = `param(
     [string]$SessionMode,
     [string]$SessionId,
     [string]$SessionFile,
+    # B2: параметры оставлены только для совместимости со старыми .cmd.
+    # Ретраи принадлежат recorder'у — обёртка делает ровно одну попытку.
     [int]$RetryCount = 0,
     [int]$RetryDelaySeconds = 0,
     [int]$GateTimeoutSeconds = 300,
@@ -705,26 +707,11 @@ try {
     # Запускаем opencode и НАПРЯМУЮ направляем весь вывод (stdout + stderr) в лог.
     # Out-File -Append -Encoding utf8 пишет по мере поступления строк, поэтому
     # ответ ИИ появляется в GUI ещё до завершения задачи.
-    # Hotfix 1.5.3.1: retryCount из схемы раньше нигде не применялся — теперь
-    # неудачная попытка повторяется до RetryCount раз с паузой RetryDelaySeconds.
-    $maxAttempts = 1 + [Math]::Max(0, $RetryCount)
-    $attempt = 0
-    while ($attempt -lt $maxAttempts) {
-        $attempt++
-        if ($attempt -gt 1) {
-            $waitSeconds = [Math]::Max(0, $RetryDelaySeconds)
-            Write-Log "[agent-steward] Повтор $($attempt - 1) из $($maxAttempts - 1) через $waitSeconds с..."
-            if ($waitSeconds -gt 0) { Start-Sleep -Seconds $waitSeconds }
-            $script:errorMessage = ""
-        }
-        $script:exitCode = Invoke-OpenCodeOnce -CommandPath $opencodeCmd -Arguments $opencodeArgs
-        if ($script:exitCode -eq 0) { break }
-        # Таймаут повторять бессмысленно: каждая попытка снова съест весь лимит.
-        if ($script:timedOut) { break }
-        if ($attempt -lt $maxAttempts) {
-            Write-Log "[agent-steward] Попытка $attempt завершилась с кодом $($script:exitCode)."
-        }
-    }
+    # B2: обёртка делает РОВНО одну попытку. Повторы — зона recorder'а
+    # (retryCount/retryDelay в БД), иначе на Windows получалось (1+N)^2
+    # запусков: N попыток внутри обёртки × N+1 запуск из recorder'а.
+    # Параметры -RetryCount/-RetryDelaySeconds принимаются, но игнорируются.
+    $script:exitCode = Invoke-OpenCodeOnce -CommandPath $opencodeCmd -Arguments $opencodeArgs
 
     # Quality Gate: проверочная команда выполняется ТОЛЬКО после успешного
     # завершения opencode run. Если ИИ упал — шлюз не запускаем.
@@ -935,8 +922,6 @@ export async function writeWrapperCmd(
   envFile?: string,
   sessionMode?: "new" | "reuse" | "last",
   sessionId?: string,
-  retryCount?: number,
-  retryDelaySeconds?: number,
   gateTimeoutSeconds?: number,
   permissionsConfig?: string,
   policyMeta?: unknown,
@@ -966,13 +951,10 @@ export async function writeWrapperCmd(
       : 300;
   psArgs.push(`-GateTimeoutSeconds ${safeGateTimeout}`);
 
-  // Hotfix 1.5.3.1: ретраи. Параметр не передаём при 0 — обёртка по умолчанию
-  // делает ровно одну попытку, как раньше.
-  const safeRetryCount = Math.max(0, Math.floor(retryCount ?? 0));
-  if (safeRetryCount > 0) {
-    psArgs.push(`-RetryCount ${safeRetryCount}`);
-    psArgs.push(`-RetryDelaySeconds ${Math.max(0, Math.floor(retryDelaySeconds ?? 0))}`);
-  }
+  // B2: ретраи сознательно не передаются в обёртку — единственный владелец
+  // повторов это recorder (retryCount/retryDelay), иначе на Windows получается
+  // (1+N)^2 запусков. Старые .cmd с -RetryCount продолжают работать: параметр
+  // принимается, но игнорируется.
 
   if (logFile) {
     psArgs.push(`-LogFile "${logFile}"`);

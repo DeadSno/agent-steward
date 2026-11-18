@@ -6309,8 +6309,6 @@ export async function schedulerCreateTask(
         taskEnvFile,
         effectiveSession,
         effectiveSessionId,
-        retryCount,
-        retryDelay,
         undefined,
         permissionsConfig,
         policyMeta,

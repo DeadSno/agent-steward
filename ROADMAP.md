@@ -23,19 +23,7 @@ Legacy: `opencode-windows-scheduler@1.5.8`.
 
 # 1. Бэклог (аудит 18.11)
 
-## Деталь 1.1 — Ретраи
-`src/core/ps-wrapper.ts`, `src/core/record-history.ts`
-
-**Задача B2 — Один слой ретраев на Windows** · P1 · ⬜
-
-PS-обёртка ретраит сама, recorder добавляет свои → `(1+N)²` вместо `1+N`, «ретрейт-штормы» и лишние деньги.
-
-- [ ] B2.1 Убрать retry-цикл из PS-обёртки
-- [ ] B2.2 Оставить единственным владельцем ретраев recorder (retryCount/retryDelay)
-- [ ] B2.3 Тест: N ретраев = ровно N+1 запуск на Windows и POSIX
-- [ ] B2.4 Docs: поведение ретраев на обеих полосах
-
-## Деталь 1.2 — Dashboard HTTP
+## Деталь 1.1 — Dashboard HTTP
 `src/server.ts`
 
 **Задача B3 — XSS через атрибуты дашборда** · P1 · ⬜
@@ -47,7 +35,7 @@ PS-обёртка ретраит сама, recorder добавляет свои 
 - [ ] B3.3 Тест: payload с кавычками не ломает разметку и не исполняется
 - [ ] B3.4 CSP-заголовок дашборда (defense in depth)
 
-## Деталь 1.3 — Release CI
+## Деталь 1.2 — Release CI
 `.github/workflows/release.yml`
 
 **Задача B16 — Publish только по тегу, permissions ужать** · P1 · ⬜
@@ -59,7 +47,7 @@ PS-обёртка ретраит сама, recorder добавляет свои 
 - [ ] B16.3 Guard: `package.json` version == тег
 - [ ] B16.4 `workflow_dispatch` = dry-run без публикации
 
-## Деталь 1.4 — Профили и порты
+## Деталь 1.3 — Профили и порты
 `src/server.ts`, `src/core/profile*.ts`
 
 **Задача B4 — Порт профиля не пересекается с default** · P2 · ⬜
@@ -71,7 +59,7 @@ PS-обёртка ретраит сама, recorder добавляет свои 
 - [ ] B4.3 Тест: два профиля одновременно, данные не смешиваются
 - [ ] B4.4 Docs: нумерация портов профилей
 
-## Деталь 1.5 — macOS launchd
+## Деталь 1.4 — macOS launchd
 `src/core/*launchd*`, `src/core/install-entry*`
 
 **Задача B5 — `installEntry` уважает `paused` и пробрасывает ошибки `load`** · P2 · ⬜
