@@ -260,6 +260,7 @@
 | P3-18 | Роутер, подзадача 36.5.c: слой 3 — декомпозиция миссии — `src/core/router/planner.ts` (`planMission` вызывает декомпозер один раз на миссию, `planMissionSync` и `decomposeHeuristically` без модели, `needsDecomposition`); шаг содержит только `stepName`+`taskType`, маршрут остаётся слоям 1–2, неизвестные типы идут в `ambiguousTaskTypes`; тест `test-planner.mjs` | Спринт 36 | ✅ |
 | P3-19 | Роутер, подзадача 36.5.d: эскалация при провале гейта — `src/core/router/escalation.ts` (`escalateAfterGate`: `local → cloud → review → blocked` по таблице переходов, `nextGateTarget`, `isEscalationExhausted`, `escalationChain`, без БД и модели); сборка маршрута `src/core/router/dispatch.ts` (`routeStep`: слой 1 → слой 2, `review`/`explore` без транспорта); тест `test-escalation.mjs` | Спринт 36 | ✅ |
 | P3-20 | Роутер, подзадача 36.5.e: маршрутизация без модели для известных типов — `test-router-dispatch.mjs` доказывает, что статика отвечает до инициализации БД, не пишет в `capability_map`, а `dispatch.ts` не импортирует planner; 1000 маршрутов укладываются в миллисекунды | Спринт 36 | ✅ |
+| P3-21 | Chaos-тест nightly, задача 36.5: `test-chaos-dag.mjs` убивает `SIGKILL` дочерний процесс посреди DAG-цепочки (`build`, затем `test`), проверяет durable-состояние до и после `recoverInterruptedSteps`, resume с прерванного шага с `attempt = 2`, отсутствие повторных вызовов завершённых шагов и `PRAGMA integrity_check`; `.github/workflows/nightly.yml` запускает тест по cron на windows-latest и ubuntu-latest; `npm run test:chaos` | Спринт 36 | ✅ |
 
 ---
 

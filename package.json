@@ -92,6 +92,7 @@
     "test:escalation": "node test-escalation.mjs",
     "test:router-dispatch": "node test-router-dispatch.mjs",
     "test:crash": "node test-crash-recovery.mjs",
+    "test:chaos": "node test-chaos-dag.mjs",
     "test:workspaces": "node test-workspaces.mjs",
     "test:role": "node test-role-scoped.mjs",
     "test:dry-run": "node test-dry-run.mjs",

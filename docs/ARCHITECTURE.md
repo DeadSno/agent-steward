@@ -439,6 +439,15 @@ failure, but the run still ends `failed`. This is covered by
 `test-run-resume.mjs`, including a real `kill -9` in the middle of a four-step
 chain.
 
+The crash path is also exercised nightly by `test-chaos-dag.mjs`: a child process
+runs a four-step chain, the parent sends `SIGKILL` right after the next step has
+committed `running`, and the test then verifies the durable state (`passed` steps
+are untouched, the victim is `running` with `attempt = 1`, later steps are
+`pending`), `PRAGMA integrity_check = ok`, recovery to `failed` with
+`attempt = 1`, and a resume that retries the victim with `attempt = 2` and never
+re-invokes handlers of completed steps. `.github/workflows/nightly.yml` runs it
+on a schedule on Windows and Ubuntu; locally it is `npm run test:chaos`.
+
 ### Idempotent steps (Sprint 36.3)
 
 `run_steps.idempotency_key` is unique per run: schema v4 deduplicates legacy
