@@ -72,9 +72,17 @@ const recordHistory = fs.readFileSync(
 );
 const helperCalls = (recordHistory.match(/runTaskNow\(/g) || []).length;
 check("record-history: цепочки и retry используют runTaskNow (>=2 вызова)", helperCalls >= 2);
+// P3-37: запрещаем именно прямые вызовы backend.runTask (они обходят
+// force-маркер). createSchedulerBackend() здесь нужен легитимно — P2-27
+// очищает отработавшие ONCE-задачи через deleteTask.
+const directRunTaskCalls = (recordHistory.match(/\.runTask\s*\(/g) || []).length;
 check(
-  "record-history: прямых createSchedulerBackend().runTask больше нет",
-  !recordHistory.includes("createSchedulerBackend"),
+  "record-history: прямых backend.runTask больше нет",
+  directRunTaskCalls === 0,
+);
+check(
+  "record-history: cleanup one-shot вызывает createSchedulerBackend().deleteTask",
+  /createSchedulerBackend\(\)\s*\.\s*deleteTask\s*\(/.test(recordHistory),
 );
 
 console.log(`\n${passed}/${passed + failed} OK`);
