@@ -515,6 +515,32 @@ check(
   pkgJson.scripts?.["pretest:parallel"] === "npm run build"
 );
 
+// P3-36: npm переписывает относительные ссылки в README пакета как
+// <repository>/blob/<путь> и теряет ветку. В итоге ссылка из legacy-пакета
+// вела на https://github.com/DeadSno/agent-steward/blob/docs/MIGRATION.md
+// (ветка `docs` не существует). Ссылка на гайд по ренейму должна быть
+// абсолютной и указывать на ветку с самим разделом (сейчас dev).
+const legacyReadmePath = path.join(root, "legacy", "README.md");
+const legacyReadme = fs.existsSync(legacyReadmePath)
+  ? fs.readFileSync(legacyReadmePath, "utf8")
+  : "";
+const migrationUrl =
+  "https://github.com/DeadSno/agent-steward/blob/dev/docs/MIGRATION.md#from-opencode-windows-scheduler-to-agent-steward-package-rename";
+check("legacy/README.md существует", legacyReadme.length > 0);
+check(
+  "legacy/README.md: ссылка на MIGRATION абсолютная и с веткой",
+  legacyReadme.includes(`[docs/MIGRATION.md](${migrationUrl})`)
+);
+check(
+  "legacy/README.md: нет относительной ссылки ../docs/MIGRATION.md (ломается на npm)",
+  !legacyReadme.includes("../docs/MIGRATION.md")
+);
+const migrationDoc = fs.readFileSync(path.join(docs, "MIGRATION.md"), "utf8");
+check(
+  "docs/MIGRATION.md: анкор package rename существует в целевом документе",
+  migrationDoc.includes("## From `opencode-windows-scheduler` to `agent-steward` (package rename)")
+);
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\nDocs: ${results.length - failed.length}/${results.length} проверок пройдено.`);
 process.exit(failed.length > 0 ? 1 : 0);
