@@ -10,7 +10,7 @@ import { loadTaskDefinitions } from "../task-transfer.js";
 import { getHistory } from "../db/history-repo.js";
 import { getWorkspace } from "../workspaces.js";
 import { expandMatrixTask } from "./matrix.js";
-import { nextRun, activeWindowState } from "./schedule-v2.js";
+import { nextRun, activeWindowState, assessCronWindowFeasibility, windowFeasibilityReasonText } from "./schedule-v2.js";
 import { checkGitTrigger } from "./git-trigger.js";
 import { t } from "../i18n.js";
 import type { TaskDefinition } from "../task-transfer.js";
@@ -282,6 +282,30 @@ async function describeTrigger(opts: DescribeTriggerOptions): Promise<DryRunTrig
           reason: state.reason ?? t("dryRun.window.outside"),
         }),
       );
+    }
+
+    // P2-24: даже если сейчас окно откроется, cron может никогда в него не
+    // попадать (например, daily 09:00 при окне 22:00–06:00). Предупреждаем
+    // заранее — иначе задача молча не выполняется из-за лимита переноса 12 ч.
+    if ((def.triggerType ?? "cron") === "cron" && def.schedule) {
+      const feasibility = assessCronWindowFeasibility(
+        def.schedule,
+        {
+          notBefore: def.notBefore ?? undefined,
+          notAfter: def.notAfter ?? undefined,
+          days: def.activeDays ?? undefined,
+          timeZone: def.timezone ?? undefined,
+        },
+        policy,
+      );
+      if (!feasibility.feasible) {
+        warnings.push(
+          t("dryRun.window.unreachable", {
+            cron: def.schedule,
+            reason: windowFeasibilityReasonText(feasibility.reason),
+          }),
+        );
+      }
     }
   }
 

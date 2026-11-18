@@ -22,7 +22,7 @@ import {
   validateModelId,
   validateTaskName,
 } from "./types.js";
-import { parseCron, buildScheduleGate, isValidIanaTimeZone, validateLaunchWindow, prevRun, nextRun as cronNextRun, normalizeActiveDays, activeWindowState, nextWindowOpenDelayMs } from "./core/schedule-v2.js";
+import { parseCron, buildScheduleGate, isValidIanaTimeZone, validateLaunchWindow, prevRun, nextRun as cronNextRun, normalizeActiveDays, activeWindowState, nextWindowOpenDelayMs, assessCronWindowFeasibility, windowFeasibilityReasonText } from "./core/schedule-v2.js";
 import {
   buildLaunchdOneShotCleanup,
   normalizeOneShotRunAt,
@@ -5806,6 +5806,29 @@ async function schedulerCreateTask(
     );
     if (windowError) {
       throw new Error(t("tool.error.window", { task: name, error: windowError }));
+    }
+    // P2-24: cron может быть валидным, но никогда не попадать в окно запуска
+    // (например, daily 09:00 при окне 22:00–06:00). Предупреждаем сразу при
+    // создании: иначе задача молча не выполняется из-за лимита переноса 12 ч.
+    if (normalizedNotBefore || normalizedNotAfter || normalizedActiveDays) {
+      const feasibility = assessCronWindowFeasibility(
+        schedule,
+        {
+          notBefore: normalizedNotBefore,
+          notAfter: normalizedNotAfter,
+          days: normalizedActiveDays,
+          timeZone: normalizedTz || undefined,
+        },
+        normalizedWindowPolicy,
+      );
+      if (!feasibility.feasible) {
+        console.warn(
+          `[scheduler] Задача "${name}": ${t("dryRun.window.unreachable", {
+            cron: schedule,
+            reason: windowFeasibilityReasonText(feasibility.reason),
+          })}`,
+        );
+      }
     }
   }
   // Спринт 27: окно и дни недели применимы и к событийным триггерам

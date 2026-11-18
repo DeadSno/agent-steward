@@ -9,6 +9,7 @@ import {
   normalizeActiveDays,
   isActiveDay,
   buildScheduleGate,
+  assessCronWindowFeasibility,
 } from "./dist/core/schedule-v2.js";
 import { t } from "./dist/i18n.js";
 
@@ -105,6 +106,33 @@ check("gate: вне окна, --window-policy skip → exit 3", runGate(["--cron
 check("gate: вне окна, --window-policy run → exit 0", runGate(["--cron", "0 8 * * *", "--tz", "UTC", "--now", "2026-11-16T08:00:00Z", "--days", "1,2,3,4,5", "--not-before", "09:00", "--not-after", "19:00", "--window-policy", "run"]).status === 0);
 // cron не совпал → exit 3 независимо от дней.
 check("gate: cron не совпал, дни совпадают → exit 3", runGate(["--cron", "0 9 * * *", "--tz", "UTC", "--now", "2026-11-16T10:00:00Z", "--days", "1,2,3,4,5"]).status === 3);
+
+// --- 7. P2-24: cron, который никогда не попадает в окно ----------------------
+const p224From = new Date("2026-11-16T09:00:00Z");
+const nightFeasibility = assessCronWindowFeasibility(
+  "0 9 * * *",
+  { notBefore: "22:00", notAfter: "06:00", timeZone: "UTC" },
+  "postpone",
+  p224From,
+);
+check(
+  "P2-24: 09:00 + окно 22:00–06:00 → недостижимо (перенос >12ч)",
+  nightFeasibility.feasible === false && nightFeasibility.reason === "postpone-too-far",
+);
+const dayWindow = assessCronWindowFeasibility(
+  "0 9 * * *",
+  { notBefore: "08:00", notAfter: "18:00", timeZone: "UTC" },
+  "postpone",
+  p224From,
+);
+check("P2-24: 09:00 + окно 08:00–18:00 → достижимо", dayWindow.feasible === true);
+const runPolicy = assessCronWindowFeasibility(
+  "0 9 * * *",
+  { notBefore: "22:00", notAfter: "06:00", timeZone: "UTC" },
+  "run",
+  p224From,
+);
+check("P2-24: windowPolicy=run → всегда достижимо", runPolicy.feasible === true);
 
 const failed = results.filter((r) => !r.ok);
 console.log(`\n${results.length - failed.length}/${results.length} OK`);

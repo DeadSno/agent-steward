@@ -476,10 +476,14 @@
 
 | Задача | Подзадача | Описание | Статус |
 |--------|-----------|----------|--------|
-| P2-24.T1 | P2-24.T1.1 | При создании валидировать/предупреждать: cron-время не попадает в окно, перенос >12 ч будет пропущен | ☐ |
-| | P2-24.T1.2 | `dry_run` показывает этот случай | ☐ |
+| P2-24.T1 | P2-24.T1.1 | При создании валидировать/предупреждать: cron-время не попадает в окно, перенос >12 ч будет пропущен | ✅ |
+| | P2-24.T1.2 | `dry_run` показывает этот случай | ✅ |
 
 **Проверено запуском (18.11.2026):** `schedule-gate --cron "0 9 * * *" --now 09:00Z --not-before 22:00 --not-after 06:00` → `exit 3` с сообщением «до открытия больше 12 часов, тик пропущен».
+
+**Реализовано (18.11.2026):** в `schedule-v2.ts` добавлен `assessCronWindowFeasibility(expr, options, policy, from, maxPostponeMs = 12ч, maxOccurrences = 120)` — перебирает ближайшие запуски cron и проверяет, попадает ли хотя бы один в окно либо переносится не дальше 12 ч. Возвращает `{ feasible, checked, firstRun?, reason? }` с причинами `never-fires | never-in-window | postpone-too-far`; для `windowPolicy = "run"` всегда `feasible`. `windowFeasibilityReasonText()` переводит причину на язык интерфейса. В `schedulerCreateTask` (cron-ветка) при наличии окна/дней выводится громкое предупреждение `console.warn` с текстом `dryRun.window.unreachable` (создание не блокируется). В `dry-run.ts` тот же расчёт добавляет предупреждение в отчёт. Ключи `dryRun.window.unreachable` и `dryRun.window.reason.*` добавлены в ru/en/zh.
+
+**Проверено запуском (18.11.2026):** `test-window-v3.mjs` 36/36 (в т.ч. 09:00 + окно 22:00–06:00 → `postpone-too-far`; 09:00 + 08:00–18:00 → достижимо; `windowPolicy=run` → достижимо), `test-dry-run.mjs` 19/19, `test-schedule-v2.mjs` 56/56, `npm run build` OK.
 
 ---
 

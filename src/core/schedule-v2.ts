@@ -597,6 +597,75 @@ export function nextWindowOpenDelayMs(now: Date, options: ActiveWindowOptions = 
   return state.nextOpenAt ? Math.max(0, state.nextOpenAt.getTime() - now.getTime()) : 0;
 }
 
+export interface CronWindowFeasibility {
+  /** Будет ли хотя бы один запуск пропущен не из-за окна. */
+  feasible: boolean;
+  /** Сколько вхождений cron проверено. */
+  checked: number;
+  /** Ближайшее вхождение, которое окно/политика пропустят (ISO). */
+  firstRun?: string;
+  reason?: "never-fires" | "never-in-window" | "postpone-too-far";
+}
+
+/** Человекочитаемая причина недостижимости окна (P2-24). */
+export function windowFeasibilityReasonText(
+  reason: CronWindowFeasibility["reason"],
+): string {
+  switch (reason) {
+    case "never-fires":
+      return t("dryRun.window.reason.neverFires");
+    case "never-in-window":
+      return t("dryRun.window.reason.neverInWindow");
+    case "postpone-too-far":
+      return t("dryRun.window.reason.postponeTooFar");
+    default:
+      return "";
+  }
+}
+
+/**
+ * P2-24: проверяет, не окажется ли cron навсегда отрезан окном запуска.
+ *
+ * `schedule-gate` откладывает запуск максимум на 12 ч. Если cron срабатывает
+ * только в 09:00, а окно 22:00–06:00, то до открытия всегда ~13 ч → каждый тик
+ * молча пропускается. Здесь это выявляется заранее (для предупреждения при
+ * создании задачи и в dry_run).
+ */
+export function assessCronWindowFeasibility(
+  expr: string,
+  options: ActiveWindowOptions = {},
+  policy: "skip" | "postpone" | "run" = "postpone",
+  from: Date = new Date(),
+  maxPostponeMs = 12 * 60 * 60 * 1000,
+  maxOccurrences = 120,
+): CronWindowFeasibility {
+  if (policy === "run") return { feasible: true, checked: 0 };
+
+  let cursor = from;
+  for (let i = 0; i < maxOccurrences; i += 1) {
+    const at = nextRun(expr, cursor, options.timeZone);
+    if (!at) {
+      return { feasible: false, checked: i, reason: "never-fires" };
+    }
+    const state = activeWindowState(at, options);
+    if (state.active) {
+      return { feasible: true, checked: i + 1, firstRun: at.toISOString() };
+    }
+    if (policy === "postpone" && state.nextOpenAt) {
+      const waitMs = state.nextOpenAt.getTime() - at.getTime();
+      if (waitMs <= maxPostponeMs) {
+        return { feasible: true, checked: i + 1, firstRun: at.toISOString() };
+      }
+    }
+    cursor = at;
+  }
+  return {
+    feasible: false,
+    checked: maxOccurrences,
+    reason: policy === "skip" ? "never-in-window" : "postpone-too-far",
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Проверка совместимости с schtasks (родной режим).
 
