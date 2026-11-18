@@ -90,6 +90,8 @@ interface SchedulerBackend {
 - Node, PS и bash пишут владельца lock как `<pid>-<iso>`; старые форматы
   `<iso>|<pid>` (PS) и голый `<pid>` тоже читаются, поэтому живой lock не
   вытесняется другой средой исполнения.
+- При старте плагин читает владельца и из `<task>.lock`, и из `<task>.lock.d/pid`:
+  каталог lock вытесняется только если PID мёртв или отсутствует; возраст — fallback.
 - Таймаут: дочерний процесс + watchdog (`TERM`, затем `KILL`).
 - Quality Gate: `bash -lc "<команда>"` (аналог `cmd.exe /c` на Windows).
 - Метрики: `node "<record-history.js>" <task> <status> <started> <duration> <error> "-" "-"` —

@@ -88,6 +88,8 @@ interface SchedulerBackend {
 - 通过原子 `mkdir` 加锁——防止并行运行。
 - Node、PS 和 bash 都将锁持有者写为 `<pid>-<iso>`；旧格式 `<iso>|<pid>`（PS）和
   裸 `<pid>` 仍可读取，因此运行中的锁不会被另一种运行时误判为过期。
+- 插件启动时同时读取 `<task>.lock` 与 `<task>.lock.d/pid` 的持有者：只有 PID
+  已死亡或缺失时才清理锁目录，年龄仅作为回退条件。
 - 超时：子进程 + 看门狗（先 `TERM`，再 `KILL`）。
 - Quality Gate：`bash -lc "<命令>"`（相当于 Windows 上的 `cmd.exe /c`）。
 - 指标：`node "<record-history.js>" <task> <status> <started> <duration> <error> "-" "-"`——

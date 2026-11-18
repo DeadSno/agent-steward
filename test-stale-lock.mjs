@@ -55,7 +55,7 @@ const OLD = new Date(Date.now() - STALE_LOCK_MAX_AGE_MS - 60_000);
   check("свежий .lock не тронут", fs.existsSync(lockFile));
 }
 
-// --- 3. Stale .lock.d (POSIX mkdir-lock) вытесняется ---
+// --- 3. Stale .lock.d (POSIX mkdir-lock) мёртвого владельца вытесняется ---
 {
   const lockDirPath = path.join(lockDir, "dir.lock.d");
   fs.mkdirSync(lockDirPath, { recursive: true });
@@ -65,7 +65,39 @@ const OLD = new Date(Date.now() - STALE_LOCK_MAX_AGE_MS - 60_000);
   const a = new LockManager(lockDir);
   await a.initialize();
 
-  check("stale .lock.d вытеснен", !fs.existsSync(lockDirPath));
+  check("stale .lock.d мёртвого владельца вытеснен", !fs.existsSync(lockDirPath));
+}
+
+// --- 3a. B7: stale .lock.d живого владельца НЕ вытесняется ---
+{
+  const lockDirPath = path.join(lockDir, "dir-live.lock.d");
+  fs.mkdirSync(lockDirPath, { recursive: true });
+  const liveToken = `${process.pid}-${new Date().toISOString()}`;
+  fs.writeFileSync(path.join(lockDirPath, "pid"), liveToken, "utf8");
+  fs.utimesSync(lockDirPath, OLD, OLD);
+
+  const a = new LockManager(lockDir);
+  await a.initialize();
+
+  check(
+    "B7: stale .lock.d живого процесса не вытеснен",
+    fs.existsSync(lockDirPath) &&
+      fs.readFileSync(path.join(lockDirPath, "pid"), "utf8") === liveToken
+  );
+  fs.rmSync(lockDirPath, { recursive: true, force: true });
+}
+
+// --- 3b. B7: .lock.d без pid-файла вытесняется по возрасту (fallback) ---
+{
+  const lockDirPath = path.join(lockDir, "dir-nopid.lock.d");
+  fs.mkdirSync(lockDirPath, { recursive: true });
+  fs.writeFileSync(path.join(lockDirPath, "notes"), "no pid", "utf8");
+  fs.utimesSync(lockDirPath, OLD, OLD);
+
+  const a = new LockManager(lockDir);
+  await a.initialize();
+
+  check("B7: stale .lock.d без pid вытеснен по возрасту", !fs.existsSync(lockDirPath));
 }
 
 // --- 4. Осиротевший артефакт .stale-* чистится при следующем старте ---

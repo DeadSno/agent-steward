@@ -89,6 +89,8 @@ The factory picks an implementation from `process.platform`:
 - Locking via atomic `mkdir` — protects against parallel runs.
 - Lock owner is written as `<pid>-<iso>` by Node/PS/bash; legacy `<iso>|<pid>` (PS)
   and bare `<pid>` are still read, so a live lock is never evicted by another runtime.
+- On startup the plugin reads the owner of both `<task>.lock` and `<task>.lock.d/pid`:
+  a lock directory is evicted only when its PID is dead or missing; age is a fallback.
 - Timeout: child process + watchdog (`TERM`, then `KILL`).
 - Quality Gate: `bash -lc "<command>"` (the `cmd.exe /c` equivalent on Windows).
 - Metrics: `node "<record-history.js>" <task> <status> <started> <duration> <error> "-" "-"` —

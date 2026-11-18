@@ -355,6 +355,14 @@ enforced:
 проверяет файловый lock Node/PS и не запускает задачу, если его владелец жив.
 `test-lock-format.mjs` проверяет парсеры и interop в обе стороны.
 
+**Вытеснение каталога `.lock.d` (B7).** При старте плагина `LockManager.initialize()`
+читает владельца из `<task>.lock.d/pid` тем же парсером, что и `.lock`, и не
+трогает каталог, пока процесс жив, — даже если он старше 24 ч (задача с
+`timeoutSeconds: 0` может работать легально долго). Возраст остаётся только
+fallback'ом: каталог без pid-файла или с мёртвым PID вытесняется атомарным
+`rename` в `.stale-*`. Тест — `test-stale-lock.mjs` (живой PID сохраняется,
+мёртвый и безымянный вытесняются).
+
 Windows uses PowerShell and `.cmd` shims; POSIX uses bash. Both wrappers are generated
 from templates so the policy stays identical across platforms.
 

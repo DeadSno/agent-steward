@@ -101,6 +101,25 @@ export function ownerPidFromToken(content: string): number | null {
   return parseLockToken(content).pid;
 }
 
+/**
+ * PID владельца lock-артефакта.
+ *
+ * B7: файловый lock Node/PS хранит токен в самом файле, а POSIX-обёртка
+ * держит каталог `<lock>.d` и пишет `<pid>-<iso>` в `<lock>.d/pid`.
+ * Раньше каталог вытеснялся только по возрасту, без чтения этого файла,
+ * поэтому легально долгая задача (> 24 ч) после рестарта плагина
+ * дублировалась. Нет pid-файла/не разобрался — возвращаем null,
+ * и решение принимает возраст (fallback).
+ */
+export async function readLockOwnerPid(
+  lockPath: string,
+  isDir: boolean,
+): Promise<number | null> {
+  const tokenPath = isDir ? path.join(lockPath, "pid") : lockPath;
+  const content = await fs.readFile(tokenPath, "utf8").catch(() => "");
+  return ownerPidFromToken(content);
+}
+
 
 /**
  * Менеджер файловых блокировок для предотвращения наложения запусков одной задачи.
@@ -160,20 +179,19 @@ export class LockManager {
         const stat = await fs.stat(fullPath);
         const age = now - stat.mtimeMs;
         if (age > STALE_LOCK_MAX_AGE_MS) {
-          // P2-18: возраст — только повод проверить владельца. Задача может
+          // P2-18/B7: возраст — только повод проверить владельца. Задача может
           // легально работать дольше 24 ч (timeoutSeconds: 0), поэтому живой
           // процесс не вытесняем: иначе после рестарта плагина появится дубль.
-          if (isLockFile) {
-            const content = await fs.readFile(fullPath, "utf8").catch(() => "");
-            const ownerPid = ownerPidFromToken(content);
-            if (ownerPid !== null && isProcessAlive(ownerPid)) {
-              console.log(
-                `[agent-steward] Lock ${file} старше ${Math.round(
-                  age / 1000,
-                )} с, но процесс ${ownerPid} жив — оставляем.`,
-              );
-              continue;
-            }
+          // B7: для каталога `.lock.d` владелец лежит в `<dir>/pid`, а не в
+          // самом файле; без этого проверка смотрела только на `.lock`.
+          const ownerPid = await readLockOwnerPid(fullPath, isLockDir);
+          if (ownerPid !== null && isProcessAlive(ownerPid)) {
+            console.log(
+              `[agent-steward] Lock ${file} старше ${Math.round(
+                age / 1000,
+              )} с, но процесс ${ownerPid} жив — оставляем.`,
+            );
+            continue;
           }
           // T-03: не удаляем lock напрямую. Два воркера могли одновременно
           // снести один и тот же файл, после чего один из них удалял свежий
