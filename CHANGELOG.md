@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.0.4] - 2026-11-18
 
 ### Added
 
@@ -17,6 +17,10 @@ All notable changes to this project are documented here. Format follows [Keep a 
 - **DLQ в GUI (Sprint 36.6):** панель «♻️ Dead-letter queue» в `src/gui.tsx` показывает открытые записи с причиной, ошибкой и числом попыток; фильтр `open`/`all`/`retried`/`discarded` и счётчик открытых. RPC `list_dlq`/`retry_dlq`/`discard_dlq` работают через фасад `src/core/dlq-api.ts`; retry переоткрывает запуск и готовит шаг к выполнению (`attempt + 1`), discard закрывает запись, не меняя статус шага; мутации пишутся в аудит (`dlq.retry`, `dlq.discard`).
 - **Пауза с инъекцией контекста (Sprint 36.7):** `SCHEMA_VERSION = 7` и новая таблица `run_injections` (comment / file / artifact, автор, metadata, `consumed_at`). Статус запуска `paused` с переходами `pending → paused`, `running → paused`, `paused → running/passed`. `src/db/run-context.ts` позволяет поставить запуск на паузу между шагами с комментарием, файлом и структурированным артефактом (`pauseRun`, `listRunInjections`, `pendingInjectionsForStep`, `consumeInjections`); секреты маскируются при записи (`redactSecretsInText`, чувствительные ключи JSON → `***`), максимальный размер вставки 100 кБ. При `resumeRunSync`/`resumeRun` обработчик шага получает `StepContext {injections}`, вставки передаются ровно один раз и помечаются потреблёнными, осиротевшие вставки закрываются в `finalize`. Тест `test-run-context.mjs`.
 - **Пауза и resume в GUI (Sprint 36.8):** панель «⏯️ Запуски DAG» в `src/gui.tsx` показывает durable-запуски, прогресс, текущий шаг со ссылкой-якорем и историю контекста (автор, время, получатель). Фильтр `active`/`all`/`running`/`paused`/`failed`, поле комментария, кнопки pause/resume с подтверждением. Пауза во время выполняющегося шага блокируется и сопровождается предупреждением. RPC `list_durable_runs`/`pause_durable_run`/`resume_durable_run` работают через фасад `src/core/run-panel-api.ts`; resume только снимает паузу и готовит первый незавершённый шаг, выполнение продолжает `resumeRun`/исполнитель DAG. Мутации пишутся в аудит (`run.pause`, `run.resume`), локали ru/en/zh синхронны, тест `test-pause-gui.mjs`.
+
+### Fixed
+
+- **GNU at e2e (P1-7.T1.3):** `test-at-e2e.mjs` запускает реальный `at` только на Linux и требует GNU-версию (`at -V`); на Windows Git Bash находил `C:\Windows\System32\at.exe`, а на macOS `atrun` по умолчанию выключен. На этих платформах тест делает SKIP, one-shot покрыт через schtasks/launchd.
 
 ## [0.0.3] - 2026-11-17
 
