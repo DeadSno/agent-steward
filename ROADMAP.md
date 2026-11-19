@@ -31,17 +31,6 @@ agent-steward — execution engine с опциональной регистра�
 
 > Реализованные части execution model (ядро, полосы A/B, wrapper, recorder, storage, in-process triggers) в ROADMAP не перечисляются — они в [CHANGELOG.md](./CHANGELOG.md). Здесь только открытые архитектурные задачи.
 
-## Деталь 2.1 — Ядро исполнения
-`src/core/runtime.ts`, `src/core/run-*.ts`, `src/db/*`
-
-**Задача AC-1 — Единый путь: createRun → план → маршрут → исполнение → GATE → ledger** · P2 · ⬜
-
-- [ ] AC-1.1 Контракт `RunContext` (вход, задача, профиль, безопасность)
-- [ ] AC-1.2 Абстракция исполнителя вместо OpenCode-специфичного транспорта
-- [ ] AC-1.3 Dry-run план и трассировка маршрута
-- [ ] AC-1.4 Тест: ad-hoc и registered проходят один путь
-- [ ] AC-1.5 Docs
-
 ## Деталь 2.2 — Полоса B: Direct / Ad-hoc
 `src/core/*runtime*`, `src/cli.ts`, `src/rpc.ts`
 

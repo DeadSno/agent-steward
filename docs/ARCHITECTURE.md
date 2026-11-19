@@ -127,6 +127,38 @@ loads env/secrets with the task permission policy, and records history through t
 recorder. The only difference is *who starts the wrapper*: the OS scheduler or the
 core.
 
+### Unified execution path (AC-1)
+
+`src/core/execution.ts` is the single core path for both registered tasks and
+ad-hoc missions: `createRun → plan → route → execute → GATE → ledger`. The origin
+(`registered` or `ad-hoc`) changes where the context comes from, not what happens
+next.
+
+- **`RunContext` (AC-1.1)** — entry, trigger, task name, mission/prompt, cwd,
+  profile (model, session policy, workspace) and safety contract (permission
+  policy, allowed/denied tools). `createRegisteredRunContext` builds it from a
+  task definition; `createAdHocRunContext` from a free-form mission, defaulting
+  to `ad-hoc` / `new` session / `hybrid` policy. `validateRunContext` rejects
+  empty fields, unknown policies and tools listed as both allowed and denied.
+- **Plan and dry-run trace (AC-1.3)** — `buildExecutionPlan` either uses the
+  explicit task type or asks the heuristic planner to decompose the mission, then
+  routes every step through the capability map. `describeExecutionPlan` prints the
+  ordered steps, their local/cloud/review targets and routing source without
+  creating a run row, so the same plan can be inspected before execution.
+- **Executor abstraction (AC-1.2)** — `StepExecutor` advertises which routes it
+  supports and receives `{ step, context, plan }`. `createOpenCodeExecutor`
+  adapts the OpenCode CLI, but the core no longer depends on that transport:
+  another executor can serve the same plan.
+- **Execution and GATE (AC-1.4)** — `executeExecutionPlan` creates one ledger run,
+  executes steps through the journal (so retries, leases and crash recovery still
+  apply), calls the optional GATE after each result and stops on the first
+  failure. Steps routed to review/explore are recorded as `skipped` with the
+  routing reason instead of being silently dropped.
+
+The test `test-execution-pipeline.mjs` drives a registered task and an ad-hoc
+mission through the same executor, including a rejecting GATE and a skipped
+review step.
+
 ### Data: one SQLite per profile
 
 Each profile has its own plugin directory, its own SQLite database, its own OS-task

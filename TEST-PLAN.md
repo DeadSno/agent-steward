@@ -596,6 +596,7 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 | `test-task-status.mjs` | D02 |
 | `test-crash-recovery.mjs` | D03, D15 |
 | `test-prompt-argv.mjs` | D03 (промпт после `--`, лимит argv) |
+| `test-execution-pipeline.mjs` | AC-1 (единый путь createRun → план → маршрут → GATE → ledger) |
 | `test-ps-watchdog.mjs` | D03 (CIM → WMI → tasklist watchdog, fail-closed kill) |
 | `test-session-continuity.mjs` | D03.9 |
 | `test-sqlite.mjs` | D15 |
