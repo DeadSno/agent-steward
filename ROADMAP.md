@@ -37,22 +37,6 @@ agent-steward — execution engine с опциональной регистра�
 
 # 3. Остальные задачи (не бэклог и не архитектура)
 
-## Деталь 3.1 — Pipeline-as-code (документация и приёмка)
-`docs/PIPELINE.md`, `README.md`
-
-**Задача PI-6 — Документация** · P2 · ⬜
-
-- [ ] PI-6.1 `docs/PIPELINE.md`
-- [ ] PI-6.2 Пример `opencode.pipeline.yaml`
-- [ ] PI-6.3 Раздел в README ru/en/zh
-
-**Задача PI-7 — Приёмка** · P2 · ⬜
-
-- [ ] PI-7.1 Полный `npm test`
-- [ ] PI-7.2 `npm run build`
-- [ ] PI-7.3 `npm run lint` (0 ошибок)
-- [ ] PI-7.4 Коммит в `dev`
-
 ## Деталь 3.2 — Worktree-изоляция
 `src/core/worktree*`
 

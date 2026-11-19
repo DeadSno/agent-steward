@@ -323,6 +323,21 @@ Behavior worth knowing:
 - `matrix_control` with `action: "cleanup"` removes orphaned clones whose parent is
   gone; the same cleanup also runs at plugin startup.
 
+### Pipeline as code
+
+A whole DAG can be declared in `opencode.pipeline.yaml` and applied as code:
+
+- `version: 1`, a pipeline `name`, optional `defaults` and 1..200 `steps`.
+- Each step has a stable `id`, a `prompt` and an optional `needs` list that becomes
+  `dependsOn`.
+- `trigger: cron` (default) needs a `schedule`; `trigger: once` needs `runAt`;
+  `trigger: dag` runs only after its `needs` succeed.
+- `matrix.workspaces` fans a step out over workspace names or ids.
+- `agent-steward pipeline validate|apply|export` and the `pipeline_validate`,
+  `pipeline_apply`, `pipeline_export` tools cover the lifecycle; apply is idempotent,
+  skips unchanged steps and never deletes stale tasks.
+- Full format and limits: [PIPELINE.md](PIPELINE.md).
+
 ## Multi-repository workspaces
 
 A workspace is a named directory: id, name, path, optional git remote and color.
@@ -612,7 +627,7 @@ the `cleanup_history` RPC and the GUI's **Clear now** button. Aggregates in
 
 ## Agent interface
 
-Twenty-six tools: `schedule_task`, `list_tasks`, `update_task`, `delete_task`,
+Twenty-nine tools: `schedule_task`, `list_tasks`, `update_task`, `delete_task`,
 `run_task_now`, `pause_task`, `resume_task`, `get_history`, `get_task_logs`, `dry_run`,
 `manage_workspaces`, `matrix_control` (results/cancel/cleanup/preview), `get_metrics`,
 `get_analytics`, `self_analysis` (health score, anomalies, trends), `manage_settings`,

@@ -1,0 +1,35 @@
+version: 1
+name: nightly-release
+
+description: Lint, test and build the repository every night after the last commit.
+
+defaults:
+  timeoutSeconds: 1800
+  retryCount: 1
+  retryDelay: 120
+  allowedTools: [read, edit, glob, grep]
+
+steps:
+  - id: lint
+    schedule: "0 2 * * *"
+    prompt: >
+      Run the linter and fix every reported problem in the changed files.
+      Do not change behaviour, only style and obvious defects.
+    qualityGate: npm run lint
+
+  - id: test
+    needs: [lint]
+    trigger: dag
+    prompt: >
+      Run the test suite, find the cause of any failure and fix it.
+      Add a regression test when the fix changes behaviour.
+    qualityGate: npm test
+
+  - id: build
+    needs: [test]
+    trigger: dag
+    timeoutSeconds: 3600
+    prompt: >
+      Build the package and verify that dist/ contains the CLI entry point.
+      Report the build output size.
+    qualityGate: npm run build

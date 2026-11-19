@@ -59,6 +59,7 @@
     "scripts",
     "docs",
     "README.md",
+    "opencode.pipeline.yaml",
     "LICENSE",
     "CHANGELOG.md",
     "CROSS_PLATFORM.md",

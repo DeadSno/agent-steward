@@ -153,6 +153,9 @@ The agent gets the full feature set — 29 tools covering scheduling, pipelines,
 | `manage_secrets` | `action`, `name?`, `value?` | Create, list or delete AES-256-GCM encrypted secrets used in task `env` |
 | `get_audit_log` | `action?`, `target?`, `actor?`, `since?`, `until?`, `limit?` | Mutation audit journal: who changed what, when and via which interface |
 | `emit_event` | `eventName`, `payload?` | Start tasks subscribed to an MCP event |
+| `pipeline_validate` | `path?`, `source?` | Validates `opencode.pipeline.yaml` without changing tasks |
+| `pipeline_apply` | `path?`, `source?`, `dryRun?` | Idempotently creates or updates pipeline tasks; `dryRun` only reports the diff |
+| `pipeline_export` | `pipeline` | Exports a pipeline's tasks back to YAML |
 
 `schedule_task` also accepts the full matrix configuration (`workspaceIds`, `strategy`, `failureMode`, `aggregation`, `concurrency`, `overrides`, `createAggregator`).
 
@@ -198,6 +201,41 @@ The plugin registers a built-in skill, `scheduled-job-best-practices`, so the ag
 ```
 
 Each workspace gets a clone named `<parent>-matrix-<workspace>`. The parent never runs itself: it aggregates clone results into `success`, `error` or `partial`. Clones stay in sync with the parent when you edit it; running clones are never touched.
+
+## Pipeline as code
+
+Declare the whole workflow in one `opencode.pipeline.yaml` file instead of creating tasks one by one:
+
+```yaml
+version: 1
+name: nightly-release
+defaults:
+  retryCount: 1
+  retryDelay: 120
+steps:
+  - id: lint
+    schedule: "0 2 * * *"
+    prompt: Run the linter and fix what it reports.
+    qualityGate: npm run lint
+  - id: test
+    needs: [lint]
+    trigger: dag
+    prompt: Run the tests and fix failures.
+    qualityGate: npm test
+```
+
+`needs` becomes a DAG dependency, a step with `trigger: dag` runs only after its dependencies succeed, and `defaults` are inherited by every step. Each step becomes a task named `<pipeline> <step>`.
+
+```bash
+agent-steward pipeline validate opencode.pipeline.yaml
+agent-steward pipeline apply opencode.pipeline.yaml --dry-run
+agent-steward pipeline apply opencode.pipeline.yaml
+agent-steward pipeline export --pipeline nightly-release --out opencode.pipeline.yaml
+```
+
+Apply is idempotent: unchanged steps are skipped, edited steps are updated, and tasks outside the pipeline are never touched. Steps removed from the file are reported as stale, not deleted. The agent gets the same operations through `pipeline_validate`, `pipeline_apply` and `pipeline_export`.
+
+See [docs/PIPELINE.md](docs/PIPELINE.md) for the full format, matrix fan-out, validation rules and limitations, and the ready-to-copy [example](opencode.pipeline.yaml).
 
 ## GUI and dashboard
 
@@ -255,6 +293,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 - [docs/FEATURES.md](docs/FEATURES.md) — full feature catalog with examples.
 - [docs/FAQ.md](docs/FAQ.md) — recovery scenarios, webhook replay, operational answers.
 - [docs/MIGRATION.md](docs/MIGRATION.md) — moving from cron, systemd, launchd or Task Scheduler.
+- [docs/PIPELINE.md](docs/PIPELINE.md) — pipeline-as-code: file format, CLI, idempotent apply.
 - [docs/SAVINGS.md](docs/SAVINGS.md) — how the "Saved $" estimate is calculated.
 - [CROSS_PLATFORM.md](CROSS_PLATFORM.md) — Windows / macOS / Linux differences and backends.
 

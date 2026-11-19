@@ -283,6 +283,20 @@ OpenCode 动作的 `effect: "deny"` 规则，而 `allowedTools`（一旦设置�
 - `matrix_control` 的 `action: "cleanup"` 会移除父任务已不存在的孤立
   克隆；同样的清理也会在插件启动时运行。
 
+### 流水线即代码
+
+整个 DAG 可以声明在 `opencode.pipeline.yaml` 中并按代码应用：
+
+- `version: 1`、流水线 `name`、可选的 `defaults` 和 1..200 个 `steps`。
+- 每个步骤有稳定的 `id`、`prompt` 和可选的 `needs`（转换为 `dependsOn`）。
+- `trigger: cron`（默认）需要 `schedule`；`trigger: once` 需要 `runAt`；
+  `trigger: dag` 只在其 `needs` 成功后运行。
+- `matrix.workspaces` 按 workspace 名称或 id 将步骤扇出。
+- `agent-steward pipeline validate|apply|export` 与 `pipeline_validate`、
+  `pipeline_apply`、`pipeline_export` 工具覆盖整个生命周期；apply 幂等、
+  跳过未变化的步骤，且从不删除 stale 任务。
+- 完整格式与限制：[PIPELINE.md](PIPELINE.md)。
+
 ## 多仓库工作区
 
 工作区是一个命名目录：id、name、path、可选的 git 远程仓库和颜色。
@@ -568,14 +582,14 @@ GUI 面板）支持 `list`、`set` 和 `delete`。密钥名匹配
 
 ## Agent 接口
 
-二十六个工具：`schedule_task`、`list_tasks`、`update_task`、`delete_task`、
+二十九个工具：`schedule_task`、`list_tasks`、`update_task`、`delete_task`、
 `run_task_now`、`pause_task`、`resume_task`、`get_history`、`get_task_logs`、`dry_run`、
 `manage_workspaces`、`matrix_control`（results/cancel/cleanup/preview）、`get_metrics`、
 `get_analytics`、`self_analysis`（健康评分、异常、趋势）、`manage_settings`、
 `manage_local_ai`、`manage_templates`、`manage_profiles`、
 `transfer_tasks`、`send_notification`、`get_dashboard_info`、`cleanup_history`、
 `manage_secrets`、`get_audit_log`、
-`emit_event`。
+`emit_event`、`pipeline_validate`、`pipeline_apply`、`pipeline_export`。
 
 捆绑的 skill `scheduled-job-best-practices` 教会 agent 安全的默认做法：
 最小权限、Quality Gate、超时、矩阵并发、DAG 规则以及

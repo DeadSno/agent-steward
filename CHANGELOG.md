@@ -6,6 +6,8 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **PI-6 — документация Pipeline-as-code:** `docs/PIPELINE.md` описывает формат `opencode.pipeline.yaml`, шаги и DAG (`needs`/`trigger: dag`), триггеры, `defaults`, matrix-фан-аут, CLI `validate|apply|export`, идемпотентный apply (create/update/unchanged/stale, маркеры `pipelineName`/`pipelineStepId`), правила валидатора и ограничения v1; добавлен готовый пример `opencode.pipeline.yaml`. Раздел «Pipeline as code» появился в `README.md`, `docs/README.ru.md`, `docs/README.zh.md` и `docs/FEATURES.md`/`FEATURES.zh.md`, таблицы агент-инструментов дополнены `pipeline_validate`/`pipeline_apply`/`pipeline_export`, счётчик обновлён до 29.
+- **PI-7 — приёмка Pipeline-as-code:** полный `npm test`, `npm run build` и `npm run lint` (0 ошибок) на ветке `dev`.
 - **AB-8.5 — документация ad-hoc миссий:** `docs/ARCHITECTURE.md` описывает `MissionSpec`, safety-контракт, Quality Gate, workspace-lock и отсутствие регистрации в ОС; `docs/SAFETY.md` фиксирует инварианты ad-hoc, `docs/EXECUTION-LOOP.md` отмечает закрытие разрыва.
 - **AB-8.4 — тест ad-hoc миссии:** `test-mission-run.mjs` (32 проверки) покрывает dry-run без записи в ledger, успешный запуск, ошибку исполнителя, блокировку workspace, валидацию входа и статическую проверку отсутствия импорта планировщика; тест добавлен в `npm test`.
 - **AB-8.3 — RPC и GUI:** метод `run_mission` (`RunMissionInput`/`RunMissionOutput`) с аудитом `mission.run`; панель «Ad-hoc миссия» в GUI с prompt, cwd, model, timeout, gate, policy, session и dry-run; локали `ru`/`en`/`zh`.
