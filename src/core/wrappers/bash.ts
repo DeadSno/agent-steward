@@ -76,6 +76,10 @@ export interface BashWrapperOptions {
    * 0 — без таймаута. Зависший хук не должен держать lock.
    */
   gateTimeoutSeconds?: number;
+  /** W-1 (0.0.6): запустить задачу в одноразовом git worktree. */
+  worktree?: boolean;
+  /** Путь к dist/core/worktree-run.js (обязателен при worktree=true). */
+  worktreeHelper?: string;
 }
 
 /**
@@ -137,6 +141,8 @@ export function buildBashWrapperScript(options: BashWrapperOptions): string {
     scheduleGate,
     envFile,
     gateTimeoutSeconds,
+    worktree,
+    worktreeHelper,
   } = options;
 
   const effectivePermissions = resolvePermissions({
@@ -157,6 +163,9 @@ export function buildBashWrapperScript(options: BashWrapperOptions): string {
     `LOCK_FILE=${shellQuote(lockFile)}`,
     `WORKDIR=${shellQuote(workdir || process.cwd())}`,
     `WORKSPACE_NAME=${shellQuote(workspaceName ?? "")}`,
+    // W-1 (0.0.6): одноразовый git worktree на запуск.
+    `WORKTREE_MODE=${worktree ? 1 : 0}`,
+    `WORKTREE_HELPER=${shellQuote(worktreeHelper ?? "")}`,
     `TIMEOUT_SECONDS=${Number.isFinite(timeoutSeconds) ? Math.max(0, Math.floor(timeoutSeconds)) : 3600}`,
     // Маркер сработавшего watchdog: по нему обёртка отличает таймаут от
     // обычного ненулевого кода возврата (SIGTERM/SIGKILL неотличимы от падения).
@@ -343,6 +352,24 @@ export function buildBashWrapperScript(options: BashWrapperOptions): string {
     '  cd "$WORKDIR" || { log "[scheduler] Не удалось перейти в $WORKDIR"; exit 1; }',
     "fi",
     "",
+    "# W-1 (0.0.6): одноразовый git worktree. Ошибка создания — fail-closed:",
+    "# задача не должна молча работать в основном дереве репозитория.",
+    'if [ "$WORKTREE_MODE" = "1" ]; then',
+    '  if [ -z "$WORKTREE_HELPER" ] || ! command -v node >/dev/null 2>&1; then',
+    '    log "[scheduler] ОШИБКА: помощник worktree недоступен (нет node или worktree-run.js). Запуск отменён."',
+    "    exit 1",
+    "  fi",
+    '  AGENT_STEWARD_WORKTREE="$(node "$WORKTREE_HELPER" --repo "$WORKDIR" --task "$TASK_NAME" 2>> "$LOG_FILE" | tail -n 1)"',
+    '  if [ -z "$AGENT_STEWARD_WORKTREE" ]; then',
+    '    log "[scheduler] ОШИБКА: не удалось создать git worktree для \'$TASK_NAME\' — запуск отменён."',
+    "    exit 1",
+    "  fi",
+    "  export AGENT_STEWARD_WORKTREE",
+    '  export AGENT_STEWARD_WORKTREE_REPO="$WORKDIR"',
+    '  log "[scheduler] Git worktree: $AGENT_STEWARD_WORKTREE"',
+    '  cd "$AGENT_STEWARD_WORKTREE" || { log "[scheduler] Не удалось перейти в worktree $AGENT_STEWARD_WORKTREE"; exit 1; }',
+    "fi",
+    "",
     "# Спринт 21: env-переменные workspace. Файл пишет плагин, значения не логируются.",
     'if [ -n "$ENV_FILE" ] && [ -f "$ENV_FILE" ]; then',
     '  while IFS= read -r env_line || [ -n "$env_line" ]; do',
@@ -385,6 +412,11 @@ export function buildBashWrapperScript(options: BashWrapperOptions): string {
     "fi",
     "",
     'PROMPT="$(cat "$PROMPT_FILE" 2>/dev/null || true)"',
+    "# W-1: сообщаем агенту, что он работает в одноразовом git worktree.",
+    'if [ -n "${AGENT_STEWARD_WORKTREE:-}" ]; then',
+    '  PROMPT="[agent-steward] Рабочая директория запуска - одноразовый git worktree: $AGENT_STEWARD_WORKTREE',
+    '$PROMPT"',
+    "fi",
     "# T-09: backstop размера промпта на POSIX (argv ограничен MAX_ARG_STRLEN",
     "# 128 КиБ на аргумент в Linux). Считаем байты, а не символы. Лимит включает",
     "# завершающий NUL, поэтому максимум полезных данных — 131071 байт (B11.2).",

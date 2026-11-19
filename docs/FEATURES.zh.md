@@ -221,6 +221,18 @@ OpenCode 动作的 `effect: "deny"` 规则，而 `allowedTools`（一旦设置�
 嵌套子代理）见
 [ARCHITECTURE.md](ARCHITECTURE.md#permission-enforcement--known-limitations-spike-291-findings)。
 
+### 一次性 git worktree（W-1）
+
+设置 `worktree: true` 后，每次运行都会在 `workingDirectory` 的全新 `git worktree`
+中执行，并使用独立的 `agent-steward/...` 分支。包装脚本在调度门禁之后、启动
+`opencode` 之前创建 worktree，通过提示词前导和 `AGENT_STEWARD_WORKTREE` 把路径传给
+Agent；创建失败时（例如目录不是 git 仓库）运行会 fail-closed 终止。每次运行的路径和
+分支都唯一，因此矩阵克隆和并行任务可以各自写文件，互不影响主工作区和彼此——无需
+Docker 即可安全扇出。
+
+Worktree 位于 `PLUGIN_DIR/worktrees`，旁边有 `.json` sidecar 供后续清理（W-2）使用；
+worktree 不隔离网络、API 或数据库访问，Quality Gate 仍以你的用户权限运行。
+
 ## 编排
 
 ### 链式调度

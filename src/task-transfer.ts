@@ -158,6 +158,11 @@ export interface TaskDefinition {
    * перечислить shell в allowedTools.
    */
   legacyShell?: boolean;
+  /**
+   * W-1: запускать задачу в одноразовом git worktree, созданном от HEAD
+   * рабочей директории. По умолчанию выключено. Требует git-репозиторий.
+   */
+  worktree?: boolean;
   /** Настройки fan-out матрицы (родитель). */
   matrix?: MatrixConfig;
   /** Для клона матрицы — имя родительской задачи-шаблона. */
@@ -405,6 +410,8 @@ export async function buildExportJson(
       ...(definition?.paused === true ? { paused: true } : {}),
       // Спринт 27.5.10: режим входа переживает перенос между профилями.
       ...(definition?.runWhenLoggedOff === true ? { runWhenLoggedOff: true } : {}),
+      // W-1: изоляция запуска в одноразовом git worktree.
+      ...(definition?.worktree === true ? { worktree: true } : {}),
       ...(Array.isArray(definition?.allowedTools) && definition.allowedTools.length > 0
         ? { allowedTools: definition.allowedTools }
         : {}),
@@ -728,6 +735,8 @@ export function parseImportJson(raw: string): ParsedImport {
     // Спринт 27.5.10: режим входа. Только явный `true` делает задачу фоновой;
     // всё остальное (false, null, строка) означает интерактивную задачу.
     const runWhenLoggedOffFlag = source.runWhenLoggedOff === true;
+    // W-1: одноразовый git worktree; только явный `true`.
+    const worktreeFlag = source.worktree === true;
 
     // Ограничения инструментов (Спринт 14): массив непустых строк без дублей.
     // Пустой allowedTools отклоняется с явной ошибкой (избегаем «запрещено всё»).
@@ -942,6 +951,7 @@ export function parseImportJson(raw: string): ParsedImport {
       ...(pausedFlag ? { paused: true } : {}),
       // Спринт 27.5.10: сохраняем режим входа при переносе задачи.
       ...(runWhenLoggedOffFlag ? { runWhenLoggedOff: true } : {}),
+      ...(worktreeFlag ? { worktree: true } : {}),
       ...(mcpEvent ? { mcpEvent } : {}),
       ...(allowedTools !== undefined ? { allowedTools } : {}),
       ...(deniedTools !== undefined ? { deniedTools } : {}),

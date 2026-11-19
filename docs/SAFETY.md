@@ -44,7 +44,7 @@ risk R2 → allowedTools:  [read, edit, glob, grep]
 
 | Уровень | Механизм | Когда |
 |---------|----------|-------|
-| 1 (default) | git worktree | R0/R1 |
+| 1 (opt-in: `worktree: true`) | git worktree | R0/R1, когда включено у задачи |
 | 2 | OS-jail: ограничение ФС/процессов | R1 с недоверенным контентом |
 | 3 | Docker runner (opt-in, спринт 46) | R2/R3, недоверенные зависимости |
 

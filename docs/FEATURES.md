@@ -259,6 +259,20 @@ not to hooks, Quality Gates or scripts, which still run with your user privilege
 for the exact action mapping and known limitations (project/system config, nested
 subagents).
 
+### One-off git worktree (W-1)
+
+Set `worktree: true` to run every tick in a fresh `git worktree` of
+`workingDirectory` on its own `agent-steward/...` branch. The wrapper creates the
+worktree after the schedule gate and before `opencode`, passes the path to the agent
+through the prompt preamble and `AGENT_STEWARD_WORKTREE`, and fails the run closed
+if creation fails (for example, the directory is not a git repository). Paths and
+branches are unique per run, so matrix clones and parallel missions can write files
+without touching the main checkout or each other — safe fan-out without Docker.
+
+Worktrees live under `PLUGIN_DIR/worktrees` with a `.json` sidecar for future
+cleanup (W-2); a worktree does not isolate network, API or database access, and
+Quality Gates still run with your user privileges.
+
 ## Orchestration
 
 ### Chains

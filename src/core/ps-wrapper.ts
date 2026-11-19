@@ -709,6 +709,14 @@ try {
     if (-not $script:skipMainTask) {
     $prompt = Get-Content -Path $PromptFile -Raw -Encoding UTF8
 
+    # W-1: запуск в одноразовом git worktree — сообщаем путь агенту.
+    # Переменную выставляет .cmd-обёртка после успешного создания копии.
+    if ($env:AGENT_STEWARD_WORKTREE) {
+        Write-Log "[agent-steward] Git worktree: $env:AGENT_STEWARD_WORKTREE (repo: $env:AGENT_STEWARD_WORKTREE_REPO)"
+        $worktreeContext = "[agent-steward] Рабочая директория запуска - одноразовый git worktree: " + $env:AGENT_STEWARD_WORKTREE + [Environment]::NewLine
+        $prompt = $worktreeContext + $prompt
+    }
+
     # CreateProcess ограничивает командную строку 32767 символами, а промпт
     # передаётся opencode аргументом ($opencodeArgs += $prompt). Явная ошибка
     # понятнее, чем обрезанный/отвергнутый запуск. Основная валидация — в schedule_task.
@@ -997,6 +1005,10 @@ export async function writeWrapperCmd(
   permissionsConfig?: string,
   policyMeta?: unknown,
   sessionFile?: string,
+  /** W-1: запустить задачу в одноразовом git worktree. */
+  worktree?: boolean,
+  /** Путь к dist/core/worktree-run.js (обязателен при worktree=true). */
+  worktreeHelperFile?: string,
 ): Promise<string> {
   await fs.mkdir(WRAPPER_DIR, { recursive: true });
   const cmdPath = path.join(WRAPPER_DIR, `run-${sanitizedName}.cmd`);
@@ -1169,6 +1181,27 @@ export async function writeWrapperCmd(
     }
     lines.push(gateArgs.join(" "));
     lines.push("if \"%errorlevel%\"==\"3\" exit /b 0");
+  }
+
+  // W-1 (0.0.6): одноразовый git worktree. Создаётся после гейта расписания,
+  // чтобы пропущенный тик не плодил рабочие копии. Ошибка создания — fail-closed:
+  // задача не должна молча работать в основном дереве.
+  if (worktree) {
+    const wtHelper = (worktreeHelperFile ?? "").replace(/[\r\n"]+/g, "").trim();
+    const wtRepo = effectiveWorkdir.replace(/[\r\n"]+/g, "").trim();
+    const safeTaskName = taskName.replace(/[\r\n"]+/g, "").trim();
+    const logRedirect = logFile?.trim() ? `>> "${logFile.trim()}" 2>&1` : "";
+    const helperErr = logFile?.trim() ? `2>> "${logFile.trim()}"` : "";
+    lines.push('set "AGENT_STEWARD_WORKTREE="');
+    lines.push(
+      `for /f "usebackq delims=" %%W in (\`node "${wtHelper}" --repo "${wtRepo}" --task "${safeTaskName}" ${helperErr}\`) do set "AGENT_STEWARD_WORKTREE=%%W"`,
+    );
+    lines.push("if not defined AGENT_STEWARD_WORKTREE (");
+    lines.push(`  echo [agent-steward] ERROR: git worktree creation failed ${logRedirect}`);
+    lines.push("  exit /b 1");
+    lines.push(")");
+    lines.push('cd /d "%AGENT_STEWARD_WORKTREE%"');
+    lines.push(`set "AGENT_STEWARD_WORKTREE_REPO=${wtRepo}"`);
   }
 
   lines.push(psArgs.join(" "));

@@ -221,6 +221,24 @@ const gatePath = (() => {
   return distPath;
 })();
 
+/**
+ * W-1: путь к помощнику создания одноразового git worktree
+ * (dist/core/worktree-run.js). Обёртка вызывает его перед opencode.
+ */
+const worktreeHelperPath = (() => {
+  const resolved = require.resolve("./core/worktree-run.js");
+  if (!resolved.endsWith(".ts")) return resolved;
+  const distPath = resolved
+    .replace(/([\\/])src([\\/])/, "$1dist$2")
+    .replace(/\.ts$/, ".js");
+  if (existsSync(distPath)) return distPath;
+  console.warn(
+    "[agent-steward] Не найден собранный worktree-run.js: " +
+      `${distPath}. Изоляция в git worktree не будет работать. Выполните npm run build.`,
+  );
+  return distPath;
+})();
+
 /** Бэкенд планировщика текущей ОС (schtasks / crontab / launchd). */
 const scheduler = getSchedulerBackend();
 
@@ -495,6 +513,12 @@ export const scheduleTaskSchema = z.object({
     .describe(
       "Windows only: run the task even when no user is logged on (/ru SYSTEM). The task runs in session 0 without the user's profile, mapped drives or saved credentials, so tasks that need the user's environment may fail. Creating such a task usually requires an elevated shell. Default false: interactive only — the task runs only while the user is logged on.",
     ),
+  worktree: z
+    .boolean()
+    .optional()
+    .describe(
+      "W-1: run each tick in a one-off git worktree created from HEAD of workingDirectory. Keeps fan-out runs isolated from each other and from the main checkout. Requires a git repository; creation failure fails the run closed. Default false.",
+    ),
   matrix: matrixSchema
     .optional()
     .describe(
@@ -708,6 +732,12 @@ export const updateTaskSchema = z.object({
     .optional()
     .describe(
       "Transitional flag (release 1.6): re-enable shell under the hybrid policy for this task.",
+    ),
+  worktree: z
+    .boolean()
+    .optional()
+    .describe(
+      "W-1: run each tick in a one-off git worktree created from HEAD of workingDirectory. Default false.",
     ),
   matrix: matrixSchema
     .nullable()
@@ -1307,6 +1337,7 @@ const scheduleTaskExecute = wrapExecute<ScheduleArgs>(async (args) => {
     gitPollSeconds,
     runWhenLoggedOff,
     legacyShell,
+    worktree,
   } = args;
 
   let effectiveRunAt: string | undefined;
@@ -1375,6 +1406,7 @@ const scheduleTaskExecute = wrapExecute<ScheduleArgs>(async (args) => {
       runWhenLoggedOff === true,
       undefined,
       legacyShell === true,
+      worktree === true,
     );
   } catch (err: any) {
     return {
@@ -1441,6 +1473,7 @@ const scheduleTaskExecute = wrapExecute<ScheduleArgs>(async (args) => {
         workspaceId: workspace?.id ?? null,
         workspaceName: workspace?.name ?? null,
         matrix: matrix ?? null,
+        worktree: worktree === true,
       },
     }),
   };
@@ -1554,6 +1587,7 @@ async function cancelMatrixRun(
         clone.runWhenLoggedOff,
         clone.paused,
         clone.legacyShell,
+        clone.worktree,
       );
     } catch (err: any) {
       warnings.push(
@@ -2066,6 +2100,7 @@ async function updateTaskFromInput(
       input.runWhenLoggedOff ?? previous.runWhenLoggedOff,
       wasPaused,
       input.legacyShell ?? previous.legacyShell,
+      input.worktree ?? previous.worktree,
     );
 
     // Матрица отключена при обновлении — убираем клонов и агрегатор.
@@ -2616,6 +2651,7 @@ const pipelineApplyExecute = wrapExecute<PipelineApplyArgs>(async (args) => {
           task.runWhenLoggedOff ?? false,
           task.paused ?? false,
           task.legacyShell ?? false,
+          task.worktree ?? false,
         );
         await saveTaskDefinition(task);
         created++;
@@ -2671,6 +2707,7 @@ const pipelineApplyExecute = wrapExecute<PipelineApplyArgs>(async (args) => {
           item.task.runWhenLoggedOff ?? false,
           item.task.paused ?? false,
           item.task.legacyShell ?? false,
+          item.task.worktree ?? false,
         );
         await saveTaskDefinition(item.task);
         updated++;
@@ -3305,6 +3342,23 @@ const transferTasksExecute = wrapExecute<TransferArgs>(async (args) => {
         def.notAfter,
         def.pausedUntil,
         def.runAt,
+        def.session,
+        def.sessionId,
+        def.sessionMaxRuns,
+        {
+          activeDays: def.activeDays,
+          windowPolicy: def.windowPolicy,
+          watchGlobs: def.watchGlobs,
+          watchIgnore: def.watchIgnore,
+          gitBranch: def.gitBranch,
+          gitPaths: def.gitPaths,
+          gitIgnore: def.gitIgnore,
+          gitPollSeconds: def.gitPollSeconds,
+        },
+        def.runWhenLoggedOff,
+        def.paused,
+        def.legacyShell,
+        def.worktree,
       );
       await saveTaskDefinition(def);
       imported.push(def.name);
@@ -4516,6 +4570,7 @@ const v2Plugin = Plugin.define({
           sessionMaxRuns,
           runWhenLoggedOff,
           legacyShell,
+          worktree,
         } = input as {
           name: string;
           schedule?: string;
@@ -4547,6 +4602,7 @@ const v2Plugin = Plugin.define({
           sessionMaxRuns?: number;
           runWhenLoggedOff?: boolean;
           legacyShell?: boolean;
+          worktree?: boolean;
         };
         let effectiveRunAt: string | undefined;
         if (triggerType === "once") {
@@ -4610,6 +4666,7 @@ const v2Plugin = Plugin.define({
             runWhenLoggedOff === true,
             undefined,
             legacyShell === true,
+            worktree === true,
           );
           const nextRun = computeTaskNextRun({
             schedule: schedule ?? "",
@@ -5612,6 +5669,7 @@ const v2Plugin = Plugin.define({
                 def.runWhenLoggedOff === true,
                 def.paused === true,
                 def.legacyShell === true,
+                def.worktree === true,
               );
               await saveTaskDefinition(def);
               imported.push(def.name);
@@ -5895,6 +5953,8 @@ export async function schedulerCreateTask(
    * true возвращает shell задаче, созданной до обновления поведения.
    */
   legacyShell?: boolean,
+  /** W-1: одноразовый git worktree на каждый запуск. */
+  worktree?: boolean,
 ): Promise<void> {
   // Спринт 27.5 (hotfix 1.5.1): проверяем имя до создания wrapper/prompt и записи
   // в БД. Недопустимые символы отклоняются с понятным сообщением, а не ошибкой
@@ -5960,6 +6020,8 @@ export async function schedulerCreateTask(
   const normalizedRunWhenLoggedOff = runWhenLoggedOff === true ? true : undefined;
   // Спринт 27.5.8: пауза сохраняется при пересоздании задачи.
   const normalizedPaused = paused === true ? true : undefined;
+  // W-1: изоляция запуска в одноразовом git worktree.
+  const normalizedWorktree = worktree === true ? true : undefined;
   // Спринт 27: дни недели, политика окна и glob/git-фильтры.
   const normalizeGlobList = (raw?: string[]): string[] | undefined => {
     if (!Array.isArray(raw)) return undefined;
@@ -6350,6 +6412,8 @@ export async function schedulerCreateTask(
         permissionsConfig,
         policyMeta,
         sessionFile,
+        normalizedWorktree,
+        worktreeHelperPath,
       );
     } else {
       wrapperPath = await writeBashWrapper({
@@ -6375,6 +6439,8 @@ export async function schedulerCreateTask(
         sessionMode: effectiveSession,
         sessionId: effectiveSessionId,
         sessionFile,
+        worktree: normalizedWorktree,
+        worktreeHelper: worktreeHelperPath,
         ...(effectiveTriggerType === "once" && scheduler.platform === "darwin"
           ? { oneShotCleanupCommand: buildLaunchdOneShotCleanup(sanitized, getProfileName()) }
           : {}),
@@ -6521,6 +6587,7 @@ export async function schedulerCreateTask(
     allowedTools: normalizedAllowedTools,
     deniedTools: normalizedDeniedTools,
     legacyShell: legacyShell === true ? true : undefined,
+    worktree: normalizedWorktree,
     matrix: normalizedMatrix,
     isMatrixParent: normalizedMatrix ? true : undefined,
     matrixParentId,
@@ -6603,6 +6670,7 @@ export async function schedulerCreateTask(
         clone.runWhenLoggedOff,
         clone.paused,
         clone.legacyShell,
+        clone.worktree,
       );
     };
 
@@ -6816,6 +6884,7 @@ async function recreateTaskFromDefinition(definition: TaskDefinition): Promise<v
     definition.runWhenLoggedOff,
     paused,
     definition.legacyShell,
+    definition.worktree,
   );
 }
 
