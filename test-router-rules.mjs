@@ -35,6 +35,7 @@ const expected = {
   read_file: ["direct", "local"],
   write_file: ["direct", "local"],
   run_tests: ["direct", "local"],
+  mission: ["direct", "local"],
   apply_diff: ["direct", "local"],
   github_create_pr: ["mcp", "local"],
   jira_update_task: ["mcp", "cloud"],
@@ -93,7 +94,7 @@ try {
 } catch {
   mutationBlocked = true;
 }
-check("таблица правил заморожена", mutationBlocked || STATIC_ROUTE_RULES.length === 6);
+check("таблица правил заморожена", mutationBlocked || STATIC_ROUTE_RULES.length === 7);
 check("listStaticRouteRules возвращает ту же таблицу", listStaticRouteRules() === STATIC_ROUTE_RULES);
 
 // 6. Каждое правило описано (используется в логах и GUI)

@@ -11,7 +11,7 @@
 - **Роутер не вызывается live.** `routeStep` / `decideCapabilityRoute` отсутствуют в `index.ts` / `record-history.ts`.
 - **Карта не обучается.** `recordCapabilityOutcome` не вызывается из горячего пути.
 - **Эскалация не живая.** `escalateAfterGate` есть, но провал гейта идёт в retry/chain.
-- **Нет ad-hoc входа.** Любой запуск требует регистрации: `schedule_task` + `run_task_now`; `once` — это `at` / `schtasks ONCE` / launchd. Цепочки/DAG/retry обходят расписание костылём force-маркера.
+- **Нет ad-hoc входа.** Любой запуск требует регистрации: `schedule_task` + `run_task_now`; `once` — это `at` / `schtasks ONCE` / launchd. Цепочки/DAG/retry обходят расписание костылём force-маркера. *(Закрыто в AB-8: `run_mission` / CLI `run` / GUI / RPC.)*
 
 Не построено вовсе: ledger + provenance; класс риска и компиляция политики;
 бюджет миссии; целостность гейта, flake-aware, отложенные эффекты; context

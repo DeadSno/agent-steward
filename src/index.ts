@@ -84,6 +84,7 @@ import type {
   PermissionSettings,
   TriageSettings,
 } from "./settings.js";
+import { runMission, type MissionSpec } from "./core/mission.js";
 import {
   DEFAULT_PERMISSION_POLICY,
   buildOpencodeConfig,
@@ -3505,6 +3506,11 @@ const RPC_AUDIT_RULES: Record<
   update_task: { action: "task.update", targetType: "task", target: (i) => i.name ?? "" },
   delete_task: { action: "task.delete", targetType: "task", target: (i) => i.name ?? "" },
   run_task: { action: "task.run", targetType: "task", target: (i) => i.name ?? "" },
+  run_mission: {
+    action: "mission.run",
+    targetType: "mission",
+    target: (i) => i.taskName ?? "ad-hoc",
+  },
   pause_task: { action: "task.pause", targetType: "task", target: (i) => i.name ?? "" },
   resume_task: { action: "task.resume", targetType: "task", target: (i) => i.name ?? "" },
   cancel_matrix: { action: "matrix.cancel", targetType: "matrix", target: (i) => i.name ?? "" },
@@ -4733,6 +4739,37 @@ const v2Plugin = Plugin.define({
           return { success: true, message: t("tool.task.started", { name }) };
         } catch (err: any) {
           return { success: false, message: `schtasks error: ${err instanceof Error ? err.message : String(err)}` };
+        }
+      },
+      run_mission: async (input: unknown) => {
+        try {
+          const mission = await runMission(input as MissionSpec);
+          return {
+            success: mission.success,
+            dryRun: mission.dryRun,
+            runId: mission.runId ?? "",
+            status: mission.status,
+            description: mission.description,
+            ...(mission.error ? { error: mission.error } : {}),
+            steps: mission.steps.map((step) => ({
+              stepName: step.stepName,
+              taskType: step.taskType,
+              target: step.target,
+              status: step.status,
+              attempt: step.attempt,
+              ...(step.error ? { error: step.error } : {}),
+            })),
+          };
+        } catch (err: any) {
+          return {
+            success: false,
+            dryRun: false,
+            runId: "",
+            status: "failed",
+            description: "",
+            error: err instanceof Error ? err.message : String(err),
+            steps: [],
+          };
         }
       },
       emit_event: async (input: unknown) => {

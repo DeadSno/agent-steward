@@ -844,5 +844,19 @@
   "tool.workspace.needDeleteId": "action=delete 需要 id。",
   "tool.workspace.needPath": "action=add 需要 path。",
   "tool.workspace.needUpdateId": "action=update 需要 id。",
-  "tool.workspace.notFound": "未找到工作区。"
+  "tool.workspace.notFound": "未找到工作区。",
+  "gui.missionHeading": "Ad-hoc 任务",
+  "gui.missionHint": "无需在操作系统中注册，使用同一 runtime、GATE 和 ledger。",
+  "gui.missionCwdPlaceholder": "工作目录（默认为当前目录）",
+  "gui.missionTimeout": "超时，秒",
+  "gui.missionPolicy": "权限策略",
+  "gui.missionPolicyHybrid": "hybrid",
+  "gui.missionPolicySecure": "secure",
+  "gui.missionPolicyLegacy": "legacy",
+  "gui.missionDryRun": "仅计划（dry-run）",
+  "gui.missionRun": "运行任务",
+  "gui.missionTitle": "Ad-hoc 任务",
+  "gui.missionEmptyPrompt": "请输入任务提示词。",
+  "gui.missionStarted": "任务已完成",
+  "gui.missionFailed": "任务失败"
 }

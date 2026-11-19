@@ -6,6 +6,11 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **AB-8.5 — документация ad-hoc миссий:** `docs/ARCHITECTURE.md` описывает `MissionSpec`, safety-контракт, Quality Gate, workspace-lock и отсутствие регистрации в ОС; `docs/SAFETY.md` фиксирует инварианты ad-hoc, `docs/EXECUTION-LOOP.md` отмечает закрытие разрыва.
+- **AB-8.4 — тест ad-hoc миссии:** `test-mission-run.mjs` (32 проверки) покрывает dry-run без записи в ledger, успешный запуск, ошибку исполнителя, блокировку workspace, валидацию входа и статическую проверку отсутствия импорта планировщика; тест добавлен в `npm test`.
+- **AB-8.3 — RPC и GUI:** метод `run_mission` (`RunMissionInput`/`RunMissionOutput`) с аудитом `mission.run`; панель «Ad-hoc миссия» в GUI с prompt, cwd, model, timeout, gate, policy, session и dry-run; локали `ru`/`en`/`zh`.
+- **AB-8.2 — CLI `agent-steward run`:** позиционный промпт и флаги `--cwd`, `--task-type`, `--model`, `--timeout`, `--gate`, `--policy`, `--allow-tools`, `--deny-tools`, `--session`, `--session-id`, `--name`, `--dry-run`, `--json`; exit 0/1/2.
+- **AB-8.1 — спецификация ad-hoc миссии:** `src/core/mission.ts` — `MissionSpec`, `normalizeMissionSpec` (обязательный prompt, абсолютный cwd, policy, таймауты, session, конфликт allow/deny), `createMissionContext`, `runMission` через единый `executeExecutionPlan`, lock по workspace; маршрут `mission` → `local`/`direct`.
 - **AC-1.5 — документация единого пути:** `docs/ARCHITECTURE.md` описывает `src/core/execution.ts`: `RunContext` для registered/ad-hoc, dry-run план и трассировку маршрута, абстракцию `StepExecutor` (OpenCode — один из исполнителей), GATE после шага и запись в ledger, а также пропуск review/explore с причиной.
 - **AC-1.4 — тест единого пути:** `test-execution-pipeline.mjs` (49 проверок) проводит зарегистрированную задачу и ad-hoc миссию через один `executeExecutionPlan`, проверяет одинаковый план/маршруты, сохранение в ledger, отклонение GATE, повтор шага после ошибки и `skipped` для review; тест добавлен в `npm test`.
 - **AC-1.3 — dry-run план и трассировка:** `buildExecutionPlan` строит шаги из явного `taskType` или эвристического планировщика, маршрутизирует каждый через capability map, а `describeExecutionPlan` печатает порядок, target и источник решения, не создавая запуск.

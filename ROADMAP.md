@@ -31,16 +31,7 @@ agent-steward — execution engine с опциональной регистра�
 
 > Реализованные части execution model (ядро, полосы A/B, wrapper, recorder, storage, in-process triggers) в ROADMAP не перечисляются — они в [CHANGELOG.md](./CHANGELOG.md). Здесь только открытые архитектурные задачи.
 
-## Деталь 2.2 — Полоса B: Direct / Ad-hoc
-`src/core/*runtime*`, `src/cli.ts`, `src/rpc.ts`
-
-**Задача AB-8 — `run_mission` (CLI / GUI / RPC)** · P2 · ⬜
-
-- [ ] AB-8.1 Спецификация ad-hoc миссии (гейт + safety-контракт)
-- [ ] AB-8.2 CLI `agent-steward run`
-- [ ] AB-8.3 RPC/GUI
-- [ ] AB-8.4 Тест без регистрации в ОС
-- [ ] AB-8.5 Docs
+Открытых задач нет: полосы A/B и ad-hoc вход (`run_mission`) реализованы.
 
 ---
 

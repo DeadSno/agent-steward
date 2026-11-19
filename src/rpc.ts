@@ -306,6 +306,54 @@ const DeleteTaskOutput = {
 
 const RunTaskOutput = DeleteTaskOutput;
 
+const RunMissionInput = {
+  type: "object" as const,
+  properties: {
+    prompt: { type: "string" },
+    cwd: { type: "string" },
+    taskName: { type: "string" },
+    taskType: { type: "string" },
+    model: { type: "string" },
+    session: { type: "string", enum: ["new", "reuse", "last"] },
+    sessionId: { type: "string" },
+    timeoutSeconds: { type: "number" },
+    gate: { type: "string" },
+    gateTimeoutSeconds: { type: "number" },
+    policy: { type: "string", enum: ["hybrid", "secure", "legacy"] },
+    allowedTools: { type: "array", items: { type: "string" } },
+    deniedTools: { type: "array", items: { type: "string" } },
+    dryRun: { type: "boolean" },
+  },
+  required: ["prompt"],
+} as const;
+
+const RunMissionOutput = {
+  type: "object" as const,
+  properties: {
+    success: { type: "boolean" },
+    dryRun: { type: "boolean" },
+    runId: { type: "string" },
+    status: { type: "string" },
+    description: { type: "string" },
+    error: { type: "string" },
+    steps: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          stepName: { type: "string" },
+          taskType: { type: "string" },
+          target: { type: "string" },
+          status: { type: "string" },
+          attempt: { type: "number" },
+          error: { type: "string" },
+        },
+      },
+    },
+  },
+  required: ["success", "dryRun", "status", "description"],
+} as const;
+
 const GetTaskLogsInput = NameOnly;
 
 const GetTaskLogsOutput = {
@@ -1948,6 +1996,7 @@ export const SchedulerRpc = Rpc.define({
     create_task: { input: CreateTaskInput, output: CreateTaskOutput },
     delete_task: { input: DeleteTaskInput, output: DeleteTaskOutput },
     run_task: { input: RunTaskInput, output: RunTaskOutput },
+    run_mission: { input: RunMissionInput, output: RunMissionOutput },
     pause_task: { input: PauseResumeInput, output: DeleteTaskOutput },
     resume_task: { input: PauseResumeInput, output: DeleteTaskOutput },
     update_task: { input: UpdateTaskInput, output: UpdateTaskOutput },

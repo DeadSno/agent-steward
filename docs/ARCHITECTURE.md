@@ -46,7 +46,7 @@ path, and the OS scheduler is only one of them (CONCEPT §5, §8):
 
 | Entry | Examples | Goes through the OS scheduler? |
 | --- | --- | --- |
-| ad-hoc (no OS registration) | agent tools · GUI · TUI · RPC · (`run_mission` — planned) | No |
+| ad-hoc (no OS registration) | agent tools · GUI · CLI · TUI · RPC (`run_mission`) | No |
 | internal orchestration (core-driven, no OS) | chains · DAG dependents · retries · matrix continuation · escalation · resume after pause/crash | No |
 | registered triggers | `cron` / `once` | Yes — registered with Task Scheduler / launchd / crontab |
 | registered, in-process | `file` / `git` / `mcp-event` / webhook | No — watched inside the plugin process |
@@ -60,7 +60,7 @@ The OS scheduler is responsible only for firing registered `cron`/`once` ticks.
 │ ENTRIES                                                             │
 │                                                                     │
 │  ad-hoc (no OS registration)                                        │
-│    agent tools · GUI · TUI · RPC · (CLI run_mission — planned)      │
+│    agent tools · GUI · CLI · TUI · RPC (`run_mission`)               │
 │                                                                     │
 │  internal orchestration (core-driven, no OS)                        │
 │    chains · DAG dependents · retries · matrix continuation ·        │
@@ -158,6 +158,46 @@ next.
 The test `test-execution-pipeline.mjs` drives a registered task and an ad-hoc
 mission through the same executor, including a rejecting GATE and a skipped
 review step.
+
+### Ad-hoc mission runtime (AB-8)
+
+`src/core/mission.ts` turns a one-off request into a `RunContext` without
+registering anything in the OS scheduler. The same entry point is exposed by
+the agent tool / RPC method `run_mission`, the CLI command `agent-steward run`
+and the GUI panel «Ad-hoc миссия».
+
+- **MissionSpec (AB-8.1)** — `prompt` is required; `cwd`, `taskName`,
+  `taskType`, `model`, `session` (`new` / `reuse` / `last`), `sessionId`,
+  `timeoutSeconds` (1–86400), `gate`, `gateTimeoutSeconds`, `policy`
+  (`hybrid` / `secure` / `legacy`), `allowedTools`, `deniedTools` and `dryRun`
+  are optional. `normalizeMissionSpec` trims the prompt, makes `cwd` absolute,
+  rejects unknown policies/timers/sessions and tools listed as both allowed and
+  denied. The default task type is `mission`, routed statically to
+  `local`/`direct`.
+- **Safety contract** — the mission is a normal `RunContext` with its own
+  permission policy and tool lists. It does not bypass the GATE, budget, audit
+  or ledger; the wrapper receives the gate command and permission config just
+  like a registered task. An in-process lock keyed by the resolved workspace
+  rejects a second mission in the same directory
+  (`В workspace … уже выполняется миссия …`).
+- **Planning and dry-run** — `buildExecutionPlan` + `describeExecutionPlan`
+  produce the same trace as registered runs. `dryRun: true` returns the plan
+  with `status: "planned"` and does not create a ledger row.
+- **Execution (AB-8.2/8.3)** — without an injected executor the mission writes
+  the prompt file, log, lock and wrapper (`writeWrapperCmd` on Windows,
+  `writeBashWrapper` on POSIX), spawns the wrapper with a hard timeout, and
+  feeds its output into `executeExecutionPlan`; the run is stored with
+  `metadata.adHoc = true` and tasks are never created in Windows Task Scheduler,
+  launchd or crontab. An injected `StepExecutor` is used by tests and
+  alternative transports.
+- **Results** — `MissionResult` reports `success`, `dryRun`, `runId`, `status`
+  (`planned` / `passed` / `failed`), `steps`, `error`, `logFile` and the
+  human-readable plan description. `run_mission` returns the same data minus
+  raw step output.
+
+The test `test-mission-run.mjs` covers dry-run (no ledger row), a successful
+ad-hoc run, executor failure, the workspace lock, input validation and a static
+check that the mission path never imports the OS scheduler.
 
 ### Data: one SQLite per profile
 
@@ -911,7 +951,7 @@ after the agent with the user's privileges and are not filtered by tool policy.
 
 ## Mission runtime и гибридные входы (план 38–40)
 
-> Статус: спека. Что уже в коде, а что нет — [ROADMAP.md](../ROADMAP.md) §1.
+> Статус: ad-hoc вход реализован (AB-8); internal-оркестрация и `gate_outcomes` — план 40. Что уже в коде — [ROADMAP.md](../ROADMAP.md) §1.
 
 Система гибридная: ядро (**mission runtime**) не знает про планировщик ОС.
 Планировщик — адаптер входа, регистрация опциональна.
@@ -920,7 +960,7 @@ after the agent with the user's privileges and are not filtered by tool policy.
 
 | Класс | Вход | Регистрация в ОС | Реализация |
 |---|---|---|---|
-| Ad-hoc | `run_mission` / CLI / GUI / RPC | нет | план 38 |
+| Ad-hoc | `run_mission` / CLI `run` / GUI / RPC | нет | есть: `core/mission.ts` (AB-8) |
 | Внутренний | chain / DAG / retry / escalation | нет | сейчас через `backend.runTask` + force-маркер; план 40 — напрямую в runtime |
 | Registered | cron / once / file / git / mcp-event / webhook | да (cron/once) | есть: `core/scheduler/*`, `file-watcher`, `git-trigger`, `integrations` |
 
@@ -928,7 +968,7 @@ after the agent with the user's privileges and are not filtered by tool policy.
 
 | Объект | Содержимое | Таблица |
 |---|---|---|
-| Миссия | цель + scope + gate-спека + safety + бюджет | `missions` (план 38, опциональный шаблон) |
+| Миссия | цель + scope + gate-спека + safety + бюджет | `runs` metadata (AB-8); шаблон `missions` — план 38 |
 | Задача | миссия-шаблон + триггер | `tasks` (есть) |
 | Запуск | durable-исполнение: шаги, попытки, вердикты | `runs` / `run_steps` (есть, SCHEMA_VERSION 10) |
 | Исход гейта | вердикт + provenance + экономика | `gate_outcomes` (план 40) |

@@ -606,6 +606,18 @@ export default Plugin.define({
     const [runPanelActive, setRunPanelActive] = createSignal(0)
     const [runPanelBusy, setRunPanelBusy] = createSignal(false)
     const [runPanelCollapsed, setRunPanelCollapsed] = createSignal(true)
+    // AB-8: ad-hoc миссия без регистрации в ОС.
+    const [missionCollapsed, setMissionCollapsed] = createSignal(true)
+    const [missionPrompt, setMissionPrompt] = createSignal("")
+    const [missionCwd, setMissionCwd] = createSignal("")
+    const [missionGate, setMissionGate] = createSignal("")
+    const [missionModel, setMissionModel] = createSignal("")
+    const [missionTimeout, setMissionTimeout] = createSignal("")
+    const [missionPolicy, setMissionPolicy] = createSignal<"hybrid" | "secure" | "legacy">("hybrid")
+    const [missionSession, setMissionSession] = createSignal<"new" | "reuse" | "last">("new")
+    const [missionDryRun, setMissionDryRun] = createSignal(false)
+    const [missionBusy, setMissionBusy] = createSignal(false)
+    const [missionResult, setMissionResult] = createSignal("")
     const [runPanelFilter, setRunPanelFilter] = createSignal<"active" | "all" | "running" | "paused" | "failed">("active")
     const [runPanelComments, setRunPanelComments] = createSignal<Record<string, string>>({})
 
@@ -1014,6 +1026,61 @@ export default Plugin.define({
         console.error("RPC Error (list_durable_runs):", err)
       } finally {
         setRunPanelBusy(false)
+      }
+    }
+
+    /** AB-8: ad-hoc миссия через единый execution path, без записи в планировщик ОС. */
+    async function handleRunMission() {
+      const prompt = missionPrompt().trim()
+      if (!prompt) {
+        ctx.toast.show({
+          title: gt("gui.missionTitle"),
+          variant: "warning",
+          description: gt("gui.missionEmptyPrompt"),
+        })
+        return
+      }
+      const timeoutNumber = Number(missionTimeout())
+      setMissionBusy(true)
+      setMissionResult("")
+      try {
+        const result: any = await rpc.run_mission({
+          prompt,
+          cwd: missionCwd().trim() || undefined,
+          gate: missionGate().trim() || undefined,
+          model: missionModel().trim() || undefined,
+          timeoutSeconds:
+            Number.isFinite(timeoutNumber) && timeoutNumber > 0 ? timeoutNumber : undefined,
+          policy: missionPolicy(),
+          session: missionSession(),
+          dryRun: missionDryRun(),
+        })
+        if (result?.success) {
+          ctx.toast.show({
+            title: gt("gui.missionStarted"),
+            variant: "success",
+            description: result.runId ? `run: ${String(result.runId).slice(0, 8)}` : undefined,
+          })
+        } else {
+          ctx.toast.show({
+            title: gt("gui.missionFailed"),
+            variant: "error",
+            description: result?.error ?? gt("gui.runsUnknownError"),
+          })
+        }
+        setMissionResult(
+          [result?.description, result?.error].filter((line: unknown) => Boolean(line)).join("\n"),
+        )
+        await loadJobs()
+      } catch (err: any) {
+        console.error("RPC Error (run_mission):", err)
+        ctx.toast.show({
+          title: gt("gui.missionFailed"),
+          variant: "error",
+          description: errorMessage(err),
+        })
+      } finally {
+        setMissionBusy(false)
       }
     }
 
@@ -3908,6 +3975,100 @@ export default Plugin.define({
                       {gt("gui.historyCleanupHint")}
                     </span>
                   </div>
+                </div>
+              )}
+            </div>
+
+            {/* AB-8: ad-hoc миссия (CLI/RPC/GUI), без регистрации в ОС */}
+            <div style="width:100%;max-width:900px;box-sizing:border-box;margin-top:8px;background:#1e1e1e;border:1px solid #333;border-radius:10px;overflow:hidden">
+              <button
+                onClick={() => setMissionCollapsed(!missionCollapsed())}
+                style="display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;box-sizing:border-box;padding:10px 14px;background:transparent;border:none;color:#e0e0e0;font-size:12px;font-weight:600;cursor:pointer;text-align:left"
+              >
+                <span>{gt("gui.missionHeading")}</span>
+                <span>{missionCollapsed() ? "▾" : "▴"}</span>
+              </button>
+              {!missionCollapsed() && (
+                <div style="padding:0 14px 14px;display:flex;flex-direction:column;gap:10px">
+                  <div style="font-size:11px;color:#8e8e93">{gt("gui.missionHint")}</div>
+                  <textarea
+                    value={missionPrompt()}
+                    onInput={(e) => setMissionPrompt(e.currentTarget.value)}
+                    placeholder={gt("gui.promptPlaceholder")}
+                    rows={4}
+                    style="width:100%;box-sizing:border-box;padding:8px;background:#0f0f0f;border:1px solid #333;border-radius:6px;color:#fff;font-size:12px;resize:vertical;outline:none"
+                  />
+                  <div style="display:flex;gap:8px;flex-wrap:wrap">
+                    <input
+                      value={missionCwd()}
+                      onInput={(e) => setMissionCwd(e.currentTarget.value)}
+                      placeholder={gt("gui.missionCwdPlaceholder")}
+                      style="flex:1 1 260px;min-width:180px;padding:6px 8px;background:#0f0f0f;border:1px solid #333;border-radius:6px;color:#fff;font-size:12px;outline:none"
+                    />
+                    <input
+                      value={missionModel()}
+                      onInput={(e) => setMissionModel(e.currentTarget.value)}
+                      placeholder={gt("gui.modelPlaceholder")}
+                      style="flex:0 1 200px;padding:6px 8px;background:#0f0f0f;border:1px solid #333;border-radius:6px;color:#fff;font-size:12px;outline:none"
+                    />
+                    <input
+                      value={missionTimeout()}
+                      onInput={(e) => setMissionTimeout(e.currentTarget.value)}
+                      placeholder={gt("gui.missionTimeout")}
+                      inputMode="numeric"
+                      style="width:130px;padding:6px 8px;background:#0f0f0f;border:1px solid #333;border-radius:6px;color:#fff;font-size:12px;outline:none"
+                    />
+                  </div>
+                  <input
+                    value={missionGate()}
+                    onInput={(e) => setMissionGate(e.currentTarget.value)}
+                    placeholder={gt("gui.qualityGatePlaceholder")}
+                    style="width:100%;box-sizing:border-box;padding:6px 8px;background:#0f0f0f;border:1px solid #333;border-radius:6px;color:#fff;font-size:12px;outline:none"
+                  />
+                  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                    <label style="font-size:11px;color:#8e8e93">{gt("gui.missionPolicy")}</label>
+                    <select
+                      value={missionPolicy()}
+                      onChange={(e) => setMissionPolicy(e.currentTarget.value as "hybrid" | "secure" | "legacy")}
+                      style="padding:4px 6px;background:#0f0f0f;border:1px solid #333;border-radius:4px;color:#fff;font-size:12px;outline:none"
+                    >
+                      <option value="hybrid">{gt("gui.missionPolicyHybrid")}</option>
+                      <option value="secure">{gt("gui.missionPolicySecure")}</option>
+                      <option value="legacy">{gt("gui.missionPolicyLegacy")}</option>
+                    </select>
+                    <label style="font-size:11px;color:#8e8e93">{gt("gui.sessionLabel")}</label>
+                    <select
+                      value={missionSession()}
+                      onChange={(e) => setMissionSession(e.currentTarget.value as "new" | "reuse" | "last")}
+                      style="padding:4px 6px;background:#0f0f0f;border:1px solid #333;border-radius:4px;color:#fff;font-size:12px;outline:none"
+                    >
+                      <option value="new">{gt("gui.sessionNew")}</option>
+                      <option value="reuse">{gt("gui.sessionReuse")}</option>
+                      <option value="last">{gt("gui.sessionContinue")}</option>
+                    </select>
+                    <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:#8e8e93">
+                      <input
+                        type="checkbox"
+                        checked={missionDryRun()}
+                        onChange={(e) => setMissionDryRun(e.currentTarget.checked)}
+                      />
+                      {gt("gui.missionDryRun")}
+                    </label>
+                    <button
+                      onClick={() => void handleRunMission()}
+                      disabled={missionBusy()}
+                      style={missionBusy()
+                        ? "margin-left:auto;padding:6px 12px;background:#666;color:white;border:none;border-radius:6px;cursor:not-allowed;font-size:12px;font-weight:500;opacity:0.6"
+                        : "margin-left:auto;padding:6px 12px;background:#007acc;color:white;border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:500;opacity:1"}
+                    >
+                      {missionBusy() ? gt("gui.loading") : gt("gui.missionRun")}
+                    </button>
+                  </div>
+                  {missionResult() && (
+                    <pre style="margin:0;padding:8px;background:#0f0f0f;border:1px solid #333;border-radius:6px;color:#e0e0e0;font-size:11px;white-space:pre-wrap;word-break:break-word">
+                      {missionResult()}
+                    </pre>
+                  )}
                 </div>
               )}
             </div>

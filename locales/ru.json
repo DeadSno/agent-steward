@@ -844,5 +844,19 @@
   "tool.workspace.needDeleteId": "Для action=delete нужен id.",
   "tool.workspace.needPath": "Для action=add нужен path.",
   "tool.workspace.needUpdateId": "Для action=update нужен id.",
-  "tool.workspace.notFound": "Workspace не найден."
+  "tool.workspace.notFound": "Workspace не найден.",
+  "gui.missionHeading": "Ad-hoc миссия",
+  "gui.missionHint": "Запуск без регистрации в ОС: единый runtime, GATE и ledger.",
+  "gui.missionCwdPlaceholder": "Рабочая директория (по умолчанию — текущая)",
+  "gui.missionTimeout": "Таймаут, сек",
+  "gui.missionPolicy": "Политика прав",
+  "gui.missionPolicyHybrid": "hybrid",
+  "gui.missionPolicySecure": "secure",
+  "gui.missionPolicyLegacy": "legacy",
+  "gui.missionDryRun": "Только план (dry-run)",
+  "gui.missionRun": "Запустить миссию",
+  "gui.missionTitle": "Ad-hoc миссия",
+  "gui.missionEmptyPrompt": "Введите промпт миссии.",
+  "gui.missionStarted": "Миссия выполнена",
+  "gui.missionFailed": "Миссия не выполнена"
 }

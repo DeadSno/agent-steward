@@ -844,5 +844,19 @@
   "tool.workspace.needDeleteId": "action=delete requires id.",
   "tool.workspace.needPath": "action=add requires path.",
   "tool.workspace.needUpdateId": "action=update requires id.",
-  "tool.workspace.notFound": "Workspace not found."
+  "tool.workspace.notFound": "Workspace not found.",
+  "gui.missionHeading": "Ad-hoc mission",
+  "gui.missionHint": "Runs without OS registration through the same runtime, GATE and ledger.",
+  "gui.missionCwdPlaceholder": "Working directory (defaults to current)",
+  "gui.missionTimeout": "Timeout, sec",
+  "gui.missionPolicy": "Permission policy",
+  "gui.missionPolicyHybrid": "hybrid",
+  "gui.missionPolicySecure": "secure",
+  "gui.missionPolicyLegacy": "legacy",
+  "gui.missionDryRun": "Plan only (dry-run)",
+  "gui.missionRun": "Run mission",
+  "gui.missionTitle": "Ad-hoc mission",
+  "gui.missionEmptyPrompt": "Enter a mission prompt.",
+  "gui.missionStarted": "Mission completed",
+  "gui.missionFailed": "Mission failed"
 }

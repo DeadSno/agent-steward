@@ -18,6 +18,7 @@ import { executePipelineApply, planPipelineApply } from "./core/pipeline-apply.j
 import { tasksToPipelineSpec } from "./core/pipeline-map.js";
 import { saveTaskDefinition, type TaskDefinition } from "./task-transfer.js";
 import { listWorkspaces } from "./workspaces.js";
+import { runMission, type MissionSpec } from "./core/mission.js";
 
 const USAGE = `agent-steward — планировщик agent jobs
 
@@ -252,11 +253,135 @@ async function runApply(args: string[]): Promise<number> {
   }
 }
 
+function listFlag(args: string[], name: string): string[] | undefined {
+  const value = flagValue(args, name);
+  if (value === undefined) return undefined;
+  const list = value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return list.length > 0 ? list : undefined;
+}
+
+/**
+ * AB-8.2: `agent-steward run <prompt>` — ad-hoc миссия без регистрации в ОС.
+ * Проходит тот же runtime, что и задачи: план → маршрут → GATE → ledger.
+ */
+async function runAdHoc(args: string[]): Promise<number> {
+  const valueFlags = new Set([
+    "--cwd",
+    "--gate",
+    "--task-type",
+    "--model",
+    "--timeout",
+    "--policy",
+    "--allow-tools",
+    "--deny-tools",
+    "--session",
+    "--session-id",
+    "--name",
+  ]);
+  let prompt: string | undefined;
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index];
+    if (arg.startsWith("--")) {
+      if (valueFlags.has(arg)) index++;
+      continue;
+    }
+    prompt = arg;
+    break;
+  }
+  if (!prompt?.trim()) {
+    console.error(
+      "agent-steward run <prompt> [--cwd <dir>] [--gate <cmd>] [--task-type <type>] " +
+        "[--model <model>] [--timeout <sec>] [--policy hybrid|secure|legacy] " +
+        "[--allow-tools a,b] [--deny-tools a,b] [--session new|reuse|last] " +
+        "[--session-id ses_...] [--name <name>] [--dry-run] [--json]",
+    );
+    return 2;
+  }
+
+  const json = args.includes("--json");
+  const timeoutRaw = flagValue(args, "--timeout");
+  const timeoutSeconds = timeoutRaw === undefined ? undefined : Number(timeoutRaw);
+  if (timeoutSeconds !== undefined && (!Number.isInteger(timeoutSeconds) || timeoutSeconds <= 0)) {
+    console.error("--timeout должен быть целым положительным числом секунд.");
+    return 2;
+  }
+  const policyRaw = flagValue(args, "--policy");
+  if (policyRaw && !["hybrid", "secure", "legacy"].includes(policyRaw)) {
+    console.error("--policy должен быть hybrid, secure или legacy.");
+    return 2;
+  }
+  const sessionRaw = flagValue(args, "--session");
+  if (sessionRaw && !["new", "reuse", "last"].includes(sessionRaw)) {
+    console.error("--session должен быть new, reuse или last.");
+    return 2;
+  }
+
+  const spec: MissionSpec = {
+    prompt,
+    cwd: flagValue(args, "--cwd"),
+    taskName: flagValue(args, "--name"),
+    taskType: flagValue(args, "--task-type"),
+    model: flagValue(args, "--model"),
+    session: sessionRaw as MissionSpec["session"],
+    sessionId: flagValue(args, "--session-id"),
+    timeoutSeconds,
+    gate: flagValue(args, "--gate"),
+    gateTimeoutSeconds: undefined,
+    policy: policyRaw as MissionSpec["policy"],
+    allowedTools: listFlag(args, "--allow-tools"),
+    deniedTools: listFlag(args, "--deny-tools"),
+    dryRun: args.includes("--dry-run"),
+  };
+
+  initDb();
+  try {
+    const result = await runMission(spec);
+    if (json) {
+      console.log(
+        JSON.stringify(
+          {
+            success: result.success,
+            dryRun: result.dryRun,
+            runId: result.runId,
+            status: result.status,
+            description: result.description,
+            error: result.error,
+            logFile: result.logFile,
+            steps: result.steps,
+          },
+          null,
+          2,
+        ),
+      );
+    } else {
+      console.log(result.description);
+      for (const step of result.steps) {
+        console.log(`  ${step.stepName}: ${step.status} (attempt ${step.attempt})`);
+      }
+      if (result.error) console.error(`Ошибка: ${result.error}`);
+      if (result.logFile) console.log(`Лог: ${result.logFile}`);
+      if (result.runId) console.log(`Запуск: ${result.runId}`);
+    }
+    return result.success ? 0 : 1;
+  } catch (err) {
+    console.error(`Ошибка миссии: ${err instanceof Error ? err.message : String(err)}`);
+    return 1;
+  } finally {
+    closeDb();
+  }
+}
+
 async function main(argv: string[]): Promise<number> {
   const [group, command, ...rest] = argv;
   if (group === "--help" || group === "-h" || group === "help" || !group) {
     console.log(USAGE);
     return group ? 0 : 2;
+  }
+  if (group === "run") {
+    return runAdHoc([command, ...rest].filter((value): value is string => Boolean(value)));
   }
   if (group !== "pipeline") {
     console.error(`Неизвестная команда «${group}».\n`);

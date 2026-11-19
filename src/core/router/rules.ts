@@ -55,6 +55,12 @@ export const STATIC_ROUTE_RULES: readonly StaticRouteRule[] = Object.freeze([
     description: "Тесты запускаются локальным процессом.",
   },
   {
+    taskType: "mission",
+    transport: "direct",
+    executor: "local",
+    description: "Ad-hoc миссия исполняется локально через обёртку без регистрации в ОС.",
+  },
+  {
     taskType: "apply_diff",
     transport: "direct",
     executor: "local",
