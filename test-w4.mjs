@@ -38,6 +38,15 @@ const runRecorder = (args) =>
     timeout: 30000,
   });
 
+// История пишется короткоживущими процессами recorder, а читается этим
+// процессом. На Windows соединение SQLite может держать устаревший snapshot
+// WAL, поэтому перед каждой проверкой переоткрываем его. Иначе гонка даёт
+// нестабильные CHECK'и в CI (50/… вместо 27/27).
+function refreshDb() {
+  closeDb();
+  initDb();
+}
+
 saveTask({ name: "Guard Task", schedule: "* * * * *", prompt: "guarded", workspaceId: "api" });
 
 // --- 1. Recorder: --skip пишет историю и total-метрику ---------------------
@@ -51,6 +60,7 @@ const skipResult = runRecorder([
 check("recorder: --skip завершается кодом 0", skipResult.status === 0);
 if (skipResult.status !== 0) console.error(skipResult.stderr);
 
+refreshDb();
 const skipped = getHistory("Guard Task").filter((row) => row.status === "skipped");
 check("recorder: запись skipped в истории", skipped.length === 1);
 check(
@@ -61,6 +71,7 @@ check(
   "recorder: длительность сохранена",
   skipped.length === 1 && skipped[0].durationMs === 1500,
 );
+refreshDb();
 const metrics = getMetrics("Guard Task");
 check(
   "recorder: skipped увеличивает только total",
@@ -79,6 +90,7 @@ check(
 // --- 2. Recorder: причины по умолчанию и защита от неверных аргументов -----
 const defaultResult = runRecorder(["--skip", "Guard Task"]);
 check("recorder: битой base64 → код 0", defaultResult.status === 0);
+refreshDb();
 const defaultSkipped = getHistory("Guard Task").filter((row) => row.status === "skipped");
 check(
   "recorder: причина по умолчанию",
@@ -93,22 +105,36 @@ check(
   "recorder: legacy-статус skipped принимается",
   runRecorder(["Guard Task", "skipped", new Date().toISOString(), "0", "-", "-1", "-", "-", "-", "-", logFile]).status === 0,
 );
+const startResult = runRecorder(["--start", "Guard Task", new Date().toISOString()]);
+const finishRunId = Number(startResult.stdout.trim());
+const finishResult = runRecorder([
+  "--finish", String(finishRunId), "Guard Task", "skipped", "0", "-", "-1", "-", "-", "-", "-", logFile,
+]);
 check(
   "recorder: --finish со статусом skipped принимается",
-  (() => {
-    const start = runRecorder(["--start", "Guard Task", new Date().toISOString()]);
-    if (start.status !== 0) return false;
-    const id = start.stdout.trim();
-    const finish = runRecorder([
-      "--finish", id, "Guard Task", "skipped", "0", "-", "-1", "-", "-", "-", "-", logFile,
-    ]);
-    return finish.status === 0;
-  })(),
+  startResult.status === 0 && Number.isInteger(finishRunId) && finishRunId > 0 &&
+    finishResult.status === 0,
 );
+if (finishResult.status !== 0) console.error(finishResult.stderr);
+
+// Проверяем конкретную запись по id: cumulative-счётчик уязвим к гонкам WAL
+// между процессами recorder и этим тестом (-macos/windows CI).
+let finishedRow = null;
+for (let attempt = 0; attempt < 10; attempt += 1) {
+  refreshDb();
+  finishedRow = getHistory("Guard Task", 100).find((row) => row.id === finishRunId) ?? null;
+  if (finishedRow?.status === "skipped") break;
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+}
 check(
   "recorder: skipped из --finish попал в историю",
-  getHistory("Guard Task", 50, "skipped").length >= 4,
+  finishedRow?.status === "skipped" &&
+    getHistory("Guard Task", 50, "skipped").length >= 4,
 );
+if (finishedRow?.status !== "skipped") {
+  console.error(`[w4] запись #${finishRunId} после --finish:`, finishedRow);
+  console.error(finishResult.stderr);
+}
 
 // --- 3. Обёртки: --skip вызывается только при guard-пропуске --------------
 const guardedCmdPath = await writeWrapperCmd(
@@ -179,6 +205,9 @@ for (const locale of ["en", "ru", "zh"]) {
 
 // --- 5. Итог ---------------------------------------------------------------
 const failed = results.filter((item) => !item.ok);
+if (failed.length > 0) {
+  console.log(`Не прошли проверки: ${failed.map((item) => item.name).join("; ")}`);
+}
 closeDb();
 if (failed.length === 0) {
   fs.rmSync(tempRoot, { recursive: true, force: true });
