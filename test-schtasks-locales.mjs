@@ -4,6 +4,7 @@
 //
 // Запуск: node test-schtasks-locales.mjs (после npm run build).
 import { strict as assert } from "node:assert";
+import { readFile } from "node:fs/promises";
 import { setTaskField } from "./dist/core/scheduler/windows.js";
 
 const cases = [
@@ -64,5 +65,22 @@ for (const [key, field, value] of cases) {
     `заголовок «${key}» должен маппиться в ${field}`
   );
 }
+
+// V-1: кэш формата даты обязан хранить промис. Иначе параллельные createTask
+// (триггеры `once`/file/MCP) видят null и запускают PowerShell по несколько раз.
+const windowsSource = await readFile(
+  new URL("./src/core/scheduler/windows.ts", import.meta.url),
+  "utf8",
+);
+assert.match(
+  windowsSource,
+  /let windowsDateFormatCache: Promise<string> \| null = null;/,
+  "кэш формата даты должен хранить Promise<string>, а не готовую строку",
+);
+assert.match(
+  windowsSource,
+  /windowsDateFormatCache = \(async \(\) => \{/,
+  "параллельные вызовы должны кэшировать один и тот же async-результат",
+);
 
 console.log(`Schtasks locales: ${cases.length} заголовков (включая ZH) — OK.`);

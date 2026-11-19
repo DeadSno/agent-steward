@@ -381,7 +381,16 @@ export class MacScheduler extends PosixSchedulerBase {
     const plan = planLaunchctlInstall(entry.paused, plistPath);
     // Агент мог быть не загружен — это не ошибка.
     await this.launchctl(plan.beforeWrite, { tolerateFailure: true });
-    await fs.writeFile(plistPath, buildPlist(this.label(entry.name), entry), "utf8");
+    // Пишем в уникальный temp и переименовываем: launchctl не должен увидеть
+    // полузаписанный plist, если процесс упадёт посреди записи.
+    const tmpPath = `${plistPath}.${process.pid}.${Date.now()}.tmp`;
+    try {
+      await fs.writeFile(tmpPath, buildPlist(this.label(entry.name), entry), "utf8");
+      await fs.rename(tmpPath, plistPath);
+    } catch (error) {
+      await fs.rm(tmpPath, { force: true }).catch(() => {});
+      throw error;
+    }
     if (plan.afterWrite) {
       await this.launchctl(plan.afterWrite);
     }

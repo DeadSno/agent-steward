@@ -37,6 +37,32 @@ function git(cwd, args) {
   }).trim();
 }
 
+/**
+ * git возвращает канонический путь: на macOS /var/... → /private/var/...,
+ * на Windows короткое имя RUNNER~1 → полное имя. Сравниваем реальные пути,
+ * иначе корректный worktree кажется «чужим» только в CI.
+ */
+function samePath(left, right) {
+  const norm = (value) => {
+    let resolved = path.resolve(value);
+    try {
+      resolved = fs.realpathSync(resolved);
+    } catch {
+      // Путь мог быть уже удалён — сравниваем как есть.
+    }
+    return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+  };
+  return norm(left) === norm(right);
+}
+
+/** Пути всех зарегистрированных worktree из `git worktree list --porcelain`. */
+function registeredWorktreePaths(cwd) {
+  return git(cwd, ["worktree", "list", "--porcelain"])
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("worktree "))
+    .map((line) => line.slice("worktree ".length).trim());
+}
+
 /** Создаёт настоящий git-репозиторий с одним коммитом. */
 function makeRepo(name) {
   const dir = path.join(tempRoot, name);
@@ -78,7 +104,7 @@ let first;
     const wt = result.worktree;
     check("worktree: каталог существует", fs.existsSync(wt.path));
     check("worktree: файл из базового коммита на месте", fs.existsSync(path.join(wt.path, "README.md")));
-    check("worktree: репозиторий определён", path.resolve(wt.repoRoot).toLowerCase() === path.resolve(repo).toLowerCase());
+    check("worktree: репозиторий определён", samePath(wt.repoRoot, repo));
     check("worktree: базовая ветка agent-steward/", wt.branch.startsWith("agent-steward/"));
     check("worktree: baseCommit — 40 hex", /^[0-9a-f]{40}$/.test(wt.baseCommit));
     check("worktree: уникальный путь вне репозитория", !wt.path.startsWith(repo));
@@ -317,7 +343,7 @@ let disposable;
     check("cleanup: sidecar удалён", !fs.existsSync(`${wt.path}.json`));
     check(
       "cleanup: запись исчезла из git worktree list",
-      !git(repo, ["worktree", "list", "--porcelain"]).includes(wt.path),
+      !registeredWorktreePaths(repo).some((registered) => samePath(registered, wt.path)),
     );
     check("cleanup: ветка удалена", git(repo, ["branch", "--list", wt.branch]).trim() === "");
     check("cleanup: повторный вызов идемпотентен", (await removeRunWorktree({ path: wt.path, rootDir: worktreeRoot })).ok === true);
@@ -464,6 +490,9 @@ let disposable;
 const failed = results.filter((entry) => !entry.ok);
 console.log(`\nWorktree: ${results.length - failed.length}/${results.length} проверок пройдено.`);
 if (failed.length > 0) {
+  // Имена падающих проверок должны попадать в хвост лога CI (annotations
+  // показывают только последние строки, а не весь вывод теста).
+  console.error(`Не прошли проверки: ${failed.map((entry) => entry.name).join("; ")}`);
   process.exitCode = 1;
 } else {
   // Не оставляем за собой временные репозитории и worktree.

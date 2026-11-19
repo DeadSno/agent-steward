@@ -16,6 +16,13 @@ const settingsUrl = pathToFileURL(
   path.join(process.cwd(), "dist", "db", "settings-repo.js"),
 ).href;
 
+// Прогреваем схему и WAL в родительском процессе: 20 одновременных initDb()
+// с CREATE TABLE и сменой journal_mode на Windows дают "database is locked".
+// Дальше воркеры только делают DML с уже созданной схемой (busy_timeout есть).
+const { initDb, closeDb } = await import(distUrl);
+initDb(dbPath);
+closeDb();
+
 await fs.writeFile(
   workerPath,
   [

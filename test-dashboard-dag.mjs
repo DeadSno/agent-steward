@@ -77,7 +77,9 @@ function ok(name, fn) {
   }
 }
 
-const started = await startDashboardServer(deps, { preferred: 4320, fallback: 4321 });
+// Уникальный диапазон портов: test-dashboard-xss.mjs одновременно занимает
+// 4320/4321 при параллельном прогоне (test:parallel).
+const started = await startDashboardServer(deps, { preferred: 4322, fallback: 4323 });
 assert.ok(started, "сервер не стартовал");
 const base = `http://127.0.0.1:${started.port}`;
 

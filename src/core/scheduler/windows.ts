@@ -15,25 +15,29 @@ import type {
 
 const execFileAsync = promisify(execFile);
 
-/** Кэш формата даты локали Windows (ShortDatePattern), полученного через PowerShell. */
-let windowsDateFormatCache: string | null = null;
+/** Кэш формата даты локали Windows (ShortDatePattern), полученного через PowerShell.
+ *  Храним промис, а не готовую строку: параллельные вызовы ждут один и тот же
+ *  результат и не запускают PowerShell по несколько раз (гонка при await). */
+let windowsDateFormatCache: Promise<string> | null = null;
 
 /** Определяет формат даты системной локали через PowerShell (P1-8). */
 async function getWindowsDateFormat(): Promise<string> {
-  if (windowsDateFormatCache !== null) return windowsDateFormatCache;
-  try {
-    const { stdout } = await execFileAsync(
-      "powershell.exe",
-      ["-NoProfile", "-Command", "(Get-Culture).DateTimeFormat.ShortDatePattern"],
-      { maxBuffer: MAX_OUTPUT_BUFFER },
-    );
-    const pattern = String(stdout).trim();
-    windowsDateFormatCache = pattern || "dd.MM.yyyy";
-    return windowsDateFormatCache;
-  } catch {
-    windowsDateFormatCache = "dd.MM.yyyy";
-    return windowsDateFormatCache;
+  if (windowsDateFormatCache === null) {
+    windowsDateFormatCache = (async () => {
+      try {
+        const { stdout } = await execFileAsync(
+          "powershell.exe",
+          ["-NoProfile", "-Command", "(Get-Culture).DateTimeFormat.ShortDatePattern"],
+          { maxBuffer: MAX_OUTPUT_BUFFER },
+        );
+        const pattern = String(stdout).trim();
+        return pattern || "dd.MM.yyyy";
+      } catch {
+        return "dd.MM.yyyy";
+      }
+    })();
   }
+  return windowsDateFormatCache;
 }
 
 /** Форматирует дату «никогда» (заглушка для file/git/mcp-триггеров) в формате локали. */

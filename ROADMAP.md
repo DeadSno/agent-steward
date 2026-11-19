@@ -147,6 +147,9 @@ agent-steward — execution engine с опциональной регистра�
 **Задача X-6 — `systemd` в keywords** · P3 · ⏸️
 - [ ] X-6.1 Убрать, бэкенда нет
 
+> Находки аудита dev-ветки (V-1 … V-4) закрыты и перенесены в [CHANGELOG.md](./CHANGELOG.md)
+> (`Unreleased` → Fixed); открытых задач по ним нет.
+
 ---
 
 # 4. Правила работы (канбан)

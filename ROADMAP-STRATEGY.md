@@ -27,14 +27,14 @@ Scheduler, уведомления, аналитика — триггеры и о
 - Опубликован в npm, CI зелёный на Windows / macOS / Linux
 - `plugin id` не меняется: `opencode-windows-scheduler` — имена SQLite/логов и ID действий TUI без изменений; каталог данных — `agent-steward` (legacy мигрирует автоматически)
 - Dual-support: один пакет работает с OpenCode V1 (≥ 1.18.29) и V2 (≥ 2.2.7)
-- 26 инструментов агента — паритет с RPC-поверхностью
+- 29 инструментов агента — паритет с RPC-поверхностью
 - Локальный триаж + shadow mode, `manage_local_ai`, блок настроек в GUI — есть
 - Одноразовые запуски, непрерывность сессий, профили, webhooks, Telegram и нативные toast, тихие часы, Prometheus и OTLP — есть
 - Зашифрованные секреты (`${secret:NAME}`) и журнал аудита — есть
 - Durable DAG (journal, resume, идемпотентность, DLQ, роутер 3 слоя, chaos-nightly, GUI) — выпущен (0.0.3–0.0.4)
 - Английский README и `docs/` — основные, русский синхронизирован в `docs/README.ru.md`
 
-**Чего ещё нет:** pipeline-as-code, Docker-runner, approvals, remote runners, capability-карта с LoRA-адаптерами.
+**Чего ещё нет в релизе:** pipeline-as-code (код уже в `[Unreleased]`, релиз 0.0.5), Docker-runner, approvals, remote runners, capability-карта с LoRA-адаптерами.
 
 ---
 

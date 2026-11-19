@@ -240,7 +240,16 @@ async function prepareWrapper(
   const logFile = path.join(LOG_DIR, `${sanitized}.log`);
   const promptFile = await writePromptFile(taskName, spec.prompt);
   await fs.mkdir(LOG_DIR, { recursive: true });
-  await fs.writeFile(logFile, "", "utf8");
+  try {
+    await fs.writeFile(logFile, "", "utf8");
+  } catch (error) {
+    // Обёртки пишут лог через >> и создают файл сами: предварительная очистка
+    // нужна только чтобы убрать лог прошлого прогона. Не срываем миссию из-за
+    // прав доступа к каталогу логов.
+    console.warn(
+      `[agent-steward] Не удалось очистить лог миссии (${logFile}): ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
   const lockFile = lockFilePath(taskName);
   const sessionMode = spec.session ?? "new";
   let sessionId = spec.sessionId;

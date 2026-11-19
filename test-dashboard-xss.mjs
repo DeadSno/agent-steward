@@ -66,8 +66,12 @@ const deps = {
 try {
   const started = await startDashboardServer(deps, { preferred: 4320, fallback: 4321 });
   check("дашборд стартовал", !!started && started.port === 4320);
+  if (!started) throw new Error("дашборд не стартовал: порты 4320/4321 заняты");
 
-  const base = "http://127.0.0.1:" + getDashboardPort();
+  // При параллельном прогоне getDashboardPort() может указывать на другой
+  // экземпляр сервера (или быть null), поэтому берём порт нашего started.
+  check("порт дашборда совпадает с запущенным", getDashboardPort() === started.port);
+  const base = "http://127.0.0.1:" + started.port;
   const res = await fetch(base + "/");
   const html = await res.text();
   check("GET / отдаёт HTML-страницу", res.ok && html.includes("<!DOCTYPE html>"));
