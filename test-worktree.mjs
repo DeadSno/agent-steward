@@ -1,6 +1,6 @@
 /**
- * W-1.3: тесты одноразового git worktree (без Docker) и интеграции с обёртками.
- * Запуск: node test-worktree.mjs (после npm run build).
+ * W-1.3 / W-2.3: тесты одноразового git worktree (без Docker), очистки и
+ * интеграции с обёртками. Запуск: node test-worktree.mjs (после npm run build).
  */
 import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -11,12 +11,18 @@ const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ws-scheduler-worktree-")
 process.env.APPDATA = tempRoot;
 process.env.OPENCODE_SCHEDULER_HOME = path.join(tempRoot, "opencode", "windows-scheduler");
 
-const { isGitRepository, createRunWorktree, WORKTREE_ROOT_DIR } = await import(
-  "./dist/core/worktree.js"
-);
+const {
+  isGitRepository,
+  createRunWorktree,
+  removeRunWorktree,
+  cleanupStaleWorktrees,
+  WORKTREE_ROOT_DIR,
+  DEFAULT_STALE_AFTER_MS,
+} = await import("./dist/core/worktree.js");
 const { parseImportJson } = await import("./dist/task-transfer.js");
 const { writeWrapperCmd } = await import("./dist/core/ps-wrapper.js");
 const { buildBashWrapperScript } = await import("./dist/core/wrappers/bash.js");
+const { main: worktreeMain } = await import("./dist/core/worktree-run.js");
 
 const results = [];
 function check(name, cond) {
@@ -198,6 +204,19 @@ let first;
   check("Windows .cmd: запоминает репозиторий", text.includes("AGENT_STEWARD_WORKTREE_REPO"));
   check("Windows .cmd: fail-closed при ошибке", text.includes("git worktree creation failed"));
   check("Windows .cmd: путь помощника", text.includes("worktree-run.js"));
+  check(
+    "Windows .cmd: очистка после прогона",
+    text.includes('cleanup --path "%AGENT_STEWARD_WORKTREE%"'),
+  );
+  check(
+    "Windows .cmd: исходный код возврата сохраняется",
+    text.includes("AGENT_STEWARD_EXIT_CODE") && text.includes("exit /b %AGENT_STEWARD_EXIT_CODE%"),
+  );
+  check(
+    "Windows .cmd: перед очисткой выходит из worktree",
+    text.includes("set \"AGENT_STEWARD_EXIT_CODE=%errorlevel%\"") &&
+      text.indexOf('cd /d "' + repo) < text.indexOf('cleanup --path "%AGENT_STEWARD_WORKTREE%"'),
+  );
 
   const withoutWt = await writeWrapperCmd(...common);
   const plain = fs.readFileSync(withoutWt, "utf8");
@@ -224,6 +243,17 @@ let first;
   check("bash: экспорт пути", enabled.includes("export AGENT_STEWARD_WORKTREE"));
   check("bash: cd в worktree", enabled.includes('cd "$AGENT_STEWARD_WORKTREE"'));
   check("bash: контекст в промпте", enabled.includes("одноразовый git worktree: $AGENT_STEWARD_WORKTREE"));
+  check("bash: очистка после прогона", enabled.includes("cleanup_worktree()"));
+  check(
+    "bash: очистка вызывается из trap",
+    enabled.includes("cleanup() { cleanup_worktree;") &&
+      enabled.includes("trap cleanup EXIT INT TERM"),
+  );
+  check(
+    "bash: очистка выходит из worktree",
+    enabled.includes('cd "$WORKDIR" 2>/dev/null || true') &&
+      enabled.includes('cleanup --path "$AGENT_STEWARD_WORKTREE"'),
+  );
 
   const disabled = buildBashWrapperScript({
     sanitizedName: "wt-task",
@@ -267,6 +297,157 @@ let first;
   const insideRepo = WORKTREE_ROOT_DIR.startsWith(repo);
   check("WORKTREE_ROOT_DIR: вне рабочего репозитория", !insideRepo);
   check("WORKTREE_ROOT_DIR: внутри данных плагина", WORKTREE_ROOT_DIR.includes("worktrees"));
+}
+
+// 11. W-2.1: удаление worktree после прогона.
+let disposable;
+{
+  const created = await createRunWorktree({
+    repoDir: repo,
+    taskName: "cleanup-me",
+    rootDir: worktreeRoot,
+  });
+  disposable = created;
+  check("cleanup: worktree создан", created.ok === true);
+  if (created.ok) {
+    const wt = created.worktree;
+    const removed = await removeRunWorktree({ path: wt.path, rootDir: worktreeRoot });
+    check("cleanup: удаление успешно", removed.ok === true);
+    check("cleanup: каталог удалён", !fs.existsSync(wt.path));
+    check("cleanup: sidecar удалён", !fs.existsSync(`${wt.path}.json`));
+    check(
+      "cleanup: запись исчезла из git worktree list",
+      !git(repo, ["worktree", "list", "--porcelain"]).includes(wt.path),
+    );
+    check("cleanup: ветка удалена", git(repo, ["branch", "--list", wt.branch]).trim() === "");
+    check("cleanup: повторный вызов идемпотентен", (await removeRunWorktree({ path: wt.path, rootDir: worktreeRoot })).ok === true);
+  }
+}
+
+// 12. W-2.2: защита от удаления чужих каталогов и веток.
+{
+  const outside = path.join(tempRoot, "outside", "wt");
+  fs.mkdirSync(outside, { recursive: true });
+  const foreign = await removeRunWorktree({ path: outside, repoRoot: repo, rootDir: worktreeRoot });
+  check("guard: путь вне корня не удаляется", foreign.ok === false && fs.existsSync(outside));
+
+  const unowned = path.join(worktreeRoot, "not-ours");
+  fs.mkdirSync(unowned, { recursive: true });
+  const unownedResult = await removeRunWorktree({ path: unowned, repoRoot: repo, rootDir: worktreeRoot });
+  check("guard: каталог без sidecar не удаляется", unownedResult.ok === false && fs.existsSync(unowned));
+
+  const created = await createRunWorktree({ repoDir: repo, taskName: "wrong-branch", rootDir: worktreeRoot });
+  check("guard: worktree для проверки ветки создан", created.ok === true);
+  if (created.ok) {
+    const wrong = await removeRunWorktree({
+      path: created.worktree.path,
+      branch: "main",
+      rootDir: worktreeRoot,
+    });
+    check("guard: чужая ветка не удаляется", wrong.ok === false && fs.existsSync(created.worktree.path));
+    check("guard: корректное удаление после отказа", (await removeRunWorktree({ path: created.worktree.path, rootDir: worktreeRoot })).ok === true);
+  }
+
+  const kept = await createRunWorktree({ repoDir: repo, taskName: "keep-branch", rootDir: worktreeRoot });
+  check("guard: worktree с сохранением ветки создан", kept.ok === true);
+  if (kept.ok) {
+    const removed = await removeRunWorktree({
+      path: kept.worktree.path,
+      rootDir: worktreeRoot,
+      deleteBranch: false,
+    });
+    check("guard: --keep-branch оставляет ветку", removed.ok === true && git(repo, ["branch", "--list", kept.worktree.branch]).trim() !== "");
+    git(repo, ["branch", "-D", kept.worktree.branch]);
+  }
+}
+
+// 13. W-2.2: уборка остатков и защита от гонок.
+{
+  const staleRoot = path.join(tempRoot, "stale-worktrees");
+  const old = await createRunWorktree({ repoDir: repo, taskName: "stale-old", rootDir: staleRoot });
+  const fresh = await createRunWorktree({ repoDir: repo, taskName: "stale-fresh", rootDir: staleRoot });
+  check("stale: оба worktree созданы", old.ok === true && fresh.ok === true);
+
+  if (old.ok) {
+    const sidecarPath = `${old.worktree.path}.json`;
+    const sidecar = JSON.parse(fs.readFileSync(sidecarPath, "utf8"));
+    sidecar.createdAt = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+    fs.writeFileSync(sidecarPath, JSON.stringify(sidecar, null, 2), "utf8");
+  }
+
+  const ghost = path.join(staleRoot, "ghost");
+  fs.writeFileSync(
+    path.join(staleRoot, "ghost.json"),
+    JSON.stringify({
+      path: ghost,
+      branch: "agent-steward/ghost",
+      repoRoot: repo,
+      createdAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
+    }),
+    "utf8",
+  );
+  fs.mkdirSync(path.join(staleRoot, "unknown"), { recursive: true });
+
+  const summary = await cleanupStaleWorktrees({ rootDir: staleRoot });
+  check("stale: старый worktree удалён", old.ok && summary.removed.includes(old.worktree.path));
+  check("stale: свежий worktree не тронут", fresh.ok && summary.skipped.includes(fresh.worktree.path));
+  check("stale: fresh-каталог на месте", fresh.ok && fs.existsSync(fresh.worktree.path));
+  check("stale: sidecar без копии убран", summary.pruned.includes(ghost) && !fs.existsSync(path.join(staleRoot, "ghost.json")));
+  check("stale: чужой каталог не удалён", fs.existsSync(path.join(staleRoot, "unknown")));
+  check("stale: без ошибок", summary.errors.length === 0);
+
+  const lockedCandidate = await createRunWorktree({ repoDir: repo, taskName: "locked-old", rootDir: staleRoot });
+  if (lockedCandidate.ok) {
+    const sidecarPath = `${lockedCandidate.worktree.path}.json`;
+    const sidecar = JSON.parse(fs.readFileSync(sidecarPath, "utf8"));
+    sidecar.createdAt = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+    fs.writeFileSync(sidecarPath, JSON.stringify(sidecar, null, 2), "utf8");
+  }
+  const lockPath = path.join(staleRoot, ".cleanup-lock");
+  fs.mkdirSync(lockPath, { recursive: true });
+  const lockedSummary = await cleanupStaleWorktrees({ rootDir: staleRoot });
+  check("stale: параллельная уборка уступает lock", lockedSummary.locked === true && lockedSummary.removed.length === 0);
+  check("stale: кандидат жив, пока lock свежий", lockedCandidate.ok === true && fs.existsSync(lockedCandidate.worktree.path));
+
+  const staleLockTime = new Date(Date.now() - 20 * 60 * 1000);
+  fs.utimesSync(lockPath, staleLockTime, staleLockTime);
+  const recovered = await cleanupStaleWorktrees({ rootDir: staleRoot });
+  check("stale: осиротевший lock перехватывается", recovered.locked === false);
+  check("stale: кандидат удалён после снятия lock", lockedCandidate.ok && recovered.removed.includes(lockedCandidate.worktree.path));
+
+  const cliCandidate = await createRunWorktree({ repoDir: repo, taskName: "cli-cleanup", rootDir: staleRoot });
+  const cliCode = await worktreeMain([
+    "cleanup", "--stale", "--root", staleRoot, "--max-age-hours", "0", "--json",
+  ]);
+  check("CLI cleanup --stale: код 0", cliCode === 0);
+  check("CLI cleanup --stale: worktree удалён", cliCandidate.ok && !fs.existsSync(cliCandidate.worktree.path));
+}
+
+// 14. CLI очистки: успех и защитные ошибки.
+{
+  const created = await createRunWorktree({ repoDir: repo, taskName: "cli-path", rootDir: worktreeRoot });
+  check("CLI cleanup: worktree создан", created.ok === true);
+  if (created.ok) {
+    const code = await worktreeMain([
+      "cleanup", "--path", created.worktree.path, "--repo", repo, "--root", worktreeRoot, "--json",
+    ]);
+    check("CLI cleanup --path: код 0", code === 0);
+    check("CLI cleanup --path: каталог удалён", !fs.existsSync(created.worktree.path));
+  }
+
+  check("CLI cleanup: нет --path → код 1", (await worktreeMain(["cleanup"])) === 1);
+  check(
+    "CLI cleanup: --stale и --path несовместимы",
+    (await worktreeMain(["cleanup", "--stale", "--path", path.join(worktreeRoot, "x")])) === 1,
+  );
+
+  const outside = path.join(tempRoot, "outside", "wt");
+  check(
+    "CLI cleanup: путь вне корня → код 1",
+    (await worktreeMain([
+      "cleanup", "--path", outside, "--repo", repo, "--root", worktreeRoot,
+    ])) === 1,
+  );
 }
 
 const failed = results.filter((entry) => !entry.ok);

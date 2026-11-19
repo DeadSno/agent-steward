@@ -269,9 +269,15 @@ if creation fails (for example, the directory is not a git repository). Paths an
 branches are unique per run, so matrix clones and parallel missions can write files
 without touching the main checkout or each other — safe fan-out without Docker.
 
-Worktrees live under `PLUGIN_DIR/worktrees` with a `.json` sidecar for future
-cleanup (W-2); a worktree does not isolate network, API or database access, and
-Quality Gates still run with your user privileges.
+Worktrees live under `PLUGIN_DIR/worktrees` with a `.json` sidecar used by cleanup.
+After the run the wrapper removes the worktree and its `agent-steward/...` branch
+even when the task fails (W-2.1). Leftovers from crashes are swept opportunistically
+on the next run: worktrees older than 24 hours are removed, sidecars without a
+checkout are pruned, and a `.cleanup-lock` serialises concurrent sweeps (W-2.2).
+Cleanup only touches paths under the worktree root that have a sidecar and an
+`agent-steward/` branch, so foreign directories and fresh active runs are never
+deleted. A worktree does not isolate network, API or database access, and Quality
+Gates still run with your user privileges.
 
 ## Orchestration
 

@@ -1186,18 +1186,21 @@ export async function writeWrapperCmd(
   // W-1 (0.0.6): одноразовый git worktree. Создаётся после гейта расписания,
   // чтобы пропущенный тик не плодил рабочие копии. Ошибка создания — fail-closed:
   // задача не должна молча работать в основном дереве.
+  let wtHelper = "";
+  let wtRepo = "";
+  let wtLogRedirect = "";
   if (worktree) {
-    const wtHelper = (worktreeHelperFile ?? "").replace(/[\r\n"]+/g, "").trim();
-    const wtRepo = effectiveWorkdir.replace(/[\r\n"]+/g, "").trim();
+    wtHelper = (worktreeHelperFile ?? "").replace(/[\r\n"]+/g, "").trim();
+    wtRepo = effectiveWorkdir.replace(/[\r\n"]+/g, "").trim();
     const safeTaskName = taskName.replace(/[\r\n"]+/g, "").trim();
-    const logRedirect = logFile?.trim() ? `>> "${logFile.trim()}" 2>&1` : "";
+    wtLogRedirect = logFile?.trim() ? `>> "${logFile.trim()}" 2>&1` : "";
     const helperErr = logFile?.trim() ? `2>> "${logFile.trim()}"` : "";
     lines.push('set "AGENT_STEWARD_WORKTREE="');
     lines.push(
       `for /f "usebackq delims=" %%W in (\`node "${wtHelper}" --repo "${wtRepo}" --task "${safeTaskName}" ${helperErr}\`) do set "AGENT_STEWARD_WORKTREE=%%W"`,
     );
     lines.push("if not defined AGENT_STEWARD_WORKTREE (");
-    lines.push(`  echo [agent-steward] ERROR: git worktree creation failed ${logRedirect}`);
+    lines.push(`  echo [agent-steward] ERROR: git worktree creation failed ${wtLogRedirect}`);
     lines.push("  exit /b 1");
     lines.push(")");
     lines.push('cd /d "%AGENT_STEWARD_WORKTREE%"');
@@ -1205,6 +1208,18 @@ export async function writeWrapperCmd(
   }
 
   lines.push(psArgs.join(" "));
+
+  // W-2.1: удаляем одноразовый worktree после прогона при любом коде возврата.
+  // Сначала выходим из него (Windows не даёт удалить текущий каталог), затем
+  // возвращаем исходный код задачи — ошибка очистки не маскирует результат.
+  if (worktree) {
+    lines.push('set "AGENT_STEWARD_EXIT_CODE=%errorlevel%"');
+    lines.push(`cd /d "${wtRepo}"`);
+    lines.push(
+      `node "${wtHelper}" cleanup --path "%AGENT_STEWARD_WORKTREE%" --repo "${wtRepo}" ${wtLogRedirect}`,
+    );
+    lines.push("exit /b %AGENT_STEWARD_EXIT_CODE%");
+  }
 
   await fs.writeFile(cmdPath, lines.join("\r\n"), "utf8");
   return cmdPath;

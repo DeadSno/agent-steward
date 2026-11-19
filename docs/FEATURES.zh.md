@@ -230,8 +230,13 @@ Agent；创建失败时（例如目录不是 git 仓库）运行会 fail-closed 
 分支都唯一，因此矩阵克隆和并行任务可以各自写文件，互不影响主工作区和彼此——无需
 Docker 即可安全扇出。
 
-Worktree 位于 `PLUGIN_DIR/worktrees`，旁边有 `.json` sidecar 供后续清理（W-2）使用；
-worktree 不隔离网络、API 或数据库访问，Quality Gate 仍以你的用户权限运行。
+Worktree 位于 `PLUGIN_DIR/worktrees`，旁边的 `.json` sidecar 用于清理。运行结束后，
+包装脚本会删除 worktree 及其 `agent-steward/...` 分支，任务失败时也会删除（W-2.1）。
+崩溃留下的残留会在下一次运行时顺带清扫：超过 24 小时的 worktree 被删除，没有工作
+副本的 sidecar 被清理，`.cleanup-lock` 串行化并发清扫（W-2.2）。清理只处理 worktree
+根目录下带 sidecar 且分支为 `agent-steward/` 的路径，因此不会删除外来目录和正在
+运行的 worktree。worktree 不隔离网络、API 或数据库访问，Quality Gate 仍以你的
+用户权限运行。
 
 ## 编排
 
