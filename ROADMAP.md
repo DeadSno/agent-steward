@@ -10,8 +10,8 @@
 > **В ROADMAP только открытые задачи.** Закрытые задачи и подзадачи удаляются отсюда
 > и фиксируются в [CHANGELOG.md](./CHANGELOG.md) — больше нигде.
 
-Текущая версия: **agent-steward 0.0.4** (18.11.2026).
-В `[Unreleased]` (релиз 0.0.5) уже готовы pipeline-as-code — `opencode.pipeline.yaml`: парсер, валидатор, CLI, 3 инструмента, 51 тест — и worktree-изоляция с guard-условиями. Это не задачи 0.1.0; номер версии присваивается по факту публикации.
+Текущая версия: **agent-steward 0.0.5** (19.11.2026).
+В 0.0.5 вошли pipeline-as-code — `opencode.pipeline.yaml`: парсер, валидатор, CLI, 3 инструмента, 51 тест — worktree-изоляция с guard-условиями, аудит-бэклог и защита Quality Gate. Это не задачи 0.1.0.
 Legacy: `opencode-windows-scheduler@1.5.8`.
 
 - Стратегия и позиционирование — [ROADMAP-STRATEGY.md](./ROADMAP-STRATEGY.md).

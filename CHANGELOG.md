@@ -4,6 +4,8 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ## [Unreleased]
 
+## [0.0.5] - 2026-11-19
+
 ### Added
 
 - **Dev tooling — локальные скиллы и публичный RPC-контракт:** в `.opencode/skills/` добавлены `opencode-plugin-dev` (V2 Plugin API, шпаргалка в `references/v2-plugin-api.md`), `agent-steward-dev` (карта кода и маппинг правка→тест), `qa-deep-audit` / `release-check` / `docs-sync` (перекрывают глобальные скиллы сайта), `plugin-security-review`; `AGENTS.md` фиксирует команды и ограничения V2 (LSP отсутствует). `package.json` публикует `./rpc` (`dist/rpc.js` + `dist/rpc.d.ts`) — другие плагины и клиенты импортируют типизированный контракт; `test-package-exports.mjs` проверяет новый экспорт.
@@ -532,7 +534,8 @@ First public release.
 - Deleting a matrix parent deletes its family, but deleting a workspace does not touch existing matrix jobs.
 - ~~Agent tools cover a subset of the RPC surface (see roadmap item 0.4).~~ Resolved in 1.1.0 (Full agent parity); extended to 29 tools with full RPC parity in the current dev line (`Unreleased`).
 
-[Unreleased]: https://github.com/DeadSno/agent-steward/compare/v1.5.3...HEAD
+[Unreleased]: https://github.com/DeadSno/agent-steward/compare/v0.0.5...HEAD
+[0.0.5]: https://github.com/DeadSno/agent-steward/compare/v0.0.4...v0.0.5
 [1.5.4]: https://github.com/DeadSno/agent-steward/compare/v1.5.3...v1.5.4
 [1.5.3]: https://github.com/DeadSno/agent-steward/compare/v1.5.2...v1.5.3
 [1.5.2]: https://github.com/DeadSno/agent-steward/compare/v1.5.1...v1.5.2
