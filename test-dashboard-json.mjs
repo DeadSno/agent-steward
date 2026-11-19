@@ -8,9 +8,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import { createTestHomeSync, removeTestHomeSync } from "./scripts/test-home.mjs";
 
 // Изолируем PLUGIN_DIR (history.json/metrics.json) ДО импорта сервера.
-const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "sched-json-test-"));
+const { root: tempRoot } = createTestHomeSync("sched-json-test-");
 process.env.APPDATA = tempRoot;
 process.env.OPENCODE_SCHEDULER_HOME = path.join(tempRoot, "opencode", "windows-scheduler");
 
@@ -279,11 +280,9 @@ if (!zombie.killed) zombie.kill();
 
 assert(isDashboardRunning() === false && getDashboardPort() === null, "после тестов сервер закрыт");
 
-// Уборка временных файлов.
-try {
-  fs.rmSync(tempRoot, { recursive: true, force: true });
-  fs.rmSync(foreignDir, { recursive: true, force: true });
-  fs.rmSync(zombieDir, { recursive: true, force: true });
-} catch {}
+// Уборка временных файлов (с backoff: дочерние процесса могут ещё держать файлы).
+removeTestHomeSync(tempRoot);
+removeTestHomeSync(foreignDir);
+removeTestHomeSync(zombieDir);
 
 console.log(process.exitCode ? "\nЕсть падения теста." : "\nВсе проверки пройдены.");

@@ -46,6 +46,10 @@
       "default": "./dist/index.js"
     },
     "./tui": "./src/tui.tsx",
+    "./rpc": {
+      "types": "./dist/rpc.d.ts",
+      "default": "./dist/rpc.js"
+    },
     "./gui-experimental": "./gui-experimental.cjs",
     "./package.json": "./package.json"
   },

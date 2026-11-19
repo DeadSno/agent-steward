@@ -1,0 +1,13 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  // Локальные скиллы и AGENTS.md подхватываются автоматически (см. ../AGENTS.md).
+  // НЕ переопределяйте здесь `plugins` и `mcp`: они заданы глобально в
+  // ~/.config/opencode/opencode.jsonc (dcp + локальная dev-установка плагина,
+  // codebase-memory / context7 / playwright / git). Переопределение убрало бы их.
+  "instructions": ["AGENTS.md"],
+  // Публикация и push — не случайные операции: требуем подтверждение.
+  "permissions": [
+    { "action": "shell", "resource": "git push *", "effect": "ask" },
+    { "action": "shell", "resource": "npm publish *", "effect": "ask" }
+  ],
+}

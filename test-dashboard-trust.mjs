@@ -6,12 +6,11 @@
  *
  * Run: node test-dashboard-trust.mjs (after npm run build).
  */
-import fs from "node:fs";
 import http from "node:http";
-import os from "node:os";
 import path from "node:path";
+import { createTestHomeSync, removeTestHomeSync } from "./scripts/test-home.mjs";
 
-const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ws-scheduler-trust-"));
+const { root: tempRoot } = createTestHomeSync("ws-scheduler-trust-");
 process.env.APPDATA = tempRoot;
 process.env.OPENCODE_SCHEDULER_HOME = path.join(tempRoot, "opencode", "windows-scheduler");
 
@@ -137,12 +136,7 @@ try {
   }
 }
 
-try {
-  fs.rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
-} catch (err) {
-  // На Windows SQLite/WAL может держать файл ещё мгновение; это не провал теста.
-  console.warn(`  warn временный каталог не удалён: ${err instanceof Error ? err.message : err}`);
-}
+removeTestHomeSync(tempRoot);
 
 console.log(`\nDashboard trust: ${passed} passed, ${failed} failed.`);
 if (failed > 0) process.exit(1);

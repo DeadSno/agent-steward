@@ -7,12 +7,11 @@
  *
  * Run: node test-dashboard-xss.mjs (после npm run build).
  */
-import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import vm from "node:vm";
+import { createTestHomeSync, removeTestHomeSync } from "./scripts/test-home.mjs";
 
-const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ws-scheduler-xss-"));
+const { root: tempRoot } = createTestHomeSync("ws-scheduler-xss-");
 process.env.APPDATA = tempRoot;
 process.env.OPENCODE_SCHEDULER_HOME = path.join(tempRoot, "opencode", "windows-scheduler");
 
@@ -173,11 +172,7 @@ try {
   }
 }
 
-try {
-  fs.rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
-} catch (err) {
-  console.warn(`  warn временная папка не удалена: ${err instanceof Error ? err.message : err}`);
-}
+removeTestHomeSync(tempRoot);
 
 console.log(`\nDashboard XSS: ${passed} passed, ${failed} failed.`);
 if (failed > 0) process.exit(1);

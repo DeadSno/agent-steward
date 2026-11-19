@@ -1,13 +1,10 @@
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
+import { createTestHome, removeTestHome } from "./scripts/test-home.mjs";
 
 // Изолируем PLUGIN_DIR: server.ts/history.ts читают %APPDATA% при импорте.
-const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "scheduler-dashboard-dag-"));
-const appData = path.join(tempRoot, "AppData");
-const pluginDir = path.join(appData, "opencode", "windows-scheduler");
-await fs.mkdir(pluginDir, { recursive: true });
+const { root: tempRoot, appData, pluginDir } = await createTestHome("scheduler-dashboard-dag-");
 
 const historySeed = [
   {
@@ -107,7 +104,7 @@ try {
   // Закрываем SQLite до удаления временной папки (Windows блокирует файл).
   const { closeDb } = await import("./dist/db/index.js");
   closeDb();
-  await fs.rm(tempRoot, { recursive: true, force: true });
+  await removeTestHome(tempRoot);
 }
 
 console.log(`\n${passed}/${passed} проверок дашборда (DAG + стоимость) прошли.`);

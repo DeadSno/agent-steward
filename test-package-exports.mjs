@@ -88,4 +88,20 @@ checkPackage("legacy", path.join(root, "legacy"));
 // 2. Корневой пакет: dist и остальные exports должны быть в тарболе.
 checkPackage("root", root, { allowUnbuiltGui: true });
 
+// 3. RPC-контракт — публичный экспорт: другие плагины/клиенты импортируют
+//    `agent-steward/rpc`, не загружая реализацию плагина.
+const rootManifest = JSON.parse(
+  fs.readFileSync(path.join(root, "package.json"), "utf8"),
+);
+check(
+  "root: ./rpc экспортируется как публичный контракт",
+  Boolean(rootManifest.exports?.["./rpc"]),
+);
+check(
+  "root: ./rpc указывает на dist/rpc.js и dist/rpc.d.ts",
+  collectExportTargets(rootManifest.exports?.["./rpc"]).join(",") ===
+    "dist/rpc.d.ts,dist/rpc.js",
+  collectExportTargets(rootManifest.exports?.["./rpc"]).join(","),
+);
+
 process.exit(failed ? 1 : 0);

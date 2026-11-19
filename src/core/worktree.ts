@@ -230,10 +230,28 @@ function isInside(parent: string, child: string): boolean {
   return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
 }
 
-function samePath(left: string, right: string): boolean {
+/** realpath может отсутствовать для уже удалённого пути — тогда берём resolve. */
+async function realPathOrResolved(target: string): Promise<string> {
+  try {
+    return await fs.realpath(target);
+  } catch {
+    return path.resolve(target);
+  }
+}
+
+/**
+ * git возвращает канонический путь: на macOS /var/... превращается в
+ * /private/var/..., на Windows может измениться регистр или короткое имя.
+ * Сравниваем и нормализованные, и реальные пути.
+ */
+async function samePath(left: string, right: string): Promise<boolean> {
   const a = path.resolve(left);
   const b = path.resolve(right);
-  return process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b;
+  const equal = (x: string, y: string): boolean =>
+    process.platform === "win32" ? x.toLowerCase() === y.toLowerCase() : x === y;
+  if (equal(a, b)) return true;
+  const [realA, realB] = await Promise.all([realPathOrResolved(a), realPathOrResolved(b)]);
+  return equal(realA, realB);
 }
 
 function isSidecarData(value: unknown): value is SidecarData {
@@ -284,7 +302,10 @@ export async function removeRunWorktree(
   }
 
   // Идемпотентность: каталога уже нет — удалять нечего (sidecar мог остаться).
+  // Registration в git мог остаться после прошлого падения — снимаем его тоже.
   if (!(await pathExists(target))) {
+    const knownRepo = options.repoRoot?.trim() || sidecar?.repoRoot;
+    if (knownRepo) await git(knownRepo, ["worktree", "prune", "--expire=now"]);
     await removeSidecar(target);
     return { ok: true };
   }
@@ -302,14 +323,16 @@ export async function removeRunWorktree(
   }
 
   const list = await git(repoRoot, ["worktree", "list", "--porcelain"]);
-  const registered =
-    list.ok &&
-    list.stdout
-      .split(/\r?\n/)
-      .some(
-        (line) =>
-          line.startsWith("worktree ") && samePath(line.slice("worktree ".length).trim(), target),
-      );
+  let registered = false;
+  if (list.ok) {
+    for (const line of list.stdout.split(/\r?\n/)) {
+      if (!line.startsWith("worktree ")) continue;
+      if (await samePath(line.slice("worktree ".length).trim(), target)) {
+        registered = true;
+        break;
+      }
+    }
+  }
 
   if (!registered && !sidecar) {
     return {
@@ -333,7 +356,6 @@ export async function removeRunWorktree(
           }`,
         };
       }
-      await git(repoRoot, ["worktree", "prune"]);
     }
   } else {
     try {
@@ -347,6 +369,13 @@ export async function removeRunWorktree(
       };
     }
   }
+
+  // Канонический путь git может не совпадать с запрошенным (macOS /var ->
+  // /private/var, Windows-регистр). Тогда ветка \"remove\" не срабатывала и
+  // registration оставался в .git/worktrees — из-за этого `git branch -D`
+  // падала даже после успешного удаления каталога. prune --expire=now снимает
+  // registration в любом случае; для живых worktree он безвреден.
+  await git(repoRoot, ["worktree", "prune", "--expire=now"]);
 
   // Ветка одноразовая: после удаления рабочей копии она больше не нужна.
   if (options.deleteBranch !== false && branch && branch.startsWith(BRANCH_PREFIX)) {

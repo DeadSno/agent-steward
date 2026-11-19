@@ -357,7 +357,18 @@ let disposable;
       deleteBranch: false,
     });
     check("guard: --keep-branch оставляет ветку", removed.ok === true && git(repo, ["branch", "--list", kept.worktree.branch]).trim() !== "");
-    git(repo, ["branch", "-D", kept.worktree.branch]);
+    check(
+      "guard: --keep-branch снимает регистрацию worktree",
+      !git(repo, ["worktree", "list", "--porcelain"]).includes(kept.worktree.branch),
+    );
+    let branchDeleted = false;
+    try {
+      git(repo, ["branch", "-D", kept.worktree.branch]);
+      branchDeleted = true;
+    } catch (err) {
+      console.error(`Не удалось удалить ветку ${kept.worktree.branch}: ${String(err)}`);
+    }
+    check("guard: ветка после --keep-branch удаляется вручную", branchDeleted);
   }
 }
 
