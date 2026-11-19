@@ -281,6 +281,10 @@ npm test             # 109 test suites, 600+ checks
 npm run test:en      # same suites with the English locale
 ```
 
+`npm run test:chaos` runs `test-chaos-dag.mjs` separately — it is the 110th `test-*.mjs`
+file on disk but is intentionally not part of `npm test`. The **109** in `npm test`
+counts exactly the suites listed in that script.
+
 `npm run test:en` sets `OPENCODE_SCHEDULER_LOCALE=en` for every suite; the variable is a
 service hook, not a user setting.
 

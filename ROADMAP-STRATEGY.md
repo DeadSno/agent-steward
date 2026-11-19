@@ -34,7 +34,9 @@ Scheduler, уведомления, аналитика — триггеры и о
 - Durable DAG (journal, resume, идемпотентность, DLQ, роутер 3 слоя, chaos-nightly, GUI) — выпущен (0.0.3–0.0.4)
 - Английский README и `docs/` — основные, русский синхронизирован в `docs/README.ru.md`
 
-**Чего ещё нет в релизе:** pipeline-as-code (код уже в `[Unreleased]`, релиз 0.0.5), Docker-runner, approvals, remote runners, capability-карта с LoRA-адаптерами.
+**В `[Unreleased]` (релиз 0.0.5), ещё не выпущено:** pipeline-as-code (`opencode.pipeline.yaml`: парсер, валидатор, CLI `validate|apply|export`, 3 инструмента, 51 тест) и worktree-изоляция с guard-условиями.
+
+**Чего ещё нет в релизе:** Docker-runner, approvals, remote runners, capability-карта с LoRA-адаптерами.
 
 ---
 
@@ -52,7 +54,7 @@ Scheduler, уведомления, аналитика — триггеры и о
 
 Вынести интерфейс исполнителя агента за пределы OpenCode-specific кода. Позволить запускать задачи не только через OpenCode, но и через других агентов / MCP / стандартные API.
 
-Планируемые спринты: 32 (Pipeline-as-code), 36 (Durable DAG), 38 (Approvals, окружения, артефакты, 0.1.0).
+Планируемые спринты: 38 (Approvals, окружения, артефакты, 0.1.0). Спринт 32 (Pipeline-as-code) и спринт 36 (Durable DAG) уже выполнены: код в `[Unreleased]` / выпущен в 0.0.3–0.0.4 (см. CHANGELOG).
 
 ### Этап 3: универсальный фреймворк оркестрации (долгосрочно, 0.2.x+)
 
@@ -82,21 +84,21 @@ Enforced `allowedTools` / `deniedTools` вместо advisory, scoped-инъек
 
 ## Горизонт 1–3 месяца: verifiable orchestration
 
-**Фактический порядок (18.11.2026):** Durable DAG (пункт 9, `0.0.3`–`0.0.4`) выпущен, следующим идёт Pipeline-as-code (`0.0.5`), затем остальные P2. Номер версии присваивается по факту релиза.
+**Фактический порядок (19.11.2026):** Durable DAG (пункт 9, `0.0.3`–`0.0.4`) выпущен; Pipeline-as-code (пункт 5, `0.0.5`) и worktree-изоляция (пункт 6) уже в `[Unreleased]`; следующими идут остальные P2. Номер версии присваивается по факту релиза.
 
 ### 4. Локальный помощник v2 (P2) — 1.5.5–1.5.6 ✅
 
 Дедуп уведомлений (правила + эмбеддинги), саммари логов в 3 строки, GUI-wizard настройки триажа, счётчик «сэкономлено $» с пометкой «оценка», асинхронный триаж, persistent-аудит решений. Закрыто срезами 31.1–31.13.
 
-### 5. Pipeline-as-code (P2)
+### 5. Pipeline-as-code (P2, `[Unreleased]` 0.0.5 — код готов)
 
-`opencode.pipeline.yaml` в репозитории + CLI `opencode pipeline validate\|run\|export`. DAG, матрицы и Quality Gates описываются файлом, который можно ревьюить в PR.
+`opencode.pipeline.yaml` в репозитории + CLI `opencode pipeline validate\|apply\|export`. DAG, матрицы и Quality Gates описываются файлом, который можно ревьюить в PR. Парсер, валидатор, маппинг, идемпотентный apply, 3 инструмента и 51 тест (`test-pipeline.mjs`) уже в `[Unreleased]` (CHANGELOG: запись о Pipeline-as-code, PI-6/PI-7).
 
 Это водораздел между «планировщиком» и «оркестратором» (CONCEPT §3: фреймворк-супервизор, а не просто таймер). Версия присваивается по факту релиза.
 
-### 6. Worktree-изоляция и guard-условия (P2)
+### 6. Worktree-изоляция и guard-условия (P2, `[Unreleased]` — код готов)
 
-Одноразовый `git worktree` на запуск, политика очистки, shell- и семантические guard-условия, статус `skipped`. 80% ценности безопасного fan-out без инфраструктуры Docker. Версия присваивается по факту релиза.
+Одноразовый `git worktree` на запуск, политика очистки, shell- и семантические guard-условия, статус `skipped`. 80% ценности безопасного fan-out без инфраструктуры Docker. Уже в `[Unreleased]` (CHANGELOG W-1.1 … W-4.2). Версия присваивается по факту релиза.
 
 ### 7. Экономика v2 (P2)
 
@@ -163,7 +165,7 @@ Enforced `allowedTools` / `deniedTools` вместо advisory, scoped-инъек
 | Telegram / toast | ✅ | ✅ | ✅ |
 | Secrets / audit | ✅ | ✅ | ✅ |
 | Git-триггеры | ✅ | ✅ | ✅ |
-| Pipeline-as-code | ❌ | прототип | ✅ |
+| Pipeline-as-code | в `[Unreleased]` (0.0.5) | ✅ | ✅ |
 | Docker runner | ❌ | ❌ | ✅ |
 | Загрузки npm / мес | первые | 300+ | 1500+ |
 | GitHub stars | единицы | 100+ | 500+ |
@@ -185,8 +187,8 @@ Enforced `allowedTools` / `deniedTools` вместо advisory, scoped-инъек
 ## Ближайшие две недели
 
 1. Durable DAG (0.0.3–0.0.4, закрыт) — 36.1–36.8 выполнены и выпущены: state-машина, resume, идемпотентность, DLQ, роутер.
-2. Pipeline-as-code (0.0.5) — спецификация формата, парсер, CLI — следующий релиз.
-3. Worktree-изоляция (0.0.6) и экономика v2 (0.0.7) — после Pipeline-as-code.
+2. Pipeline-as-code (0.0.5) — спецификация формата, парсер, CLI — код готов в `[Unreleased]`, релиз после 0.0.4.
+3. Worktree-изоляция (уже в `[Unreleased]`) и экономика v2 (0.0.7) — после релиза Pipeline-as-code.
 
 **Критерий месяца:** пользователь ставит плагин одной командой, получает уведомление в Telegram о падении задачи, токены и доступы не лежат открытым текстом в `tasks.json`, а интерфейс говорит на его языке.
 

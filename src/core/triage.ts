@@ -161,7 +161,7 @@ function parseVerdict(raw: string): TriageVerdict {
   let parsed: unknown;
   try {
     parsed = JSON.parse(text.slice(start, end + 1));
-  } catch (err: any) {
+  } catch (err: unknown) {
     throw new ParseFailure(
       "invalid-json",
       `Ответ модели не парсится как JSON: ${err instanceof Error ? err.message : String(err)}`,
@@ -333,7 +333,7 @@ export async function classifyNotification(
           protocol,
         };
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       const aborted = controller.signal.aborted;
       const failure: TriageFailure = aborted
         ? "timeout"

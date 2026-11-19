@@ -67,8 +67,8 @@ function withSecretsLock<T>(fn: () => T): T {
       }
       secretsLockDepth = 1;
       break;
-    } catch (err: any) {
-      if (err?.code !== "EEXIST") throw err;
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException | undefined)?.code !== "EEXIST") throw err;
       try {
         const stat = fs.statSync(SECRETS_LOCK_FILE);
         if (Date.now() - stat.mtimeMs > SECRETS_LOCK_STALE_MS) {
@@ -239,8 +239,8 @@ function loadKey(): Buffer {
     chmodPrivate(SECRETS_KEY_FILE);
     keyCache = { stamp, key: raw };
     return raw;
-  } catch (err: any) {
-    if (err?.code !== "ENOENT") throw err;
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException | undefined)?.code !== "ENOENT") throw err;
     // Два процесса могли одновременно не найти ключ и сгенерировать разный.
     // Под локом перечитываем файл: побеждает первый, остальные используют его ключ.
     return withSecretsLock(() => {
@@ -254,8 +254,8 @@ function loadKey(): Buffer {
           key: raw,
         };
         return raw;
-      } catch (readErr: any) {
-        if (readErr?.code !== "ENOENT") throw readErr;
+      } catch (readErr: unknown) {
+        if ((readErr as NodeJS.ErrnoException | undefined)?.code !== "ENOENT") throw readErr;
       }
       const key = crypto.randomBytes(KEY_BYTES);
       fs.writeFileSync(SECRETS_KEY_FILE, key, { mode: 0o600 });
@@ -337,8 +337,8 @@ function readFileSafe(): SecretsFile {
     const file: SecretsFile = { version: 1, secrets };
     cache = { stamp, file };
     return file;
-  } catch (err: any) {
-    if (err?.code === "ENOENT") return emptyFile();
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException | undefined)?.code === "ENOENT") return emptyFile();
     // Не глотаем повреждение молча: иначе setSecret запишет пустой файл поверх.
     quarantineCorruptStore(err);
     return emptyFile();

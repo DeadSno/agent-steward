@@ -284,6 +284,74 @@ const OLD = new Date(Date.now() - STALE_LOCK_MAX_AGE_MS - 60_000);
   );
 }
 
+// --- 14. O-2: ошибки cleanup не маскируются, а попадают в console.warn ---
+{
+  const artifact = path.join(lockDir, "warn.lock.stale-777");
+  fs.writeFileSync(artifact, "artifact", "utf8");
+  const realRm = fs.promises.rm;
+  const realWarn = console.warn;
+  const warnings = [];
+  fs.promises.rm = async (target, options) => {
+    if (String(target) === artifact) {
+      throw Object.assign(new Error("O2_CLEANUP_SENTINEL"), { code: "EPERM" });
+    }
+    return realRm(target, options);
+  };
+  console.warn = (...args) => warnings.push(args.map(String).join(" "));
+  let initializeError = null;
+  try {
+    await new LockManager(lockDir).initialize();
+  } catch (err) {
+    initializeError = err;
+  } finally {
+    fs.promises.rm = realRm;
+    console.warn = realWarn;
+  }
+  check("O-2: initialize не падает при ошибке удаления .stale-*", initializeError === null);
+  check(
+    "O-2: причина ошибки cleanup видна в предупреждении",
+    warnings.some((w) => w.includes("O2_CLEANUP_SENTINEL") && w.includes(artifact)),
+    warnings.join(" | "),
+  );
+  fs.rmSync(artifact, { force: true });
+}
+
+// --- 14b. O-2: withLockWait продолжает работу, если stale-артефакт не удалился ---
+{
+  const manager = new LockManager(lockDir);
+  const deadPath = path.join(lockDir, "warn-wait.lock");
+  fs.writeFileSync(deadPath, `999999999-${Date.now()}-o2`, "utf8");
+  fs.utimesSync(deadPath, OLD, OLD);
+
+  const realRm = fs.promises.rm;
+  const realWarn = console.warn;
+  const warnings = [];
+  fs.promises.rm = async (target, options) => {
+    if (String(target).includes(".stale-")) throw new Error("O2_WAIT_SENTINEL");
+    return realRm(target, options);
+  };
+  console.warn = (...args) => warnings.push(args.map(String).join(" "));
+  let result;
+  try {
+    result = await withLockWait(
+      manager,
+      "warn-wait",
+      async () => "ran",
+      { timeoutMs: 3000, retryDelayMs: 20, staleMs: 60_000 },
+    );
+  } finally {
+    fs.promises.rm = realRm;
+    console.warn = realWarn;
+  }
+  check("O-2: withLockWait выполняет fn при ошибке удаления артефакта", result === "ran");
+  check(
+    "O-2: предупреждение withLockWait содержит причину",
+    warnings.some((w) => w.includes("O2_WAIT_SENTINEL")),
+    warnings.join(" | "),
+  );
+  fs.rmSync(deadPath, { force: true });
+}
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\nStale lock: ${results.length - failed.length}/${results.length} проверок пройдено.`);
 try {

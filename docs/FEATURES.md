@@ -526,6 +526,12 @@ agent's stdout/stderr. `get_task_logs` returns the tail (1–1000 lines).
 `dry_run` simulates one task or every task: execution order, DAG prerequisites, matrix
 fan-out and estimated time. Nothing is executed and nothing is created.
 
+The ad-hoc mission API (`runMission` / `agent-steward run --dry-run`) has its own
+`dryRun` contract: it builds the step plan and its description, but does not acquire
+the `activeWorkspaces` lock and does not write `runs`/`run_steps` to the ledger.
+This is intentional — several dry runs in the same `cwd` run in parallel and leave
+no trace in history. Only a real mission is locked to one workspace at a time.
+
 ### Dashboard
 
 A local web dashboard shows tasks, matrix tabs, per-workspace summaries, DAG markers,

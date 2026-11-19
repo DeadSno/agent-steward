@@ -18,7 +18,18 @@ import { redactSecretsInText } from "./secrets.js";
  */
 
 /** События структурированного лога. */
-export type StructuredLogEvent = "run.started" | "run.finished" | "hook.received" | string;
+export type StructuredLogEvent =
+  | "run.started"
+  | "run.finished"
+  | "hook.received"
+  | "matrix.started"
+  | "matrix.advanced"
+  | "matrix.queue_started"
+  | "matrix.cancelled"
+  | "matrix.aggregated"
+  | "matrix.aggregator_started"
+  | "matrix.error"
+  | string;
 
 export interface StructuredLogRecord {
   /** Время записи (ISO). */
@@ -49,6 +60,12 @@ export interface StructuredLogRecord {
   payloadBytes?: number;
   /** Причина отказа/пропуска. */
   reason?: string;
+  /** Родительская задача матрицы (matrixId === task для событий matrix.*). */
+  matrixId?: string;
+  /** Имя клона матрицы, к которому относится событие. */
+  cloneName?: string;
+  /** Шаг матричного сценария: started, advanced, cancelled, aggregated и т.п. */
+  step?: string;
 }
 
 export interface ReadStructuredLogsFilter {
@@ -101,9 +118,9 @@ function rotateIfNeeded(): void {
       // Нет старого архива — не страшно.
     }
     fs.renameSync(STRUCTURED_LOG_FILE, STRUCTURED_LOG_ARCHIVE);
-  } catch (err: any) {
+  } catch (err: unknown) {
     // ENOENT — файла ещё нет, это нормально.
-    if (err?.code !== "ENOENT") warn("не удалось ротировать лог", err);
+    if ((err as NodeJS.ErrnoException | undefined)?.code !== "ENOENT") warn("не удалось ротировать лог", err);
   }
 }
 
@@ -143,8 +160,8 @@ function readLines(file: string): string[] {
       .readFileSync(file, "utf8")
       .split(/\r?\n/)
       .filter((line) => line.trim().length > 0);
-  } catch (err: any) {
-    if (err?.code !== "ENOENT") warn(`не удалось прочитать ${file}`, err);
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException | undefined)?.code !== "ENOENT") warn(`не удалось прочитать ${file}`, err);
     return [];
   }
 }

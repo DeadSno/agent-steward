@@ -16,6 +16,12 @@ import type { RegistryEntry } from "./registry.js";
 
 const execFileAsync = promisify(execFile);
 
+/** O-2: неудачная уборка temp/plist не проглатывается молча. */
+function warnCleanupFailure(target: string, error: unknown): void {
+  const reason = error instanceof Error ? error.message : String(error);
+  console.warn(`[agent-steward] Не удалось удалить plist «${target}»: ${reason}`);
+}
+
 /** Папка пользовательских LaunchAgents. */
 const LAUNCH_AGENTS_DIR = path.join(os.homedir(), "Library", "LaunchAgents");
 
@@ -321,13 +327,73 @@ export function planLaunchctlInstall(
 }
 
 /**
+ * ML-1: macOS 13 (Darwin 22) заменяет `load`/`unload` на `bootstrap`/`bootout`
+ * с явным доменом `gui/<uid>`. `-w` у legacy-команды здесь не нужен: bootstrap
+ * сам регистрирует агент, а bootout — снимает регистрацию.
+ */
+export function modernLaunchctlArgs(args: string[], uid: number = process.getuid?.() ?? 501): string[] {
+  const [command, ...rest] = args;
+  if (command !== "load" && command !== "unload") return args;
+  const plist = rest.filter((part) => part !== "-w");
+  return [command === "load" ? "bootstrap" : "bootout", `gui/${uid}`, ...plist];
+}
+
+/** Современные команды доступны на macOS 13+ (Darwin 22+). */
+export function supportsModernLaunchctl(
+  platform: NodeJS.Platform = process.platform,
+  release: string = os.release(),
+): boolean {
+  if (platform !== "darwin") return true;
+  const darwinMajor = Number.parseInt(release.split(".")[0] ?? "", 10);
+  return Number.isFinite(darwinMajor) ? darwinMajor >= 22 : true;
+}
+
+/** Признак того, что launchctl не знает bootstrap/bootout (максимально старая macOS). */
+function needsLegacyLaunchctlFallback(error: unknown): boolean {
+  const source = error as { message?: unknown; stderr?: unknown } | null;
+  const text = `${String(source?.message ?? "")}\n${String(source?.stderr ?? "")}`;
+  return /unrecognized subcommand|unknown subcommand|invalid subcommand|unrecognized option|Usage:/i.test(
+    text,
+  );
+}
+
+/**
+ * Выполняет launchctl через современные команды; при отсутствии поддержки
+ * (macOS < 13 или «unrecognized subcommand») повторяет legacy-аргументы.
+ */
+export async function runLaunchctlModern(
+  runner: (args: string[]) => Promise<unknown>,
+  args: string[],
+  options: { tolerateFailure?: boolean } = {},
+): Promise<void> {
+  const modern = supportsModernLaunchctl() ? modernLaunchctlArgs(args) : args;
+  await runLaunchctl(
+    async (call) => {
+      try {
+        await runner(call);
+      } catch (err) {
+        if (modern !== args && needsLegacyLaunchctlFallback(err)) {
+          await runner(args);
+          return;
+        }
+        throw err;
+      }
+    },
+    modern,
+    options,
+  );
+}
+
+/**
  * Бэкенд планировщика macOS на основе launchd.
  *
  * Каждая задача — отдельный LaunchAgent:
  *   ~/Library/LaunchAgents/com.opencode.scheduler.<name>.plist
- * Управление — через launchctl load/unload -w. Ошибки load не глотаются:
- * битый plist должен вернуть ошибку установки, а не оставить задачу
- * молча незапланированной.
+ * Управление — через `launchctl bootstrap/bootout` (macOS ≥13), с фолбэком
+ * на legacy `load/unload -w` для более старых систем. `planLaunchctlInstall`
+ * намеренно остаётся на legacy-командах: обратная совместимость контракта.
+ * Ошибки загрузки не глотаются: битый plist должен вернуть ошибку установки,
+ * а не оставить задачу молча незапланированной.
  */
 export class MacScheduler extends PosixSchedulerBase {
   readonly platform: NodeJS.Platform = "darwin";
@@ -363,12 +429,12 @@ export class MacScheduler extends PosixSchedulerBase {
     return path.join(LAUNCH_AGENTS_DIR, `${this.label(name)}.plist`);
   }
 
-  /** Выполняет launchctl; tolerateFailure оставлен только для unload. */
+  /** Выполняет launchctl; tolerateFailure оставлен только для bootout/unload. */
   private async launchctl(
     args: string[],
     options: { tolerateFailure?: boolean } = {},
   ): Promise<void> {
-    await runLaunchctl(
+    await runLaunchctlModern(
       (call) => execFileAsync("launchctl", call, { maxBuffer: 1024 * 1024 }),
       args,
       options,
@@ -388,7 +454,9 @@ export class MacScheduler extends PosixSchedulerBase {
       await fs.writeFile(tmpPath, buildPlist(this.label(entry.name), entry), "utf8");
       await fs.rename(tmpPath, plistPath);
     } catch (error) {
-      await fs.rm(tmpPath, { force: true }).catch(() => {});
+      await fs.rm(tmpPath, { force: true }).catch((cleanupError: unknown) =>
+        warnCleanupFailure(tmpPath, cleanupError),
+      );
       throw error;
     }
     if (plan.afterWrite) {
@@ -399,7 +467,7 @@ export class MacScheduler extends PosixSchedulerBase {
   protected async uninstallEntry(entry: RegistryEntry): Promise<void> {
     const plistPath = this.plistPath(entry.name);
     await this.launchctl(["unload", "-w", plistPath], { tolerateFailure: true });
-    await fs.unlink(plistPath).catch(() => {});
+    await fs.unlink(plistPath).catch((error: unknown) => warnCleanupFailure(plistPath, error));
   }
 
   protected async applyPause(entry: RegistryEntry, paused: boolean): Promise<void> {

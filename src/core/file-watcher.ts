@@ -146,7 +146,7 @@ export class FileWatchManager {
         awaitWriteFinish: { stabilityThreshold: 500, pollInterval: 100 },
         ignorePermissionErrors: true,
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(
         `[agent-steward] Не удалось начать отслеживание "${watchPath}" для задачи "${name}": ${
           err instanceof Error ? err.message : String(err)
@@ -196,7 +196,7 @@ export class FileWatchManager {
               );
             });
           }
-        } catch (err: any) {
+        } catch (err: unknown) {
           console.error(
             `[agent-steward] Ошибка запуска задачи "${name}" по изменению файла: ${
               err instanceof Error ? err.message : String(err)

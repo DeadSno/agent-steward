@@ -2,10 +2,15 @@
 // (битый plist, права) возвращаются вызывающему с stderr и exit code.
 // Реальный launchctl есть только на macOS, поэтому проверяется план команд
 // и обработка ошибок через подставной runner.
+import fs from "node:fs";
 import {
   describeLaunchctlError,
+  MacScheduler,
+  modernLaunchctlArgs,
   planLaunchctlInstall,
   runLaunchctl,
+  runLaunchctlModern,
+  supportsModernLaunchctl,
 } from "./dist/core/scheduler/mac.js";
 
 let failures = 0;
@@ -102,6 +107,138 @@ const plist = "/Users/test/Library/LaunchAgents/com.opencode.scheduler.demo.plis
     { tolerateFailure: true },
   );
   check("tolerateFailure: unload незагруженного агента не падает", called === 1);
+}
+
+// --- ML-1: bootstrap/bootout вместо load/unload -w --------------------------
+{
+  const uid = process.getuid?.() ?? 501;
+  check(
+    "ML-1: load -w → bootstrap gui/<uid>",
+    JSON.stringify(modernLaunchctlArgs(["load", "-w", plist], uid)) ===
+      JSON.stringify(["bootstrap", `gui/${uid}`, plist]),
+  );
+  check(
+    "ML-1: unload -w → bootout gui/<uid>",
+    JSON.stringify(modernLaunchctlArgs(["unload", "-w", plist], uid)) ===
+      JSON.stringify(["bootout", `gui/${uid}`, plist]),
+  );
+  const other = ["print", plist];
+  check("ML-1: прочие команды не меняются", modernLaunchctlArgs(other, uid) === other);
+  check("ML-1: macOS 13+ использует современные команды", supportsModernLaunchctl("darwin", "22.6.0") === true);
+  check("ML-1: macOS 12 использует legacy", supportsModernLaunchctl("darwin", "21.6.0") === false);
+}
+
+{
+  const calls = [];
+  await runLaunchctlModern(async (args) => {
+    calls.push(args);
+    if (args[0] === "bootstrap") {
+      throw Object.assign(new Error("unrecognized subcommand"), { stderr: "unrecognized subcommand: bootstrap" });
+    }
+  }, ["load", "-w", plist]);
+  check(
+    "ML-1: фолбэк на legacy load -w при отсутствии bootstrap",
+    calls.length === 2 &&
+      calls[0][0] === "bootstrap" &&
+      JSON.stringify(calls[1]) === JSON.stringify(["load", "-w", plist]),
+    JSON.stringify(calls),
+  );
+}
+
+{
+  const pausedPlan = planLaunchctlInstall(true, plist);
+  const calls = [];
+  await runLaunchctlModern(async (args) => void calls.push(args), pausedPlan.beforeWrite);
+  check(
+    "ML-1: приостановленная задача не загружается (только bootout)",
+    calls.length === 1 && calls[0][0] === "bootout" && pausedPlan.afterWrite === null,
+    JSON.stringify(calls),
+  );
+}
+
+// --- O-2: ошибки уборки plist логируются и не подменяют исходную ошибку ---
+{
+  const scheduler = new MacScheduler("default");
+  scheduler.launchctl = async () => {}; // реальный launchctl есть только на macOS
+  const entry = {
+    name: "o2-temp",
+    schedule: "0 3 * * *",
+    command: "echo o2",
+    triggerType: "cron",
+    paused: false,
+    createdAt: new Date().toISOString(),
+  };
+  const real = {
+    mkdir: fs.promises.mkdir,
+    writeFile: fs.promises.writeFile,
+    rm: fs.promises.rm,
+    unlink: fs.promises.unlink,
+    warn: console.warn,
+  };
+  const warnings = [];
+  fs.promises.mkdir = async () => {};
+  fs.promises.writeFile = async () => {
+    throw new Error("O2_WRITE_SENTINEL");
+  };
+  fs.promises.rm = async (target) => {
+    throw new Error(`O2_RM_SENTINEL:${target}`);
+  };
+  console.warn = (...args) => warnings.push(args.map(String).join(" "));
+  let thrown = null;
+  try {
+    await scheduler.installEntry(entry);
+  } catch (err) {
+    thrown = err;
+  } finally {
+    fs.promises.mkdir = real.mkdir;
+    fs.promises.writeFile = real.writeFile;
+    fs.promises.rm = real.rm;
+    console.warn = real.warn;
+  }
+  check(
+    "O-2: ошибка записи plist не подменена ошибкой cleanup",
+    thrown?.message === "O2_WRITE_SENTINEL",
+    thrown?.message,
+  );
+  check(
+    "O-2: ошибка удаления temp plist попадает в warn",
+    warnings.some((w) => w.includes("O2_RM_SENTINEL")),
+    warnings.join(" | "),
+  );
+}
+
+{
+  const scheduler = new MacScheduler("default");
+  scheduler.launchctl = async () => {};
+  const entry = {
+    name: "o2-uninstall",
+    schedule: "0 3 * * *",
+    command: "echo o2",
+    triggerType: "cron",
+    paused: false,
+    createdAt: new Date().toISOString(),
+  };
+  const real = { warn: console.warn, unlink: fs.promises.unlink };
+  const warnings = [];
+  fs.promises.unlink = async () => {
+    throw new Error("O2_UNLINK_SENTINEL");
+  };
+  console.warn = (...args) => warnings.push(args.map(String).join(" "));
+  let thrown = null;
+  try {
+    await scheduler.uninstallEntry(entry);
+  } catch (err) {
+    thrown = err;
+  } finally {
+    console.warn = real.warn;
+    fs.promises.unlink = real.unlink;
+  }
+  check("O-2: uninstallEntry не падает при ошибке unlink", thrown === null, thrown?.message);
+  check(
+    "O-2: ошибка unlink plist попадает в warn",
+    warnings.some((w) => w.includes("O2_UNLINK_SENTINEL")),
+    warnings.join(" | "),
+  );
 }
 
 if (failures > 0) {

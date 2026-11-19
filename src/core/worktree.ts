@@ -24,6 +24,15 @@ export const WORKTREE_ROOT_DIR = path.join(PLUGIN_DIR, "worktrees");
 /** Таймаут git-операций: зависший git не должен держать обёртку. */
 const GIT_TIMEOUT_MS = 30_000;
 
+/**
+ * W-1 (0.0.6): служебные git-вызовы не должны наследовать пользовательские
+ * хуки — падающий `post-checkout` блокировал бы `git worktree add`, а
+ * интерактивный запрос пароля мог бы повесить вызов. `/dev/null` (Windows:
+ * `NUL`) — не каталог, поэтому git не находит ни одного хука.
+ */
+const GIT_SAFE_ARGS = ["-c", `core.hooksPath=${process.platform === "win32" ? "NUL" : "/dev/null"}`];
+const GIT_SAFE_ENV = { ...process.env, GIT_TERMINAL_PROMPT: "0" };
+
 /** Описание созданного worktree. */
 export interface RunWorktree {
   /** Абсолютный путь рабочей копии. */
@@ -63,11 +72,12 @@ interface GitResult {
 
 async function git(cwd: string, args: string[]): Promise<GitResult> {
   try {
-    const { stdout, stderr } = await execFileAsync("git", ["-C", cwd, ...args], {
+    const { stdout, stderr } = await execFileAsync("git", ["-C", cwd, ...GIT_SAFE_ARGS, ...args], {
       encoding: "utf8",
       timeout: GIT_TIMEOUT_MS,
       windowsHide: true,
       maxBuffer: 1024 * 1024,
+      env: GIT_SAFE_ENV,
     });
     return { ok: true, stdout: String(stdout).trim(), stderr: String(stderr).trim() };
   } catch (err: unknown) {
@@ -115,9 +125,18 @@ function serializeWorktreeCreate<T>(work: () => Promise<T>): Promise<T> {
   return result;
 }
 
-/** Ошибки, которые стоит перепробовать: гонки lock-файлов и ANTIVIRUS/FS. */
-function isTransientGitError(message: string): boolean {
-  return /lock|Unable to create|File exists|already (exists|registered)|cannot lock ref|No such file|resource busy|EPERM|EBUSY/i.test(
+/**
+ * Ошибки, которые стоит перепробовать: гонки lock-файлов и ANTIVIRUS/FS.
+ *
+ * W-2: общий `No such file` убран из списка. Он маскировал отсутствующий
+ * `baseRef` и повреждённый репозиторий под транзиентную гонку: `addWorktree`
+ * делал 3 попытки с задержками 50 + 100 мс, а затем возвращал ту же ошибку.
+ * Гонки lock-файлов по-прежнему распознаются по `index.lock`, `cannot lock ref`
+ * и `Unable to create` — `No such file` может встречаться внутри их текста,
+ * но сам по себе больше не является признаком транзиентности.
+ */
+export function isTransientGitError(message: string): boolean {
+  return /index\.lock|cannot lock ref|Unable to create|lock|File exists|already (exists|registered)|resource busy|EPERM|EBUSY/i.test(
     message,
   );
 }

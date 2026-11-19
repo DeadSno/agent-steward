@@ -89,15 +89,16 @@ export class LinuxScheduler extends PosixSchedulerBase {
         maxBuffer: 10 * 1024 * 1024,
       });
       return stdout;
-    } catch (err: any) {
-      const stderr = String(err?.stderr ?? "");
+    } catch (err: unknown) {
+      const stderrRaw = (err as { stderr?: unknown } | undefined)?.stderr;
+      const stderr = typeof stderrRaw === "string" ? stderrRaw : String(stderrRaw ?? "");
       // "no crontab for user" — это нормальное состояние. Любую другую ошибку
       // (нет доступа, сбой crontab) нельзя превращать в пустой crontab: иначе
       // последующая запись затрёт пользовательские задания.
-      if (/no crontab/i.test(stderr) || /no crontab/i.test(String(err?.message ?? ""))) {
+      if (/no crontab/i.test(stderr) || /no crontab/i.test(String((err as Error | undefined)?.message ?? ""))) {
         return "";
       }
-      throw new Error(`Не удалось прочитать crontab: ${stderr.trim() || err?.message || err}`);
+      throw new Error(`Не удалось прочитать crontab: ${stderr.trim() || (err as Error | undefined)?.message || String(err)}`);
     }
   }
 

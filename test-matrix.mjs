@@ -27,6 +27,7 @@ const {
   finalizeMatrixIfComplete,
 } = await import("./dist/core/matrix.js");
 const { selectDependentsToTrigger } = await import("./dist/core/record-history.js");
+const { readStructuredLogs, clearStructuredLogs } = await import("./dist/core/structured-log.js");
 const { buildExportJson, parseImportJson } = await import("./dist/task-transfer.js");
 const { t } = await import("./dist/i18n.js");
 
@@ -111,12 +112,21 @@ try {
   saveTask({ ...parentDef, isMatrixParent: true });
   for (const clone of clones) saveTask(clone);
 
+  clearStructuredLogs();
   const parallelRun = await runMatrix(parentDef);
   check(
     'strategy: "parallel" пытается запустить все клоны сразу',
     parallelRun.started.length === 0 &&
       parallelRun.skipped.length === 0 &&
       parallelRun.errors.length === 3
+  );
+  const matrixLogs = readStructuredLogs().records.filter((r) =>
+    String(r.event).startsWith("matrix.")
+  );
+  check(
+    "runs.jsonl содержит matrix.* с matrixId и cloneName",
+    matrixLogs.some((r) => r.event === "matrix.started" && r.matrixId === "Deploy") &&
+      matrixLogs.some((r) => r.event === "matrix.start_failed" && Boolean(r.cloneName))
   );
 
   // 3. Стратегия sequential: только первый клон, остальные в skipped.
@@ -232,11 +242,19 @@ try {
   recordCloneStatus(clones[0].name, "success");
   recordCloneStatus(clones[1].name, "success");
   recordCloneStatus(clones[2].name, "success");
+  clearStructuredLogs();
   await finalizeMatrixIfComplete(clones[0].name);
   const parentRecord = getHistory("Deploy", 1)[0];
   check(
     "finalizeMatrixIfComplete пишет агрегированную запись success для родителя",
     parentRecord && parentRecord.status === "success" && parentRecord.error == null
+  );
+  const aggregatedLog = readStructuredLogs({ event: "matrix.aggregated" }).records[0];
+  check(
+    "matrix.aggregated в runs.jsonl привязан к runId родителя",
+    aggregatedLog?.matrixId === "Deploy" &&
+      aggregatedLog?.runId === parentRecord?.id &&
+      aggregatedLog?.status === "success"
   );
 
   // 11. finalizeMatrixIfComplete: частичный успех → partial в истории родителя.

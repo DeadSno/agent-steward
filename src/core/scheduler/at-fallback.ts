@@ -276,7 +276,7 @@ export async function pruneStaleFallbackEntries(
       try {
         entry.atJobId = await schedule(entry, buildFallbackCommand(entry), nowMs);
         report.rescheduled += 1;
-      } catch (err: any) {
+      } catch (err: unknown) {
         warn(
           `[scheduler] Не удалось пересоздать fallback для "${entry.name}": ${
             err instanceof Error ? err.message : String(err)

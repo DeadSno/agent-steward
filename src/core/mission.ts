@@ -407,7 +407,11 @@ function createWrapperExecutor(
  *
  * Инварианты EXECUTION-LOOP §2.1: нет записи в планировщике ОС, работают
  * GATE, политика прав, ledger (`runs`/`run_steps`) и аудит; параллельные
- * миссии в одном workspace не допускаются.
+ * обычные миссии в одном workspace не допускаются.
+ *
+ * W-3 (контракт dryRun): `dryRun: true` строит план и описание, но не захватывает
+ * `activeWorkspaces` и не пишет ledger (`runs`/`run_steps`) — это контракт, а не
+ * утечка контекста. Поэтому несколько dry-run в одном `cwd` проходят параллельно.
  */
 export async function runMission(
   input: MissionSpec,

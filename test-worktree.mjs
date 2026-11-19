@@ -16,6 +16,7 @@ const {
   createRunWorktree,
   removeRunWorktree,
   cleanupStaleWorktrees,
+  isTransientGitError,
   WORKTREE_ROOT_DIR,
   DEFAULT_STALE_AFTER_MS,
 } = await import("./dist/core/worktree.js");
@@ -23,6 +24,7 @@ const { parseImportJson } = await import("./dist/task-transfer.js");
 const { writeWrapperCmd } = await import("./dist/core/ps-wrapper.js");
 const { buildBashWrapperScript } = await import("./dist/core/wrappers/bash.js");
 const { main: worktreeMain } = await import("./dist/core/worktree-run.js");
+const { probeGit } = await import("./dist/core/git-trigger.js");
 
 const results = [];
 function check(name, cond) {
@@ -175,6 +177,48 @@ let first;
   check("пустая рабочая директория: ok=false", noDir.ok === false);
   const noName = await createRunWorktree({ repoDir: repo, taskName: "  " });
   check("пустое имя задачи: ok=false", noName.ok === false);
+}
+
+// 5b. W-2: отсутствующий baseRef — fail-closed сразу, без трёх попыток.
+{
+  check(
+    "W-2: отсутствующий baseRef не считается транзиентной ошибкой",
+    isTransientGitError("fatal: invalid reference: refs/heads/no-such-ref-xyz") === false,
+  );
+  check(
+    "W-2: гонка index.lock остаётся транзиентной",
+    isTransientGitError(
+      "error: cannot lock ref 'refs/heads/x': Unable to create '.git/index.lock': No such file or directory",
+    ) === true,
+  );
+
+  const realSetTimeout = globalThis.setTimeout;
+  const retryDelays = [];
+  globalThis.setTimeout = (fn, ms, ...args) => {
+    if (ms === 50 || ms === 100) retryDelays.push(ms);
+    return realSetTimeout(fn, ms, ...args);
+  };
+  let bad;
+  try {
+    bad = await createRunWorktree({
+      repoDir: repo,
+      taskName: "missing-base-ref",
+      rootDir: worktreeRoot,
+      baseRef: "refs/heads/no-such-ref-xyz",
+    });
+  } finally {
+    globalThis.setTimeout = realSetTimeout;
+  }
+  check("W-2: несуществующий baseRef → ok=false", bad.ok === false);
+  check(
+    "W-2: ошибка содержит текст git worktree add",
+    bad.ok === false && bad.error.includes("git worktree add"),
+  );
+  check(
+    "W-2: нет повторных попыток и задержек 50/100 мс",
+    retryDelays.length === 0,
+    `задержки: ${retryDelays.join(", ")}`,
+  );
 }
 
 // 6. CLI-помощник обёртки.
@@ -497,6 +541,39 @@ let disposable;
     (await worktreeMain([
       "cleanup", "--path", outside, "--repo", repo, "--root", worktreeRoot,
     ])) === 1,
+  );
+}
+
+// 15. W-1.2: служебные git-вызовы не наследуют пользовательские хуки.
+{
+  const hookRepo = makeRepo("hook-repo");
+  const hooksDir = path.join(tempRoot, "bad-hooks");
+  fs.mkdirSync(hooksDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(hooksDir, "post-checkout"),
+    "#!/bin/sh\necho BAD-HOOK-RAN >&2\nexit 1\n",
+    { mode: 0o755 },
+  );
+  git(hookRepo, ["config", "core.hooksPath", hooksDir]);
+  check(
+    "W-1: падающий post-checkout-хук настроен",
+    git(hookRepo, ["config", "--get", "core.hooksPath"]) === hooksDir,
+  );
+
+  const isolated = await createRunWorktree({
+    repoDir: hookRepo,
+    taskName: "hook-isolation",
+    rootDir: worktreeRoot,
+  });
+  check(
+    "W-1: createRunWorktree игнорирует пользовательский хук",
+    isolated.ok === true && !("error" in isolated && isolated.error.includes("BAD-HOOK-RAN")),
+  );
+
+  const probe = await probeGit(hookRepo);
+  check(
+    "W-1: probeGit игнорирует пользовательский хук",
+    Boolean(probe) && probe.head === git(hookRepo, ["rev-parse", "HEAD"]),
   );
 }
 

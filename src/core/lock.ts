@@ -4,6 +4,17 @@ import { randomUUID } from "node:crypto";
 import { LOCK_DIR, STALE_LOCK_MAX_AGE_MS } from "../types.js";
 
 /**
+ * O-2: ошибки очистки больше не проглатываются молча. Прямой импорт
+ * `structured-log.ts` создал бы цикл (structured-log → secrets → lock), поэтому
+ * здесь используется `console.warn` — предупреждение всё равно видно в логе
+ * процесса и не ломает основной сценарий.
+ */
+function warnCleanupFailure(target: string, error: unknown): void {
+  const reason = error instanceof Error ? error.message : String(error);
+  console.warn(`[agent-steward] Не удалось удалить lock-артефакт «${target}»: ${reason}`);
+}
+
+/**
  * Проверяет, жив ли процесс-владелец lock-файла.
  *
  * `process.kill(pid, 0)` не посылает сигнал, а только проверяет существование.
@@ -16,8 +27,8 @@ export function isProcessAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
-  } catch (err: any) {
-    if (err?.code === "ESRCH") return false;
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException | undefined)?.code === "ESRCH") return false;
     return true;
   }
 }
@@ -173,7 +184,9 @@ export class LockManager {
         // Артефакт предыдущего вытеснения валидным lock быть не может,
         // поэтому убираем его независимо от возраста.
         if (isStaleArtifact) {
-          await fs.rm(fullPath, { recursive: true, force: true }).catch(() => {});
+          await fs.rm(fullPath, { recursive: true, force: true }).catch((err: unknown) =>
+            warnCleanupFailure(fullPath, err),
+          );
           continue;
         }
         const stat = await fs.stat(fullPath);
@@ -204,7 +217,9 @@ export class LockManager {
           } catch {
             continue;
           }
-          await fs.rm(stalePath, { recursive: true, force: true }).catch(() => {});
+          await fs.rm(stalePath, { recursive: true, force: true }).catch((err: unknown) =>
+            warnCleanupFailure(stalePath, err),
+          );
 
           console.log(
             `[agent-steward] Вытеснен зависший lock: ${file} (возраст ${Math.round(
@@ -238,16 +253,16 @@ export class LockManager {
       // 'wx' — exclusive create: ошибка если файл уже существует.
       await fs.writeFile(lockPath, token, { flag: "wx" });
       return token;
-    } catch (err: any) {
+    } catch (err: unknown) {
       // P3-39: на Windows конкурентный create/delete того же lock-файла
       // возвращает EPERM/EACCES/EBUSY вместо EEXIST. Это тот же случай
       // «блокировка занята», а не ошибка прав: отдаём null, а withLockWait
       // повторит попытку (withLock корректно пропустит запуск).
       if (
-        err.code === "EEXIST" ||
-        err.code === "EPERM" ||
-        err.code === "EACCES" ||
-        err.code === "EBUSY"
+        (err as NodeJS.ErrnoException).code === "EEXIST" ||
+        (err as NodeJS.ErrnoException).code === "EPERM" ||
+        (err as NodeJS.ErrnoException).code === "EACCES" ||
+        (err as NodeJS.ErrnoException).code === "EBUSY"
       ) {
         return null;
       }
@@ -268,10 +283,10 @@ export class LockManager {
       try {
         await fs.unlink(lockPath);
         return true;
-      } catch (err: any) {
-        if (err.code === "ENOENT") return false;
+      } catch (err: unknown) {
+        if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
         const transient =
-          err.code === "EPERM" || err.code === "EACCES" || err.code === "EBUSY";
+          (err as NodeJS.ErrnoException).code === "EPERM" || (err as NodeJS.ErrnoException).code === "EACCES" || (err as NodeJS.ErrnoException).code === "EBUSY";
         if (transient && i < attempts - 1) {
           await new Promise((resolve) => setTimeout(resolve, 10 * (i + 1)));
           continue;
@@ -295,8 +310,8 @@ export class LockManager {
     let current: string;
     try {
       current = await fs.readFile(lockPath, "utf8");
-    } catch (err: any) {
-      if (err.code === "ENOENT") return false;
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
       throw err;
     }
     if (current !== token) return false;
@@ -313,8 +328,8 @@ export class LockManager {
     try {
       await fs.stat(lockPath);
       return true;
-    } catch (err: any) {
-      if (err.code === "ENOENT") return false;
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
       throw err;
     }
   }
@@ -388,7 +403,9 @@ export async function withLockWait<T>(
             const stalePath = `${lockPath}.stale-${process.pid}-${Date.now()}`;
             try {
               await fs.rename(lockPath, stalePath);
-              await fs.rm(stalePath, { force: true }).catch(() => {});
+              await fs.rm(stalePath, { force: true }).catch((err: unknown) =>
+                warnCleanupFailure(stalePath, err),
+              );
             } catch {
               // Кто-то успел раньше — просто повторяем acquire.
             }

@@ -418,8 +418,8 @@ export async function sendTelegramMessage(
           );
         }
         break;
-      } catch (err: any) {
-        if (err?.name === "AbortError") {
+      } catch (err: unknown) {
+        if ((err as Error | undefined)?.name === "AbortError") {
           throw new Error(
             t("notify.error.telegramTimeout", {
               seconds: Math.floor(timeoutMs / 1000),

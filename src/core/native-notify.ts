@@ -148,7 +148,7 @@ export async function sendNativeNotification(
       });
     }
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     return {
       success: false,
       error: err instanceof Error ? err.message : String(err),

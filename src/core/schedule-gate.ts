@@ -160,7 +160,7 @@ async function main(): Promise<number> {
   if (cronExpr) {
     try {
       spec = parseCron(cronExpr);
-    } catch (err: any) {
+    } catch (err: unknown) {
       // Fail-closed: при повреждённом cron проверка расписания невозможна.
       // Если пропустить её (fail-open), задача с окном/днями будет
       // запускаться на каждом минутном тике — включая дорогие LLM-агенты.

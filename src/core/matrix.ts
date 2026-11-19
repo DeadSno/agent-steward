@@ -21,7 +21,36 @@ import { getHistory, recordRun } from "../db/history-repo.js";
 import { notifyMatrixCompletion } from "../notifications.js";
 import { getWorkspace } from "../workspaces.js";
 import { createSchedulerBackend } from "./scheduler/index.js";
+import { appendStructuredLog } from "./structured-log.js";
 import { t } from "../i18n.js";
+
+/**
+ * Матричные события идут в machine-readable runs.jsonl: человекочитаемый
+ * вывод планировщика не позволяет связать клон с родителем и запуском.
+ */
+function logMatrixEvent(
+  parentName: string,
+  step: string,
+  details: {
+    cloneName?: string;
+    status?: string;
+    reason?: string;
+    error?: string;
+    runId?: number;
+  } = {},
+): void {
+  appendStructuredLog({
+    event: `matrix.${step}`,
+    task: parentName,
+    matrixId: parentName,
+    cloneName: details.cloneName,
+    step,
+    status: details.status,
+    reason: details.reason,
+    error: details.error,
+    runId: details.runId,
+  });
+}
 
 /** Суффикс агрегирующей задачи, запускаемой после всех клонов. */
 export const MATRIX_COMPLETE_SUFFIX = "-matrix-complete";
@@ -314,9 +343,10 @@ export async function runMatrix(task: TaskDefinition): Promise<MatrixRunResult> 
       } else {
         started.push(clone.name);
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       errors.push(`${clone.name}: ${message}`);
+      logMatrixEvent(task.name, "start_failed", { cloneName: clone.name, error: message });
       if (failureMode === "stop") {
         const rest = clones
           .slice(clones.indexOf(clone) + 1)
@@ -332,19 +362,19 @@ export async function runMatrix(task: TaskDefinition): Promise<MatrixRunResult> 
     failureMode === "stop" && errors.length > 0 ? [] : queued;
   try {
     saveTask({ ...task, matrixQueue: queueToSave.length > 0 ? queueToSave : undefined });
-  } catch (err: any) {
-    console.log(
-      `[matrix] ${task.name}: не удалось сохранить очередь: ${
-        err instanceof Error ? err.message : String(err)
-      }`,
-    );
+  } catch (err: unknown) {
+    logMatrixEvent(task.name, "queue_save_failed", {
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
 
-  console.log(
-    `[matrix] ${task.name}: strategy=${strategy}, failureMode=${failureMode}, ` +
+  logMatrixEvent(task.name, "started", {
+    status: started.length > 0 ? "running" : "error",
+    reason:
+      `strategy=${strategy}, failureMode=${failureMode}, ` +
       `concurrency=${concurrency}, started=${started.length}, skipped=${skipped.length}, ` +
       `queued=${queueToSave.length}, errors=${errors.length}`,
-  );
+  });
 
   return {
     success: errors.length === 0 || failureMode === "continue",
@@ -387,7 +417,10 @@ export async function advanceSequentialMatrix(
   if ((parent.matrix.failureMode ?? "continue") === "stop") {
     const latest = latestCloneStatus(cloneName);
     if (latest.status === "error") {
-      console.log(`[matrix] ${parent.name}: sequential остановлена после ошибки ${cloneName}`);
+      logMatrixEvent(parent.name, "sequential_stopped", {
+        cloneName,
+        status: "error",
+      });
       return undefined;
     }
   }
@@ -398,11 +431,15 @@ export async function advanceSequentialMatrix(
   try {
     const result = await createSchedulerBackend().runTask(next.name);
     if (result.alreadyRunning) return undefined;
-    console.log(`[matrix] ${parent.name}: sequential -> ${next.name}`);
+    logMatrixEvent(parent.name, "advanced", {
+      cloneName: next.name,
+      status: "running",
+      reason: "sequential",
+    });
     return next.name;
-  } catch (err: any) {
+  } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    console.log(`[matrix] ${parent.name}: не удалось запустить ${next.name}: ${message}`);
+    logMatrixEvent(parent.name, "start_failed", { cloneName: next.name, error: message });
     return undefined;
   }
 }
@@ -449,12 +486,16 @@ export async function advanceMatrixAfterClone(
       started.push(nextName);
       slots -= 1;
       if (result.alreadyRunning) slots += 0; // слот уже занят этим клоном
-      console.log(`[matrix] ${parent.name}: из очереди -> ${nextName}`);
-    } catch (err: any) {
+      logMatrixEvent(parent.name, "queue_started", {
+        cloneName: nextName,
+        status: "running",
+      });
+    } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
-      console.log(
-        `[matrix] ${parent.name}: не удалось запустить из очереди ${nextName}: ${message}`,
-      );
+      logMatrixEvent(parent.name, "queue_start_failed", {
+        cloneName: nextName,
+        error: message,
+      });
       // Попытка запуска «съедает» слот: иначе при недоступном бэкенде
       // цикл уйдёт по всей очереди, проигнорировав лимит.
       slots -= 1;
@@ -467,12 +508,10 @@ export async function advanceMatrixAfterClone(
 
   try {
     saveTask({ ...parent, matrixQueue: queue.length > 0 ? queue : undefined });
-  } catch (err: any) {
-    console.log(
-      `[matrix] ${parent.name}: не удалось сохранить очередь: ${
-        err instanceof Error ? err.message : String(err)
-      }`,
-    );
+  } catch (err: unknown) {
+    logMatrixEvent(parent.name, "queue_save_failed", {
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
 
   return started;
@@ -789,12 +828,10 @@ export async function cancelPendingMatrixClones(
   if (Array.isArray(parent.matrixQueue) && parent.matrixQueue.length > 0) {
     try {
       saveTask({ ...parent, matrixQueue: undefined });
-    } catch (err: any) {
-      console.log(
-        `[matrix] ${parent.name}: не удалось очистить очередь: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
+    } catch (err: unknown) {
+      logMatrixEvent(parent.name, "queue_clear_failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 
@@ -827,12 +864,12 @@ export async function cancelPendingMatrixClones(
         "skipped",
       );
       cancelled.push(clone.name);
-    } catch (err: any) {
-      console.log(
-        `[matrix] ${parent.name}: не удалось записать отмену клона ${clone.name}: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
+    } catch (err: unknown) {
+      logMatrixEvent(parent.name, "cancelled", {
+        cloneName: clone.name,
+        status: "error",
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 
@@ -919,12 +956,18 @@ export async function finalizeMatrixIfComplete(
       error: aggregate.errorCount,
       message: aggregate.message,
     });
-  } catch (err: any) {
-    console.log(
-      `[matrix] ${parent.name}: не удалось записать агрегат: ${
-        err instanceof Error ? err.message : String(err)
-      }`,
-    );
+    const aggregateRunId = getHistory(parent.name, 1)[0]?.id;
+    logMatrixEvent(parent.name, "aggregated", {
+      status: finalStatus,
+      runId: aggregateRunId,
+      reason:
+        `total=${aggregate.totalCount}, success=${aggregate.successCount}, ` +
+        `error=${aggregate.errorCount}`,
+    });
+  } catch (err: unknown) {
+    logMatrixEvent(parent.name, "aggregate_failed", {
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
 
   if (parent.matrix.createAggregator) {
@@ -932,13 +975,15 @@ export async function finalizeMatrixIfComplete(
     if (aggregator) {
       try {
         await createSchedulerBackend().runTask(aggregator.name);
-        console.log(`[matrix] ${parent.name}: запущен агрегатор ${aggregator.name}`);
-      } catch (err: any) {
-        console.log(
-          `[matrix] ${parent.name}: не удалось запустить агрегатор: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        );
+        logMatrixEvent(parent.name, "aggregator_started", {
+          cloneName: aggregator.name,
+          status: "running",
+        });
+      } catch (err: unknown) {
+        logMatrixEvent(parent.name, "aggregator_start_failed", {
+          cloneName: aggregator.name,
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
     }
   }

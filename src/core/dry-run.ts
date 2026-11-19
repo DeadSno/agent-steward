@@ -183,7 +183,7 @@ async function describeTrigger(opts: DescribeTriggerOptions): Promise<DryRunTrig
             t("dryRun.git.branchMismatch", { branch: def.gitBranch ?? "" }),
           );
         }
-      } catch (err: any) {
+      } catch (err: unknown) {
         base.explanation = t("dryRun.git.checkError", {
           error: err instanceof Error ? err.message : String(err),
         });
@@ -409,7 +409,7 @@ export async function simulatePipeline(taskName: string): Promise<DryRunReport> 
           t("dryRun.matrix.parent", { name: def.name, count: clones.length }),
         );
         for (const clone of clones) units.push({ def: clone, matrixParent: def.name });
-      } catch (err: any) {
+      } catch (err: unknown) {
         const list = warningsPerTask.get(def.name.toLowerCase()) ?? [];
         list.push(
           t("dryRun.matrix.expandError", {

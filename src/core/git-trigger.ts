@@ -62,12 +62,25 @@ export type GitTriggerHandler = (taskName: string, info: GitCheckResult & { cwd:
 
 export type GitRunner = (cwd: string, args: string[]) => Promise<string>;
 
+/**
+ * W-1 (0.0.6): опрос репозитория — служебная операция, а не пользовательская.
+ * Игнорируем пользовательские хуки и запрещаем интерактивный ввод пароля,
+ * чтобы длинная цепочка хуков или запрос credentials не блокировали опрос.
+ */
+const GIT_SAFE_ARGS = ["-c", `core.hooksPath=${process.platform === "win32" ? "NUL" : "/dev/null"}`];
+const GIT_SAFE_ENV = { ...process.env, GIT_TERMINAL_PROMPT: "0" };
+
 const defaultRunner: GitRunner = (cwd, args) =>
   new Promise((resolve, reject) => {
     execFile(
       "git",
-      ["-C", cwd, ...args],
-      { timeout: GIT_COMMAND_TIMEOUT_MS, windowsHide: true, maxBuffer: 4 * 1024 * 1024 },
+      ["-C", cwd, ...GIT_SAFE_ARGS, ...args],
+      {
+        timeout: GIT_COMMAND_TIMEOUT_MS,
+        windowsHide: true,
+        maxBuffer: 4 * 1024 * 1024,
+        env: GIT_SAFE_ENV,
+      },
       (err, stdout) => {
         if (err) {
           reject(err instanceof Error ? err : new Error(String(err)));
@@ -208,7 +221,7 @@ export async function checkGitTrigger(
   let files: string[];
   try {
     files = await gitChangedFiles(task.cwd, state.commitSha, probe.head, run);
-  } catch (err: any) {
+  } catch (err: unknown) {
     // Не двигаем state: следующий опрос повторит сравнение с тем же коммитом,
     // и пропущенные изменения не потеряются.
     return {
@@ -219,7 +232,7 @@ export async function checkGitTrigger(
       files: [],
       matched: [],
       message: t("gitTrigger.diffFailed", {
-        error: err?.message ? String(err.message) : String(err),
+        error: err instanceof Error ? err.message : String(err),
       }),
     };
   }
@@ -356,7 +369,7 @@ export class GitTriggerManager {
       } else if (result.status === "error") {
         console.error(`[agent-steward] git-триггер «${managed.def.name}»: ${result.message}`);
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(
         `[agent-steward] git-триггер «${managed.def.name}»: ${
           err instanceof Error ? err.message : String(err)

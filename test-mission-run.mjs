@@ -39,6 +39,44 @@ initDb(dbPath);
   check("dry-run: запись в ledger не создана", listRuns().length === 0);
 }
 
+// 1b. W-3: два dry-run в одном cwd проходят параллельно (нет захвата activeWorkspaces).
+{
+  let prepared = 0;
+  let release;
+  const barrier = new Promise((resolve) => {
+    release = resolve;
+  });
+  const onPrepared = () => {
+    prepared += 1;
+    if (prepared === 2) release();
+  };
+  const attempts = Promise.all([
+    runMission({ prompt: "параллельный dry A", cwd: root, dryRun: true }, { onPrepared }),
+    runMission({ prompt: "параллельный dry B", cwd: root, dryRun: true }, { onPrepared }),
+  ]);
+  let results;
+  try {
+    results = await Promise.race([
+      attempts,
+      new Promise((_, reject) =>
+        setTimeout(
+          () => reject(new Error("второй dry-run заблокирован activeWorkspaces")),
+          2000,
+        ),
+      ),
+    ]);
+  } catch (err) {
+    check("dry-run: два вызова в одном cwd проходят параллельно", false, String(err));
+  }
+  if (results) {
+    check(
+      "dry-run: два вызова в одном cwd проходят параллельно",
+      results.length === 2 && results.every((item) => item.success && item.dryRun === true) && prepared === 2,
+    );
+    check("dry-run: параллельные вызовы не пишут ledger", listRuns().length === 0);
+  }
+}
+
 // 2. Обычный ad-hoc запуск проходит через единый путь и пишет ledger.
 {
   const calls = [];

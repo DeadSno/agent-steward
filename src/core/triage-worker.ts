@@ -65,8 +65,8 @@ function processAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
-  } catch (err: any) {
-    return err?.code === "EPERM";
+  } catch (err: unknown) {
+    return (err as NodeJS.ErrnoException | undefined)?.code === "EPERM";
   }
 }
 
@@ -82,8 +82,8 @@ function acquireWorkerSlot(dir: string): string | null {
       fs.writeFileSync(fd, String(process.pid));
       fs.closeSync(fd);
       return slot;
-    } catch (err: any) {
-      if (err?.code !== "EEXIST") continue;
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException | undefined)?.code !== "EEXIST") continue;
       let holder = 0;
       try {
         holder = parseInt(fs.readFileSync(slot, "utf8").trim(), 10);
@@ -245,7 +245,7 @@ export function scheduleTriageJob(
     const dir = options.tmpDir ?? os.tmpdir();
     pruneTriageArtifacts(dir);
     file = writeTriageJob(input, triage, { tmpDir: dir });
-  } catch (err: any) {
+  } catch (err: unknown) {
     return {
       scheduled: false,
       error: err instanceof Error ? err.message : String(err),
@@ -267,7 +267,7 @@ export function scheduleTriageJob(
     // Если процесс не стартовал, файл задания останется сиротой — убираем.
     child.on?.("error", () => safeUnlink(file));
     return { scheduled: true, file };
-  } catch (err: any) {
+  } catch (err: unknown) {
     safeUnlink(file);
     return {
       scheduled: false,
@@ -315,7 +315,7 @@ async function drainQueue(first: string): Promise<void> {
     const file: string = current;
     try {
       await runTriageJob(file);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(
         `[agent-steward] triage worker: ${
           err instanceof Error ? err.message : String(err)

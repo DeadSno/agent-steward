@@ -62,8 +62,8 @@ export class TaskRegistry {
     let raw: string;
     try {
       raw = await fs.readFile(this.file, "utf8");
-    } catch (err: any) {
-      if (err?.code === "ENOENT") {
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException | undefined)?.code === "ENOENT") {
         // Карантин уже переместил файл. Пустой реестр нельзя выдавать за
         // «задач нет»: rebuildCrontab вычистил бы все cron-строки плагина.
         const blocked = await fs.readFile(this.blockedPath, "utf8").catch(() => null);

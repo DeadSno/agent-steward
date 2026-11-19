@@ -15,8 +15,37 @@ import {
   advanceMatrixAfterClone,
   finalizeMatrixIfComplete,
 } from "./matrix.js";
+import { appendStructuredLog } from "./structured-log.js";
 
 type Status = "success" | "error" | "timeout" | "skipped";
+
+/**
+ * Диагностика рекордера пишется в runs.jsonl: цепочки, DAG, повторы и
+ * one-shot-очистка иначе не видны в машиночитаемом логе. Human-readable
+ * вывод остаётся только в логе задачи; stdout `--start` не трогаем — обёртка
+ * читает оттуда runId.
+ */
+function logRecorderEvent(
+  event: string,
+  task: string,
+  details: {
+    runId?: number;
+    status?: string;
+    error?: string;
+    reason?: string;
+    nextTask?: string;
+  } = {},
+): void {
+  appendStructuredLog({
+    event,
+    task,
+    runId: details.runId,
+    status: details.status,
+    error: details.error,
+    reason: details.reason,
+    nextTask: details.nextTask,
+  });
+}
 
 /** Префикс ключа настроек со счётчиком повторов конкретной задачи. */
 const RETRY_STATE_PREFIX = "retry_state:";
@@ -133,12 +162,11 @@ async function triggerTask(taskName: string): Promise<boolean> {
   try {
     await runTaskNow(taskName);
     return true;
-  } catch (err: any) {
-    console.error(
-      `[agent-steward] Не удалось запустить задачу цепочки "${taskName}": ${
-        err instanceof Error ? err.message : String(err)
-      }`,
-    );
+  } catch (err: unknown) {
+    logRecorderEvent("chain.trigger_failed", taskName, {
+      nextTask: taskName,
+      error: err instanceof Error ? err.message : String(err),
+    });
     return false;
   }
 }
@@ -168,7 +196,7 @@ async function scheduleRetry(taskName: string): Promise<boolean> {
 
     if (remaining === null) {
       deleteSetting(key);
-      console.log(`[agent-steward] Повторы для "${taskName}" исчерпаны.`);
+      logRecorderEvent("retry.exhausted", taskName, { reason: "retries exhausted" });
       return false;
     }
 
@@ -184,17 +212,14 @@ async function scheduleRetry(taskName: string): Promise<boolean> {
     });
     child.unref();
 
-    console.log(
-      `[agent-steward] Задача "${taskName}" будет повторена через ${delay} с ` +
-        `(осталось повторов: ${remaining}).`,
-    );
+    logRecorderEvent("retry.scheduled", taskName, {
+      reason: `delay=${delay}s, remaining=${remaining}`,
+    });
     return true;
-  } catch (err: any) {
-    console.error(
-      `[agent-steward] Не удалось запланировать повтор "${taskName}": ${
-        err instanceof Error ? err.message : String(err)
-      }`,
-    );
+  } catch (err: unknown) {
+    logRecorderEvent("retry.schedule_failed", taskName, {
+      error: err instanceof Error ? err.message : String(err),
+    });
     return false;
   }
 }
@@ -210,13 +235,11 @@ async function runRetry(taskName: string, delaySec: number): Promise<void> {
 
   try {
     await runTaskNow(taskName);
-    console.log(`[agent-steward] Повторный запуск задачи "${taskName}".`);
-  } catch (err: any) {
-    console.error(
-      `[agent-steward] Повторный запуск "${taskName}" не удался: ${
-        err instanceof Error ? err.message : String(err)
-      }`,
-    );
+    logRecorderEvent("retry.started", taskName);
+  } catch (err: unknown) {
+    logRecorderEvent("retry.failed", taskName, {
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
 }
 
@@ -478,9 +501,10 @@ async function main() {
       postFlightStatus,
     );
     if (!completed) {
-      console.error(
-        `[agent-steward] record-history: запись #${runId} уже завершена или не найдена.`,
-      );
+      logRecorderEvent("run.finish_skipped", taskName, {
+        runId,
+        reason: "already finished or not found",
+      });
       return;
     }
 
@@ -588,16 +612,12 @@ export async function cleanupWindowsOneShotTask(
     ((name: string) => createSchedulerBackend().deleteTask(name));
   try {
     await deleteTask(taskName);
-    console.log(
-      `[agent-steward] One-shot "${taskName}": задача удалена из Планировщика Windows.`,
-    );
+    logRecorderEvent("oneshot.cleaned", taskName);
     return true;
-  } catch (err: any) {
-    console.warn(
-      `[agent-steward] One-shot "${taskName}": не удалось удалить задачу из Планировщика Windows: ${
-        err instanceof Error ? err.message : String(err)
-      }`,
-    );
+  } catch (err: unknown) {
+    logRecorderEvent("oneshot.cleanup_failed", taskName, {
+      error: err instanceof Error ? err.message : String(err),
+    });
     return false;
   }
 }
@@ -635,12 +655,10 @@ async function handleCompletion(
   try {
     await advanceMatrixAfterClone(taskName);
     await finalizeMatrixIfComplete(taskName);
-  } catch (err: any) {
-    console.log(
-      `[matrix] ${taskName}: ошибка обработки матрицы: ${
-        err instanceof Error ? err.message : String(err)
-      }`,
-    );
+  } catch (err: unknown) {
+    logRecorderEvent("matrix.error", taskName, {
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
 
   if (st === "success") {
@@ -649,7 +667,7 @@ async function handleCompletion(
     if (chainTarget) {
       const started = await triggerTask(chainTarget);
       if (started) {
-        console.log(`[agent-steward] Запущена следующая задача в цепочке: ${chainTarget}`);
+        logRecorderEvent("chain.triggered", taskName, { nextTask: chainTarget });
       }
     }
 
@@ -664,17 +682,13 @@ async function handleCompletion(
       for (const dependent of dependents) {
         const started = await triggerTask(dependent);
         if (started) {
-          console.log(
-            `[agent-steward] DAG: все зависимости выполнены, запущена задача "${dependent}".`,
-          );
+          logRecorderEvent("dag.triggered", taskName, { nextTask: dependent });
         }
       }
-    } catch (err: any) {
-      console.error(
-        `[agent-steward] DAG: не удалось запустить зависимые задачи: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
+    } catch (err: unknown) {
+      logRecorderEvent("dag.trigger_failed", taskName, {
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   } else if (st !== "skipped") {
     // Сначала пытаемся повторить саму задачу; компенсирующая задача запускается
@@ -684,7 +698,7 @@ async function handleCompletion(
     if (!retryScheduled && chainTarget) {
       const started = await triggerTask(chainTarget);
       if (started) {
-        console.log(`[agent-steward] Запущена компенсирующая задача: ${chainTarget}`);
+        logRecorderEvent("compensation.triggered", taskName, { nextTask: chainTarget });
       }
     }
   }
@@ -693,12 +707,10 @@ async function handleCompletion(
   // при достижении sessionMaxRuns. Не должна ломать завершение запуска.
   try {
     await rotateSessionIfNeeded(taskName);
-  } catch (err: any) {
-    console.warn(
-      `[agent-steward] Не удалось обновить состояние сессии "${taskName}": ${
-        err instanceof Error ? err.message : String(err)
-      }`,
-    );
+  } catch (err: unknown) {
+    logRecorderEvent("session.rotate_failed", taskName, {
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
 }
 
@@ -720,11 +732,9 @@ function isDirectInvocation(): boolean {
 
 if (isDirectInvocation()) {
   main().catch((err) => {
-    console.error(
-      `[agent-steward] record-history: не удалось записать результат запуска: ${
-        err instanceof Error ? err.message : String(err)
-      }`,
-    );
+    logRecorderEvent("record_history.fatal", "record-history", {
+      error: err instanceof Error ? err.message : String(err),
+    });
     process.exit(1);
   });
 }

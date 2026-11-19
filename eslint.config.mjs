@@ -8,6 +8,29 @@ import tseslint from "typescript-eslint";
  * в коде много преднамеренных any/|| из до-ESLint эпохи; они не должны
  * падать CI, но подсвечиваются в редакторе.
  */
+/**
+ * O-3: запрет `any` в catch-параметрах. `@typescript-eslint/no-explicit-any`
+ * здесь остаётся warn (легаси), а это правило — error: новым кодам придётся
+ * сужать unknown через type guard, как это сделано в `src/core/*`.
+ */
+const noAnyInCatch = {
+  meta: {
+    type: "problem",
+    schema: [],
+    messages: { forbidden: "В catch используйте unknown вместо any." },
+  },
+  create(context) {
+    return {
+      CatchClause(node) {
+        const annotation = node.param?.typeAnnotation?.typeAnnotation;
+        if (annotation?.type === "TSAnyKeyword") {
+          context.report({ node: annotation, messageId: "forbidden" });
+        }
+      },
+    };
+  },
+};
+
 export default tseslint.config(
   {
     ignores: ["dist/", "node_modules/", "*.cjs", "*.mjs", "*.js", "scripts/"],
@@ -48,5 +71,10 @@ export default tseslint.config(
       "@typescript-eslint/no-empty-function": "warn",
       "@typescript-eslint/await-thenable": "warn"
     }
+  },
+  {
+    files: ["src/core/**/*.ts"],
+    plugins: { local: { rules: { "no-any-in-catch": noAnyInCatch } } },
+    rules: { "local/no-any-in-catch": "error" }
   }
 );

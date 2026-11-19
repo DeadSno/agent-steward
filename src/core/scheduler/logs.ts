@@ -25,8 +25,8 @@ export async function getTaskLogs(
     }
     const last = lines.slice(-Math.max(1, Math.min(limit, 1000)));
     return { logs: last.join("\n") };
-  } catch (err: any) {
-    if (err.code === "ENOENT") {
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
       return {
         logs: "",
         error: `Лог задачи "${name}" не найден по пути ${logPath} (задача ещё не запускалась).`,

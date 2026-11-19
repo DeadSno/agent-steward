@@ -583,6 +583,29 @@ check(
   markerGuard && serverSrc.includes('const DASHBOARD_MARKER = "agent-steward"')
 );
 
+// DOC-1.3: счётчик сюит в README сверяется не с числом файлов на диске, а с
+// числом `node test-*.mjs` в сценарии `npm test`. Отдельные сюиты (например,
+// `test-chaos-dag.mjs` через `test:chaos`) в npm test не входят, но обязаны
+// быть упомянуты в каком-либо script — иначе тест незаметно «теряется».
+const npmTestScript = pkgJson.scripts?.test ?? "";
+const suitesInScript = [...npmTestScript.matchAll(/node (test-[^\s]+\.mjs)/g)].map((m) => m[1]);
+const suitesInScriptUnique = [...new Set(suitesInScript)];
+const suiteFilesOnDisk = fs.readdirSync(root).filter((f) => /^test-.*\.mjs$/.test(f));
+const readmeSuiteCount = Number(/# (\d+) test suites/.exec(readmeMain)?.[1]);
+const allScriptsText = Object.values(pkgJson.scripts ?? {}).join(" ");
+const unlistedSuites = suiteFilesOnDisk.filter((f) => !allScriptsText.includes(f));
+
+check(
+  `README: число test suites (${readmeSuiteCount}) = число node test-*.mjs в npm test (${suitesInScriptUnique.length})`,
+  Number.isInteger(readmeSuiteCount) &&
+    readmeSuiteCount === suitesInScriptUnique.length &&
+    suitesInScript.length === suitesInScriptUnique.length
+);
+check(
+  `package.json: все ${suiteFilesOnDisk.length} test-*.mjs на диске упомянуты в скриптах (не упомянуто: ${unlistedSuites.length})`,
+  unlistedSuites.length === 0 && suiteFilesOnDisk.length > 0
+);
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\nDocs: ${results.length - failed.length}/${results.length} проверок пройдено.`);
 process.exit(failed.length > 0 ? 1 : 0);
