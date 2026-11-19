@@ -55,6 +55,16 @@ function samePath(left, right) {
   return norm(left) === norm(right);
 }
 
+/**
+ * Канонический корень репозитория по мнению git. На Windows ни path.resolve,
+ * ни realpathSync не гарантируют совпадение с выводом git: короткое имя
+ * RUNNER~1 и прямой слеш сохраняются по-разному. Сравниваем вывод git с выводом
+ * git — это единственный надёжный способ на всех ОС.
+ */
+function gitRoot(cwd) {
+  return git(cwd, ["rev-parse", "--show-toplevel"]);
+}
+
 /** Пути всех зарегистрированных worktree из `git worktree list --porcelain`. */
 function registeredWorktreePaths(cwd) {
   return git(cwd, ["worktree", "list", "--porcelain"])
@@ -104,7 +114,7 @@ let first;
     const wt = result.worktree;
     check("worktree: каталог существует", fs.existsSync(wt.path));
     check("worktree: файл из базового коммита на месте", fs.existsSync(path.join(wt.path, "README.md")));
-    check("worktree: репозиторий определён", samePath(wt.repoRoot, repo));
+    check("worktree: репозиторий определён", gitRoot(wt.repoRoot) === gitRoot(repo));
     check("worktree: базовая ветка agent-steward/", wt.branch.startsWith("agent-steward/"));
     check("worktree: baseCommit — 40 hex", /^[0-9a-f]{40}$/.test(wt.baseCommit));
     check("worktree: уникальный путь вне репозитория", !wt.path.startsWith(repo));
