@@ -151,6 +151,9 @@ let first;
     ),
   );
   check("fan-out: все три запуска успешны", parallel.every((item) => item.ok));
+  for (const item of parallel) {
+    if (!item.ok) console.error(`fan-out: ошибка создания worktree: ${item.error}`);
+  }
   const paths = parallel.filter((item) => item.ok).map((item) => item.worktree.path);
   const branches = parallel.filter((item) => item.ok).map((item) => item.worktree.branch);
   check("fan-out: пути уникальны", new Set(paths).size === 3);

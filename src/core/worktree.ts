@@ -103,6 +103,74 @@ function uniqueSuffix(): string {
 }
 
 /**
+ * git worktree add обновляет общие метаданные репозитория (refs, worktrees/).
+ * На Windows параллельные вызовы в одном процессе иногда сталкиваются на
+ * lock-файлах, поэтому сериализуем только создание каталога/ветки. сами
+ * задачи продолжают выполняться параллельно — блокируется лишь операция git.
+ */
+let worktreeCreateTail: Promise<void> = Promise.resolve();
+function serializeWorktreeCreate<T>(work: () => Promise<T>): Promise<T> {
+  const result = worktreeCreateTail.then(work, work);
+  worktreeCreateTail = result.then(() => undefined, () => undefined);
+  return result;
+}
+
+/** Ошибки, которые стоит перепробовать: гонки lock-файлов и ANTIVIRUS/FS. */
+function isTransientGitError(message: string): boolean {
+  return /lock|Unable to create|File exists|already (exists|registered)|cannot lock ref|No such file|resource busy|EPERM|EBUSY/i.test(
+    message,
+  );
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+type AddWorktreeResult =
+  | { ok: true; branch: string; worktreePath: string }
+  | { ok: false; error: string };
+
+/** Создаёт каталог и ветку worktree с повторами на transient-ошибки git. */
+async function addWorktree(
+  rootDir: string,
+  repoRoot: string,
+  baseRef: string,
+  segment: string,
+): Promise<AddWorktreeResult> {
+  return serializeWorktreeCreate(async () => {
+    let lastError = "неизвестная ошибка";
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const suffix = uniqueSuffix();
+      const branch = `agent-steward/${segment}-${suffix}`;
+      const worktreePath = path.join(rootDir, `${segment}-${suffix}`);
+
+      try {
+        await fs.mkdir(rootDir, { recursive: true });
+      } catch (err: unknown) {
+        return {
+          ok: false,
+          error: `Не удалось создать каталог worktree «${rootDir}»: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        };
+      }
+
+      // -b создаёт ветку, чтобы каждый запуск был независим.
+      const add = await git(repoRoot, ["worktree", "add", "-b", branch, worktreePath, baseRef]);
+      if (add.ok) return { ok: true, branch, worktreePath };
+
+      lastError = add.stderr || "неизвестная ошибка";
+      if (attempt < 2 && isTransientGitError(lastError)) {
+        await delay(50 * (attempt + 1));
+        continue;
+      }
+      break;
+    }
+    return { ok: false, error: `git worktree add завершился ошибкой: ${lastError}` };
+  });
+}
+
+/**
  * Создаёт одноразовый worktree под запуск задачи.
  *
  * Никогда не бросает: ошибки git и файловой системы возвращаются как
@@ -131,30 +199,12 @@ export async function createRunWorktree(
   const rootDir = options.rootDir?.trim() || WORKTREE_ROOT_DIR;
   const baseRef = options.baseRef?.trim() || "HEAD";
   const segment = sanitizeName(taskName).slice(0, 48) || "task";
-  const suffix = uniqueSuffix();
-  const branch = `agent-steward/${segment}-${suffix}`;
-  const worktreePath = path.join(rootDir, `${segment}-${suffix}`);
 
-  try {
-    await fs.mkdir(rootDir, { recursive: true });
-  } catch (err: unknown) {
-    return {
-      ok: false,
-      error: `Не удалось создать каталог worktree «${rootDir}»: ${
-        err instanceof Error ? err.message : String(err)
-      }`,
-    };
-  }
-
-  // -b создаёт ветку, чтобы каждый запуск был независим. Путь и ветка
-  // уникальны, поэтому гонка двух параллельных запусков не блокирует друг друга.
-  const add = await git(repoRoot, ["worktree", "add", "-b", branch, worktreePath, baseRef]);
-  if (!add.ok) {
-    return {
-      ok: false,
-      error: `git worktree add завершился ошибкой: ${add.stderr || "неизвестная ошибка"}`,
-    };
-  }
+  // Сериализуем только git-операцию: параллельный fan-out не должен биться
+  // об общие lock-файлы .git/refs и .git/worktrees на Windows.
+  const added = await addWorktree(rootDir, repoRoot, baseRef, segment);
+  if (!added.ok) return { ok: false, error: added.error };
+  const { branch, worktreePath } = added;
 
   const head = await git(worktreePath, ["rev-parse", "HEAD"]);
   if (!head.ok || !head.stdout) {
