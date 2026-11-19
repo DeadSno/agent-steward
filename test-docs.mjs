@@ -573,6 +573,16 @@ check(
   migrationDoc.includes("## From `opencode-windows-scheduler` to `agent-steward` (package rename)")
 );
 
+// Дашборд отдаёт x-plugin-dashboard: agent-steward (DASHBOARD_MARKER).
+// Клиентская проверка в readJson должна принимать оба маркера, иначе на каждый
+// успешный ответ сыпется ложное предупреждение «нет заголовка».
+const serverSrc = fs.readFileSync(path.join(root, "src/server.ts"), "utf8");
+const markerGuard = /if \(marker !== 'agent-steward' && marker !== 'opencode-windows-scheduler'\) \{[\s\S]{0,200}?В ответе нет заголовка x-plugin-dashboard/.test(serverSrc);
+check(
+  "server.ts: readJson принимает маркеры agent-steward и legacy без ложного warning",
+  markerGuard && serverSrc.includes('const DASHBOARD_MARKER = "agent-steward"')
+);
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\nDocs: ${results.length - failed.length}/${results.length} проверок пройдено.`);
 process.exit(failed.length > 0 ? 1 : 0);

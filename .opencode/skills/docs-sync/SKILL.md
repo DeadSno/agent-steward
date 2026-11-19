@@ -24,9 +24,10 @@ project: agent-steward
 
 - Приоритет факта: код → тесты → документы. Текст `Known limitations` может отставать от
   закрытых B1.x-фиксов; `docs/FEATURES.md` содержал ложное «Secrets are not encrypted».
-- Исторически расходятся счётчики: `TEST-PLAN.md` (25 tools/44 RPC/39 suites) vs
-  `README/CHANGELOG` (29 tools/56 RPC) vs `ARCHITECTURE` (53 methods). Не копировать число
-  из соседнего файла — сверять через `test-docs`.
+- Актуальные счётчики (сверены с кодом 19.11.2026): **29** MCP-инструментов (`src/index.ts`),
+  **57** RPC-методов (`SchedulerRpc.methods` в `src/rpc.ts`), **109** наборов тестов
+  (`npm test`). Числа приведены во всех документах к одним значениям. При сомнении не копировать из соседнего
+  файла, а пересчитать по исходникам и прогнать `node test-docs.mjs`.
 - After правки: `node test-docs.mjs`, `npm run test:i18n`, `node test-package-exports.mjs`.
 
 ## Формат находки

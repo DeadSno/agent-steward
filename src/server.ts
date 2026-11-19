@@ -1927,7 +1927,7 @@ function renderPage(nonce: string): string {
         );
         throw new Error('Сервер вернул не JSON. Проверьте консоль.');
       }
-      if (marker !== 'opencode-windows-scheduler') {
+      if (marker !== 'agent-steward' && marker !== 'opencode-windows-scheduler') {
         console.warn(
           'В ответе нет заголовка x-plugin-dashboard — возможно, это не дашборд плагина.'
         );
