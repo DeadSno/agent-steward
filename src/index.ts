@@ -1016,7 +1016,7 @@ export const manageSettingsSchema = z.object({
     .enum(["auto", "ru", "en", "zh"])
     .optional()
     .describe(
-      "Interface language: auto (follow OpenCode), ru (default), en or zh. Applies without restart.",
+      "Interface language: auto (default, follows OpenCode), ru, en or zh. Applies without restart.",
     ),
   winterMode: z
     .boolean()

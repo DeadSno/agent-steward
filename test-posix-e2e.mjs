@@ -96,6 +96,7 @@ function writeWrapper(spec) {
     recorderFile: recorder,
     beforeScript: spec.beforeScript,
     afterScript: spec.afterScript,
+    qualityGate: spec.qualityGate,
     sessionMode: "new",
   });
   const wrapperPath = path.join(tempRoot, `run-${spec.sanitized}.sh`);
@@ -316,6 +317,45 @@ try {
   console.log("[diag] section 4 THREW:", err instanceof Error ? err.stack : String(err));
   check("backstop: в обёртке есть проверка PROMPT_BYTES", false, "section threw");
   check("backstop: лимит 131072 байта", false, "section threw");
+}
+
+// --- 5. G-1.2: тест-атака — агент подменяет команду Quality Gate в обёртке ---
+try {
+  const spec = {
+    name: "posix e2e gate attack",
+    sanitized: "posix-e2e-gate-attack",
+    prompt: "Скажи hello",
+    logFile: path.join(pluginDir, "logs", "posix-e2e-gate-attack.log"),
+    lockFile: path.join(pluginDir, "locks", "posix-e2e-gate-attack.lock"),
+    timeoutSeconds: 30,
+    qualityGate: "test -d .",
+  };
+  const wrapperPath = await prepareTask(spec);
+  const original = fs.readFileSync(wrapperPath, "utf8");
+  check("G-1.2: обёртка содержит путь снимка гейта", original.includes("GATE_SNAPSHOT="));
+
+  const control = runWrapper(wrapperPath, {});
+  check("G-1.2: контрольный прогон с гейтом успешен", control.status === 0, `status=${control.status}`);
+
+  // Агент меняет гейт-команду на «всегда успешно» — снимок должен это поймать.
+  const attacked = original.replace(/^QUALITY_GATE=.*$/m, "QUALITY_GATE='exit 0'");
+  check("G-1.2: команда гейта подменена", attacked !== original);
+  fs.writeFileSync(wrapperPath, attacked, "utf8");
+  const attack = runWrapper(wrapperPath, {});
+  check("G-1.2: подмена гейта даёт ненулевой код", attack.status !== 0, `status=${attack.status}`);
+  check(
+    "G-1.2: лог содержит snapshot mismatch",
+    readLog(spec.logFile).includes("snapshot mismatch"),
+    readLog(spec.logFile).slice(-400)
+  );
+  const records = getHistory(spec.name, 10);
+  check(
+    "G-1.2: история фиксирует ошибку целостности гейта",
+    records.some((r) => r.status === "error" && String(r.error ?? "").includes("snapshot mismatch"))
+  );
+} catch (err) {
+  console.log("[diag] section 5 THREW:", err instanceof Error ? err.stack : String(err));
+  check("G-1.2: тест-атака не выбросила исключение", false, "section threw");
 }
 
 const failed = results.filter((r) => !r.ok);

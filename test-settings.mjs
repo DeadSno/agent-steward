@@ -212,8 +212,8 @@ check(
 // Язык интерфейса (T7): режим auto и обратная совместимость явных локалей.
 const defaultLocaleSettings = await settingsModule.loadSettings();
 check(
-  "loadSettings: локаль по умолчанию — ru",
-  defaultLocaleSettings.locale === "ru"
+  "loadSettings: режим локали по умолчанию — auto",
+  defaultLocaleSettings.locale === "auto"
 );
 
 await settingsModule.saveSettings({ locale: "auto" });
@@ -247,8 +247,8 @@ check(
 fs.writeFileSync(settingsFile, JSON.stringify({ locale: "de-DE" }), "utf8");
 const unknownLocaleSettings = await settingsModule.loadSettings();
 check(
-  "loadSettings: неизвестная локаль откатывается к ru",
-  unknownLocaleSettings.locale === "ru"
+  "loadSettings: неизвестная локаль откатывается к auto",
+  unknownLocaleSettings.locale === "auto"
 );
 
 // S24: последняя известная локаль интерфейса для серверного процесса.

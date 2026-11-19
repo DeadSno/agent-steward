@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { PLUGIN_DIR } from "./types.js";
-import { DEFAULT_LOCALE, normalizeLocale, normalizeLocaleMode, SUPPORTED_LOCALES, messageIn, t, type Locale, type LocaleMode } from "./i18n.js";
+import { DEFAULT_LOCALE, DEFAULT_LOCALE_MODE, normalizeLocale, normalizeLocaleMode, SUPPORTED_LOCALES, messageIn, t, type Locale, type LocaleMode } from "./i18n.js";
 import {
   DEFAULT_PERMISSION_POLICY,
   normalizePolicy,
@@ -362,8 +362,8 @@ export interface SchedulerSettings {
   /** Максимум одновременно выполняющихся задач. 0 — без ограничения. */
   maxConcurrent: number;
   /**
-   * Язык интерфейса (Спринт 28, режим `auto` — T7): `ru` по умолчанию,
-   * `en`/`zh` — явный выбор, `auto` — следовать за языком OpenCode.
+   * Язык интерфейса (Спринт 28, режим `auto` — T7): `auto` по умолчанию —
+   * следовать за языком OpenCode; `ru`/`en`/`zh` — явный выбор пользователя.
    */
   locale: LocaleMode;
   /**
@@ -1266,7 +1266,7 @@ export async function loadSettings(): Promise<SchedulerSettings> {
         parsed?.maxConcurrent,
         DEFAULT_MAX_CONCURRENT,
       ),
-      locale: normalizeLocaleMode(parsed?.locale, DEFAULT_LOCALE),
+      locale: normalizeLocaleMode(parsed?.locale, DEFAULT_LOCALE_MODE),
       uiLocale: normalizeLocale(parsed?.uiLocale, DEFAULT_LOCALE),
       winterMode: normalizeWinterMode(
         parsed?.winterMode,
@@ -1290,7 +1290,7 @@ export async function loadSettings(): Promise<SchedulerSettings> {
   } catch {
     return {
       maxConcurrent: DEFAULT_MAX_CONCURRENT,
-      locale: DEFAULT_LOCALE,
+      locale: DEFAULT_LOCALE_MODE,
       uiLocale: DEFAULT_LOCALE,
       winterMode: DEFAULT_WINTER_MODE,
       notifications: fallbackNotifications,

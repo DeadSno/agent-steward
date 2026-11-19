@@ -3,6 +3,7 @@ import path from "node:path";
 import { PLUGIN_DIR, LOG_DIR, LOCK_DIR, WRAPPER_DIR, STALE_LOCK_MAX_AGE_MS, sanitizeName } from "../types.js";
 import type { ScheduleGateSpec } from "./schedule-v2.js";
 import type { TaskGuards } from "./guard.js";
+import { createGateSnapshot } from "./gate-integrity.js";
 
 /**
  * Путь к единому generic-обёртке PowerShell, которая реализует запуск opencode run
@@ -82,6 +83,8 @@ export const WRAPPER_SCRIPT = `param(
     [string]$LogFile,
     [string]$RecorderFile,
     [string]$QualityGate,
+    # G-1.2: snapshot входов гейта, снятый при создании обёртки.
+    [string]$GateSnapshotFile = "",
     [string]$BeforeScript,
     [string]$AfterScript,
     [string]$EnvFile,
@@ -796,20 +799,49 @@ try {
     # Quality Gate: проверочная команда выполняется ТОЛЬКО после успешного
     # завершения opencode run. Если ИИ упал — шлюз не запускаем.
     if ($QualityGate -and $script:exitCode -eq 0) {
-        Write-Log "[agent-steward] Запуск Quality Gate: $QualityGate"
-        # Тот же таймаут, что у хуков: зависший gate не должен держать lock.
-        $gateCode = Invoke-HookScript -Command $QualityGate
-
-        if ($gateCode -eq 124) {
-            Write-Log "[agent-steward] ОШИБКА: Quality Gate превысил таймаут $GateTimeoutSeconds с и был остановлен."
-            $script:errorMessage = "Quality Gate: превышен таймаут $GateTimeoutSeconds с"
-            $script:exitCode = 1
-        } elseif ($gateCode -ne 0) {
-            Write-Log "[agent-steward] ОШИБКА: Quality Gate провален. Код возврата: $gateCode"
-            $script:errorMessage = "Quality Gate провален. Код возврата: $gateCode"
-            $script:exitCode = 1
+        # G-1.2: перед запуском гейта сверяем его входы со snapshot'ом,
+        # снятым при создании задачи. При расхождении гейт НЕ выполняется.
+        $gateIntegrityOk = $false
+        if ($GateSnapshotFile -and (Test-Path -LiteralPath $GateSnapshotFile)) {
+            $gateIntegrityFile = Join-Path (Split-Path $RecorderFile -Parent) "gate-integrity.js"
+            if (Test-Path -LiteralPath $gateIntegrityFile) {
+                $verifyOutput = & node $gateIntegrityFile verify --snapshot "$GateSnapshotFile" --gate-file "$QualityGate" --prompt-file "$PromptFile" --timeout $GateTimeoutSeconds 2>&1
+                $verifyCode = $LASTEXITCODE
+                foreach ($line in $verifyOutput) { Write-Log "[agent-steward] $line" }
+                if ($verifyCode -eq 0) {
+                    $gateIntegrityOk = $true
+                } else {
+                    Write-Log "[agent-steward] ОШИБКА: целостность входов Quality Gate нарушена (snapshot mismatch)."
+                    $script:errorMessage = "Quality Gate: целостность входов нарушена (snapshot mismatch)"
+                    $script:exitCode = 1
+                }
+            } else {
+                Write-Log "[agent-steward] ОШИБКА: не найден помощник проверки целостности гейта."
+                $script:errorMessage = "Quality Gate: помощник проверки целостности не найден"
+                $script:exitCode = 1
+            }
         } else {
-            Write-Log "[agent-steward] Quality Gate пройден."
+            Write-Log "[agent-steward] ОШИБКА: snapshot гейта отсутствует — запуск с гейтом невозможен."
+            $script:errorMessage = "Quality Gate: snapshot входов отсутствует"
+            $script:exitCode = 1
+        }
+
+        if ($gateIntegrityOk) {
+            Write-Log "[agent-steward] Запуск Quality Gate: $QualityGate"
+            # Тот же таймаут, что у хуков: зависший gate не должен держать lock.
+            $gateCode = Invoke-HookScript -Command $QualityGate
+
+            if ($gateCode -eq 124) {
+                Write-Log "[agent-steward] ОШИБКА: Quality Gate превысил таймаут $GateTimeoutSeconds с и был остановлен."
+                $script:errorMessage = "Quality Gate: превышен таймаут $GateTimeoutSeconds с"
+                $script:exitCode = 1
+            } elseif ($gateCode -ne 0) {
+                Write-Log "[agent-steward] ОШИБКА: Quality Gate провален. Код возврата: $gateCode"
+                $script:errorMessage = "Quality Gate провален. Код возврата: $gateCode"
+                $script:exitCode = 1
+            } else {
+                Write-Log "[agent-steward] Quality Gate пройден."
+            }
         }
     }
 
@@ -1057,6 +1089,27 @@ export async function writeWrapperCmd(
     // внутри неё больше не ломают однострочный вызов powershell.exe.
     const gateFile = await writeHookFile(sanitizedName, "gate", qualityGate);
     psArgs.push(`-QualityGate "${gateFile}"`);
+
+    // G-1.2: фиксируем входы гейта до первого запуска. Snapshot лежит в
+    // PLUGIN_DIR, вне рабочей директории задачи.
+    let prompt = "";
+    let hook = qualityGate;
+    try {
+      prompt = await fs.readFile(promptFile, "utf8");
+    } catch {
+      // Промпт мог быть уже удалён — уникальность snapshot от этого не страдает.
+    }
+    try {
+      hook = await fs.readFile(gateFile, "utf8");
+    } catch {
+      // Используем исходную команду, если прочитать хук не удалось.
+    }
+    const snapshotFile = createGateSnapshot(taskName, {
+      gate: hook,
+      prompt,
+      gateTimeoutSeconds: safeGateTimeout,
+    });
+    psArgs.push(`-GateSnapshotFile "${snapshotFile}"`);
   }
 
   if (model?.trim()) {

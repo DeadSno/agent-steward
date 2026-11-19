@@ -53,10 +53,12 @@ Want to see it without installing OpenCode? `node scripts/demo-dashboard.mjs` st
 
 ### Language
 
-The interface ships in Russian (default), English and Simplified Chinese. The language
-selector sits in the scheduler panel header (🌐 Auto / Русский / English / 中文) and is
-also available through the `manage_settings` tool (`action: "update"`, `locale: "zh"`).
-`locale: "auto"` (the "Auto" option) follows the OpenCode interface language: the panel
+The interface ships in Russian, English and Simplified Chinese. By default the language
+selector is set to **Auto** — like OpenCode, it follows the OpenCode interface language;
+Russian, English and Chinese can be chosen explicitly. The selector sits in the scheduler
+panel header (🌐 Auto / Русский / English / 中文) and is also available through the
+`manage_settings` tool (`action: "update"`, `locale: "zh"`).
+`locale: "auto"` (the "Auto" option, used by default) follows the OpenCode interface language: the panel
 reacts to language changes immediately, and the resolved locale is sent to the server so
 notifications, digests and the dashboard use the same language. The switch applies
 without a restart. Dashboard localization is still being rolled out: some client-side

@@ -369,7 +369,7 @@ avg_cost / avg_time / last_10_runs`. Обучается на исходах ге
 | `src/workspaces.ts` | Workspace registry and path validation; env pairs and `.env` file resolution with secret masking |
 | `src/templates.ts` | Reusable task templates |
 | `src/settings.ts` | Plugin settings: notifications, history retention, audit, interface locale (`auto`/`ru`/`en`/`zh`) and last known UI locale, local AI/triage |
-| `src/i18n.ts` | Interface locale (`ru` default, `en`/`zh`), BCP 47 mapping, JSON catalogs in `locales/`, ICU subset (`{param}`, `plural`) via built-in `Intl`, fallback to `ru` |
+| `src/i18n.ts` | Interface locale mode (`auto` default, follows OpenCode; `ru`/`en`/`zh` explicit), BCP 47 mapping, JSON catalogs in `locales/`, ICU subset (`{param}`, `plural`) via built-in `Intl`, fallback catalog `ru` |
 | `src/notifications.ts` | Multi-channel delivery (webhook, Telegram, native OS) with retries/backoff, templates, task filters, quiet hours, matrix and stuck-clone notifications, daily/weekly digest |
 | `src/core/telegram.ts` | Telegram Bot API `sendMessage`: parse-mode escaping, dashboard link, token validation and masking |
 | `src/core/native-notify.ts` | Native OS notifications: Windows Toast (PowerShell/WinRT), macOS `osascript`, Linux `notify-send`; no external dependency |
@@ -809,7 +809,7 @@ resume preparation, rejection of a repeated resume, end-to-end comment delivery 
 
 ## Localization
 
-User-visible text lives in flat JSON catalogs: `locales/ru.json` (default),
+User-visible text lives in flat JSON catalogs: `locales/ru.json` (fallback),
 `locales/en.json` and `locales/zh.json`. Keys are dot-separated and grouped by surface —
 `gui.*`, `notify.*`, `tool.*`, `dryRun.*`, `matrix.*`, `schedule.*` — and all catalogs
 must have the same key set with non-empty values.
@@ -817,8 +817,9 @@ must have the same key set with non-empty values.
 `src/i18n.ts` loads the catalogs once and caches them. It exposes `t(key, params)`,
 `setLocale(locale)`, `messageIn(locale, key)` and `hasKey(key, locale)`. Lookup order is
 active locale → `en` → `ru` → the key itself, so a missing translation never renders as
-an empty string. The `locale` setting (`ru` default, `en`/`zh` optional, `auto` follows
-the OpenCode interface language) is applied immediately, without restarting OpenCode.
+an empty string. The `locale` setting (`auto` default, follows the OpenCode interface
+language; `ru`/`en`/`zh` are explicit choices) is applied immediately, without restarting
+OpenCode.
 `auto` is resolved in the GUI through `ctx.locale.locale()` with BCP 47 prefix mapping
 (`zh-CN` → `zh`, `en-GB` → `en`); the resolved value is sent to the server as `uiLocale`,
 because the server process cannot see the window. The sidebar GUI embeds the catalogs at

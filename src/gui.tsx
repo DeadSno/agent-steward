@@ -2,7 +2,7 @@ import { createEffect, createSignal, onCleanup, ErrorBoundary } from "solid-js"
 import { Panel, Plugin } from "@opencode/plugin/gui"
 import { SchedulerRpc } from "./rpc.js"
 import { loadHistory, loadMetrics, type HistoryRecord } from "./history.js"
-import { normalizeLocale, normalizeLocaleMode, registerCatalog, setLocale, t, type LocaleMode, type TranslateParams, type Locale } from "./i18n.js"
+import { DEFAULT_LOCALE, DEFAULT_LOCALE_MODE, normalizeLocale, normalizeLocaleMode, registerCatalog, setLocale, t, type LocaleMode, type TranslateParams, type Locale } from "./i18n.js"
 // Каталоги встраиваются в бандл на этапе сборки: в webview OpenCode нет
 // доступа к файлам пакета, поэтому ленивый fs-загрузчик из i18n.ts не работает.
 import ruCatalog from "../locales/ru.json"
@@ -473,7 +473,7 @@ export default Plugin.define({
     const [winterMode, setWinterMode] = createSignal(false)
 
     // Режим языка (T7): auto — следовать за локалью интерфейса OpenCode.
-    const [localeMode, setLocaleMode] = createSignal<LocaleMode>("ru")
+    const [localeMode, setLocaleMode] = createSignal<LocaleMode>(DEFAULT_LOCALE_MODE)
     // Последняя известная серверу локаль интерфейса (уведомления, дайджест, дашборд).
     const [uiLocaleKnown, setUiLocaleKnown] = createSignal<Locale>("ru")
 
@@ -499,7 +499,7 @@ export default Plugin.define({
       const app = appLocale()
       if (mode !== "auto") return
       applyLocale(app)
-      const resolved = normalizeLocale(app, "ru")
+      const resolved = normalizeLocale(app, DEFAULT_LOCALE)
       if (resolved !== uiLocaleKnown()) {
         setUiLocaleKnown(resolved)
         void rpc.save_settings({ uiLocale: resolved }).catch((err: any) => {
@@ -733,8 +733,8 @@ export default Plugin.define({
         setAuditRetentionEnabled(Boolean(au?.enabled !== false))
         setAuditRetentionDays(Number(au?.retentionDays ?? 90))
         setAuditMaxRecords(Number(au?.maxRecords ?? 10000))
-        setUiLocaleKnown(normalizeLocale((s as { uiLocale?: string }).uiLocale, "ru"))
-        const mode = normalizeLocaleMode((s as { locale?: string }).locale, "ru")
+        setUiLocaleKnown(normalizeLocale((s as { uiLocale?: string }).uiLocale, DEFAULT_LOCALE))
+        const mode = normalizeLocaleMode((s as { locale?: string }).locale, DEFAULT_LOCALE_MODE)
         setLocaleMode(mode)
         // При auto язык задаёт OpenCode: ответ сервера его не переопределяет.
         applyLocaleMode(mode)
@@ -872,8 +872,8 @@ export default Plugin.define({
           setAuditRetentionDays(Number(au?.retentionDays ?? 90))
           setAuditMaxRecords(Number(au?.maxRecords ?? 10000))
         }
-        setUiLocaleKnown(normalizeLocale((s as { uiLocale?: string }).uiLocale, "ru"))
-        const mode = normalizeLocaleMode((s as { locale?: string }).locale, "ru")
+        setUiLocaleKnown(normalizeLocale((s as { uiLocale?: string }).uiLocale, DEFAULT_LOCALE))
+        const mode = normalizeLocaleMode((s as { locale?: string }).locale, DEFAULT_LOCALE_MODE)
         setLocaleMode(mode)
         // При auto язык задаёт OpenCode: ответ сервера его не переопределяет.
         applyLocaleMode(mode)
@@ -909,8 +909,8 @@ export default Plugin.define({
         setHistoryMaxRecords(Number(h?.maxRecords ?? 5000))
         setHistoryLastCleanupAt(h?.lastCleanupAt ?? null)
         setHistoryLastCleanupDeleted(Number(h?.lastCleanupDeleted ?? 0))
-        setUiLocaleKnown(normalizeLocale((s as { uiLocale?: string }).uiLocale, "ru"))
-        const mode = normalizeLocaleMode((s as { locale?: string }).locale, "ru")
+        setUiLocaleKnown(normalizeLocale((s as { uiLocale?: string }).uiLocale, DEFAULT_LOCALE))
+        const mode = normalizeLocaleMode((s as { locale?: string }).locale, DEFAULT_LOCALE_MODE)
         setLocaleMode(mode)
         // При auto язык задаёт OpenCode: ответ сервера его не переопределяет.
         applyLocaleMode(mode)
@@ -3026,7 +3026,7 @@ export default Plugin.define({
                 <select
                   value={localeMode()}
                   onChange={async (e) => {
-                    const next = normalizeLocaleMode(e.currentTarget.value, "ru")
+                    const next = normalizeLocaleMode(e.currentTarget.value, DEFAULT_LOCALE_MODE)
                     setLocaleMode(next)
                     applyLocaleMode(next)
                     await persistSettings({ locale: next })

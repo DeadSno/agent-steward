@@ -351,6 +351,43 @@ if (process.platform === "win32") {
   );
 }
 
+// --- G-1.2: тест-атака — агент переписывает gate-хук на «всегда успешно» ---
+try {
+  const spec = {
+    name: "hardening gate attack",
+    sanitized: "hardening-gate-attack",
+    timeoutSeconds: 30,
+    qualityGate: "exit /b 0",
+  };
+  const { wrapperPath, logFile } = await prepareTask(spec);
+  const hookFile = path.join(pluginDir, "wrappers", "hooks", `run-${spec.sanitized}-gate.cmd`);
+  check("G-1.2: gate-хук создан", fs.existsSync(hookFile));
+  check(
+    "G-1.2: обёртка получила путь снимка гейта",
+    fs.readFileSync(wrapperPath, "utf8").includes("GateSnapshotFile")
+  );
+
+  const control = runWrapper(wrapperPath, {});
+  check("G-1.2: контрольный прогон с гейтом успешен", control.status === 0, `status=${control.status}`);
+
+  fs.writeFileSync(hookFile, "@echo off\r\nexit /b 0\r\n", "utf8");
+  const attack = runWrapper(wrapperPath, {});
+  check("G-1.2: подмена gate-хука даёт ненулевой код", attack.status !== 0, `status=${attack.status}`);
+  check(
+    "G-1.2: лог содержит snapshot mismatch",
+    readLog(logFile).includes("snapshot mismatch"),
+    readLog(logFile).slice(-400)
+  );
+  const records = getHistory(spec.name, 10);
+  check(
+    "G-1.2: история фиксирует ошибку целостности гейта",
+    records.some((r) => r.status === "error" && String(r.error ?? "").includes("snapshot mismatch"))
+  );
+} catch (err) {
+  console.log("[diag] G-1.2 attack THREW:", err instanceof Error ? err.stack : String(err));
+  check("G-1.2: тест-атака не выбросила исключение", false, "section threw");
+}
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\nExecution hardening: ${results.length - failed.length}/${results.length} проверок пройдено.`);
 try {

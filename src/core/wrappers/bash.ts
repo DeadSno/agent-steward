@@ -1,9 +1,11 @@
 import fs from "node:fs/promises";
+import fsSync from "node:fs";
 import path from "node:path";
 import { WRAPPER_DIR } from "../../types.js";
 import { shellQuote } from "../scheduler/posix.js";
 import type { ScheduleGateSpec } from "../schedule-v2.js";
 import type { TaskGuards } from "../guard.js";
+import { createGateSnapshot } from "../gate-integrity.js";
 import {
   buildOpencodeConfig as buildPermissionsConfig,
   formatPolicyLog,
@@ -123,6 +125,7 @@ export const BASH_LOCK_PID_FUNCTION = `parse_lock_pid() {
  */
 export function buildBashWrapperScript(options: BashWrapperOptions): string {
   const {
+    sanitizedName,
     taskName,
     promptFile,
     timeoutSeconds,
@@ -151,6 +154,31 @@ export function buildBashWrapperScript(options: BashWrapperOptions): string {
     guards,
     guardHelper,
   } = options;
+
+  // G-1.2: фиксируем входы гейта при создании обёртки и передаём путь
+  // snapshot'а и помощника проверки в сгенерированный скрипт.
+  let gateSnapshot = "";
+  let gateIntegrity = "";
+  if (qualityGate?.trim()) {
+    const safeGateTimeout =
+      typeof gateTimeoutSeconds === "number" && Number.isFinite(gateTimeoutSeconds)
+        ? Math.max(0, Math.floor(gateTimeoutSeconds))
+        : 300;
+    let prompt = "";
+    try {
+      prompt = fsSync.readFileSync(promptFile || "", "utf8");
+    } catch {
+      // Промпт мог быть удалён — snapshot всё равно уникален для задачи.
+    }
+    gateSnapshot = createGateSnapshot(sanitizedName || taskName, {
+      gate: qualityGate,
+      prompt,
+      gateTimeoutSeconds: safeGateTimeout,
+    });
+    gateIntegrity = recorderFile
+      ? path.join(path.dirname(recorderFile), "gate-integrity.js")
+      : "";
+  }
 
   const effectivePermissions = resolvePermissions({
     policy,
@@ -184,6 +212,9 @@ export function buildBashWrapperScript(options: BashWrapperOptions): string {
     `TIMEOUT_MARKER=${shellQuote(`${lockFile}.timeout`)}`,
     `RECORDER_FILE=${shellQuote(recorderFile ?? "")}`,
     `QUALITY_GATE=${shellQuote(qualityGate ?? "")}`,
+    // G-1.2: путь к snapshot'у и CLI проверки целостности входов гейта.
+    `GATE_SNAPSHOT=${shellQuote(gateSnapshot)}`,
+    `GATE_INTEGRITY=${shellQuote(gateIntegrity)}`,
     `MODEL=${shellQuote(model ?? "")}`,
     // Спринт 24: режим сессии — "new" (по умолчанию), "reuse" (--session <id>), "last" (--continue).
     `SESSION_MODE=${shellQuote(sessionMode ?? "new")}`,
@@ -592,15 +623,30 @@ export function buildBashWrapperScript(options: BashWrapperOptions): string {
     "fi",
     "",
     'if [ -n "$QUALITY_GATE" ] && [ "$EXIT_CODE" -eq 0 ]; then',
-    '  log "[scheduler] Запуск Quality Gate: $QUALITY_GATE"',
-    '  run_with_timeout "$GATE_TIMEOUT_SECONDS" bash -c "$QUALITY_GATE" >> "$LOG_FILE" 2>&1',
-    "  GATE_CODE=$?",
-    '  if [ "$GATE_CODE" -ne 0 ]; then',
-    '    log "[scheduler] ОШИБКА: Quality Gate провален. Код возврата: $GATE_CODE"',
-    '    ERROR_MESSAGE="Quality Gate провален. Код возврата: $GATE_CODE"',
+    // G-1.2: сверяем входы гейта со snapshot'ом, снятым при создании задачи.
+    "  GATE_INTEGRITY_OK=1",
+    '  if [ -n "$GATE_SNAPSHOT" ] && [ -n "$GATE_INTEGRITY" ] && [ -f "$GATE_SNAPSHOT" ] && [ -f "$GATE_INTEGRITY" ]; then',
+    '    node "$GATE_INTEGRITY" verify --snapshot "$GATE_SNAPSHOT" --gate-command "$QUALITY_GATE" --prompt-file "$PROMPT_FILE" --timeout "$GATE_TIMEOUT_SECONDS" >> "$LOG_FILE" 2>&1',
+    "    VERIFY_CODE=$?",
+    '    if [ "$VERIFY_CODE" -ne 0 ]; then GATE_INTEGRITY_OK=0; fi',
+    "  else",
+    "    GATE_INTEGRITY_OK=0",
+    "  fi",
+    '  if [ "$GATE_INTEGRITY_OK" -eq 0 ]; then',
+    '    log "[scheduler] ОШИБКА: целостность входов Quality Gate нарушена (snapshot mismatch)."',
+    '    ERROR_MESSAGE="Quality Gate: целостность входов нарушена (snapshot mismatch)"',
     "    EXIT_CODE=1",
     "  else",
-    '    log "[scheduler] Quality Gate пройден."',
+    '    log "[scheduler] Запуск Quality Gate: $QUALITY_GATE"',
+    '    run_with_timeout "$GATE_TIMEOUT_SECONDS" bash -c "$QUALITY_GATE" >> "$LOG_FILE" 2>&1',
+    "    GATE_CODE=$?",
+    '    if [ "$GATE_CODE" -ne 0 ]; then',
+    '      log "[scheduler] ОШИБКА: Quality Gate провален. Код возврата: $GATE_CODE"',
+    '      ERROR_MESSAGE="Quality Gate провален. Код возврата: $GATE_CODE"',
+    "      EXIT_CODE=1",
+    "    else",
+    '      log "[scheduler] Quality Gate пройден."',
+    "    fi",
     "  fi",
     "fi",
     "",

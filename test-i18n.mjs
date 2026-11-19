@@ -9,6 +9,7 @@ import url from "node:url";
 import { spawnSync } from "node:child_process";
 import {
   DEFAULT_LOCALE,
+  DEFAULT_LOCALE_MODE,
   LOCALE_AUTO,
   SUPPORTED_LOCALES,
   availableLocales,
@@ -69,13 +70,14 @@ check("normalizeLocale('zh-CN') → zh", normalizeLocale("zh-CN") === "zh");
 
 // Режим локали (T7): auto + явные значения, неизвестное → fallback.
 check("LOCALE_AUTO = auto", LOCALE_AUTO === "auto");
+check("режим локали по умолчанию — auto", DEFAULT_LOCALE_MODE === "auto");
 check("isLocaleMode('auto')", isLocaleMode("auto") === true);
 check("isLocaleMode('zh')", isLocaleMode("zh") === true);
 check("isLocaleMode('de') — false", isLocaleMode("de") === false);
 check("normalizeLocaleMode('auto') → auto", normalizeLocaleMode("auto") === "auto");
 check("normalizeLocaleMode('zh-CN') → zh", normalizeLocaleMode("zh-CN") === "zh");
-check("normalizeLocaleMode('de') → ru", normalizeLocaleMode("de") === "ru");
-check("normalizeLocaleMode(undefined) → ru", normalizeLocaleMode(undefined) === "ru");
+check("normalizeLocaleMode('de') → auto", normalizeLocaleMode("de") === "auto");
+check("normalizeLocaleMode(undefined) → auto", normalizeLocaleMode(undefined) === "auto");
 check("normalizeLocaleMode('de', 'auto') → auto", normalizeLocaleMode("de", "auto") === "auto");
 check("resolveLocale('auto') → ru", resolveLocale("auto") === "ru");
 check("resolveLocale('auto', 'zh') → zh", resolveLocale("auto", "zh") === "zh");

@@ -7,6 +7,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 
 let failures = 0;
 const check = (name, ok, detail) => {
@@ -206,6 +207,67 @@ check("opencode: план выполнен", opencodeRun.status === "passed");
 check("opencode: получил промпт и cwd", invocations[0].prompt === registeredPlan.context.prompt && invocations[0].cwd === tempRoot);
 check("opencode: получил модель", invocations[0].model === "local/model");
 check("opencode: output сохранён", invocations[0].step.taskType === "run_tests");
+
+// --- 7. G-1.2: snapshot и хэш входов Quality Gate ---------------------------
+const gateIntegrity = await import("./dist/core/gate-integrity.js");
+const snapshotFile = path.join(tempRoot, "gate-snapshot.json");
+const gateInputs = { gate: "npm test", prompt: "implement feature", gateTimeoutSeconds: 300 };
+const firstHash = gateIntegrity.gateInputsHash(gateInputs);
+check(
+  "gate-integrity: хэш детерминирован",
+  firstHash === gateIntegrity.gateInputsHash({ ...gateInputs }) && /^[0-9a-f]{64}$/.test(firstHash),
+);
+check(
+  "gate-integrity: изменение gate меняет хэш",
+  gateIntegrity.gateInputsHash({ ...gateInputs, gate: "exit 0" }) !== firstHash,
+);
+check(
+  "gate-integrity: изменение prompt меняет хэш",
+  gateIntegrity.gateInputsHash({ ...gateInputs, prompt: "forge" }) !== firstHash,
+);
+check(
+  "gate-integrity: изменение таймаута меняет хэш",
+  gateIntegrity.gateInputsHash({ ...gateInputs, gateTimeoutSeconds: 1 }) !== firstHash,
+);
+
+check("gate-integrity: snapshot создан", gateIntegrity.createGateSnapshot("g12", gateInputs, snapshotFile) === snapshotFile);
+check("gate-integrity: snapshot прочитан", gateIntegrity.readGateSnapshot(snapshotFile)?.hash === firstHash);
+check("gate-integrity: исходные входы верифицируются", gateIntegrity.verifyGateSnapshot(snapshotFile, gateInputs).ok === true);
+const tamperedGate = gateIntegrity.verifyGateSnapshot(snapshotFile, { ...gateInputs, gate: "exit 0" });
+check("gate-integrity: подмена gate-команды → fail", tamperedGate.ok === false && /изменены/.test(tamperedGate.reason ?? ""));
+check(
+  "gate-integrity: подмена prompt → fail",
+  gateIntegrity.verifyGateSnapshot(snapshotFile, { ...gateInputs, prompt: "forge" }).ok === false,
+);
+check(
+  "gate-integrity: подмена таймаута → fail",
+  gateIntegrity.verifyGateSnapshot(snapshotFile, { ...gateInputs, gateTimeoutSeconds: 1 }).ok === false,
+);
+check(
+  "gate-integrity: отсутствующий snapshot → fail",
+  gateIntegrity.verifyGateSnapshot(path.join(tempRoot, "missing.json"), gateInputs).ok === false,
+);
+const invalidSnapshot = path.join(tempRoot, "invalid-snapshot.json");
+fs.writeFileSync(invalidSnapshot, JSON.stringify({ version: 2, hash: firstHash }), "utf8");
+check("gate-integrity: неверная версия snapshot → fail", gateIntegrity.verifyGateSnapshot(invalidSnapshot, gateInputs).ok === false);
+
+const integrityCli = path.resolve("dist/core/gate-integrity.js");
+const cliPromptFile = path.join(tempRoot, "gate-prompt.txt");
+fs.writeFileSync(cliPromptFile, gateInputs.prompt, "utf8");
+const cliVerify = spawnSync(
+  process.execPath,
+  [integrityCli, "verify", "--snapshot", snapshotFile, "--gate-command", "npm test", "--prompt-file", cliPromptFile, "--timeout", "300"],
+  { encoding: "utf8", windowsHide: true },
+);
+check("gate-integrity: CLI verify — корректные входы → 0", cliVerify.status === 0);
+const cliAttack = spawnSync(
+  process.execPath,
+  [integrityCli, "verify", "--snapshot", snapshotFile, "--gate-command", "exit 0", "--prompt-file", cliPromptFile, "--timeout", "300"],
+  { encoding: "utf8", windowsHide: true },
+);
+check("gate-integrity: CLI verify — атака (подмена gate) → 1", cliAttack.status === 1);
+const cliBadArgs = spawnSync(process.execPath, [integrityCli, "verify"], { encoding: "utf8", windowsHide: true });
+check("gate-integrity: CLI verify — плохие аргументы → 2", cliBadArgs.status === 2);
 
 closeDb();
 try {

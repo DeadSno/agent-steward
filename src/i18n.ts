@@ -10,9 +10,11 @@
  *   - `{count, plural, one {…} few {…} many {…} other {…}}` — плюрализация
  *     через встроенный `Intl.PluralRules`; `#` внутри ветки — число.
  *
- * Русский — локаль по умолчанию (`DEFAULT_LOCALE`). Если ключа нет в текущей
- * локали, берётся русский вариант; если нет и там — возвращается сам ключ,
- * чтобы пропажа была видна, а не превращалась в пустую строку.
+ * Режим языка по умолчанию — `auto` (`DEFAULT_LOCALE_MODE`): интерфейс следует
+ * за языком OpenCode. Русский остаётся резервной локалью (`DEFAULT_LOCALE`),
+ * если язык хоста неизвестен: если ключа нет в текущей локали, берётся русский
+ * вариант; если нет и там — возвращается сам ключ, чтобы пропажа была видна,
+ * а не превращалась в пустую строку.
  *
  * Локаль процесса меняется через `setLocale()` — без перезапуска плагина.
  */
@@ -36,6 +38,12 @@ export type LocaleMode = "auto" | Locale;
 
 /** Значение режима «следовать за OpenCode». */
 export const LOCALE_AUTO = "auto" as const;
+
+/**
+ * Режим по умолчанию: как в OpenCode — следовать за языком интерфейса.
+ * Явный выбор пользователя (`ru`/`en`/`zh`) сохраняется как есть.
+ */
+export const DEFAULT_LOCALE_MODE: LocaleMode = LOCALE_AUTO;
 
 /**
  * Каталог модуля: `src/` при запуске из исходников, `dist/` из сборки.
@@ -122,7 +130,7 @@ export function normalizeLocale(
 /** Приводит значение к режиму локали: `auto` или поддерживаемая локаль. */
 export function normalizeLocaleMode(
   value: unknown,
-  fallback: LocaleMode = DEFAULT_LOCALE,
+  fallback: LocaleMode = DEFAULT_LOCALE_MODE,
 ): LocaleMode {
   if (value === LOCALE_AUTO) return LOCALE_AUTO;
   if (typeof value === "string") {
