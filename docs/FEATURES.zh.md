@@ -238,18 +238,18 @@ Worktree 位于 `PLUGIN_DIR/worktrees`，旁边的 `.json` sidecar 用于清理�
 运行的 worktree。worktree 不隔离网络、API 或数据库访问，Quality Gate 仍以你的
 用户权限运行。
 
-### Guard-условия (W-3)
+### Guard 条件（W-3）
 
-У задачи можно задать `guards` — условия, которые должны выполниться перед запуском:
-шелл-`command` (exit 0 — пройден, ненулевой — пропуск, `timeoutSeconds` 1..3600)
-и/или `semantic`-условия — `filesExist`/`filesMissing` (относительные пути,
-разрешаются внутри worktree или cwd), `branch` (glob) и `changedPaths` (glob;
-хотя бы один путь в diff `changedSince..HEAD`, по умолчанию `HEAD~1`). Все
-условия объединяются как «и»: если какая-то проверка не пройдена или ошиблась —
-запуск пропущен грчески (exit 0, статус `skipped` уйдёт в W-4). Проверки выполняются
-уже после создания worktree, поэтому при комбинации с `worktree: true` они работают
-внутри него; хелпер `guard-run.js` и модули `src/core/guard-run.ts` /
-`src/core/guard.ts` реализуют нормализацию, оценку и конвенцию exit code (4 — пропуск).
+可以为任务设置 `guards` — 运行前必须满足的条件：可选的 shell `command`
+（exit 0 表示通过，非 0 表示跳过，`timeoutSeconds` 1..3600）和/或 `semantic`
+条件 — `filesExist` / `filesMissing`（相对路径，在 worktree 或 cwd 内解析）、
+`branch`（glob）和 `changedPaths`（glob；`changedSince..HEAD` 的 diff 中至少
+匹配一个路径，默认 `HEAD~1`）。所有条件按「与」组合：任一检查失败或出错时，
+运行会被优雅跳过，并在历史记录和 GUI 中显示为可见的 `skipped` 状态
+（`record-history --skip`；不发送通知、不触发成功/错误链）。检查在创建
+worktree 之后执行，因此与 `worktree: true` 组合时它们在新 worktree 内运行；
+`guard-run.js` 帮助程序位于 `src/core/guard-run.ts`，`src/core/guard.ts`
+提供规范化、求值和退出码约定（4 = 跳过）。
 
 ## 编排
 

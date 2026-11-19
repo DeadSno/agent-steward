@@ -1218,6 +1218,9 @@ export async function writeWrapperCmd(
   if (guards) {
     const guardHelper = (guardHelperFile ?? "").replace(/[\r\n"]+/g, "").trim();
     const guardB64 = Buffer.from(JSON.stringify(guards), "utf8").toString("base64");
+    const skipTaskName = taskName.replace(/[\r\n"]+/g, "").trim();
+    const skipRecorder = (recorderFile ?? "").replace(/[\r\n"]+/g, "").trim();
+    const skipReasonB64 = Buffer.from("guard conditions not met", "utf8").toString("base64");
     const guardLog = logFile?.trim() ? `1>> "${logFile.trim()}" 2>&1` : "";
     const guardLogAppend = logFile?.trim() ? `>> "${logFile.trim()}" 2>&1` : "";
     const pushWorktreeCleanup = () => {
@@ -1231,6 +1234,13 @@ export async function writeWrapperCmd(
     lines.push('set "AGENT_STEWARD_GUARD_STATUS=%errorlevel%"');
     lines.push('if "%AGENT_STEWARD_GUARD_STATUS%"=="4" (');
     lines.push(`  echo [agent-steward] guard: run skipped ${guardLogAppend}`);
+    // W-4: пишем skipped в историю/метрики. Причина фиксированная (в базе),
+    // подробности guard-проверки остаются в логе задачи.
+    if (skipRecorder) {
+      lines.push(
+        `  node "${skipRecorder}" --skip "${skipTaskName}" "${skipReasonB64}" ${guardLogAppend}`,
+      );
+    }
     pushWorktreeCleanup();
     lines.push("  exit /b 0");
     lines.push(")");

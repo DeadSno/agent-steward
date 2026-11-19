@@ -286,8 +286,9 @@ Set `guards` on a task to require conditions before it runs: an optional shell
 `semantic` conditions — `filesExist` / `filesMissing` (relative paths, resolved
 inside the worktree or cwd), `branch` (glob), and `changedPaths` (glob, at least
 one path in the diff of `changedSince..HEAD`, default `HEAD~1`). All conditions
-are ANDed: when any check fails or errors, the run is skipped gracefully (exit 0
-in W-3; a visible `skipped` status comes in W-4). Guards are evaluated after the
+are ANDed: when any check fails or errors, the run is skipped gracefully with a
+visible `skipped` status in history and the GUI (`record-history --skip`, no
+notification and no success/error chain). Guards are evaluated after the
 worktree is created, so they run inside the fresh worktree when combined with
 `worktree: true`; the `guard-run.js` helper lives in `src/core/guard-run.ts` and
 `src/core/guard.ts` provides normalization, evaluation and the exit-code

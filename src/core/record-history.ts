@@ -16,7 +16,7 @@ import {
   finalizeMatrixIfComplete,
 } from "./matrix.js";
 
-type Status = "success" | "error" | "timeout";
+type Status = "success" | "error" | "timeout" | "skipped";
 
 /** Префикс ключа настроек со счётчиком повторов конкретной задачи. */
 const RETRY_STATE_PREFIX = "retry_state:";
@@ -334,6 +334,50 @@ async function main() {
     return;
   }
 
+  /**
+   * W-4: режим пропуска — node record-history.js --skip "<task>" "<reasonB64>" "<logFile>" [durationMs]
+   * Вызывается обёртками при срабатывании guard (код 4). Причина передаётся
+   * base64, чтобы не подставлять произвольный текст в командную строку. Пропуск
+   * попадает в историю и total-метрику, но не считается ошибкой, не шлёт
+   * уведомление, не запускает цепочки/повторы и не запускает DAG.
+   */
+  if (first === "--skip") {
+    const taskName = second;
+    if (!taskName) process.exit(1);
+    let reason = "guard conditions not met";
+    if (third) {
+      try {
+        const decoded = Buffer.from(third, "base64").toString("utf8").trim();
+        if (decoded) reason = decoded;
+      } catch {
+        // Битая base64 — оставляем причину по умолчанию.
+      }
+    }
+    const durationMs = Math.max(0, Number(fifth) || 0);
+    const finishedAt = new Date().toISOString();
+    const startedAt = new Date(Date.now() - durationMs).toISOString();
+    const definition = getTask(taskName);
+    recordRun(
+      taskName,
+      "skipped",
+      startedAt,
+      durationMs,
+      reason,
+      null,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      finishedAt,
+      definition?.workspaceId ?? null,
+      definition?.allowedTools ?? null,
+      definition?.deniedTools ?? null,
+    );
+    await handleCompletion(taskName, "skipped", null, reason, durationMs);
+    return;
+  }
+
   const parseOptionalNumber = (value?: string): number | undefined => {
     if (!value || value === "-") return undefined;
     const num = Number(value);
@@ -411,13 +455,15 @@ async function main() {
     const preFlightStatus = parseHookStatus(tenth);
     const postFlightStatus = parseHookStatus(eleventh);
     const st: Status =
-      status === "success" ? "success" : status === "timeout" ? "timeout" : "error";
+      status === "success" ? "success" : status === "timeout" ? "timeout" : status === "skipped" ? "skipped" : "error";
 
     const definition = getTask(taskName);
     const chainTarget =
       st === "success"
         ? definition?.nextTaskOnSuccess || null
-        : definition?.nextTaskOnError || null;
+        : st === "skipped"
+          ? null
+          : definition?.nextTaskOnError || null;
 
     const completed = finishRun(
       runId,
@@ -480,13 +526,15 @@ async function main() {
   const postFlightStatus = parseHookStatus(tenth);
 
   const st: Status =
-    status === "success" ? "success" : status === "timeout" ? "timeout" : "error";
+    status === "success" ? "success" : status === "timeout" ? "timeout" : status === "skipped" ? "skipped" : "error";
 
   const definition = getTask(taskName);
   const chainTarget =
     st === "success"
       ? definition?.nextTaskOnSuccess || null
-      : definition?.nextTaskOnError || null;
+      : st === "skipped"
+        ? null
+        : definition?.nextTaskOnError || null;
 
   recordRun(
     taskName,
@@ -568,10 +616,13 @@ async function handleCompletion(
   costUsd?: number | null,
 ): Promise<void> {
   // Уведомление о завершении (webhook). Ошибки отправки логируются внутри
-  // и не влияют на историю, цепочки и повторы.
-  await notifyTaskCompletion(taskName, st, durationMs, error, tokens, costUsd, {
-    asyncTriage: true,
-  });
+  // и не влияют на историю, цепочки и повторы. Пропуск guard не уведомляем:
+  // для него нет отдельного шаблона, а шум в уведомлениях не нужен.
+  if (st !== "skipped") {
+    await notifyTaskCompletion(taskName, st, durationMs, error, tokens, costUsd, {
+      asyncTriage: true,
+    });
+  }
 
   // P2-27: Windows не удаляет ONCE-задачи сам, а флаг schtasks `/z` на
   // практике ломает создание задачи («task XML ... EndBoundary»).
@@ -625,9 +676,10 @@ async function handleCompletion(
         }`,
       );
     }
-  } else {
+  } else if (st !== "skipped") {
     // Сначала пытаемся повторить саму задачу; компенсирующая задача запускается
     // только когда повторы исчерпаны (или не настроены).
+    // Пропуск guard — не ошибка: повторы и компенсации не запускаются.
     const retryScheduled = await scheduleRetry(taskName);
     if (!retryScheduled && chainTarget) {
       const started = await triggerTask(chainTarget);

@@ -37,11 +37,6 @@ agent-steward — execution engine с опциональной регистра�
 
 # 3. Остальные задачи (не бэклог и не архитектура)
 
-## Деталь 3.2 — Worktree-изоляция
-`src/core/worktree*`
-
-(закрыто: W-3, W-4 — остатки см. CHANGELOG)
-
 ## Деталь 3.3 — Экономика v2
 `src/core/budget*`, `src/analytics*`
 

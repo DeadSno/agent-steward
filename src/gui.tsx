@@ -29,7 +29,7 @@ const applyLocale = (locale: unknown): void => {
 }
 
 /** Статус задачи для отображения в GUI. */
-type JobStatus = "running" | "success" | "error" | "partial" | "idle" | "unknown"
+type JobStatus = "running" | "success" | "error" | "partial" | "skipped" | "idle" | "unknown"
 
 /** Per-workspace переопределения клона (Спринт 17). */
 interface MatrixOverrideFields {
@@ -318,6 +318,7 @@ function statusColor(status: JobStatus): string {
     case "success": return "#34c759"
     case "error": return "#ff3b30"
     case "partial": return "#ff9f0a"
+    case "skipped": return "#5ac8fa"
     default: return "#8e8e93"
   }
 }
@@ -2777,6 +2778,8 @@ export default Plugin.define({
                   ? gt("gui.jobStatus.error")
                   : job.status === "partial"
                   ? gt("gui.jobStatus.partial")
+                  : job.status === "skipped"
+                  ? gt("gui.jobStatus.skipped")
                   : job.status === "idle"
                   ? gt("gui.jobStatus.never")
                   : gt("gui.jobStatus.unknown")}
@@ -2898,8 +2901,8 @@ export default Plugin.define({
               history().map((r) => (
                 <div key={r.startedAt + r.durationMs} style="display:flex;align-items:flex-start;gap:10px;font-size:12px;color:#e0e0e0;padding:4px 0;border-bottom:1px solid #333">
                   <span style="color:#8e8e93;white-space:nowrap">{new Date(r.startedAt).toLocaleString()}</span>
-                  <span style={{color: r.status === "success" ? "#34c759" : "#ff3b30", fontWeight: 600, whiteSpace: "nowrap"}}>
-                    {r.status === "success" ? gt("gui.history.success") : gt("gui.history.error")}
+                  <span style={{color: r.status === "success" ? "#34c759" : r.status === "skipped" ? "#5ac8fa" : "#ff3b30", fontWeight: 600, whiteSpace: "nowrap"}}>
+                    {r.status === "success" ? gt("gui.history.success") : r.status === "skipped" ? gt("gui.history.skipped") : gt("gui.history.error")}
                   </span>
                   <span style="color:#b0b0b0;white-space:nowrap">{gt("gui.history.durationMs", { ms: r.durationMs })}</span>
                   {r.model && (

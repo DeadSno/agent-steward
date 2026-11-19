@@ -57,8 +57,8 @@ export function incrementMetricsUnsafe(
   tokens = 0,
   costUsd = 0,
 ): void {
-  // error — только ошибки и таймауты; partial хранится отдельным счётчиком,
-  // иначе дашборд показывал частичный запуск как обычную ошибку.
+  // error — только ошибки и таймауты; partial и skipped хранятся отдельно
+  // (skipped увеличивает только total: запуск не расходовал токены и не завершился).
   const success = status === "success" ? 1 : 0;
   const partial = status === "partial" ? 1 : 0;
   const error = status === "error" || status === "timeout" ? 1 : 0;
