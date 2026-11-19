@@ -40,13 +40,7 @@ agent-steward — execution engine с опциональной регистра�
 ## Деталь 3.2 — Worktree-изоляция
 `src/core/worktree*`
 
-**Задача W-3 — Guard-условия** · P2 · ⬜
-- [ ] W-3.1 Shell-guard
-- [ ] W-3.2 Семантический guard
-
-**Задача W-4 — Статус `skipped`** · P2 · ⬜
-- [ ] W-4.1 Статус для пропущенных guard'ами
-- [ ] W-4.2 Отображение в GUI/истории
+(закрыто: W-3, W-4 — остатки см. CHANGELOG)
 
 ## Деталь 3.3 — Экономика v2
 `src/core/budget*`, `src/analytics*`

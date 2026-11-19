@@ -76,6 +76,7 @@ export function pipelineSpecToTasks(
       ...(step.qualityGate !== undefined ? { qualityGate: step.qualityGate } : {}),
       ...(step.beforeScript !== undefined ? { beforeScript: step.beforeScript } : {}),
       ...(step.afterScript !== undefined ? { afterScript: step.afterScript } : {}),
+      ...(step.guards !== undefined ? { guards: step.guards } : {}),
       ...(step.model !== undefined || defaults.model !== undefined
         ? { model: step.model ?? defaults.model }
         : {}),
@@ -213,6 +214,7 @@ export function tasksToPipelineSpec(
       ...(task.qualityGate !== undefined ? { qualityGate: task.qualityGate } : {}),
       ...(task.beforeScript !== undefined ? { beforeScript: task.beforeScript } : {}),
       ...(task.afterScript !== undefined ? { afterScript: task.afterScript } : {}),
+      ...(task.guards !== undefined ? { guards: task.guards } : {}),
       ...(task.allowedTools !== undefined ? { allowedTools: task.allowedTools } : {}),
       ...(task.deniedTools !== undefined ? { deniedTools: task.deniedTools } : {}),
       ...(task.matrix

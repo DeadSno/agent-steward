@@ -238,6 +238,19 @@ Worktree 位于 `PLUGIN_DIR/worktrees`，旁边的 `.json` sidecar 用于清理�
 运行的 worktree。worktree 不隔离网络、API 或数据库访问，Quality Gate 仍以你的
 用户权限运行。
 
+### Guard-условия (W-3)
+
+У задачи можно задать `guards` — условия, которые должны выполниться перед запуском:
+шелл-`command` (exit 0 — пройден, ненулевой — пропуск, `timeoutSeconds` 1..3600)
+и/или `semantic`-условия — `filesExist`/`filesMissing` (относительные пути,
+разрешаются внутри worktree или cwd), `branch` (glob) и `changedPaths` (glob;
+хотя бы один путь в diff `changedSince..HEAD`, по умолчанию `HEAD~1`). Все
+условия объединяются как «и»: если какая-то проверка не пройдена или ошиблась —
+запуск пропущен грчески (exit 0, статус `skipped` уйдёт в W-4). Проверки выполняются
+уже после создания worktree, поэтому при комбинации с `worktree: true` они работают
+внутри него; хелпер `guard-run.js` и модули `src/core/guard-run.ts` /
+`src/core/guard.ts` реализуют нормализацию, оценку и конвенцию exit code (4 — пропуск).
+
 ## 编排
 
 ### 链式调度

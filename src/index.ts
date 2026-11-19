@@ -41,6 +41,7 @@ import { SCHEDULER_SKILL_ID, loadSchedulerSkill } from "./skill.js";
 import { getTaskLogs } from "./core/scheduler/logs.js";
 import { findSanitizedNameConflict, sanitizedConflictMessage } from "./core/task-name.js";
 import { writeBashWrapper } from "./core/wrappers/bash.js";
+import { normalizeTaskGuards, type TaskGuards } from "./core/guard.js";
 import { simulatePipeline } from "./core/dry-run.js";
 import {
   aggregateMatrixResults,
@@ -239,6 +240,23 @@ const worktreeHelperPath = (() => {
   return distPath;
 })();
 
+/**
+ * W-3: путь к CLI-помощнику guard-условий (dist/core/guard-run.js).
+ */
+const guardHelperPath = (() => {
+  const resolved = require.resolve("./core/guard-run.js");
+  if (!resolved.endsWith(".ts")) return resolved;
+  const distPath = resolved
+    .replace(/([\\/])src([\\/])/, "$1dist$2")
+    .replace(/\.ts$/, ".js");
+  if (existsSync(distPath)) return distPath;
+  console.warn(
+    "[agent-steward] Не найден собранный guard-run.js: " +
+      `${distPath}. Guard-условия не будут проверяться. Выполните npm run build.`,
+  );
+  return distPath;
+})();
+
 /** Бэкенд планировщика текущей ОС (schtasks / crontab / launchd). */
 const scheduler = getSchedulerBackend();
 
@@ -293,6 +311,40 @@ export const matrixSchema = z.object({
       "Per-workspace overrides keyed by workspace id. Keys must be present in workspaceIds.",
     ),
 });
+
+/** W-3: guard-условия задачи. */
+export const guardsSchema = z.object({
+  command: z
+    .string()
+    .max(4000)
+    .optional()
+    .describe("Shell command evaluated before the run. Exit 0 runs the task; any other code skips it."),
+  timeoutSeconds: z
+    .number()
+    .int()
+    .min(1)
+    .max(3600)
+    .optional()
+    .describe("Shell guard timeout in seconds (default 60)."),
+  semantic: z
+    .object({
+      filesExist: z.array(z.string()).max(200).optional().describe("Paths that must exist."),
+      filesMissing: z.array(z.string()).max(200).optional().describe("Paths that must not exist."),
+      branch: z.string().max(200).optional().describe("Glob for the current git branch, e.g. feature/*."),
+      changedPaths: z
+        .array(z.string())
+        .max(200)
+        .optional()
+        .describe("Globs of changed paths; at least one must match."),
+      changedSince: z
+        .string()
+        .max(100)
+        .optional()
+        .describe("Git ref to diff against (default HEAD~1)."),
+    })
+    .optional()
+    .describe("Semantic pre-run checks inside the working directory."),
+}).describe("W-3: guard conditions. If a check fails, the run is skipped before opencode starts.");
 
 /** Zod-схема аргументов schedule_task */
 export const scheduleTaskSchema = z.object({
@@ -519,6 +571,11 @@ export const scheduleTaskSchema = z.object({
     .describe(
       "W-1: run each tick in a one-off git worktree created from HEAD of workingDirectory. Keeps fan-out runs isolated from each other and from the main checkout. Requires a git repository; creation failure fails the run closed. Default false.",
     ),
+  guards: guardsSchema
+    .optional()
+    .describe(
+      "W-3: pre-run guard conditions. If a semantic check or shell command fails, the run is skipped (no opencode, no side effects). Combined with worktree: checks run inside the fresh worktree.",
+    ),
   matrix: matrixSchema
     .optional()
     .describe(
@@ -739,6 +796,9 @@ export const updateTaskSchema = z.object({
     .describe(
       "W-1: run each tick in a one-off git worktree created from HEAD of workingDirectory. Default false.",
     ),
+  guards: guardsSchema
+    .optional()
+    .describe("W-3: pre-run guard conditions; a failed check skips the run."),
   matrix: matrixSchema
     .nullable()
     .optional()
@@ -1338,6 +1398,7 @@ const scheduleTaskExecute = wrapExecute<ScheduleArgs>(async (args) => {
     runWhenLoggedOff,
     legacyShell,
     worktree,
+    guards,
   } = args;
 
   let effectiveRunAt: string | undefined;
@@ -1407,6 +1468,7 @@ const scheduleTaskExecute = wrapExecute<ScheduleArgs>(async (args) => {
       undefined,
       legacyShell === true,
       worktree === true,
+      guards,
     );
   } catch (err: any) {
     return {
@@ -1474,6 +1536,7 @@ const scheduleTaskExecute = wrapExecute<ScheduleArgs>(async (args) => {
         workspaceName: workspace?.name ?? null,
         matrix: matrix ?? null,
         worktree: worktree === true,
+        guards: guards ?? null,
       },
     }),
   };
@@ -1588,6 +1651,7 @@ async function cancelMatrixRun(
         clone.paused,
         clone.legacyShell,
         clone.worktree,
+        clone.guards,
       );
     } catch (err: any) {
       warnings.push(
@@ -2101,6 +2165,7 @@ async function updateTaskFromInput(
       wasPaused,
       input.legacyShell ?? previous.legacyShell,
       input.worktree ?? previous.worktree,
+      input.guards ?? previous.guards,
     );
 
     // Матрица отключена при обновлении — убираем клонов и агрегатор.
@@ -2652,6 +2717,7 @@ const pipelineApplyExecute = wrapExecute<PipelineApplyArgs>(async (args) => {
           task.paused ?? false,
           task.legacyShell ?? false,
           task.worktree ?? false,
+          task.guards,
         );
         await saveTaskDefinition(task);
         created++;
@@ -2708,6 +2774,7 @@ const pipelineApplyExecute = wrapExecute<PipelineApplyArgs>(async (args) => {
           item.task.paused ?? false,
           item.task.legacyShell ?? false,
           item.task.worktree ?? false,
+          item.task.guards,
         );
         await saveTaskDefinition(item.task);
         updated++;
@@ -3359,6 +3426,7 @@ const transferTasksExecute = wrapExecute<TransferArgs>(async (args) => {
         def.paused,
         def.legacyShell,
         def.worktree,
+        def.guards,
       );
       await saveTaskDefinition(def);
       imported.push(def.name);
@@ -4571,6 +4639,7 @@ const v2Plugin = Plugin.define({
           runWhenLoggedOff,
           legacyShell,
           worktree,
+          guards,
         } = input as {
           name: string;
           schedule?: string;
@@ -4603,6 +4672,7 @@ const v2Plugin = Plugin.define({
           runWhenLoggedOff?: boolean;
           legacyShell?: boolean;
           worktree?: boolean;
+          guards?: TaskGuards;
         };
         let effectiveRunAt: string | undefined;
         if (triggerType === "once") {
@@ -4667,6 +4737,7 @@ const v2Plugin = Plugin.define({
             undefined,
             legacyShell === true,
             worktree === true,
+            guards,
           );
           const nextRun = computeTaskNextRun({
             schedule: schedule ?? "",
@@ -5670,6 +5741,7 @@ const v2Plugin = Plugin.define({
                 def.paused === true,
                 def.legacyShell === true,
                 def.worktree === true,
+                def.guards,
               );
               await saveTaskDefinition(def);
               imported.push(def.name);
@@ -5955,6 +6027,8 @@ export async function schedulerCreateTask(
   legacyShell?: boolean,
   /** W-1: одноразовый git worktree на каждый запуск. */
   worktree?: boolean,
+  /** W-3: guard-условия перед запуском opencode. */
+  guards?: TaskGuards,
 ): Promise<void> {
   // Спринт 27.5 (hotfix 1.5.1): проверяем имя до создания wrapper/prompt и записи
   // в БД. Недопустимые символы отклоняются с понятным сообщением, а не ошибкой
@@ -6022,6 +6096,11 @@ export async function schedulerCreateTask(
   const normalizedPaused = paused === true ? true : undefined;
   // W-1: изоляция запуска в одноразовом git worktree.
   const normalizedWorktree = worktree === true ? true : undefined;
+  // W-3: guard-условия. Ошибка нормализации — явная ошибка создания задачи,
+  // чтобы опечатка в конфигурации не превратилась в молчаливый пропуск.
+  const guardsResult = normalizeTaskGuards(guards);
+  if (!guardsResult.ok) throw new Error(guardsResult.error);
+  const normalizedGuards = guardsResult.guards;
   // Спринт 27: дни недели, политика окна и glob/git-фильтры.
   const normalizeGlobList = (raw?: string[]): string[] | undefined => {
     if (!Array.isArray(raw)) return undefined;
@@ -6414,6 +6493,8 @@ export async function schedulerCreateTask(
         sessionFile,
         normalizedWorktree,
         worktreeHelperPath,
+        normalizedGuards,
+        guardHelperPath,
       );
     } else {
       wrapperPath = await writeBashWrapper({
@@ -6441,6 +6522,8 @@ export async function schedulerCreateTask(
         sessionFile,
         worktree: normalizedWorktree,
         worktreeHelper: worktreeHelperPath,
+        guards: normalizedGuards,
+        guardHelper: guardHelperPath,
         ...(effectiveTriggerType === "once" && scheduler.platform === "darwin"
           ? { oneShotCleanupCommand: buildLaunchdOneShotCleanup(sanitized, getProfileName()) }
           : {}),
@@ -6588,6 +6671,7 @@ export async function schedulerCreateTask(
     deniedTools: normalizedDeniedTools,
     legacyShell: legacyShell === true ? true : undefined,
     worktree: normalizedWorktree,
+    guards: normalizedGuards,
     matrix: normalizedMatrix,
     isMatrixParent: normalizedMatrix ? true : undefined,
     matrixParentId,
@@ -6671,6 +6755,7 @@ export async function schedulerCreateTask(
         clone.paused,
         clone.legacyShell,
         clone.worktree,
+        clone.guards,
       );
     };
 
@@ -6885,6 +6970,7 @@ async function recreateTaskFromDefinition(definition: TaskDefinition): Promise<v
     paused,
     definition.legacyShell,
     definition.worktree,
+    definition.guards,
   );
 }
 

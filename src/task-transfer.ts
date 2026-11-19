@@ -14,6 +14,7 @@ import {
   validateLaunchWindow,
 } from "./core/schedule-v2.js";
 import { isValidSessionId } from "./core/session.js";
+import { normalizeTaskGuards, type TaskGuards } from "./core/guard.js";
 
 /** Триггер задачи по событию из MCP-шины. */
 export interface McpEventTrigger {
@@ -163,6 +164,8 @@ export interface TaskDefinition {
    * рабочей директории. По умолчанию выключено. Требует git-репозиторий.
    */
   worktree?: boolean;
+  /** W-3: guard-условия перед запуском (semantic-проверки и shell-команда). */
+  guards?: TaskGuards;
   /** Настройки fan-out матрицы (родитель). */
   matrix?: MatrixConfig;
   /** Для клона матрицы — имя родительской задачи-шаблона. */
@@ -412,6 +415,8 @@ export async function buildExportJson(
       ...(definition?.runWhenLoggedOff === true ? { runWhenLoggedOff: true } : {}),
       // W-1: изоляция запуска в одноразовом git worktree.
       ...(definition?.worktree === true ? { worktree: true } : {}),
+      // W-3: guard-условия переживают перенос между профилями.
+      ...(definition?.guards ? { guards: definition.guards } : {}),
       ...(Array.isArray(definition?.allowedTools) && definition.allowedTools.length > 0
         ? { allowedTools: definition.allowedTools }
         : {}),
@@ -737,6 +742,13 @@ export function parseImportJson(raw: string): ParsedImport {
     const runWhenLoggedOffFlag = source.runWhenLoggedOff === true;
     // W-1: одноразовый git worktree; только явный `true`.
     const worktreeFlag = source.worktree === true;
+    // W-3: guard-условия. Ошибка нормализации попадает в общий список ошибок
+    // импорта; валидная конфигурация переносится вместе с задачей.
+    const guardsResult = normalizeTaskGuards(source.guards);
+    if (!guardsResult.ok) {
+      errors.push(`Запись ${position}${name ? ` (${name})` : ""}: ${guardsResult.error}`);
+    }
+    const guards = guardsResult.ok ? guardsResult.guards : undefined;
 
     // Ограничения инструментов (Спринт 14): массив непустых строк без дублей.
     // Пустой allowedTools отклоняется с явной ошибкой (избегаем «запрещено всё»).
@@ -952,6 +964,7 @@ export function parseImportJson(raw: string): ParsedImport {
       // Спринт 27.5.10: сохраняем режим входа при переносе задачи.
       ...(runWhenLoggedOffFlag ? { runWhenLoggedOff: true } : {}),
       ...(worktreeFlag ? { worktree: true } : {}),
+      ...(guards ? { guards } : {}),
       ...(mcpEvent ? { mcpEvent } : {}),
       ...(allowedTools !== undefined ? { allowedTools } : {}),
       ...(deniedTools !== undefined ? { deniedTools } : {}),

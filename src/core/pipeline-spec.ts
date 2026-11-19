@@ -14,6 +14,7 @@ import {
   validateLaunchWindow,
 } from "./schedule-v2.js";
 import { validateModelId, validateTaskName } from "../types.js";
+import { normalizeTaskGuards, type TaskGuards } from "./guard.js";
 
 /** Версия формата, которую понимает этот модуль. */
 export const PIPELINE_VERSION = 1;
@@ -93,6 +94,8 @@ export interface PipelineStep {
   qualityGate?: string;
   beforeScript?: string;
   afterScript?: string;
+  /** W-3: guard-условия шага; при невыполнении запуск пропускается. */
+  guards?: TaskGuards;
   allowedTools?: string[];
   deniedTools?: string[];
   matrix?: PipelineMatrix;
@@ -171,6 +174,7 @@ const STEP_KEYS = new Set([
   "qualityGate",
   "beforeScript",
   "afterScript",
+  "guards",
   "allowedTools",
   "deniedTools",
   "matrix",
@@ -433,6 +437,10 @@ export function validatePipelineSpec(input: unknown): PipelineValidationResult {
     validateOptionalString(raw.qualityGate, `${path}.qualityGate`, err);
     validateOptionalString(raw.beforeScript, `${path}.beforeScript`, err);
     validateOptionalString(raw.afterScript, `${path}.afterScript`, err);
+    if (raw.guards !== undefined) {
+      const guardsResult = normalizeTaskGuards(raw.guards);
+      if (!guardsResult.ok) err(`${path}.guards`, guardsResult.error);
+    }
     validateTools(raw.allowedTools, `${path}.allowedTools`, true, err);
     validateTools(raw.deniedTools, `${path}.deniedTools`, false, err);
 

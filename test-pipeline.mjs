@@ -481,6 +481,38 @@ function hasError(result, pathFragment, textFragment) {
   );
 }
 
+// 50. Guards (W-3): валидация, маппинг, export round-trip.
+{
+  const result = validatePipelineSpec(
+    pipeline([step("lint", { guards: { semantic: { filesExist: ["/abs"] } } })]),
+  );
+  check(
+    "guards: невалидные guards → ошибка по path steps[0].guards",
+    !result.ok && hasError(result, "steps[0].guards"),
+  );
+}
+
+{
+  const validGuards = {
+    command: "node ./scripts/check.mjs",
+    timeoutSeconds: 30,
+    semantic: { filesExist: ["src/a.ts"], changedSince: "HEAD~2" },
+  };
+  const spec = pipeline([step("lint", { guards: validGuards })]);
+  check("guards: валидные guards — ok без ошибок", validatePipelineSpec(spec).ok);
+  const { tasks } = pipelineSpecToTasks(spec);
+  check(
+    "guards: маппинг — guards попали в TaskDefinition",
+    JSON.stringify(tasks[0].guards) === JSON.stringify(validGuards),
+  );
+  const exported = tasksToPipelineSpec(tasks, spec.name);
+  check(
+    "guards: export round-trip сохраняет guards",
+    exported.spec.steps[0]?.guards?.command === "node ./scripts/check.mjs" &&
+      exported.spec.steps[0]?.guards?.semantic?.changedSince === "HEAD~2",
+  );
+}
+
 const failed = results.filter((entry) => !entry.ok);
 console.log(`\nPipeline spec: ${results.length - failed.length}/${results.length} проверок пройдено.`);
 if (failed.length > 0) {

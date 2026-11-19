@@ -65,6 +65,10 @@ risk R2 → allowedTools:  [read, edit, glob, grep]
 - Одноразовый worktree удаляется после прогона; остатки старше суток выметаются,
   sidecar без рабочей копии очищается, чужие каталоги и свежие запуски не трогаются.
 - Запрет push в защищённые ветки; лимит числа файлов и объёма diff.
+- Opt-in guards (W-3): shell-`command` и/или `semantic`-условия (`filesExist`/
+  `filesMissing`, `branch` glob, `changedPaths` в `changedSince..HEAD`); любая
+  ошибка или невыполненное условие — запуск пропущен (fail-closed), видимый
+  статус `skipped` — в W-4.
 - Egress только по явному allowlist; всё в аудит.
 - Destructive-команды запрещены без явного разрешения в контракте.
 

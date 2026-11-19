@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { PLUGIN_DIR, LOG_DIR, LOCK_DIR, WRAPPER_DIR, STALE_LOCK_MAX_AGE_MS, sanitizeName } from "../types.js";
 import type { ScheduleGateSpec } from "./schedule-v2.js";
+import type { TaskGuards } from "./guard.js";
 
 /**
  * Путь к единому generic-обёртке PowerShell, которая реализует запуск opencode run
@@ -1009,6 +1010,10 @@ export async function writeWrapperCmd(
   worktree?: boolean,
   /** Путь к dist/core/worktree-run.js (обязателен при worktree=true). */
   worktreeHelperFile?: string,
+  /** W-3: guard-условия перед запуском opencode. */
+  guards?: TaskGuards,
+  /** Путь к dist/core/guard-run.js (обязателен при guards). */
+  guardHelperFile?: string,
 ): Promise<string> {
   await fs.mkdir(WRAPPER_DIR, { recursive: true });
   const cmdPath = path.join(WRAPPER_DIR, `run-${sanitizedName}.cmd`);
@@ -1205,6 +1210,37 @@ export async function writeWrapperCmd(
     lines.push(")");
     lines.push('cd /d "%AGENT_STEWARD_WORKTREE%"');
     lines.push(`set "AGENT_STEWARD_WORKTREE_REPO=${wtRepo}"`);
+  }
+
+  // W-3 (0.0.6): guard-условия до запуска opencode. Код 4 — штатный skip,
+  // любой другой ненулевой код — ошибка проверки; в обоих случаях opencode
+  // не запускается. Созданный worktree сразу убираем, чтобы не оставлять мусор.
+  if (guards) {
+    const guardHelper = (guardHelperFile ?? "").replace(/[\r\n"]+/g, "").trim();
+    const guardB64 = Buffer.from(JSON.stringify(guards), "utf8").toString("base64");
+    const guardLog = logFile?.trim() ? `1>> "${logFile.trim()}" 2>&1` : "";
+    const guardLogAppend = logFile?.trim() ? `>> "${logFile.trim()}" 2>&1` : "";
+    const pushWorktreeCleanup = () => {
+      if (!worktree) return;
+      lines.push(`  cd /d "${wtRepo}"`);
+      lines.push(
+        `  node "${wtHelper}" cleanup --path "%AGENT_STEWARD_WORKTREE%" --repo "${wtRepo}" ${wtLogRedirect}`,
+      );
+    };
+    lines.push(`node "${guardHelper}" --cwd "%CD%" --guards-b64 "${guardB64}" ${guardLog}`);
+    lines.push('set "AGENT_STEWARD_GUARD_STATUS=%errorlevel%"');
+    lines.push('if "%AGENT_STEWARD_GUARD_STATUS%"=="4" (');
+    lines.push(`  echo [agent-steward] guard: run skipped ${guardLogAppend}`);
+    pushWorktreeCleanup();
+    lines.push("  exit /b 0");
+    lines.push(")");
+    lines.push('if not "%AGENT_STEWARD_GUARD_STATUS%"=="0" (');
+    lines.push(
+      `  echo [agent-steward] ERROR: guard failed with code %AGENT_STEWARD_GUARD_STATUS% ${guardLogAppend}`,
+    );
+    pushWorktreeCleanup();
+    lines.push("  exit /b 1");
+    lines.push(")");
   }
 
   lines.push(psArgs.join(" "));

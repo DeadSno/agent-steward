@@ -3,6 +3,7 @@ import path from "node:path";
 import { WRAPPER_DIR } from "../../types.js";
 import { shellQuote } from "../scheduler/posix.js";
 import type { ScheduleGateSpec } from "../schedule-v2.js";
+import type { TaskGuards } from "../guard.js";
 import {
   buildOpencodeConfig as buildPermissionsConfig,
   formatPolicyLog,
@@ -80,6 +81,10 @@ export interface BashWrapperOptions {
   worktree?: boolean;
   /** Путь к dist/core/worktree-run.js (обязателен при worktree=true). */
   worktreeHelper?: string;
+  /** W-3 (0.0.6): guard-условия перед запуском opencode. */
+  guards?: TaskGuards;
+  /** Путь к dist/core/guard-run.js (обязателен при guards). */
+  guardHelper?: string;
 }
 
 /**
@@ -143,6 +148,8 @@ export function buildBashWrapperScript(options: BashWrapperOptions): string {
     gateTimeoutSeconds,
     worktree,
     worktreeHelper,
+    guards,
+    guardHelper,
   } = options;
 
   const effectivePermissions = resolvePermissions({
@@ -166,6 +173,9 @@ export function buildBashWrapperScript(options: BashWrapperOptions): string {
     // W-1 (0.0.6): одноразовый git worktree на запуск.
     `WORKTREE_MODE=${worktree ? 1 : 0}`,
     `WORKTREE_HELPER=${shellQuote(worktreeHelper ?? "")}`,
+    // W-3 (0.0.6): guard-условия. Пустая строка = guard не настроен.
+    `GUARD_HELPER=${shellQuote(guardHelper ?? "")}`,
+    `GUARD_B64=${shellQuote(guards ? Buffer.from(JSON.stringify(guards), "utf8").toString("base64") : "")}`,
     `TIMEOUT_SECONDS=${Number.isFinite(timeoutSeconds) ? Math.max(0, Math.floor(timeoutSeconds)) : 3600}`,
     // Маркер сработавшего watchdog: по нему обёртка отличает таймаут от
     // обычного ненулевого кода возврата (SIGTERM/SIGKILL неотличимы от падения).
@@ -375,6 +385,21 @@ export function buildBashWrapperScript(options: BashWrapperOptions): string {
     '  export AGENT_STEWARD_WORKTREE_REPO="$WORKDIR"',
     '  log "[scheduler] Git worktree: $AGENT_STEWARD_WORKTREE"',
     '  cd "$AGENT_STEWARD_WORKTREE" || { log "[scheduler] Не удалось перейти в worktree $AGENT_STEWARD_WORKTREE"; exit 1; }',
+    "fi",
+    "",
+    "# W-3 (0.0.6): guard-условия до запуска opencode. Код 4 — штатный skip,",
+    "# ненулевой код — ошибка проверки. В обоих случаях opencode не запускается,",
+    "# а созданный worktree убирается через trap cleanup.",
+    'if [ -n "$GUARD_HELPER" ] && [ -n "$GUARD_B64" ]; then',
+    '  node "$GUARD_HELPER" --cwd "$PWD" --guards-b64 "$GUARD_B64" >> "$LOG_FILE" 2>&1',
+    "  GUARD_STATUS=$?",
+    '  if [ "$GUARD_STATUS" -eq 4 ]; then',
+    '    log "[scheduler] guard: run skipped (условия не выполнены)"',
+    "    exit 0",
+    '  elif [ "$GUARD_STATUS" -ne 0 ]; then',
+    '    log "[scheduler] ОШИБКА: guard helper завершился с кодом $GUARD_STATUS — запуск отменён."',
+    "    exit 1",
+    "  fi",
     "fi",
     "",
     "# Спринт 21: env-переменные workspace. Файл пишет плагин, значения не логируются.",

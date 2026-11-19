@@ -42,6 +42,7 @@ const SIGNATURE_FIELDS = [
   "qualityGate",
   "beforeScript",
   "afterScript",
+  "guards",
   "allowedTools",
   "deniedTools",
   "matrix",

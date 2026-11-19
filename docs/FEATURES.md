@@ -279,6 +279,20 @@ Cleanup only touches paths under the worktree root that have a sidecar and an
 deleted. A worktree does not isolate network, API or database access, and Quality
 Gates still run with your user privileges.
 
+### Guard conditions (W-3)
+
+Set `guards` on a task to require conditions before it runs: an optional shell
+`command` (exit 0 — пройден, non-zero — скип, `timeoutSeconds` 1..3600) and/or
+`semantic` conditions — `filesExist` / `filesMissing` (relative paths, resolved
+inside the worktree or cwd), `branch` (glob), and `changedPaths` (glob, at least
+one path in the diff of `changedSince..HEAD`, default `HEAD~1`). All conditions
+are ANDed: when any check fails or errors, the run is skipped gracefully (exit 0
+in W-3; a visible `skipped` status comes in W-4). Guards are evaluated after the
+worktree is created, so they run inside the fresh worktree when combined with
+`worktree: true`; the `guard-run.js` helper lives in `src/core/guard-run.ts` and
+`src/core/guard.ts` provides normalization, evaluation and the exit-code
+convention (4 = skip).
+
 ## Orchestration
 
 ### Chains
