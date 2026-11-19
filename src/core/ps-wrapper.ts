@@ -846,7 +846,12 @@ try {
     }
 
     if ($script:exitCode -ne 0) {
-        Write-Log "[agent-steward] Задача '$TaskName' завершилась с кодом $script:exitCode."
+        # Раньше пустое errorMessage превращалось в "-" в истории: причина
+        # падения терялась (например, при отказе модели до вывода в лог).
+        if (-not $script:errorMessage) {
+            $script:errorMessage = "Код возврата $($script:exitCode)"
+        }
+        Write-Log "[agent-steward] ОШИБКА: задача '$TaskName' завершилась с кодом $($script:exitCode). $script:errorMessage"
     } else {
         Write-Log "[agent-steward] Задача '$TaskName' успешно завершена."
     }

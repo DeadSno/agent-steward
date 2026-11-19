@@ -80,6 +80,40 @@ console.log("\n=== Health Score ===");
   check("components: errorRate >= 90", health.components.errorRate >= 90);
 }
 
+// roadmap-qa-01: реальные метрики должны быть реальными, а не score 0..100.
+{
+  const records = [
+    createRecord({ durationMs: 120000, status: "success" }),
+    createRecord({ durationMs: 180000, status: "success" }),
+  ];
+  const report = buildAnalytics(records, { days: 14 });
+  const health = calculateHealthScore(report);
+
+  check(
+    "components: avgDurationMs — реальные мс (150000)",
+    health.components.avgDurationMs === report.totals.avgDurationMs &&
+      health.components.avgDurationMs > 1000,
+  );
+  check(
+    "components: avgDurationMs не score (<=100)",
+    health.components.avgDurationMs > 100,
+  );
+  check(
+    "components: timeoutRate — доля 0..1",
+    health.components.timeoutRate >= 0 && health.components.timeoutRate <= 1,
+  );
+  check(
+    "components: crashRecoveryRate — доля 0..1",
+    health.components.crashRecoveryRate >= 0 && health.components.crashRecoveryRate <= 1,
+  );
+  check(
+    "components: сохранены нормализованные баллы",
+    typeof health.components.avgDurationScore === "number" &&
+      typeof health.components.timeoutScore === "number" &&
+      typeof health.components.crashRecoveryScore === "number",
+  );
+}
+
 // --- 2. Anomaly Detection ----------------------------------------------------
 
 console.log("\n=== Anomaly Detection ===");

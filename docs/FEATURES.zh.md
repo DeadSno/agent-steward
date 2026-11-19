@@ -210,6 +210,14 @@ read/edit/glob/grep/subagent/skill/webfetch/websearch 并拒绝 `shell` 和 `que
 `legacyShell: true` 会在 `hybrid` 下为从旧版本迁移来的作业重新启用 `shell`；
 `legacy` 是粗放的替代方案。
 
+> **自治任务与 `tool.blocked`：** 默认的 `hybrid` 策略会拒绝 agent 使用 `shell`
+> 和 `question`，因此无人值守任务若尝试运行 `git status`（或询问澄清问题），
+> 会在日志中留下 `tool.blocked` 且无法完成该步骤。这是有意设计——不要仅为消除
+> 它而全局把 `defaultPolicy` 改成 `legacy`。应当为该具体任务授予能力：把 `shell`
+> （确有需要时也包括 `question`）加入该任务的 `allowedTools`，为迁移作业使用
+> `legacyShell: true`，或把命令移入 `beforeScript` / `qualityGate` / `afterScript`
+> ——它们以你的用户权限运行，不受 agent 工具限制约束。推荐在脚本中执行 shell 命令。
+
 `allowedTools` 和 `deniedTools` 对任务包装器启动的 `opencode run` 进程
 强制生效。包装器通过 `OPENCODE_CONFIG_CONTENT` 把生成的 `permissions` 规则
 传给该进程；不会向任务工作目录写入任何文件，因此项目级
@@ -407,6 +415,19 @@ OTLP/JSON（`GET /api/history/export?format=otlp`）。
 参考云价格计价。该 KPI 标注为估算值，并链接到
 [docs/SAVINGS.md](SAVINGS.md) 的完整方法说明；`report.savings` 暴露
 `savedUsd`、`runs`、`tokens` 以及按任务的细分。
+
+每日/每周 **预算**（Economy v2）通过 `manage_settings`
+（`budgets: { enabled, dailyUsd, weeklyUsd }`，单位 USD；`0` 表示无限制）
+或 `get_settings`/`save_settings` RPC 方法配置。支出按当前 UTC 日 /
+UTC 周（周一开始）从已完成的历史记录中统计，使用与分析相同的成本规则；
+未完成的运行会被忽略。`get_analytics`（以及 `GET /api/analytics`）在
+`report.budgets` 中提供 `day`/`week` 用量（`spentUsd`、`runs`、`limitUsd`、
+`remainingUsd`、`ratio`、`exceeded`、`disabled`）以及总的 `exceeded` 标志。
+当启用某个限额并达到时，新运行会自动暂停：`run_task`、`run_mission`、
+`run_task_now` 以及 RPC/GUI、文件触发和 MCP 入口都会拒绝启动，并给出原因，
+直到下一个周期。运行被阻止时会向已配置的通知渠道（webhook/Telegram/原生通知）
+发送警报；相同原因的重复警报在 24 小时内会被抑制。预算默认 fail-open：
+禁用的分组和零限制永远不会阻止运行，且统计始终可见。
 
 ### Prometheus
 
@@ -694,8 +715,9 @@ GUI 面板）支持 `list`、`set` 和 `delete`。密钥名匹配
   和 `last` 覆盖常见场景；不支持按消息分叉/分支会话。
 - **没有沙箱。** 钩子、Quality Gate 和 prompt 都以你的用户权限运行。
 - **仪表板没有认证。** 设计上仅限 localhost。
-- **密钥不加密。** 请使用环境变量或外部密钥
-  管理器。
+- **密钥在静态存储时使用 AES-256-GCM 加密**，保存在 `<PLUGIN_DIR>/secrets.json`
+  （见 Secrets 一节）。密钥存放在 `secrets.key` 中；丢失后已存储的值无法恢复。
+  对于更高敏感度的密钥，建议使用环境变量或外部密钥管理器。
 - **`allowedTools` / `deniedTools` 限制的是 agent 进程，而不是整个作业。**
   钩子、Quality Gate 和包装器脚本仍以你的用户权限运行，而且项目级
   或系统级 `opencode.jsonc` 可以削弱任务范围的拒绝规则。见

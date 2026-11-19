@@ -16,6 +16,10 @@ import {
   type AnalyticsRecord,
   type ErrorAnalyticsRow,
 } from "./core/analytics.js";
+import {
+  formatBudgetAlertMessage,
+  type BudgetGateDecision,
+} from "./core/budget.js";
 import { getHistory } from "./db/history-repo.js";
 import { getDb, withTransaction } from "./db/index.js";
 import { sendTelegramMessage } from "./core/telegram.js";
@@ -476,6 +480,49 @@ async function deliverDetailed(
 async function deliver(config: NotificationSettings, message: string): Promise<boolean> {
   const results = await deliverDetailed(config, message);
   return results.some((item) => item.ok);
+}
+
+/** E-1.3: окно дедупа бюджетного алерта — не чаще одного раза в сутки. */
+const BUDGET_ALERT_WINDOW_MINUTES = 24 * 60;
+
+/**
+ * E-1.3: уведомление о превышении бюджета во все включённые каналы.
+ *
+ * Повторяющиеся алерты с той же причиной подавляются в течение 24 часов
+ * через общую таблицу `notification_dedup`. Ошибки доставки и БД только
+ * логируются: уведомление не должно ломать запуск задачи (fail-open).
+ *
+ * @returns true, если хотя бы один канал успешно доставил алерт.
+ */
+export async function notifyBudgetExceeded(
+  decision: BudgetGateDecision,
+): Promise<boolean> {
+  if (decision.allowed) return false;
+  try {
+    const settings = await loadSettings();
+    const config = settings.notifications;
+    if (!config?.enabled) return false;
+
+    const dedup: NotificationDedupSettings = {
+      enabled: true,
+      windowMinutes: BUDGET_ALERT_WINDOW_MINUTES,
+      suppressDuplicates: true,
+      importantStatuses: [],
+      maxCount: 1,
+    };
+    const db = getDb();
+    const key = dedupKey("budget", decision.reason);
+    const { isDuplicate } = withTransaction(() =>
+      dedupReadOrCreate(db, key, "budget", decision.reason, dedup),
+    );
+    if (isDuplicate) return false;
+
+    return await deliver(config, formatBudgetAlertMessage(decision));
+  } catch (err) {
+    const text = err instanceof Error ? err.message : String(err);
+    console.error(`[agent-steward] Бюджетный алерт не отправлен: ${text}`);
+    return false;
+  }
 }
 
 /**

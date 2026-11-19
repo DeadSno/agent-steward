@@ -8,6 +8,7 @@ import {
   normalizePolicy,
   type PermissionPolicy,
 } from "./core/permissions.js";
+import { defaultBudgetSettings, type BudgetSettings } from "./core/budget.js";
 
 /** Настройки webhook-уведомлений (Discord/Slack/generic). */
 export interface WebhookNotificationSettings {
@@ -384,6 +385,8 @@ export interface SchedulerSettings {
   audit: AuditSettings;
   /** Политика прав фоновых задач (Спринт 32). */
   permissions: PermissionSettings;
+  /** Бюджеты день/неделя (Экономика v2, E-1.1). */
+  budgets: BudgetSettings;
 }
 
 export const SETTINGS_FILE = path.join(PLUGIN_DIR, "settings.json");
@@ -414,6 +417,25 @@ export function defaultAuditSettings(): AuditSettings {
     enabled: true,
     retentionDays: DEFAULT_AUDIT_RETENTION_DAYS,
     maxRecords: DEFAULT_AUDIT_MAX_RECORDS,
+  };
+}
+
+/**
+ * Приводит бюджетные лимиты к безопасному виду (Экономика v2, E-1.1).
+ * Отрицательные и нечисловые значения откатываются к дефолту; 0 = без лимита.
+ */
+export function normalizeBudgetSettings(
+  value: unknown,
+  fallback: BudgetSettings,
+): BudgetSettings {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { ...fallback };
+  }
+  const raw = value as Partial<BudgetSettings>;
+  return {
+    enabled: typeof raw.enabled === "boolean" ? raw.enabled : fallback.enabled,
+    dailyUsd: normalizeFloatInRange(raw.dailyUsd, fallback.dailyUsd, 0, 1_000_000),
+    weeklyUsd: normalizeFloatInRange(raw.weeklyUsd, fallback.weeklyUsd, 0, 1_000_000),
   };
 }
 
@@ -1258,6 +1280,7 @@ export async function loadSettings(): Promise<SchedulerSettings> {
   const fallbackIntegrations = defaultIntegrations();
   const fallbackAudit = defaultAuditSettings();
   const fallbackPermissions = defaultPermissionsSettings();
+  const fallbackBudgets = defaultBudgetSettings();
   try {
     const raw = await fs.readFile(SETTINGS_FILE, "utf8");
     const parsed = JSON.parse(raw) as Partial<SchedulerSettings> | null;
@@ -1286,6 +1309,7 @@ export async function loadSettings(): Promise<SchedulerSettings> {
         parsed?.permissions,
         fallbackPermissions,
       ),
+      budgets: normalizeBudgetSettings(parsed?.budgets, fallbackBudgets),
     };
   } catch {
     return {
@@ -1298,6 +1322,7 @@ export async function loadSettings(): Promise<SchedulerSettings> {
       integrations: fallbackIntegrations,
       audit: fallbackAudit,
       permissions: fallbackPermissions,
+      budgets: fallbackBudgets,
     };
   }
 }
@@ -1344,6 +1369,10 @@ export async function saveSettings(
       patch.permissions !== undefined
         ? normalizePermissionsSettings(patch.permissions, current.permissions)
         : current.permissions,
+    budgets:
+      patch.budgets !== undefined
+        ? normalizeBudgetSettings(patch.budgets, current.budgets)
+        : current.budgets,
   };
 
   // Удобство: при включении хуков без явных учётных данных генерируем их,

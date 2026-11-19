@@ -247,6 +247,16 @@ read/edit/glob/grep/subagent/skill/webfetch/websearch and denies `shell` and `qu
 allowed everything. Task-level `legacyShell: true` re-enables `shell` under `hybrid` for
 jobs migrated from older versions; `legacy` is the blunt alternative.
 
+> **Autonomous tasks and `tool.blocked`:** with the default `hybrid` policy the agent
+> is denied `shell` and `question`, so an unattended task that tries to run `git status`
+> (or ask a clarifying question) will log `tool.blocked` and cannot complete that step.
+> This is intentional — do **not** switch `defaultPolicy` to `legacy` globally just to
+> silence it. Grant the capability to the specific task instead: add `shell`
+> (and/or `question`, if truly needed) to that task's `allowedTools`, use
+> `legacyShell: true` for migrated jobs, or move the command into `beforeScript` /
+> `qualityGate` / `afterScript`, which run with your user privileges and are not subject
+> to agent tool restrictions. `shell` commands inside scripts are the recommended path.
+
 `allowedTools` and `deniedTools` are enforced for the `opencode run` process that the
 task wrapper starts. The wrapper passes the generated `permissions` rules to the
 process through `OPENCODE_CONFIG_CONTENT`; no file is written to the task workdir, so a
@@ -454,6 +464,22 @@ a recorded cost (local models, prepaid plans) are priced against a reference clo
 rate of $0.01 / 1k tokens. The KPI is labelled as an estimate and links to
 [docs/SAVINGS.md](SAVINGS.md) with the full methodology; `report.savings` exposes
 `savedUsd`, `runs`, `tokens` and a per-task breakdown.
+
+Daily and weekly **budgets** (Economy v2) are configured through `manage_settings`
+(`budgets: { enabled, dailyUsd, weeklyUsd }`, USD; `0` means no limit) or the
+`get_settings`/`save_settings` RPC methods. Spending is accounted from finished
+history rows in the current UTC day / UTC week (Monday start) using the same
+cost rule as analytics; unfinished runs are ignored. `get_analytics` (and
+`GET /api/analytics`) expose `report.budgets` with `day`/`week` usage
+(`spentUsd`, `runs`, `limitUsd`, `remainingUsd`, `ratio`, `exceeded`, `disabled`)
+and a combined `exceeded` flag. When a limit is enabled and reached, new runs
+are paused automatically: `run_task`, `run_mission`, `run_task_now` and the
+RPC/GUI, file-trigger and MCP entry points all refuse to start until the next
+period, with a human-readable reason. An alert is sent to the configured
+notification channels (webhook/Telegram/native) when a run is blocked; repeated
+alerts with the same reason are suppressed for 24 hours. Budgets are fail-open:
+disabled groups and zero limits never block a run, and accounting stays visible
+regardless.
 
 ### Prometheus
 
@@ -750,8 +776,10 @@ and troubleshooting (including `OLLAMA_CONTEXT_LENGTH`) are documented in
   not supported.
 - **No sandbox.** Hooks, Quality Gates and prompts run with your user privileges.
 - **No authentication on the dashboard.** Localhost only by design.
-- **Secrets are not encrypted.** Use environment variables or an external secret
-  manager.
+- **Secrets are encrypted at rest with AES-256-GCM** in `<PLUGIN_DIR>/secrets.json`
+  (see the Secrets section). The key lives in `secrets.key`; losing it makes stored
+  values unrecoverable. For higher-sensitivity values, prefer environment variables
+  or an external secret manager.
 - **`allowedTools` / `deniedTools` restrict the agent process, not the whole job.**
   Hooks, Quality Gates and wrapper scripts still run with your user privileges, and a
   project-level or system `opencode.jsonc` can weaken task-scoped denies. See the

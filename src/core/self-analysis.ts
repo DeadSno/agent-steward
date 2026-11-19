@@ -24,13 +24,32 @@ export interface HealthScore {
   score: number;
   /** Описание уровня здоровья. */
   level: "excellent" | "good" | "fair" | "poor" | "critical";
-  /** Детальные метрики, из которых сложился балл. */
+  /**
+   * Детальные метрики, из которых сложился балл.
+   *
+   * ВАЖНО (QA 2026-11-19, roadmap-qa-01): successRate/errorRate — это
+   * НОРМАЛИЗОВАННЫЕ БАЛЛЫ 0..100 (чем выше, тем лучше; обратная совместимость
+   * с self_analysis tool), а avgDurationMs/timeoutRate/crashRecoveryRate —
+   * РЕАЛЬНЫЕ значения из отчёта (мс и доли 0..1),此前 сюда ошибочно писались
+   * score-значения, из-за чего avgDurationMs показывал 66 вместо 101597.
+   */
   components: {
+    /** Балл успешности 0..100 (нормализованный). */
     successRate: number;
+    /** Балл частоты ошибок 0..100 (нормализованный, чемAbove тем лучше). */
     errorRate: number;
+    /** Реальная средняя длительность запуска в мс. */
     avgDurationMs: number;
+    /** Реальная доля таймаутов 0..1. */
     timeoutRate: number;
+    /** Реальная доля прерванных (crash recovery) запусков 0..1. */
     crashRecoveryRate: number;
+    /** Балл длительности 0..100 (нормализованный, использовался в score). */
+    avgDurationScore: number;
+    /** Балл таймаутов 0..100 (нормализованный). */
+    timeoutScore: number;
+    /** Балл восстановления после сбоев 0..100 (нормализованный). */
+    crashRecoveryScore: number;
   };
   /** Рекомендации по улучшению. */
   recommendations: string[];
@@ -138,12 +157,21 @@ export interface SelfAnalysisOptions {
 export function calculateHealthScore(report: AnalyticsReport): HealthScore {
   const { totals, tasks, errors } = report;
 
-  // Компоненты здоровья (0-100)
+  // Реальные метрики (то, что видит пользователь в self_analysis).
+  const realAvgDurationMs = totals.avgDurationMs;
+  const realTimeoutRate =
+    errors.filter((e) => e.message.includes("timeout")).length /
+    Math.max(1, totals.total);
+  const realCrashRecoveryRate =
+    errors.filter((e) => e.message.includes("Прервано")).length /
+    Math.max(1, totals.total);
+
+  // Компоненты здоровья — нормализованные баллы 0..100 (обратная совместимость).
   const successRateScore = totals.successRate;
   const errorRateScore = Math.max(0, 100 - (totals.error / Math.max(1, totals.total)) * 100);
-  const avgDurationScore = Math.min(100, Math.max(0, 100 - (totals.avgDurationMs / 300000) * 100)); // 5 минут = 0 баллов
-  const timeoutRateScore = Math.min(100, Math.max(0, 100 - (errors.filter(e => e.message.includes("timeout")).length / Math.max(1, totals.total)) * 100));
-  const crashRecoveryRateScore = Math.min(100, Math.max(0, 100 - (errors.filter(e => e.message.includes("Прервано")).length / Math.max(1, totals.total)) * 100));
+  const avgDurationScore = Math.min(100, Math.max(0, 100 - (realAvgDurationMs / 300000) * 100)); // 5 минут = 0 баллов
+  const timeoutRateScore = Math.min(100, Math.max(0, 100 - realTimeoutRate * 100));
+  const crashRecoveryRateScore = Math.min(100, Math.max(0, 100 - realCrashRecoveryRate * 100));
 
   // Взвешенная сумма
   const score = Math.round(
@@ -186,9 +214,14 @@ export function calculateHealthScore(report: AnalyticsReport): HealthScore {
     components: {
       successRate: successRateScore,
       errorRate: errorRateScore,
-      avgDurationMs: avgDurationScore,
-      timeoutRate: timeoutRateScore,
-      crashRecoveryRate: crashRecoveryRateScore,
+      // Реальные значения (исправление roadmap-qa-01).
+      avgDurationMs: realAvgDurationMs,
+      timeoutRate: realTimeoutRate,
+      crashRecoveryRate: realCrashRecoveryRate,
+      // Нормализованные баллы (прежняя семантика этих трёх полей).
+      avgDurationScore,
+      timeoutScore: timeoutRateScore,
+      crashRecoveryScore: crashRecoveryRateScore,
     },
     recommendations,
   };

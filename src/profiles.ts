@@ -194,17 +194,83 @@ function profileMetaFile(name: string): string {
   return path.join(getProfileDir(name), "profile.json");
 }
 
+/**
+ * Порты, зарезервированные за профилем default: основной (PREFERRED_PORT
+ * в server.ts) и запасной. У default может не быть profile.json, поэтому
+ * в listProfiles() его порт — null, и раньше аллокатор выдавал 3782 второму
+ * профилю: два дашборда дрались за один порт.
+ */
+const DEFAULT_PROFILE_PORTS = new Set([3782, 4782]);
+const FIRST_PROFILE_PORT = 3783;
+const LAST_PORT = 65535;
+
+/**
+ * Свободный порт для профиля без вызова listProfiles()/readProfileMeta()
+ * (иначе рекурсия: allocateProfilePort -> listProfiles -> readProfileMeta).
+ * Сканирует profile.json всех профилей напрямую с файловой системы.
+ * Возвращает null, если свободных портов не осталось.
+ */
+function findFreeProfilePort(): number | null {
+  const used = new Set<number>(DEFAULT_PROFILE_PORTS);
+  const fromEnv = Number(process.env.OPENCODE_SCHEDULER_PORT);
+  if (Number.isFinite(fromEnv) && fromEnv >= 1 && fromEnv <= LAST_PORT) {
+    used.add(Math.floor(fromEnv));
+  }
+  const profilesRoot = path.join(getBasePluginDir(), "profiles");
+  let entries: fs.Dirent[] = [];
+  try {
+    entries = fs.readdirSync(profilesRoot, { withFileTypes: true });
+  } catch {
+    // profiles/ ещё нет — учитываем только зарезервированные и env.
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    try {
+      const raw = fs.readFileSync(
+        path.join(profilesRoot, entry.name, "profile.json"),
+        "utf8",
+      );
+      const parsed = JSON.parse(raw) as Partial<ProfileMeta>;
+      const port = Number(parsed?.port);
+      if (Number.isFinite(port) && port >= 1 && port <= LAST_PORT) {
+        used.add(Math.floor(port));
+      }
+    } catch {
+      // Битый/отсутствующий profile.json — игнорируем.
+    }
+  }
+  for (let port = FIRST_PROFILE_PORT; port <= LAST_PORT; port += 1) {
+    if (!used.has(port)) return port;
+  }
+  return null;
+}
+
 /** Читает profile.json профиля (или null, если файла нет/он битый). */
 export function readProfileMeta(name: string): ProfileMeta | null {
   try {
-    const raw = fs.readFileSync(profileMetaFile(name), "utf8");
+    const file = profileMetaFile(name);
+    const raw = fs.readFileSync(file, "utf8");
     const parsed = JSON.parse(raw) as Partial<ProfileMeta>;
     const profileName = sanitizeProfileName(parsed?.name ?? name);
-    const port = Number(parsed?.port);
-    return {
-      name: profileName,
-      port: Number.isFinite(port) && port >= 1 && port <= 65535 ? Math.floor(port) : 0,
-    };
+    let port = Number(parsed?.port);
+    port = Number.isFinite(port) && port >= 1 && port <= LAST_PORT ? Math.floor(port) : 0;
+
+    // B4.3 (QA #3): профили, созданные до B4.2, могли получить порт default
+    // (3782/4782). Он зарезервирован — два дашборда дрались бы за один порт.
+    // Мигрируем такой профиль на свободный порт и перезаписываем profile.json.
+    // Идемпотентно: после первой миграции порт уже не из DEFAULT_PROFILE_PORTS.
+    if (name !== DEFAULT_PROFILE && port > 0 && DEFAULT_PROFILE_PORTS.has(port)) {
+      const free = findFreeProfilePort();
+      if (free === null) return { name: profileName, port: 0 };
+      fs.writeFileSync(
+        file,
+        JSON.stringify({ ...parsed, name: profileName, port: free }, null, 2),
+        "utf8",
+      );
+      port = free;
+    }
+
+    return { name: profileName, port };
   } catch {
     return null;
   }
@@ -252,16 +318,6 @@ export function listProfiles(): ProfileInfo[] {
       };
     });
 }
-
-/**
- * Порты, зарезервированные за профилем default: основной (PREFERRED_PORT
- * в server.ts) и запасной. У default может не быть profile.json, поэтому
- * в listProfiles() его порт — null, и раньше аллокатор выдавал 3782 второму
- * профилю: два дашборда дрались за один порт.
- */
-const DEFAULT_PROFILE_PORTS = new Set([3782, 4782]);
-const FIRST_PROFILE_PORT = 3783;
-const LAST_PORT = 65535;
 
 /**
  * Свободный порт для нового профиля (B4.2).

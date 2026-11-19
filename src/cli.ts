@@ -389,6 +389,11 @@ async function main(argv: string[]): Promise<number> {
     return 2;
   }
   switch (command) {
+    case "--help":
+    case "-h":
+    case "help":
+      console.log(USAGE);
+      return 0;
     case "validate":
       return runValidate(rest);
     case "apply":

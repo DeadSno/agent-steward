@@ -41,6 +41,30 @@ import {
 } from "./session.js";
 import { writeBashWrapper } from "./wrappers/bash.js";
 
+/**
+ * Маркер начала прогона в логе задачи/миссии.
+ *
+ * Лог НЕ очищается перед запуском: при падении до первого вывода обёртки он
+ * остался бы пустым и диагностировать причину было бы невозможно. Маркер
+ * разделяет прогоны в общем файле и подтверждает, что запуск действительно
+ * дошёл до подготовки обёртки.
+ */
+export function formatLogRunMarker(
+  kind: "run" | "mission" | "prepare",
+  taskName: string,
+  now: Date = new Date(),
+): string {
+  // "prepare" — задача только что создана/подготовлена, но ещё НЕ запускалась.
+  // ВАЖНО: не называть этот маркер "Run started", иначе в логе задачи
+  // появляется ложная запись о запуске при create/update/dry-run, хотя
+  // реального прогона не было (finding QA #8).
+  if (kind === "prepare") {
+    return `[agent-steward] === Task prepared ${now.toISOString()} (${taskName}) ===\n`;
+  }
+  const label = kind === "run" ? "Run" : "Mission";
+  return `[agent-steward] === ${label} started ${now.toISOString()} (${taskName}) ===\n`;
+}
+
 /** AB-8.1: спецификация ad-hoc миссии (цель + safety-контракт). */
 export interface MissionSpec {
   /** Цель миссии — тот же промпт, что получил бы OpenCode. */
@@ -241,13 +265,14 @@ async function prepareWrapper(
   const promptFile = await writePromptFile(taskName, spec.prompt);
   await fs.mkdir(LOG_DIR, { recursive: true });
   try {
-    await fs.writeFile(logFile, "", "utf8");
+    // Не очищаем лог: при раннем падении до вывода обёртки он остался бы пустым.
+    // Дописываем маркер начала прогона — он же разделяет запуски в общем файле.
+    await fs.appendFile(logFile, formatLogRunMarker("mission", taskName), "utf8");
   } catch (error) {
-    // Обёртки пишут лог через >> и создают файл сами: предварительная очистка
-    // нужна только чтобы убрать лог прошлого прогона. Не срываем миссию из-за
-    // прав доступа к каталогу логов.
+    // Обёртки пишут лог через >> и создают файл сами: маркер нужен только для
+    // диагностики. Не срываем миссию из-за прав доступа к каталогу логов.
     console.warn(
-      `[agent-steward] Не удалось очистить лог миссии (${logFile}): ${error instanceof Error ? error.message : String(error)}`,
+      `[agent-steward] Не удалось записать маркер в лог миссии (${logFile}): ${error instanceof Error ? error.message : String(error)}`,
     );
   }
   const lockFile = lockFilePath(taskName);

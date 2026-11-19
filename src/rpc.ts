@@ -676,6 +676,17 @@ const AuditSettingsSchema = {
   required: ["enabled", "retentionDays", "maxRecords"],
 } as const;
 
+/** Бюджеты день/неделя (Экономика v2, E-1.1). */
+const BudgetSettingsSchema = {
+  type: "object" as const,
+  properties: {
+    enabled: { type: "boolean" },
+    dailyUsd: { type: "number" },
+    weeklyUsd: { type: "number" },
+  },
+  required: ["enabled", "dailyUsd", "weeklyUsd"],
+} as const;
+
 /** Политика прав фоновых задач (Спринт 32). */
 const PermissionSettingsSchema = {
   type: "object" as const,
@@ -699,6 +710,7 @@ const GetSettingsOutput = {
     history: HistorySettingsSchema,
     audit: AuditSettingsSchema,
     permissions: PermissionSettingsSchema,
+    budgets: BudgetSettingsSchema,
   },
   required: ["maxConcurrent", "locale", "winterMode", "notifications"],
 } as const;
@@ -715,6 +727,7 @@ const SaveSettingsInput = {
     history: HistorySettingsSchema,
     audit: AuditSettingsSchema,
     permissions: PermissionSettingsSchema,
+    budgets: BudgetSettingsSchema,
   },
   additionalProperties: false,
 } as const;
@@ -731,6 +744,7 @@ const SaveSettingsOutput = {
     history: HistorySettingsSchema,
     audit: AuditSettingsSchema,
     permissions: PermissionSettingsSchema,
+    budgets: BudgetSettingsSchema,
   },
   required: ["success", "maxConcurrent", "locale", "winterMode", "notifications"],
 } as const;

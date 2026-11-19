@@ -269,6 +269,52 @@ check(
   autoUiLocale.locale === "auto" && autoUiLocale.uiLocale === "en"
 );
 
+// Экономика v2, E-1.1: бюджетные лимиты.
+fs.writeFileSync(settingsFile, JSON.stringify({ locale: "auto" }), "utf8");
+const defaultBudgets = await settingsModule.loadSettings();
+check(
+  "loadSettings: budgets по умолчанию выключен и без лимитов",
+  defaultBudgets.budgets?.enabled === false &&
+    defaultBudgets.budgets?.dailyUsd === 0 &&
+    defaultBudgets.budgets?.weeklyUsd === 0
+);
+
+fs.writeFileSync(
+  settingsFile,
+  JSON.stringify({
+    budgets: { enabled: true, dailyUsd: -5, weeklyUsd: 2.5 },
+  }),
+  "utf8"
+);
+const clampedBudgets = await settingsModule.loadSettings();
+check(
+  "loadSettings: отрицательный лимит зажат до 0",
+  clampedBudgets.budgets?.enabled === true &&
+    clampedBudgets.budgets?.dailyUsd === 0 &&
+    clampedBudgets.budgets?.weeklyUsd === 2.5
+);
+
+fs.writeFileSync(
+  settingsFile,
+  JSON.stringify({ budgets: { enabled: "yes", dailyUsd: "oops" } }),
+  "utf8"
+);
+const legacyBudgets = await settingsModule.loadSettings();
+check(
+  "loadSettings: битые поля budgets откатываются к дефолту",
+  legacyBudgets.budgets?.enabled === false && legacyBudgets.budgets?.dailyUsd === 0
+);
+
+await settingsModule.saveSettings({ budgets: { enabled: true, dailyUsd: 3, weeklyUsd: 20 } });
+const savedBudgets = await settingsModule.loadSettings();
+check(
+  "saveSettings/loadSettings: budgets сохраняются частично",
+  savedBudgets.budgets?.enabled === true &&
+    savedBudgets.budgets?.dailyUsd === 3 &&
+    savedBudgets.budgets?.weeklyUsd === 20 &&
+    savedBudgets.locale === "auto"
+);
+
 // Итог
 console.log(`\nSettings: ${passed}/${passed + failed} проверок прошли.`);
 if (failed > 0) {

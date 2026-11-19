@@ -9,7 +9,7 @@ process.env.OPENCODE_SCHEDULER_DB = dbPath;
 
 const { initDb, closeDb } = await import("./dist/db/index.js");
 const { listRuns, listRunSteps } = await import("./dist/db/runs-repo.js");
-const { runMission, normalizeMissionSpec } = await import("./dist/core/mission.js");
+const { runMission, normalizeMissionSpec, formatLogRunMarker } = await import("./dist/core/mission.js");
 
 let passed = 0;
 let failed = 0;
@@ -212,6 +212,43 @@ initDb(dbPath);
     !/from\s+["'][^"']*(scheduler|schtasks|crontab)/.test(source),
   );
   check("ОС: нет вызова createTask", !/schedulerCreateTask|createTask\(/.test(source));
+}
+
+// 7. Маркер запуска в логе: лог НЕ очищается, прогон всегда оставляет след.
+{
+  const now = new Date("2026-11-19T12:00:00.000Z");
+  const runMarker = formatLogRunMarker("run", "github-ci-check", now);
+  const missionMarker = formatLogRunMarker("mission", "ad-hoc", now);
+  check(
+    "лог: маркер запуска содержит время и имя",
+    runMarker === "[agent-steward] === Run started 2026-11-19T12:00:00.000Z (github-ci-check) ===\n",
+    JSON.stringify(runMarker),
+  );
+  check("лог: маркер миссии отличается", missionMarker.includes("Mission started") && !missionMarker.includes("Run started"));
+  check("лог: маркер заканчивается переводом строки", runMarker.endsWith("\n"));
+  // QA #8: при создании задачи пишется маркер подготовки, а НЕ "Run started".
+  const prepareMarker = formatLogRunMarker("prepare", "qa-fix8-probe", now);
+  check(
+    "лог: маркер подготовки не притворяется запуском",
+    prepareMarker === "[agent-steward] === Task prepared 2026-11-19T12:00:00.000Z (qa-fix8-probe) ===\n" &&
+      !prepareMarker.includes("Run started"),
+    JSON.stringify(prepareMarker),
+  );
+  const missionSource = fs.readFileSync("src/core/mission.ts", "utf8");
+  const indexSource = fs.readFileSync("src/index.ts", "utf8");
+  check(
+    "лог: подготовка миссии не очищает файл",
+    !/writeFile\(logFile,\s*["']{2}/.test(missionSource),
+  );
+  check(
+    "лог: подготовка запуска не очищает файл",
+    !/writeFile\(logFile,\s*["']{2}/.test(indexSource),
+  );
+  const wrapperSource = fs.readFileSync("src/core/ps-wrapper.ts", "utf8");
+  check(
+    "лог: пустой код ошибки заменяется сообщением",
+    wrapperSource.includes('"Код возврата $($script:exitCode)"'),
+  );
 }
 
 closeDb();

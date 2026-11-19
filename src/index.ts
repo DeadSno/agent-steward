@@ -1,10 +1,14 @@
 import { Plugin, Rpc } from "@opencode/plugin";
-import {
-  tool as v1Tool,
-  type Hooks as V1Hooks,
-  type PluginInput as V1PluginInput,
-  type PluginModule as V1PluginModule,
+import type {
+  Hooks as V1Hooks,
+  PluginInput as V1PluginInput,
+  PluginModule as V1PluginModule,
 } from "@opencode-ai/plugin";
+// V1 `tool()` — тривиальная identity-функция (`input => input`). Инлайним её,
+// чтобы точка входа V2 не импортировала devDependency @opencode-ai/plugin:
+// у пользователя OpenCode 2 этот пакет не установлен, и статический импорт
+// ломал загрузку плагина целиком (ERR_MODULE_NOT_FOUND).
+const v1Tool = <T>(input: T): T => input;
 import { z } from "zod";
 import type { Tool } from "@opencode/schema/tool";
 import { createRequire } from "node:module";
@@ -85,7 +89,7 @@ import type {
   PermissionSettings,
   TriageSettings,
 } from "./settings.js";
-import { runMission, type MissionSpec } from "./core/mission.js";
+import { formatLogRunMarker, runMission, type MissionSpec } from "./core/mission.js";
 import {
   DEFAULT_PERMISSION_POLICY,
   buildOpencodeConfig,
@@ -94,6 +98,13 @@ import {
 } from "./core/permissions.js";
 import { runHistoryRetention, maybeRunHistoryRetention } from "./core/retention.js";
 import { buildAnalytics } from "./core/analytics.js";
+import {
+  buildBudgetReport,
+  evaluateBudgetGate,
+  formatBudgetSkipMessage,
+  type BudgetGateDecision,
+  type BudgetSettings,
+} from "./core/budget.js";
 import { generateSelfAnalysisReport } from "./core/self-analysis.js";
 import { getHistory, listRunningRecords } from "./db/history-repo.js";
 import { getAllMetrics } from "./db/metrics-repo.js";
@@ -106,6 +117,7 @@ import {
 import {
   findStuckMatrixClones,
   maybeSendDigest,
+  notifyBudgetExceeded,
   notifyStuckMatrix,
   sendDigestNow,
   sendTestNotification,
@@ -576,6 +588,15 @@ export const scheduleTaskSchema = z.object({
     .describe(
       "W-3: pre-run guard conditions. If a semantic check or shell command fails, the run is skipped (no opencode, no side effects). Combined with worktree: checks run inside the fresh worktree.",
     ),
+  tokenBudget: z
+    .number()
+    .int()
+    .min(0)
+    .max(10_000_000)
+    .optional()
+    .describe(
+      "Economics v2 (E-2): per-run token budget. 0 or omitted = no task limit (fail-open). Exceeded runs are flagged in analytics; stopping is E-2.2.",
+    ),
   matrix: matrixSchema
     .optional()
     .describe(
@@ -799,6 +820,15 @@ export const updateTaskSchema = z.object({
   guards: guardsSchema
     .optional()
     .describe("W-3: pre-run guard conditions; a failed check skips the run."),
+  tokenBudget: z
+    .number()
+    .int()
+    .min(0)
+    .max(10_000_000)
+    .optional()
+    .describe(
+      "Economics v2 (E-2): per-run token budget. 0 or omitted = no task limit (fail-open). Pass 0 to clear a previous limit.",
+    ),
   matrix: matrixSchema
     .nullable()
     .optional()
@@ -896,7 +926,8 @@ export const pipelineApplySchema = z.object({
 
 /** pipeline_export — выгрузить задачи конвейера как opencode.pipeline.yaml. */
 export const pipelineExportSchema = z.object({
-  pipeline: z.string().describe("Имя конвейера (pipelineName)."),
+  pipeline: z.string().optional().describe("Имя конвейера (pipelineName)."),
+  pipelineName: z.string().optional().describe("Алиас параметра pipeline — имя конвейера."),
 });
 
 const manageWorkspacesSchema = z.object({
@@ -1050,6 +1081,16 @@ export const manageSettingsSchema = z.object({
     .optional()
     .describe(
       "Tool permission policy for background tasks: hybrid (default; shell/question denied), secure (read-only), legacy (allow everything, 1.5.x behaviour).",
+    ),
+  budgets: z
+    .object({
+      enabled: z.boolean().optional(),
+      dailyUsd: z.number().min(0).max(1_000_000).optional(),
+      weeklyUsd: z.number().min(0).max(1_000_000).optional(),
+    })
+    .optional()
+    .describe(
+      "Daily/weekly USD budgets (0 = no limit). Accounting is exposed by get_analytics as report.budgets.",
     ),
 });
 
@@ -1399,6 +1440,7 @@ const scheduleTaskExecute = wrapExecute<ScheduleArgs>(async (args) => {
     legacyShell,
     worktree,
     guards,
+    tokenBudget,
   } = args;
 
   let effectiveRunAt: string | undefined;
@@ -1469,6 +1511,7 @@ const scheduleTaskExecute = wrapExecute<ScheduleArgs>(async (args) => {
       legacyShell === true,
       worktree === true,
       guards,
+      tokenBudget,
     );
   } catch (err: any) {
     return {
@@ -2803,12 +2846,21 @@ const pipelineApplyExecute = wrapExecute<PipelineApplyArgs>(async (args) => {
 /** pipeline_export — выгрузить задачи конвейера как opencode.pipeline.yaml. */
 const pipelineExportExecute = wrapExecute<PipelineExportArgs>(async (args) => {
   const allTasks = await listTaskDefinitions();
-  const result = tasksToPipelineSpec(allTasks, args.pipeline);
+  const pipelineName = args.pipeline ?? args.pipelineName;
+  if (!pipelineName) {
+    return {
+      content: JSON.stringify({
+        success: false,
+        error: "Не задано имя конвейера: укажите pipeline или pipelineName.",
+      }),
+    };
+  }
+  const result = tasksToPipelineSpec(allTasks, pipelineName);
   if (!result.spec) {
     return {
       content: JSON.stringify({
         success: false,
-        error: `Конвейер "${args.pipeline}" не найден (не найдены задачи с pipelineName=${args.pipeline} и pipelineStepId).`,
+        error: `Конвейер "${pipelineName}" не найден (не найдены задачи с pipelineName=${pipelineName} и pipelineStepId).`,
         warnings: result.warnings,
       }),
     };
@@ -2817,7 +2869,7 @@ const pipelineExportExecute = wrapExecute<PipelineExportArgs>(async (args) => {
   return {
     content: JSON.stringify({
       success: true,
-      pipeline: args.pipeline,
+      pipeline: pipelineName,
       steps: result.spec.steps.length,
       yaml: yamlText,
       warnings: result.warnings,
@@ -3066,7 +3118,10 @@ const getAnalyticsExecute = wrapExecute<AnalyticsArgs>(async (args) => {
       matrixParentId: definition.matrixParentId,
     })),
   });
-  return { content: JSON.stringify({ success: true, report }) };
+  // Экономика v2 (E-1.1): учёт расхода за день/неделю рядом с аналитикой.
+  const settings = await loadSettings();
+  const budgets = buildBudgetReport(records, settings.budgets, new Date());
+  return { content: JSON.stringify({ success: true, report: { ...report, budgets } }) };
 });
 
 /** self_analysis — система самоанализа: здоровье, аномалии, тренды, рекомендации. */
@@ -3121,7 +3176,8 @@ const manageSettingsExecute = wrapExecute<SettingsArgs>(async (args) => {
     args.history === undefined &&
     args.integrations === undefined &&
     args.audit === undefined &&
-    args.permissions === undefined
+    args.permissions === undefined &&
+    args.budgets === undefined
   ) {
     return {
       content: JSON.stringify({
@@ -3141,6 +3197,7 @@ const manageSettingsExecute = wrapExecute<SettingsArgs>(async (args) => {
     integrations: args.integrations as IntegrationSettings | undefined,
     audit: args.audit as AuditSettings | undefined,
     permissions: args.permissions as PermissionSettings | undefined,
+    budgets: args.budgets as BudgetSettings | undefined,
   });
   // Локаль процесса меняется сразу — перезапуск плагина не нужен.
   setLocale(resolveLocale(settings.locale, settings.uiLocale));
@@ -4815,6 +4872,13 @@ const v2Plugin = Plugin.define({
       run_task: async (input: unknown) => {
         const { name } = input as { name: string };
         try {
+          const budgetGate = await checkBudgetGate();
+          if (!budgetGate.allowed) {
+            return {
+              success: false,
+              message: formatBudgetSkipMessage(budgetGate),
+            };
+          }
           // Matrix-родитель не выполняется сам: запускаем его клоны (fan-out).
           const definition = (await loadTaskDefinitions()).find(
             (def) => def.name.toLowerCase() === name.trim().toLowerCase(),
@@ -4871,6 +4935,18 @@ const v2Plugin = Plugin.define({
       },
       run_mission: async (input: unknown) => {
         try {
+          const budgetGate = await checkBudgetGate();
+          if (!budgetGate.allowed) {
+            return {
+              success: false,
+              dryRun: false,
+              runId: "",
+              status: "failed",
+              description: "",
+              error: formatBudgetSkipMessage(budgetGate),
+              steps: [],
+            };
+          }
           const mission = await runMission(input as MissionSpec);
           return {
             success: mission.success,
@@ -5044,7 +5120,10 @@ const v2Plugin = Plugin.define({
               matrixParentId: definition.matrixParentId,
             })),
           });
-          return { success: true, report };
+          // Экономика v2 (E-1.1): тот же учёт, что и в агент-инструменте.
+          const settings = await loadSettings();
+          const budgets = buildBudgetReport(records, settings.budgets, new Date());
+          return { success: true, report: { ...report, budgets } };
         } catch (err: any) {
           return {
             success: false,
@@ -5167,8 +5246,11 @@ const v2Plugin = Plugin.define({
         return JSON.parse(result.content as string);
       },
       pipeline_export: async (input: unknown) => {
-        const { pipeline } = input as { pipeline?: string };
-        const result = await pipelineExportExecute({ pipeline } as PipelineExportArgs, {} as Tool.Context);
+        const { pipeline, pipelineName } = input as { pipeline?: string; pipelineName?: string };
+        const result = await pipelineExportExecute(
+          { pipeline: pipeline ?? pipelineName } as PipelineExportArgs,
+          {} as Tool.Context,
+        );
         return JSON.parse(result.content as string);
       },
       get_matrix_results: async (input: unknown) => {
@@ -5368,7 +5450,7 @@ const v2Plugin = Plugin.define({
         return await loadSettings();
       },
       save_settings: async (input: unknown) => {
-        const { maxConcurrent, locale, uiLocale, winterMode, notifications, history, integrations, audit, permissions } = input as {
+        const { maxConcurrent, locale, uiLocale, winterMode, notifications, history, integrations, audit, permissions, budgets } = input as {
           maxConcurrent?: number;
           locale?: LocaleMode;
           uiLocale?: Locale;
@@ -5378,6 +5460,7 @@ const v2Plugin = Plugin.define({
           integrations?: IntegrationSettings;
           audit?: AuditSettings;
           permissions?: PermissionSettings;
+          budgets?: BudgetSettings;
         };
         const current = await loadSettings();
         if (
@@ -5389,7 +5472,8 @@ const v2Plugin = Plugin.define({
           history === undefined &&
           integrations === undefined &&
           audit === undefined &&
-          permissions === undefined
+          permissions === undefined &&
+          budgets === undefined
         ) {
           return {
             success: false,
@@ -5402,6 +5486,7 @@ const v2Plugin = Plugin.define({
             integrations: current.integrations,
             audit: current.audit,
             permissions: current.permissions,
+            budgets: current.budgets,
           };
         }
         const settings = await saveSettings({
@@ -5414,6 +5499,7 @@ const v2Plugin = Plugin.define({
           integrations,
           audit,
           permissions,
+          budgets,
         });
         // Локаль процесса меняется сразу — перезапуск не нужен.
         setLocale(resolveLocale(settings.locale, settings.uiLocale));
@@ -5428,6 +5514,7 @@ const v2Plugin = Plugin.define({
           integrations: settings.integrations,
           audit: settings.audit,
           permissions: settings.permissions,
+          budgets: settings.budgets,
         };
       },
       test_notification: async () => {
@@ -6029,6 +6116,8 @@ export async function schedulerCreateTask(
   worktree?: boolean,
   /** W-3: guard-условия перед запуском opencode. */
   guards?: TaskGuards,
+  /** Economics v2 (E-2): per-run token budget. 0/omitted = no limit (fail-open). */
+  tokenBudget?: number,
 ): Promise<void> {
   // Спринт 27.5 (hotfix 1.5.1): проверяем имя до создания wrapper/prompt и записи
   // в БД. Недопустимые символы отклоняются с понятным сообщением, а не ошибкой
@@ -6101,6 +6190,11 @@ export async function schedulerCreateTask(
   const guardsResult = normalizeTaskGuards(guards);
   if (!guardsResult.ok) throw new Error(guardsResult.error);
   const normalizedGuards = guardsResult.guards;
+  // Economics v2 (E-2): нормализация бюджета токенов. 0/отрицание/NaN = без лимита.
+  const normalizedTokenBudget =
+    Number.isFinite(tokenBudget) && (tokenBudget ?? 0) > 0
+      ? Math.floor(tokenBudget as number)
+      : undefined;
   // Спринт 27: дни недели, политика окна и glob/git-фильтры.
   const normalizeGlobList = (raw?: string[]): string[] | undefined => {
     if (!Array.isArray(raw)) return undefined;
@@ -6447,7 +6541,12 @@ export async function schedulerCreateTask(
   try {
     promptFile = await writePromptFile(sanitized, prompt);
     await fs.mkdir(LOG_DIR, { recursive: true });
-    await fs.writeFile(logFile, "", "utf8");
+    // Не обнуляем лог: при падении до запуска обёртки (или при отказе модели)
+    // предыдущий диагностический вывод оставался бы единственным, а новый
+    // прогон выглядел бы как «лог пуст». Дописываем маркер ПОДГОТОВКИ —
+    // задача создана, но ещё не запускалась (не путать с реальным Run started,
+    // который пишется обёрткой только при фактическом запуске; QA #8).
+    await fs.appendFile(logFile, formatLogRunMarker("prepare", name), "utf8");
   } catch (err: any) {
     throw new Error(
       t("tool.error.prepareFiles", {
@@ -6672,6 +6771,7 @@ export async function schedulerCreateTask(
     legacyShell: legacyShell === true ? true : undefined,
     worktree: normalizedWorktree,
     guards: normalizedGuards,
+    tokenBudget: normalizedTokenBudget,
     matrix: normalizedMatrix,
     isMatrixParent: normalizedMatrix ? true : undefined,
     matrixParentId,
@@ -6978,11 +7078,34 @@ async function recreateTaskFromDefinition(definition: TaskDefinition): Promise<v
  * Запуск задачи «как есть», но с учётом матрицы: родитель раскладывается
  * на клоны, а не выполняет свой промпт.
  */
+/** E-1.2: общий гейт бюджета для всех входов запуска задач. */
+async function checkBudgetGate(): Promise<BudgetGateDecision> {
+  const settings = await loadSettings();
+  const records = getHistory(null, 20000);
+  const decision = evaluateBudgetGate(records, settings.budgets, new Date());
+  if (!decision.allowed) {
+    // E-1.3: алерт не должен задерживать или ломать запуск.
+    void notifyBudgetExceeded(decision).catch((err: unknown) => {
+      console.error(
+        `[agent-steward] Ошибка бюджетного алерта: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    });
+  }
+  return decision;
+}
+
 async function runTaskEntry(name: string): Promise<{ alreadyRunning: boolean }> {
   if (shutdownGate.isShuttingDown()) {
     throw new Error(
       "Плагин выгружается: новые запуски не принимаются. Повторите после перезапуска.",
     );
+  }
+
+  const budgetGate = await checkBudgetGate();
+  if (!budgetGate.allowed) {
+    throw new Error(formatBudgetSkipMessage(budgetGate));
   }
 
   const run = (async () => {

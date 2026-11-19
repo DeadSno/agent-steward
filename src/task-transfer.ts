@@ -241,6 +241,11 @@ export interface TaskDefinition {
   pipelineName?: string;
   /** Спринт 32: стабильный id шага внутри pipeline (для diff/apply). */
   pipelineStepId?: string;
+  /**
+   * Экономика v2 (E-2): лимит токенов на один запуск задачи.
+   * 0/undefined — лимит не задан (fail-open, как и глобальные budgets).
+   */
+  tokenBudget?: number;
 }
 
 const PREFIX = `\\OpenCode\\${TASK_FOLDER_NAME}\\`;

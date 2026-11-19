@@ -31,6 +31,8 @@ export interface AnalyticsRecord {
 export interface AnalyticsTaskRef {
   name: string;
   matrixParentId?: string | null;
+  /** Экономика v2 (E-2): лимит токенов на запуск (0/undefined — без лимита). */
+  tokenBudget?: number;
 }
 
 export interface DailyBucket {
@@ -58,6 +60,10 @@ export interface TaskAnalyticsRow {
   /** Задача — клон матрицы (matrixParentId задан). */
   isMatrixClone: boolean;
   matrixParentId: string | null;
+  /** Экономика v2 (E-2): лимит токенов на запуск (0 — без лимита). */
+  tokenBudget?: number;
+  /** Сумма токенов за период превысила лимит на задачу. */
+  tokenBudgetExceeded?: boolean;
 }
 
 export interface MatrixAnalyticsRow {
@@ -191,9 +197,14 @@ export function buildAnalytics(
   const byModel = new Map<string, ModelAnalyticsRow>();
   const byError = new Map<string, ErrorAnalyticsRow>();
   const cloneParent = new Map<string, string>();
+  const taskTokenBudget = new Map<string, number>();
   for (const task of options.tasks ?? []) {
     const parentId = task.matrixParentId?.trim();
     if (parentId) cloneParent.set(task.name.toLowerCase(), parentId);
+    const budget = Number(task.tokenBudget);
+    if (Number.isFinite(budget) && budget > 0) {
+      taskTokenBudget.set(task.name.toLowerCase(), budget);
+    }
   }
 
   let totalsTotal = 0;
