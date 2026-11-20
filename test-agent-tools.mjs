@@ -466,6 +466,26 @@ check(
   typeof metricsPayload.metrics.toolBlocked === "number" && metricsPayload.metrics.toolBlocked >= 0
 );
 
+// QV-11.1: офлайн-оценка поверхности инструментов без вызова модели.
+const { measureToolSurface } = await import("./dist/core/usage-surface.js");
+// QV-11.1: реальный офлайн-токенайзер, без вызовов модели и без chars→tokens.
+const { encode } = await import("gpt-tokenizer");
+const surface = measureToolSurface(createToolSpecs({}, {}), {
+  countTokens: (text) => encode(text).length,
+});
+console.log(
+  `QV-11.1 surface: ${surface.tools} tools, ${surface.descriptionCount} descriptions, ` +
+    `${surface.descriptionChars} description chars, ~${surface.estimatedTokens} tokens`,
+);
+check(
+  "QV-11.1: оценка поверхности инструментов детерминирована",
+  surface.tools === 30 &&
+    surface.descriptionCount > 0 &&
+    surface.descriptionCount <= surface.tools &&
+    surface.descriptionChars > 0 &&
+    surface.estimatedTokens > surface.descriptionChars / 4
+);
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\nAgent tools: ${results.length - failed.length}/${results.length} проверок пройдено.`);
 process.exit(failed.length > 0 ? 1 : 0);

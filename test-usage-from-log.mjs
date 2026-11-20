@@ -41,6 +41,7 @@ const { root: tmpDir } = createTestHomeSync("ws-scheduler-usage-log-");
 process.env.APPDATA = tmpDir;
 process.env.OPENCODE_SCHEDULER_HOME = path.join(tmpDir, "opencode", "windows-scheduler");
 const { parseUsageFromLog } = await import("./dist/core/record-history.js");
+const { collectOpenCodeUsage, findOpenCodeDb } = await import("./dist/core/opencode-usage.js");
 
 let passed = 0;
 let failed = 0;
@@ -192,7 +193,7 @@ check("QA-F.1: PS-обёртка распознаёт costUsd/cost_usd без з
 // --- B10: legacy-режим (без --start/--finish) читает usage из 11-го аргумента ---
 {
   const recorder = path.resolve("dist/core/record-history.js");
-  const runLegacy = (taskName, logFile, tokens = "-", cost = "-") => {
+  const runLegacy = (taskName, logFile, tokens = "-", cost = "-", extraEnv = {}) => {
     const result = spawnSync(
       process.execPath,
       [
@@ -209,7 +210,7 @@ check("QA-F.1: PS-обёртка распознаёт costUsd/cost_usd без з
         "-", // post-flight
         logFile,
       ],
-      { encoding: "utf8", env: { ...process.env }, timeout: 30000 },
+      { encoding: "utf8", env: { ...process.env, ...extraEnv }, timeout: 30000 },
     );
     return result;
   };
@@ -246,12 +247,144 @@ check("QA-F.1: PS-обёртка распознаёт costUsd/cost_usd без з
     assert.strictEqual(Number(explicitRow.tokens), 50);
     assert.strictEqual(Number(explicitRow.cost_usd), 0.1);
 
+    // PL-38: когда лог пуст, токены приходят из opencode.db.
+    const usageDbPath = path.join(tmpDir, "opencode-recorder.db");
+    const usageDb = new DatabaseSync(usageDbPath);
+    usageDb.exec(
+      "CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT)",
+    );
+    usageDb
+      .prepare(
+        "INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?)",
+      )
+      .run(
+        "msg_db_usage",
+        "ses_test",
+        Date.now(),
+        Date.now(),
+        JSON.stringify({
+          role: "assistant",
+          cost: 0.05,
+          tokens: { total: 321 },
+          providerID: "opencode",
+          path: { cwd: tmpDir },
+        }),
+      );
+    usageDb.close();
+    const fromDb = runLegacy("DB Usage Task", path.join(tmpDir, "empty.log"), "-", "-", {
+      OPENCODE_USAGE_DB: usageDbPath,
+    });
+    assert.strictEqual(fromDb.status, 0, `recorder exit ${fromDb.status}: ${fromDb.stderr}`);
+    const dbRow = getDb()
+      .prepare("SELECT tokens, cost_usd FROM history WHERE task_name = ? ORDER BY id DESC LIMIT 1")
+      .get("DB Usage Task");
+    assert.strictEqual(Number(dbRow.tokens), 321);
+    assert.strictEqual(Number(dbRow.cost_usd), 0.05);
+
     console.log("  ✅ B10: legacy-режим пишет usage из лога и не падает без него");
     passed++;
   } catch (err) {
     console.log(`  ❌ B10: legacy-режим usage: ${err instanceof Error ? err.message : String(err)}`);
     failed++;
   }
+}
+
+// --- PL-38 / QV-11.2: чтение usage из собственной БД OpenCode ---
+check("QV-11.2: findOpenCodeDb уважает OPENCODE_USAGE_DB", () => {
+  const custom = path.join(tmpDir, "custom-opencode.db");
+  assert.strictEqual(findOpenCodeDb({ OPENCODE_USAGE_DB: `  ${custom}  ` }), custom);
+  assert.strictEqual(
+    findOpenCodeDb({ HOME: tmpDir, USERPROFILE: tmpDir, APPDATA: tmpDir }),
+    null,
+  );
+});
+
+{
+  const dbPath = path.join(tmpDir, "opencode.db");
+  const db = new DatabaseSync(dbPath);
+  db.exec(
+    "CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT)",
+  );
+  const now = Date.now();
+  const rows = [
+    {
+      id: "m1",
+      time: now - 1000,
+      data: {
+        role: "assistant",
+        cost: 0.02,
+        tokens: { input: 100, output: 20, reasoning: 0, cache: { read: 0, write: 0 } },
+        modelID: "m1",
+        providerID: "opencode",
+        path: { cwd: "C:/work/project" },
+      },
+    },
+    {
+      id: "m2",
+      time: now - 500,
+      data: {
+        role: "assistant",
+        cost: 0,
+        tokens: { total: 50 },
+        modelID: "m2",
+        providerID: "ollama",
+        path: { cwd: "C:/work/project" },
+      },
+    },
+    {
+      id: "m3",
+      time: now - 400,
+      data: {
+        role: "assistant",
+        cost: 99,
+        tokens: { total: 9999 },
+        modelID: "m3",
+        providerID: "opencode",
+        path: { cwd: "C:/work/other" },
+      },
+    },
+    {
+      id: "m4",
+      time: now - 300,
+      data: { role: "user", cost: 77, tokens: { total: 7777 }, path: { cwd: "C:/work/project" } },
+    },
+  ];
+  const insert = db.prepare(
+    "INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?)",
+  );
+  for (const row of rows) {
+    insert.run(row.id, "ses_test", row.time, row.time, JSON.stringify(row.data));
+  }
+  db.close();
+
+  check("QV-11.2: aggregated tokens/cost только за окно и cwd задачи", () => {
+    const usage = collectOpenCodeUsage({
+      dbPath,
+      since: now - 5000,
+      until: now + 1000,
+      cwd: "C:\\work\\project",
+    });
+    assert.ok(usage, "usage должен быть прочитан из БД");
+    assert.strictEqual(usage.tokens, 170);
+    assert.strictEqual(usage.costUsd, 0.02);
+    assert.strictEqual(usage.messages, 2);
+    assert.strictEqual(usage.providers.opencode, 120);
+    assert.strictEqual(usage.providers.ollama, 50);
+  });
+
+  check("QV-11.2: БД вне окна возвращает пустой, но валидный результат", () => {
+    const usage = collectOpenCodeUsage({ dbPath, since: now - 100000, until: now - 90000 });
+    assert.ok(usage);
+    assert.strictEqual(usage.tokens, 0);
+    assert.strictEqual(usage.messages, 0);
+  });
+
+  check("QV-11.2: отсутствующий файл БД — graceful null", () => {
+    assert.strictEqual(
+      collectOpenCodeUsage({ dbPath: path.join(tmpDir, "missing.db"), since: 0, until: now }),
+      null,
+    );
+  });
 }
 
 try {

@@ -469,7 +469,17 @@ Usage (tokens/cost) resolves in both recorder modes: explicit wrapper arguments 
 and when they are `-` the recorder parses the log tail (`parseUsageFromLog`) using the
 log path passed as the last argument. This applies to `--finish` (12th argument) and to
 the legacy pre-`--start` mode (11th argument, B10); a missing/unreadable log degrades to
-"no usage" without failing the record.
+the next source instead of failing the record. Many OpenCode providers (for example
+hy4-flash-free and local Ollama) print no usage lines at all, so `parseUsageFromLog`
+alone leaves tokens at zero. In that case `core/opencode-usage.ts` reads OpenCode's own
+SQLite database read-only (`~/.local/share/opencode/opencode.db`, override via
+`OPENCODE_USAGE_DB`) and sums assistant-message `tokens`/`cost` from `message.data`
+inside a ±2 s window around the run, optionally restricted to the task's working
+directory. `record-history.ts` fills only fields that are still missing and emits a
+`usage.from_opencode_db` structured event; a missing or locked database is ignored.
+Offline tool-surface measurement lives in `core/usage-surface.ts`: it accepts an
+injected tokenizer (the test uses `gpt-tokenizer`) so the reported size of the 30-tool
+registry is a real token count, not a character heuristic.
 
 If the host or the machine dies mid-run, the row stays in `running`. On the next
 plugin activation, `db/recovery.ts` marks stale `running` rows as `error`, so the UI

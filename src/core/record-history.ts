@@ -23,6 +23,7 @@ import {
   finalizeMatrixIfComplete,
 } from "./matrix.js";
 import { appendStructuredLog } from "./structured-log.js";
+import { collectOpenCodeUsage } from "./opencode-usage.js";
 
 type Status = "success" | "error" | "timeout" | "skipped";
 
@@ -154,6 +155,41 @@ export function parseUsageFromLog(logFile: string): UsageInfo {
   }
 
   return result;
+}
+
+/**
+ * PL-38: если обёртка не передала usage, а логи его не содержат, берём
+ * показания из собственной БД OpenCode за окно запуска задачи. Результат
+ * консервативный: уже найденные значения не перезаписываются, нули не подменяются.
+ */
+function resolveUsageFromOpenCodeDb(
+  taskName: string,
+  startedAtIso: string,
+  durationMs: number,
+  fallback: UsageInfo,
+): UsageInfo {
+  if (fallback.tokens !== undefined && fallback.costUsd !== undefined) return fallback;
+
+  const definition = getTask(taskName);
+  const end = Date.now();
+  const parsedStart = Date.parse(startedAtIso);
+  const start = Number.isFinite(parsedStart) ? parsedStart : end - Math.max(0, durationMs);
+  // +-2 с покрывают рассинхрон часов обёртки и движка OpenCode.
+  const usage = collectOpenCodeUsage({
+    since: start - 2000,
+    until: end + 2000,
+    cwd: definition?.workingDirectory,
+  });
+  if (!usage || (usage.tokens <= 0 && usage.costUsd <= 0)) return fallback;
+
+  const resolved: UsageInfo = {
+    tokens: fallback.tokens ?? (usage.tokens > 0 ? usage.tokens : undefined),
+    costUsd: fallback.costUsd ?? (usage.costUsd > 0 ? usage.costUsd : undefined),
+  };
+  logRecorderEvent("usage.from_opencode_db", taskName, {
+    reason: `tokens=${usage.tokens} cost=${usage.costUsd} messages=${usage.messages}`,
+  });
+  return resolved;
 }
 
 /**
@@ -488,6 +524,18 @@ async function main() {
         costResolved = usage.costUsd;
       }
     }
+    // --finish не получает startedAt: восстанавливаем окно из длительности.
+    if (tokensResolved === undefined || costResolved === undefined) {
+      const approximatedStart = new Date(Date.now() - Math.max(0, durationMs)).toISOString();
+      const dbUsage = resolveUsageFromOpenCodeDb(
+        taskName,
+        approximatedStart,
+        durationMs,
+        { tokens: tokensResolved, costUsd: costResolved },
+      );
+      tokensResolved = dbUsage.tokens;
+      costResolved = dbUsage.costUsd;
+    }
     const model = ninth && ninth !== "-" ? ninth.trim() || undefined : undefined;
     const preFlightStatus = parseHookStatus(tenth);
     const postFlightStatus = parseHookStatus(eleventh);
@@ -556,6 +604,14 @@ async function main() {
     if (costResolved === undefined && usage.costUsd !== undefined) {
       costResolved = usage.costUsd;
     }
+  }
+  if (tokensResolved === undefined || costResolved === undefined) {
+    const dbUsage = resolveUsageFromOpenCodeDb(taskName, startedAt, durationMs, {
+      tokens: tokensResolved,
+      costUsd: costResolved,
+    });
+    tokensResolved = dbUsage.tokens;
+    costResolved = dbUsage.costUsd;
   }
   // Восьмой аргумент — модель; "-" означает, что модель не задана.
   const model = eighth && eighth !== "-" ? eighth.trim() || undefined : undefined;
