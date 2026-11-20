@@ -788,6 +788,15 @@ export const scheduleTaskSchema = z.object({
 
 const listTasksSchema = z.object({});
 
+/** PL-43: структурированный ответ list_tasks для Code Mode (V2). */
+const listTasksOutputSchema = z.object({
+  success: z.boolean(),
+  message: z.string(),
+  tasks: z.array(z.unknown()),
+  osAvailable: z.boolean(),
+  osError: z.string().optional(),
+});
+
 const deleteTaskSchema = z.object({
   name: z.string().describe("Task name to delete."),
 });
@@ -1577,12 +1586,16 @@ function wrapExecute<Args>(
         err instanceof PluginShutdownError
           ? { code: err.code, hint: err.hint, shutdownState: err.state }
           : {};
+      // PL-43: тот же payload отдаём и структурированным output, и строкой
+      // content — V1-адаптер по-прежнему читает content.
+      const output = {
+        success: false,
+        error: err instanceof Error ? err.message : String(err),
+        ...shutdown,
+      };
       return {
-        content: JSON.stringify({
-          success: false,
-          error: err instanceof Error ? err.message : String(err),
-          ...shutdown,
-        }),
+        output,
+        content: JSON.stringify(output),
       };
     }
   };
@@ -1869,30 +1882,28 @@ const listTasksExecute = wrapExecute<ListArgs>(async () => {
   const { tasks, osAvailable, osError } = await collectTasksView();
 
   if (tasks.length === 0) {
-    return {
-      content: JSON.stringify({
-        success: true,
-        message: osAvailable
-          ? t("tool.task.listEmpty")
-          : t("tool.task.listOsUnavailable"),
-        tasks: [],
-        osAvailable,
-        ...(osError ? { osError } : {}),
-      }),
-    };
-  }
-
-  return {
-    content: JSON.stringify({
+    const output = {
       success: true,
       message: osAvailable
-        ? t("tool.task.found", { count: tasks.length })
-        : t("tool.task.foundOsUnavailable", { count: tasks.length }),
-      tasks,
+        ? t("tool.task.listEmpty")
+        : t("tool.task.listOsUnavailable"),
+      tasks: [],
       osAvailable,
       ...(osError ? { osError } : {}),
-    }),
+    };
+    return { output, content: JSON.stringify(output) };
+  }
+
+  const output = {
+    success: true,
+    message: osAvailable
+      ? t("tool.task.found", { count: tasks.length })
+      : t("tool.task.foundOsUnavailable", { count: tasks.length }),
+    tasks,
+    osAvailable,
+    ...(osError ? { osError } : {}),
   };
+  return { output, content: JSON.stringify(output) };
 });
 
 /**
@@ -4916,6 +4927,8 @@ type ToolSpecAudit = {
 export interface ToolSpec {
   name: string;
   input: z.ZodTypeAny;
+  /** PL-43: схема структурированного output (только V2 Code Mode; V1 использует content). */
+  output?: z.ZodTypeAny;
   description: string;
   execute: ToolSpecExecute;
   /** Правила аудита; null/undefined — операция не пишется в журнал. */
@@ -4955,9 +4968,10 @@ export function createToolSpecs(
     {
       name: "list_tasks",
       input: listTasksSchema,
+      output: listTasksOutputSchema,
       description:
         `Lists plugin tasks from the scheduler (${scheduler.title}) with schedule, status, next chained task and working directory. ` +
-        "Matrix parents include a per-clone summary.",
+        "Matrix parents include a per-clone summary. Returns structured output in Code Mode; content remains a JSON string for V1 compatibility.",
       execute: handlers.list_tasks,
     },
     {
@@ -5275,6 +5289,7 @@ const v2Plugin = Plugin.define({
         editor.add({
           name: spec.name,
           input: spec.input,
+          output: spec.output,
           description: spec.description,
           options: { codemode: true },
           execute,

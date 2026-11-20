@@ -30,6 +30,9 @@ const freePort = await new Promise((resolve, reject) => {
   });
 });
 process.env.OPENCODE_SCHEDULER_PORT = String(freePort);
+// V1-реестр проверяется на реальных инструментах; маркер дочернего прогона
+// (выставляется обёрткой планировщика) делает registration пустой.
+delete process.env.AGENT_STEWARD_CHILD_RUN;
 
 const { default: pluginModule, createToolSpecs } = await import("./dist/index.js");
 
@@ -56,6 +59,15 @@ const call = async (name, args = {}) => {
 // Три read-only инструмента: список задач, метрики и сведения о дашборде.
 const listed = await call("list_tasks");
 assert.ok(Array.isArray(listed.tasks), "list_tasks: tasks — массив");
+
+// PL-43: V2-обработчик теперь возвращает { output, content }, но V1-адаптер
+// toV1ToolResult обязан по-прежнему отдавать JSON-строку в output.
+const rawListed = await hooks.tool.list_tasks.execute({}, context);
+assert.equal(typeof rawListed.output, "string", "list_tasks (V1): output — JSON-строка");
+assert.equal(rawListed.content, undefined, "list_tasks (V1): content не пробрасывается");
+const rawParsed = JSON.parse(rawListed.output);
+assert.equal(rawParsed.success, true, "list_tasks (V1): success внутри JSON-строки");
+assert.ok(Array.isArray(rawParsed.tasks), "list_tasks (V1): tasks внутри JSON-строки");
 
 const metrics = await call("get_metrics");
 assert.equal(typeof metrics, "object", "get_metrics: JSON-объект");

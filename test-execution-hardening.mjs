@@ -24,6 +24,10 @@ if (process.platform !== "win32") {
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "sched-exec-hardening-"));
 process.env.APPDATA = tempRoot;
 process.env.OPENCODE_SCHEDULER_HOME = path.join(tempRoot, "opencode", "windows-scheduler");
+// Тест проверяет регистрацию инструментов, а маркер дочернего прогона
+// (его выставляет обёртка планировщика) registration отключает. Стенд
+// запускается внутри задачи — снимаем маркер для изоляции.
+delete process.env.AGENT_STEWARD_CHILD_RUN;
 
 const pluginDir = path.join(tempRoot, "opencode", "windows-scheduler");
 fs.mkdirSync(pluginDir, { recursive: true });
@@ -270,7 +274,7 @@ const readLog = (file) => (fs.existsSync(file) ? fs.readFileSync(file, "utf8") :
     timeoutSeconds: 45,
   });
 
-  const plugin = (await import("./dist/index.js")).default;
+  const { default: plugin, createToolSpecs } = await import("./dist/index.js");
   const tools = new Map();
   const ctx = {
     location: { directory: process.cwd() },
@@ -288,11 +292,27 @@ const readLog = (file) => (fs.existsSync(file) ? fs.readFileSync(file, "utf8") :
   };
   await plugin.setup(ctx);
 
+  const listSpec = createToolSpecs(null).find((spec) => spec.name === "list_tasks");
+  check("list_tasks spec.output схема определена", Boolean(listSpec?.output));
+
   const listTool = tools.get("list_tasks");
   check("list_tasks зарегистрирован", Boolean(listTool));
+  check("list_tasks output передан в V2-регистрацию", Boolean(listTool?.output));
   if (listTool) {
     const res = await listTool.execute({}, {});
+    check(
+      "list_tasks: output — объект с массивом tasks",
+      Boolean(res.output && Array.isArray(res.output.tasks))
+    );
+    check(
+      "list_tasks: output и content несут один payload",
+      Boolean(res.output) && res.content === JSON.stringify(res.output)
+    );
     const payload = JSON.parse(res.content);
+    check(
+      "list_tasks: content — валидный JSON",
+      Boolean(payload && Array.isArray(payload.tasks))
+    );
     const task = (payload.tasks ?? []).find((t) => t.name === "Exec Hardening View");
     check("list_tasks: задача найдена", Boolean(task));
     check(
