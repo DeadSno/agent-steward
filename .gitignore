@@ -28,6 +28,7 @@ scheduler.db-wal
 /wrappers/
 /locks/
 *.tgz
+qa-a2-gate.passed
 
 # Editors and OS
 .vscode/
