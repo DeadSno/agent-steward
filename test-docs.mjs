@@ -229,7 +229,7 @@ check(
 check(
   "src/index.ts: ToolSpec использует общие handlers.*",
   !/execute: [a-zA-Z]+Execute as any/.test(indexSrc) &&
-    (indexSrc.match(/handlers\.[a-z_]+ as any/g) || []).length === registeredTools.length
+    (indexSrc.match(/execute: handlers\.[a-z_]+/g) || []).length === registeredTools.length
 );
 check(
   "src/index.ts: V2-обёртка editor.add тонкая (createToolSpecs)",

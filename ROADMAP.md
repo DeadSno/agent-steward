@@ -48,7 +48,7 @@ Legacy: `opencode-windows-scheduler@1.5.8`.
 **Подзадачи:**
 
 - [ ] QA-A2.0 Зафиксировать baseline (826) и добавить в CI проверку «новых предупреждений нет» (сравнение с baseline), иначе типизация будет откатываться новыми правками.
-- [ ] QA-A2.1 `src/index.ts` (~140 `any`; 29 MCP-схем, RPC, dual V1/V2 entry) — hottest spot, начинать здесь; переиспользовать `z.infer` из существующих Zod-схем.
+- [x] QA-A2.1 `src/index.ts` (~140 `any`; 29 MCP-схем, RPC, dual V1/V2 entry) — hottest spot, начинать здесь; переиспользовать `z.infer` из существующих Zod-схем.
 - [ ] QA-A2.2 `src/server.ts` (~13) — HTTP API, JSON-тела запросов и типы ответов.
 - [ ] QA-A2.3 `src/notifications.ts` (~12) — каналы и пейлоады уведомлений.
 - [ ] QA-A2.4 `src/db/migrate.ts` (~11) — сырые строки `PRAGMA`/`ALTER`, типизировать отдельно.

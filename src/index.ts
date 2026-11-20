@@ -11,6 +11,7 @@ import type {
 const v1Tool = <T>(input: T): T => input;
 import { z } from "zod";
 import type { Tool } from "@opencode/schema/tool";
+import type { Skill } from "@opencode/schema/skill";
 import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
@@ -46,7 +47,7 @@ import { getTaskLogs } from "./core/scheduler/logs.js";
 import { findSanitizedNameConflict, sanitizedConflictMessage } from "./core/task-name.js";
 import { writeBashWrapper } from "./core/wrappers/bash.js";
 import { normalizeTaskGuards, type TaskGuards } from "./core/guard.js";
-import { simulatePipeline } from "./core/dry-run.js";
+import { simulatePipeline, type DryRunReport } from "./core/dry-run.js";
 import {
   aggregateMatrixResults,
   cancelPendingMatrixClones,
@@ -1458,16 +1459,23 @@ type PipelineExportArgs = z.infer<typeof pipelineExportSchema>;
 let projectDirectory: string | undefined;
 
 /**
+ * Общий контекст execute-обработчиков. Обработчики не читают поля контекста,
+ * а контексты V1 и V2 устроены по-разному, поэтому на границе адаптеров он
+ * сводится к `unknown`. Это позволяет не тащить `Tool.Context` из
+ * @opencode/schema/tool в общий контракт инструментов.
+ */
+type ToolExecuteContext = unknown;
+
+/**
  * Обёртка execute-функции: ловит ошибки и возвращает Tool.Result с content.
- * Использует Tool.Context из @opencode/schema/tool.
  */
 function wrapExecute<Args>(
-  fn: (args: Args, ctx: Tool.Context) => Promise<Tool.Result>,
-): (input: Args, context: Tool.Context) => Promise<Tool.Result> {
+  fn: (args: Args, ctx: ToolExecuteContext) => Promise<Tool.Result>,
+): (input: Args, context: ToolExecuteContext) => Promise<Tool.Result> {
   return async (input, context) => {
     try {
       return await fn(input, context);
-    } catch (err: any) {
+    } catch (err) {
       return {
         content: JSON.stringify({
           success: false,
@@ -1682,7 +1690,7 @@ const scheduleTaskExecute = wrapExecute<ScheduleArgs>(async (args) => {
       guards,
       tokenBudget,
     );
-  } catch (err: any) {
+  } catch (err) {
     return {
       content: JSON.stringify({
         success: false,
@@ -1813,7 +1821,7 @@ async function cancelMatrixRun(
     // Удаление запущенной задачи планировщика останавливает её процесс.
     try {
       await scheduler.deleteTask(clone.name);
-    } catch (err: any) {
+    } catch (err) {
       warnings.push(
         t("tool.matrix.stopFailed", {
           clone: clone.name,
@@ -1867,7 +1875,7 @@ async function cancelMatrixRun(
         // QA-P0.1 (E-2.1): клон матрицы наследует tokenBudget родителя.
         clone.tokenBudget,
       );
-    } catch (err: any) {
+    } catch (err) {
       warnings.push(
         t("tool.matrix.recreateFailed", {
           clone: clone.name,
@@ -2092,11 +2100,11 @@ const deleteTaskExecute = wrapExecute<DeleteArgs>(async (args) => {
             : t("tool.task.deleted", { name }),
       }),
     };
-  } catch (err: any) {
+  } catch (err) {
     return {
       content: JSON.stringify({
         success: false,
-        error: err.message || String(err),
+        error: err instanceof Error ? err.message : String(err),
       }),
     };
   }
@@ -2110,11 +2118,11 @@ const runTaskNowExecute = wrapExecute<RunNowArgs>(async (args) => {
   try {
     const result = await runTaskEntry(name);
     alreadyRunning = result.alreadyRunning;
-  } catch (err: any) {
+  } catch (err) {
     return {
       content: JSON.stringify({
         success: false,
-        error: err.message || String(err),
+        error: err instanceof Error ? err.message : String(err),
       }),
     };
   }
@@ -2441,7 +2449,7 @@ async function updateTaskFromInput(
       nextRun: computeTaskNextRun(updated, { paused }),
       message: t("tool.task.updated", { name }),
     };
-  } catch (err: any) {
+  } catch (err) {
     const cause = err instanceof Error ? err.message : String(err);
 
     // Спринт 27.5.6: задача удалена из ОС, но новую версию создать не удалось.
@@ -2471,7 +2479,7 @@ async function updateTaskFromInput(
         restored: true,
         message: t("tool.task.rollbackRestored", { cause }),
       };
-    } catch (restoreErr: any) {
+    } catch (restoreErr) {
       const restoreMessage =
         restoreErr instanceof Error ? restoreErr.message : String(restoreErr);
       return {
@@ -2582,7 +2590,7 @@ async function pauseOrResumeTask(
         await scheduler.resumeTask(target);
       }
       affected.push(target);
-    } catch (err: any) {
+    } catch (err) {
       warnings.push(
         `${target}: ${err instanceof Error ? err.message : String(err)}`,
       );
@@ -2601,7 +2609,7 @@ async function pauseOrResumeTask(
   if (definitionUpdates && affected.length > 0) {
     try {
       saveTask({ ...definition, ...definitionUpdates });
-    } catch (err: any) {
+    } catch (err) {
       warnings.push(
         t("tool.task.autosave", {
           error: err instanceof Error ? err.message : String(err),
@@ -2700,7 +2708,7 @@ async function resumeExpiredPauses(): Promise<void> {
       console.log(
         `[agent-steward] Автопродолжение: задача "${definition.name}" включена (пауза истекла).`,
       );
-    } catch (err: any) {
+    } catch (err) {
       console.error(
         `[agent-steward] Не удалось автопродолжить задачу "${definition.name}": ${
           err instanceof Error ? err.message : String(err)
@@ -2788,11 +2796,11 @@ const dryRunExecute = wrapExecute<DryRunArgs>(async (args) => {
   }
 
   const definitions = await loadTaskDefinitions();
-  const reports: any[] = [];
+  const reports: (DryRunReport & { error?: string })[] = [];
   for (const definition of definitions) {
     try {
       reports.push(await simulatePipeline(definition.name));
-    } catch (err: any) {
+    } catch (err) {
       reports.push({
         success: false,
         taskName: definition.name,
@@ -2946,7 +2954,7 @@ const pipelineApplyExecute = wrapExecute<PipelineApplyArgs>(async (args) => {
         );
         await saveTaskDefinition(task);
         created++;
-      } catch (err: any) {
+      } catch (err) {
         errors.push(`create ${task.name}: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
@@ -3003,7 +3011,7 @@ const pipelineApplyExecute = wrapExecute<PipelineApplyArgs>(async (args) => {
         );
         await saveTaskDefinition(item.task);
         updated++;
-      } catch (err: any) {
+      } catch (err) {
         errors.push(`update ${item.task.name}: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
@@ -3085,7 +3093,7 @@ async function refreshWorkspaceEnvFiles(workspaceId: string): Promise<number> {
     try {
       writeWorkspaceEnvFile(workspace, PLUGIN_DIR, sanitizeName(task.name));
       refreshed += 1;
-    } catch (err: any) {
+    } catch (err) {
       // P2-21: не разрешаем задаче работать с литералом ${secret:...}.
       console.error(
         `[workspace] Задача "${task.name}": env-файл не обновлён — ${
@@ -3201,7 +3209,7 @@ const manageWorkspacesExecute = wrapExecute<WorkspacesArgs>(async (args) => {
         };
       }
     }
-  } catch (err: any) {
+  } catch (err) {
     return {
       content: JSON.stringify({
         success: false,
@@ -3271,7 +3279,7 @@ const matrixControlExecute = wrapExecute<MatrixControlArgs>(async (args) => {
           cancelled: result.cancelled,
         }),
       };
-    } catch (err: any) {
+    } catch (err) {
       return {
         content: JSON.stringify({
           success: false,
@@ -3296,7 +3304,7 @@ const matrixControlExecute = wrapExecute<MatrixControlArgs>(async (args) => {
   try {
     const report = aggregateMatrixResults(name);
     return { content: JSON.stringify({ success: true, report }) };
-  } catch (err: any) {
+  } catch (err) {
     return {
       content: JSON.stringify({
         success: false,
@@ -3349,7 +3357,7 @@ const selfAnalysisExecute = wrapExecute<SelfAnalysisArgs>(async (args) => {
   });
 
   // Фильтруем секции если нужно
-  const result: any = {
+  const result: Partial<typeof report> = {
     generatedAt: report.generatedAt,
     windowDays: report.windowDays,
     health: report.health,
@@ -3699,7 +3707,7 @@ const transferTasksExecute = wrapExecute<TransferArgs>(async (args) => {
       );
       await saveTaskDefinition(def);
       imported.push(def.name);
-    } catch (err: any) {
+    } catch (err) {
       errors.push(`${def.name}: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
@@ -3733,7 +3741,7 @@ const reportBugExecute = wrapExecute<ReportBugArgs>(async (args) => {
           lines.push(`\n--- Логи задачи ${args.taskName} ---`);
           lines.push(String(logs.logs).slice(0, 2000));
         }
-      } catch (err: any) {
+      } catch (err) {
         lines.push(`\n--- Логи задачи ${args.taskName}: ошибка чтения ---`);
         lines.push(err instanceof Error ? err.message : String(err));
       }
@@ -3747,7 +3755,7 @@ const reportBugExecute = wrapExecute<ReportBugArgs>(async (args) => {
       lines.push(`Успех: ${metrics.success}`);
       lines.push(`Ошибок: ${metrics.error}`);
       if (metrics.partial) lines.push(`Частично: ${metrics.partial}`);
-    } catch (err: any) {
+    } catch (err) {
       lines.push(`\n--- Метрики: ошибка чтения: ${err instanceof Error ? err.message : String(err)} ---`);
     }
     try {
@@ -3773,7 +3781,7 @@ const reportBugExecute = wrapExecute<ReportBugArgs>(async (args) => {
           `Задачи с ошибками: ${errorTasks.map((t) => `${t.taskName} (${t.error})`).join(", ")}`,
         );
       }
-    } catch (err: any) {
+    } catch (err) {
       lines.push(`\n--- Аналитика: ошибка чтения: ${err instanceof Error ? err.message : String(err)} ---`);
     }
   }
@@ -3857,7 +3865,7 @@ const emitEventExecute = wrapExecute<EmitEventArgs>(async (args) => {
     try {
       await runTaskEntry(def.name);
       triggered.push(def.name);
-    } catch (err: any) {
+    } catch (err) {
       console.error(`[agent-steward] emit_event: не удалось запустить ${def.name}:`, err);
     }
   }
@@ -3942,14 +3950,22 @@ const getAuditLogExecute = wrapExecute<AuditLogArgs>(async (args) => {
 function withAudit<A>(
   toolName: string,
   describe: (args: A) => Omit<AuditEntryInput, "actor"> | null,
-  execute: (args: A, context: Tool.Context) => Promise<Tool.Result>,
-): (args: A, context: Tool.Context) => Promise<Tool.Result> {
-  return async (args: A, context: Tool.Context) => {
+  execute: (args: A, context: ToolExecuteContext) => Promise<Tool.Result>,
+): (args: A, context: ToolExecuteContext) => Promise<Tool.Result> {
+  return async (args: A, context: ToolExecuteContext) => {
     const result = await execute(args, context);
     try {
-      const raw = String((result as any)?.content ?? "");
-      const parsed = raw ? JSON.parse(raw) : null;
-      if (parsed?.success === false) return result;
+      const content = result.content;
+      const raw = typeof content === "string" ? content : "";
+      const parsed: unknown = raw ? JSON.parse(raw) : null;
+      if (
+        typeof parsed === "object" &&
+        parsed !== null &&
+        "success" in parsed &&
+        parsed.success === false
+      ) {
+        return result;
+      }
       const entry = describe(args);
       if (entry) {
         recordAudit({ ...entry, actor: "mcp", source: toolName });
@@ -3961,13 +3977,26 @@ function withAudit<A>(
   };
 }
 
+/** Поля payload-а GUI-RPC, которые читают правила аудита. */
+interface RpcAuditInput {
+  name?: string;
+  path?: string;
+  id?: string;
+  runId?: string;
+  eventName?: string;
+  taskName?: string;
+}
+
+/** Тип обработчика GUI-RPC: конкретные аргументы известны только вызывающей стороне. */
+type RpcHandler = (...args: never[]) => unknown;
+
 /** Правила аудита для RPC-методов GUI (Спринт 26). */
 const RPC_AUDIT_RULES: Record<
   string,
   {
     action: string;
     targetType: string;
-    target: (input: any) => string;
+    target: (input: RpcAuditInput) => string;
   }
 > = {
   create_task: { action: "task.create", targetType: "task", target: (i) => i.name ?? "" },
@@ -4051,19 +4080,25 @@ const RPC_AUDIT_RULES: Record<
  * Оборачивает RPC-обработчики GUI: успешные мутации попадают в audit log
  * с actor=gui. Ошибки аудита не влияют на ответ GUI.
  */
-function withRpcAudit<T extends Record<string, (...args: any[]) => any>>(handlers: T): T {
-  const wrapped: Record<string, (...args: any[]) => any> = {};
-  for (const [name, handler] of Object.entries(handlers)) {
+function withRpcAudit<T extends Record<string, RpcHandler>>(handlers: T): T {
+  const wrapped: Record<string, RpcHandler> = {};
+  const entries: [string, RpcHandler][] = Object.entries(handlers);
+  for (const [name, handler] of entries) {
     const rule = RPC_AUDIT_RULES[name];
     if (!rule || typeof handler !== "function") {
       wrapped[name] = handler;
       continue;
     }
-    wrapped[name] = async (...args: any[]) => {
-      const input = args[0] ?? {};
+    wrapped[name] = async (...args: never[]) => {
+      const input = (args[0] ?? {}) as RpcAuditInput;
       const result = await handler(...args);
       try {
-        if ((result)?.success !== false) {
+        const failed =
+          typeof result === "object" &&
+          result !== null &&
+          "success" in result &&
+          result.success === false;
+        if (!failed) {
           recordAudit({
             action: rule.action,
             targetType: rule.targetType,
@@ -4103,7 +4138,7 @@ async function refreshTriggers(): Promise<void> {
   if (fileWatcherManager) {
     try {
       await fileWatcherManager.refresh();
-    } catch (err: any) {
+    } catch (err) {
       console.error(
         `[agent-steward] Не удалось обновить файловые триггеры: ${
           err instanceof Error ? err.message : String(err)
@@ -4114,7 +4149,7 @@ async function refreshTriggers(): Promise<void> {
   if (gitTriggerManager) {
     try {
       await gitTriggerManager.refresh();
-    } catch (err: any) {
+    } catch (err) {
       console.error(
         `[agent-steward] Не удалось обновить git-триггеры: ${
           err instanceof Error ? err.message : String(err)
@@ -4179,7 +4214,7 @@ async function scheduleEventRun(taskName: string, reason: string): Promise<void>
     )} мин: ${state.reason ?? "вне окна"}.`,
   );
   const timer = setTimeout(() => {
-    void scheduleEventRun(taskName, reason).catch((err: any) => {
+    void scheduleEventRun(taskName, reason).catch((err) => {
       console.error(
         `[agent-steward] Не удалось запустить отложенную задачу "${taskName}": ${
           err instanceof Error ? err.message : String(err)
@@ -4231,7 +4266,7 @@ export async function createRuntime(ctxLike: RuntimeContextLike): Promise<Schedu
   initDb();
   try {
     await migrateJsonToDb();
-  } catch (err: any) {
+  } catch (err) {
     console.error(
       `[migrate] Не удалось мигрировать JSON → SQLite: ${
         err instanceof Error ? err.message : String(err)
@@ -4240,7 +4275,7 @@ export async function createRuntime(ctxLike: RuntimeContextLike): Promise<Schedu
   }
   try {
     recoverInterruptedRuns();
-  } catch (err: any) {
+  } catch (err) {
     console.error(
       `[recovery] Не удалось восстановить незавершённые запуски: ${
         err instanceof Error ? err.message : String(err)
@@ -4259,7 +4294,7 @@ export async function createRuntime(ctxLike: RuntimeContextLike): Promise<Schedu
             `живо ${report.kept}.`,
         );
       }
-    } catch (err: any) {
+    } catch (err) {
       console.error(
         `[scheduler] Не удалось очистить fallback-записи: ${
           err instanceof Error ? err.message : String(err)
@@ -4284,7 +4319,7 @@ export async function createRuntime(ctxLike: RuntimeContextLike): Promise<Schedu
         );
       }
     })
-    .catch((err: any) => {
+    .catch((err) => {
       console.error(
         `[retention] Не удалось очистить историю: ${
           err instanceof Error ? err.message : String(err)
@@ -4294,7 +4329,7 @@ export async function createRuntime(ctxLike: RuntimeContextLike): Promise<Schedu
 
   // Спринт 19: автопродолжение задач, поставленных на паузу до даты.
   // Проверяем сразу при старте и далее раз в 5 минут, пока плагин жив.
-  void resumeExpiredPauses().catch((err: any) => {
+  void resumeExpiredPauses().catch((err) => {
     console.error(
       `[agent-steward] Не удалось проверить автопродолжение: ${
         err instanceof Error ? err.message : String(err)
@@ -4302,7 +4337,7 @@ export async function createRuntime(ctxLike: RuntimeContextLike): Promise<Schedu
     );
   });
   const pausedUntilTimer = setInterval(() => {
-    void resumeExpiredPauses().catch((err: any) => {
+    void resumeExpiredPauses().catch((err) => {
       console.error(
         `[agent-steward] Не удалось проверить автопродолжение: ${
           err instanceof Error ? err.message : String(err)
@@ -4316,7 +4351,7 @@ export async function createRuntime(ctxLike: RuntimeContextLike): Promise<Schedu
   // старте и далее раз в минуту; таймер не держит процесс Node живым.
   const notificationTimer = setInterval(() => {
     void maybeSendDigest().catch(() => undefined);
-    void checkStuckMatrices().catch((err: any) => {
+    void checkStuckMatrices().catch((err) => {
       console.error(
         `[agent-steward] Детектор зависших матриц: ${
           err instanceof Error ? err.message : String(err)
@@ -4372,7 +4407,7 @@ export async function createRuntime(ctxLike: RuntimeContextLike): Promise<Schedu
           console.log(
             `[agent-steward] Запущено восстановление пропущенной задачи "${def.name}" (последний срабатывал ~${Math.round(ageMs / 1000)} с назад).`,
           );
-        } catch (err: any) {
+        } catch (err) {
           console.error(
             `[agent-steward] Не удалось восстановить задачу "${def.name}": ${
               err instanceof Error ? err.message : String(err)
@@ -4380,7 +4415,7 @@ export async function createRuntime(ctxLike: RuntimeContextLike): Promise<Schedu
           );
         }
       }
-    } catch (err: any) {
+    } catch (err) {
       console.error(
         `[agent-steward] Catch-up ошибка: ${err instanceof Error ? err.message : String(err)}`,
       );
@@ -4392,7 +4427,7 @@ export async function createRuntime(ctxLike: RuntimeContextLike): Promise<Schedu
   fileWatcherManager = new FileWatchManager(async (taskName) => {
     try {
       await scheduleEventRun(taskName, "изменение отслеживаемого файла");
-    } catch (err: any) {
+    } catch (err) {
       console.error(
         `[agent-steward] Не удалось запустить задачу "${taskName}" по файловому триггеру: ${
           err instanceof Error ? err.message : String(err)
@@ -4406,7 +4441,7 @@ export async function createRuntime(ctxLike: RuntimeContextLike): Promise<Schedu
   gitTriggerManager = new GitTriggerManager(async (taskName, info) => {
     try {
       await scheduleEventRun(taskName, `новый коммит ${info.head?.slice(0, 7) ?? ""}`);
-    } catch (err: any) {
+    } catch (err) {
       console.error(
         `[agent-steward] Не удалось запустить задачу "${taskName}" по git-триггеру: ${
           err instanceof Error ? err.message : String(err)
@@ -4569,13 +4604,26 @@ export function createShutdownHandler(
  * Декларативное описание инструмента: всё, что нужно любому entrypoint'у,
  * чтобы зарегистрировать его в своей версии API.
  */
+/**
+ * Бивариантные сигнатуры (паттерн `bivarianceHack`). Типизированные
+ * обработчики из `ToolHandlers` принимают конкретные `z.infer`-аргументы,
+ * а реестр хранит их как `unknown`: вход проверен Zod-схемой инструмента
+ * до вызова, поэтому приведение типов здесь не требуется.
+ */
+type ToolSpecExecute = {
+  bivarianceHack(args: unknown, context: ToolExecuteContext): Promise<Tool.Result>;
+}["bivarianceHack"];
+type ToolSpecAudit = {
+  bivarianceHack(args: unknown): Omit<AuditEntryInput, "actor"> | null;
+}["bivarianceHack"];
+
 export interface ToolSpec {
   name: string;
-  input: any;
+  input: z.ZodTypeAny;
   description: string;
-  execute: (args: any, context: Tool.Context) => Promise<Tool.Result>;
+  execute: ToolSpecExecute;
   /** Правила аудита; null/undefined — операция не пишется в журнал. */
-  audit?: (args: any) => Omit<AuditEntryInput, "actor"> | null;
+  audit?: ToolSpecAudit;
 }
 
 /**
@@ -4596,7 +4644,7 @@ export function createToolSpecs(runtime: SchedulerRuntime): ToolSpec[] {
         "Every run goes through a timeout + lock-file wrapper, so overlapping runs are skipped. " +
         "Without workingDirectory the task runs in the current project folder, where opencode run picks up the project's opencode.json and MCP servers.",
       audit: (args: ScheduleArgs) => ({ action: "task.create", targetType: "task", target: args.name }),
-      execute: handlers.schedule_task as any,
+      execute: handlers.schedule_task,
     },
     {
       name: "list_tasks",
@@ -4604,7 +4652,7 @@ export function createToolSpecs(runtime: SchedulerRuntime): ToolSpec[] {
       description:
         `Lists plugin tasks from the scheduler (${scheduler.title}) with schedule, status, next chained task and working directory. ` +
         "Matrix parents include a per-clone summary.",
-      execute: handlers.list_tasks as any,
+      execute: handlers.list_tasks,
     },
     {
       name: "update_task",
@@ -4613,7 +4661,7 @@ export function createToolSpecs(runtime: SchedulerRuntime): ToolSpec[] {
         "Partially updates an existing task: omitted fields keep their current values, empty strings/arrays clear them. " +
         "Matrix changes are synced (clones are diffed, running clones are never touched); pass matrix: null to remove the matrix and its clones.",
       audit: (args: UpdateArgs) => ({ action: "task.update", targetType: "task", target: args.name }),
-      execute: handlers.update_task as any,
+      execute: handlers.update_task,
     },
     {
       name: "delete_task",
@@ -4622,7 +4670,7 @@ export function createToolSpecs(runtime: SchedulerRuntime): ToolSpec[] {
         `Deletes a task from the scheduler (${scheduler.title}) by name. ` +
         "Deleting a matrix parent also deletes its clones and aggregator; deleting a single clone is refused (delete the whole matrix instead).",
       audit: (args: DeleteArgs) => ({ action: "task.delete", targetType: "task", target: args.name }),
-      execute: handlers.delete_task as any,
+      execute: handlers.delete_task,
     },
     {
       name: "run_task_now",
@@ -4631,7 +4679,7 @@ export function createToolSpecs(runtime: SchedulerRuntime): ToolSpec[] {
         `Runs a task immediately in the scheduler (${scheduler.title}) for testing. ` +
         "Runs through the timeout + lock wrapper. For a matrix parent this starts the fan-out instead of the parent itself.",
       audit: (args: RunNowArgs) => ({ action: "task.run", targetType: "task", target: args.name }),
-      execute: handlers.run_task_now as any,
+      execute: handlers.run_task_now,
     },
     {
       name: "pause_task",
@@ -4639,7 +4687,7 @@ export function createToolSpecs(runtime: SchedulerRuntime): ToolSpec[] {
       description:
         "Pauses a task in the OS scheduler. For a matrix parent every clone is paused (the parent itself never runs).",
       audit: (args: PauseArgs) => ({ action: "task.pause", targetType: "task", target: args.name }),
-      execute: handlers.pause_task as any,
+      execute: handlers.pause_task,
     },
     {
       name: "resume_task",
@@ -4647,7 +4695,7 @@ export function createToolSpecs(runtime: SchedulerRuntime): ToolSpec[] {
       description:
         "Resumes a previously paused task. For a matrix parent every clone is resumed.",
       audit: (args: ResumeArgs) => ({ action: "task.resume", targetType: "task", target: args.name }),
-      execute: handlers.resume_task as any,
+      execute: handlers.resume_task,
     },
     {
       name: "get_history",
@@ -4655,21 +4703,21 @@ export function createToolSpecs(runtime: SchedulerRuntime): ToolSpec[] {
       description:
         "Returns recent run history (status, duration, tokens, cost, model, Quality Gate and pre/post-flight results). " +
         "Filter by taskName and/or status; newest first.",
-      execute: handlers.get_history as any,
+      execute: handlers.get_history,
     },
     {
       name: "get_task_logs",
       input: getTaskLogsSchema,
       description:
         "Returns the tail of a task's log file written by the run wrapper. Use it to diagnose failed runs.",
-      execute: handlers.get_task_logs as any,
+      execute: handlers.get_task_logs,
     },
     {
       name: "dry_run",
       input: dryRunSchema,
       description:
         "Simulates a task pipeline (or every task when name is omitted): execution order, DAG dependencies, matrix fan-out, estimated duration/cost and warnings. Nothing is executed.",
-      execute: handlers.dry_run as any,
+      execute: handlers.dry_run,
     },
     {
       name: "manage_workspaces",
@@ -4684,7 +4732,7 @@ export function createToolSpecs(runtime: SchedulerRuntime): ToolSpec[] {
             targetType: "workspace",
             target: args.id || args.name || "",
           },
-      execute: handlers.manage_workspaces as any,
+      execute: handlers.manage_workspaces,
     },
     {
       name: "matrix_control",
@@ -4699,21 +4747,21 @@ export function createToolSpecs(runtime: SchedulerRuntime): ToolSpec[] {
             target: args.name || "",
           }
           : null,
-      execute: handlers.matrix_control as any,
+      execute: handlers.matrix_control,
     },
     {
       name: "get_metrics",
       input: getMetricsSchema,
       description:
         "Returns aggregate run metrics: total runs, successes and failures across all tasks.",
-      execute: handlers.get_metrics as any,
+      execute: handlers.get_metrics,
     },
     {
       name: "get_analytics",
       input: getAnalyticsSchema,
       description:
         "Returns an analytics report for a period: run counts, success rate, duration, tokens and cost, plus top tasks.",
-      execute: handlers.get_analytics as any,
+      execute: handlers.get_analytics,
     },
     {
       name: "self_analysis",
@@ -4723,7 +4771,7 @@ export function createToolSpecs(runtime: SchedulerRuntime): ToolSpec[] {
         "Helps identify performance issues, cost spikes and reliability problems. " +
         "In health.components, successRate and errorRate are normalized 0..100 scores (higher is better): " +
         "errorRate = 100 - 100 * error / total, so it is NOT the raw error percentage.",
-      execute: handlers.self_analysis as any,
+      execute: handlers.self_analysis,
     },
     {
       name: "manage_settings",
@@ -4734,7 +4782,7 @@ export function createToolSpecs(runtime: SchedulerRuntime): ToolSpec[] {
         args.action === "update"
           ? { action: "settings.update", targetType: "settings", target: "global" }
           : null,
-      execute: handlers.manage_settings as any,
+      execute: handlers.manage_settings,
     },
     {
       name: "manage_local_ai",
@@ -4747,7 +4795,7 @@ export function createToolSpecs(runtime: SchedulerRuntime): ToolSpec[] {
         args.action === "update"
           ? { action: "localAi.update", targetType: "settings", target: "triage" }
           : null,
-      execute: handlers.manage_local_ai as any,
+      execute: handlers.manage_local_ai,
     },
     {
       name: "manage_templates",
@@ -4762,7 +4810,7 @@ export function createToolSpecs(runtime: SchedulerRuntime): ToolSpec[] {
             targetType: "template",
             target: args.id || args.name || "",
           },
-      execute: handlers.manage_templates as any,
+      execute: handlers.manage_templates,
     },
     {
       name: "manage_profiles",
@@ -4777,7 +4825,7 @@ export function createToolSpecs(runtime: SchedulerRuntime): ToolSpec[] {
             targetType: "profile",
             target: args.name || "",
           },
-      execute: handlers.manage_profiles as any,
+      execute: handlers.manage_profiles,
     },
     {
       name: "transfer_tasks",
@@ -4788,28 +4836,28 @@ export function createToolSpecs(runtime: SchedulerRuntime): ToolSpec[] {
         args.action === "import"
           ? { action: "tasks.import", targetType: "tasks", target: "snapshot" }
           : null,
-      execute: handlers.transfer_tasks as any,
+      execute: handlers.transfer_tasks,
     },
     {
       name: "send_notification",
       input: sendNotificationSchema,
       description:
         "Sends a test notification through the configured channel or sends the digest immediately.",
-      execute: handlers.send_notification as any,
+      execute: handlers.send_notification,
     },
     {
       name: "report_bug",
       input: reportBugSchema,
       description:
         "Sends a bug report from the plugin user to the developer via configured notification channels (Telegram/webhook/native). Includes optional task logs and recent analytics.",
-      execute: handlers.report_bug as any,
+      execute: handlers.report_bug,
     },
     {
       name: "get_dashboard_info",
       input: getDashboardInfoSchema,
       description:
         "Returns dashboard port and URL, OS platform, scheduler title and the active profile.",
-      execute: handlers.get_dashboard_info as any,
+      execute: handlers.get_dashboard_info,
     },
     {
       name: "cleanup_history",
@@ -4817,7 +4865,7 @@ export function createToolSpecs(runtime: SchedulerRuntime): ToolSpec[] {
       description:
         "Deletes old run history by age and/or record cap, using the stored retention policy unless overridden.",
       audit: () => ({ action: "history.cleanup", targetType: "history", target: "runs" }),
-      execute: handlers.cleanup_history as any,
+      execute: handlers.cleanup_history,
     },
     {
       name: "manage_secrets",
@@ -4834,7 +4882,7 @@ export function createToolSpecs(runtime: SchedulerRuntime): ToolSpec[] {
             targetType: "secret",
             target: (args.name ?? "").trim(),
           },
-      execute: handlers.manage_secrets as any,
+      execute: handlers.manage_secrets,
     },
     {
       name: "get_audit_log",
@@ -4842,14 +4890,14 @@ export function createToolSpecs(runtime: SchedulerRuntime): ToolSpec[] {
       description:
         "Returns the audit journal of task and settings mutations: who changed what, when and through which interface (mcp, gui, http). " +
         "Filter by action, target, actor, time range and limit. Secret values are redacted.",
-      execute: handlers.get_audit_log as any,
+      execute: handlers.get_audit_log,
     },
     {
       name: "pipeline_validate",
       input: pipelineValidateSchema,
       description:
         "Проверяет opencode.pipeline.yaml (путь к файлу или исходник): валидирует version, шаги, зависимости, циклы, cron-расписание, matrix, модель, окна запуска и другие инварианты конвейера. Не применяет изменения.",
-      execute: handlers.pipeline_validate as any,
+      execute: handlers.pipeline_validate,
     },
     {
       name: "pipeline_apply",
@@ -4861,21 +4909,21 @@ export function createToolSpecs(runtime: SchedulerRuntime): ToolSpec[] {
         targetType: "pipeline",
         target: args.source ?? args.path ?? "",
       }),
-      execute: handlers.pipeline_apply as any,
+      execute: handlers.pipeline_apply,
     },
     {
       name: "pipeline_export",
       input: pipelineExportSchema,
       description:
         "Выгружает задачи указанного конвейера (pipelineName) как opencode.pipeline.yaml: шаги, зависимости, matrix, кастомные настройки шага.",
-      execute: handlers.pipeline_export as any,
+      execute: handlers.pipeline_export,
     },
     {
       name: "emit_event",
       input: emitEventSchema,
       description:
         "Emits an MCP event: every task with triggerType 'mcp-event' matching the event name (and filter) is started in priority order.",
-      execute: handlers.emit_event as any,
+      execute: handlers.emit_event,
     },
   ];
 }
@@ -4919,7 +4967,7 @@ const v2Plugin = Plugin.define({
           input: spec.input,
           description: spec.description,
           options: { codemode: true },
-          execute: execute as any,
+          execute,
         });
       }
     });
@@ -4933,16 +4981,20 @@ const v2Plugin = Plugin.define({
       const skill = loadSchedulerSkill();
       if (skill && ctx.skill?.transform) {
         skillRegistration = await ctx.skill.transform((editor) => {
+          // QA-A2.1: V2 skill API ожидает Effect-брендированные строки
+          // (Skill.ID / Skill.Name / AbsolutePath). Значения приходят из
+          // собственного skill.ts, бренд живёт только на уровне типов —
+          // приведение на границе внешнего API не меняет поведение.
           editor.add({
-            id: skill.id as any,
-            name: skill.name as any,
+            id: skill.id as Skill.Info["id"],
+            name: skill.name as Skill.Info["name"],
             description: skill.description,
-            path: skill.path as any,
+            path: skill.path as Skill.Info["path"],
             content: skill.content,
           });
         });
       }
-    } catch (err: any) {
+    } catch (err) {
       console.error(
         `[agent-steward] Не удалось зарегистрировать скилл "${SCHEDULER_SKILL_ID}": ${
           err instanceof Error ? err.message : String(err)
@@ -5131,7 +5183,7 @@ const v2Plugin = Plugin.define({
             nextRun,
             message: t("tool.task.created", { name }),
           };
-        } catch (err: any) {
+        } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           return { success: false, message };
         }
@@ -5150,7 +5202,7 @@ const v2Plugin = Plugin.define({
                 })
                 : t("tool.task.deleted", { name }),
           };
-        } catch (err: any) {
+        } catch (err) {
           return { success: false, message: err instanceof Error ? err.message : String(err) };
         }
       },
@@ -5163,7 +5215,7 @@ const v2Plugin = Plugin.define({
             message: result.message,
             cancelled: result.cancelled,
           };
-        } catch (err: any) {
+        } catch (err) {
           return {
             success: false,
             message: err instanceof Error ? err.message : String(err),
@@ -5182,7 +5234,7 @@ const v2Plugin = Plugin.define({
                 : t("tool.matrix.orphansNone"),
             removed,
           };
-        } catch (err: any) {
+        } catch (err) {
           return {
             success: false,
             message: err instanceof Error ? err.message : String(err),
@@ -5263,7 +5315,7 @@ const v2Plugin = Plugin.define({
             return { success: true, message: t("tool.task.alreadyRunning", { name }) };
           }
           return { success: true, message: t("tool.task.started", { name }) };
-        } catch (err: any) {
+        } catch (err) {
           return { success: false, message: `schtasks error: ${err instanceof Error ? err.message : String(err)}` };
         }
       },
@@ -5298,7 +5350,7 @@ const v2Plugin = Plugin.define({
               ...(step.error ? { error: step.error } : {}),
             })),
           };
-        } catch (err: any) {
+        } catch (err) {
           return {
             success: false,
             dryRun: false,
@@ -5342,7 +5394,7 @@ const v2Plugin = Plugin.define({
             console.log(
               `[agent-steward] Запуск задачи "${def.name}" по MCP-событию "${normalized}".`,
             );
-          } catch (err: any) {
+          } catch (err) {
             console.error(
               `[agent-steward] Не удалось запустить "${def.name}" по событию "${normalized}": ${
                 err instanceof Error ? err.message : String(err)
@@ -5421,7 +5473,7 @@ const v2Plugin = Plugin.define({
             maxRecords: report.maxRecords,
             vacuumed: report.vacuumed,
           };
-        } catch (err: any) {
+        } catch (err) {
           return {
             success: false,
             message: t("tool.history.cleanFailed", {
@@ -5459,7 +5511,7 @@ const v2Plugin = Plugin.define({
           const settings = await loadSettings();
           const budgets = buildBudgetReport(records, settings.budgets, new Date());
           return { success: true, report: { ...report, budgets } };
-        } catch (err: any) {
+        } catch (err) {
           return {
             success: false,
             report: null,
@@ -5493,7 +5545,7 @@ const v2Plugin = Plugin.define({
           });
 
           // Фильтруем секции если нужно
-          const result: any = {
+          const result: Partial<typeof report> = {
             generatedAt: report.generatedAt,
             windowDays: report.windowDays,
             health: report.health,
@@ -5512,7 +5564,7 @@ const v2Plugin = Plugin.define({
           }
 
           return { success: true, report: result };
-        } catch (err: any) {
+        } catch (err) {
           return {
             success: false,
             report: null,
@@ -5545,7 +5597,7 @@ const v2Plugin = Plugin.define({
                   lines.push(`\n--- Логи задачи ${taskName} ---`);
                   lines.push(String(logs.logs).slice(0, 2000));
                 }
-              } catch (err: any) {
+              } catch (err) {
                 lines.push(`\n--- Логи задачи ${taskName}: ошибка чтения ---`);
                 lines.push(err instanceof Error ? err.message : String(err));
               }
@@ -5559,7 +5611,7 @@ const v2Plugin = Plugin.define({
               lines.push(`Успех: ${metrics.success}`);
               lines.push(`Ошибок: ${metrics.error}`);
               if (metrics.partial) lines.push(`Частично: ${metrics.partial}`);
-            } catch (err: any) {
+            } catch (err) {
               lines.push(`\n--- Метрики: ошибка чтения: ${err instanceof Error ? err.message : String(err)} ---`);
             }
             try {
@@ -5585,7 +5637,7 @@ const v2Plugin = Plugin.define({
                   `Задачи с ошибками: ${errorTasks.map((t) => `${t.taskName} (${t.error})`).join(", ")}`,
                 );
               }
-            } catch (err: any) {
+            } catch (err) {
               lines.push(`\n--- Аналитика: ошибка чтения: ${err instanceof Error ? err.message : String(err)} ---`);
             }
           }
@@ -5597,7 +5649,7 @@ const v2Plugin = Plugin.define({
             message: result.message,
             results: result.results,
           };
-        } catch (err: any) {
+        } catch (err) {
           return {
             success: false,
             error: err instanceof Error ? err.message : String(err),
@@ -5615,7 +5667,7 @@ const v2Plugin = Plugin.define({
         try {
           const report = await simulatePipeline(taskName);
           return { ...report };
-        } catch (err: any) {
+        } catch (err) {
           return {
             success: false,
             taskName,
@@ -5628,12 +5680,12 @@ const v2Plugin = Plugin.define({
       },
       dry_run_all: async () => {
         const tasks = await loadTaskDefinitions();
-        const reports: any[] = [];
+        const reports: (DryRunReport & { error?: string })[] = [];
         let allSuccess = true;
         for (const task of tasks) {
           try {
             reports.push(await simulatePipeline(task.name));
-          } catch (err: any) {
+          } catch (err) {
             allSuccess = false;
             reports.push({
               success: false,
@@ -5653,8 +5705,9 @@ const v2Plugin = Plugin.define({
           source?: string;
           dryRun?: boolean;
         };
-        const result = await pipelineValidateExecute({ path, source, dryRun } as PipelineValidateArgs, {} as Tool.Context);
-        return JSON.parse(result.content as string);
+        const result = await pipelineValidateExecute({ path, source, dryRun } as PipelineValidateArgs, {});
+        const parsed: unknown = JSON.parse(result.content as string);
+        return parsed;
       },
       pipeline_apply: async (input: unknown) => {
         const { path, source, dryRun } = input as {
@@ -5662,16 +5715,18 @@ const v2Plugin = Plugin.define({
           source?: string;
           dryRun?: boolean;
         };
-        const result = await pipelineApplyExecute({ path, source, dryRun } as PipelineApplyArgs, {} as Tool.Context);
-        return JSON.parse(result.content as string);
+        const result = await pipelineApplyExecute({ path, source, dryRun } as PipelineApplyArgs, {});
+        const parsed: unknown = JSON.parse(result.content as string);
+        return parsed;
       },
       pipeline_export: async (input: unknown) => {
         const { pipeline, pipelineName } = input as { pipeline?: string; pipelineName?: string };
         const result = await pipelineExportExecute(
           { pipeline: pipeline ?? pipelineName },
-          {} as Tool.Context,
+          {},
         );
-        return JSON.parse(result.content as string);
+        const parsed: unknown = JSON.parse(result.content as string);
+        return parsed;
       },
       get_matrix_results: async (input: unknown) => {
         const { parentId } = input as { parentId?: string; name?: string };
@@ -5682,7 +5737,7 @@ const v2Plugin = Plugin.define({
         try {
           const report = aggregateMatrixResults(target);
           return { success: true, report };
-        } catch (err: any) {
+        } catch (err) {
           return {
             success: false,
             error: err instanceof Error ? err.message : String(err),
@@ -5719,7 +5774,7 @@ const v2Plugin = Plugin.define({
                 : null,
             })),
           };
-        } catch (err: any) {
+        } catch (err) {
           return {
             success: false,
             clones: [],
@@ -5754,7 +5809,7 @@ const v2Plugin = Plugin.define({
               gitBranch: readGitBranch(workspace.path) ?? null,
             },
           };
-        } catch (err: any) {
+        } catch (err) {
           return { success: false, error: err instanceof Error ? err.message : String(err) };
         }
       },
@@ -5782,7 +5837,7 @@ const v2Plugin = Plugin.define({
               gitBranch: readGitBranch(workspace.path) ?? null,
             },
           };
-        } catch (err: any) {
+        } catch (err) {
           return { success: false, error: err instanceof Error ? err.message : String(err) };
         }
       },
@@ -5796,7 +5851,7 @@ const v2Plugin = Plugin.define({
               ? t("tool.workspace.deleted")
               : t("tool.workspace.notFound"),
           };
-        } catch (err: any) {
+        } catch (err) {
           return { success: false, message: err instanceof Error ? err.message : String(err) };
         }
       },
@@ -5820,7 +5875,7 @@ const v2Plugin = Plugin.define({
               ? t("tool.profile.envVarLong", { name: current })
               : t("tool.profile.active", { name: sanitizeProfileName(name) }),
           };
-        } catch (err: any) {
+        } catch (err) {
           return {
             success: false,
             current: getProfileName(),
@@ -5845,7 +5900,7 @@ const v2Plugin = Plugin.define({
               active: meta.name === getProfileName(),
             },
           };
-        } catch (err: any) {
+        } catch (err) {
           return {
             success: false,
             error: err instanceof Error ? err.message : String(err),
@@ -5862,7 +5917,7 @@ const v2Plugin = Plugin.define({
               ? t("tool.profile.deleted", { name: sanitizeProfileName(name) })
               : t("tool.profile.notFound"),
           };
-        } catch (err: any) {
+        } catch (err) {
           return { success: false, message: err instanceof Error ? err.message : String(err) };
         }
       },
@@ -6028,7 +6083,7 @@ const v2Plugin = Plugin.define({
             message: t("tool.secret.saved", { name: secret.name }),
             secret,
           };
-        } catch (err: any) {
+        } catch (err) {
           return {
             success: false,
             message: err instanceof Error ? err.message : String(err),
@@ -6049,7 +6104,7 @@ const v2Plugin = Plugin.define({
               ? t("tool.secret.deleted", { name })
               : t("tool.secret.notFound", { name }),
           };
-        } catch (err: any) {
+        } catch (err) {
           return {
             success: false,
             message: err instanceof Error ? err.message : String(err),
@@ -6119,7 +6174,7 @@ const v2Plugin = Plugin.define({
       get_templates: async () => {
         try {
           return { templates: await loadTemplates() };
-        } catch (err: any) {
+        } catch (err) {
           console.error("[agent-steward] get_templates error:", err);
           return { templates: [] };
         }
@@ -6150,7 +6205,7 @@ const v2Plugin = Plugin.define({
                     : undefined,
           });
           return { success: true, template };
-        } catch (err: any) {
+        } catch (err) {
           return {
             success: false,
             error: err instanceof Error ? err.message : String(err),
@@ -6171,7 +6226,7 @@ const v2Plugin = Plugin.define({
           }
           await deleteTemplate(id);
           return { success: true };
-        } catch (err: any) {
+        } catch (err) {
           return {
             success: false,
             error: err instanceof Error ? err.message : String(err),
@@ -6187,7 +6242,7 @@ const v2Plugin = Plugin.define({
           }));
           const { data, count } = await buildExportJson(exportTasks);
           return { success: true, data, count };
-        } catch (err: any) {
+        } catch (err) {
           return { success: false, error: err instanceof Error ? err.message : String(err) };
         }
       },
@@ -6264,7 +6319,7 @@ const v2Plugin = Plugin.define({
               );
               await saveTaskDefinition(def);
               imported.push(def.name);
-            } catch (err: any) {
+            } catch (err) {
               errors.push(`${def.name}: ${err instanceof Error ? err.message : String(err)}`);
             }
           }
@@ -6274,7 +6329,7 @@ const v2Plugin = Plugin.define({
             imported: imported.length,
             errors: errors.length ? errors : undefined,
           };
-        } catch (err: any) {
+        } catch (err) {
           return { success: false, error: err instanceof Error ? err.message : String(err) };
         }
       },
@@ -6287,7 +6342,7 @@ const v2Plugin = Plugin.define({
 
     // Lifecycle матриц (Спринт 16): при старте вычищаем клоны/агрегаторы,
     // чьи родители были удалены в прошлых сессиях.
-    void cleanupOrphanedMatrixTasks().catch((err: any) => {
+    void cleanupOrphanedMatrixTasks().catch((err) => {
       console.log(
         `[matrix] Не удалось очистить осиротевшие задачи: ${
           err instanceof Error ? err.message : String(err)
@@ -6309,36 +6364,49 @@ const v2Plugin = Plugin.define({
  * Приводит результат V2-обработчика (`Tool.Result`) к формату V1 (`ToolResult`).
  * V1 ждёт строку или `{ output, metadata }`; V2 отдаёт `{ content }`.
  */
-export function toV1ToolResult(result: any): any {
+type V1ToolResult = string | { output: string; metadata?: Tool.Result["metadata"] };
+
+/** Сужает элемент content до текстового блока (остальные типы V2 не нас интересуют). */
+function isTextContent(part: unknown): part is { type: "text"; text: string } {
+  return (
+    typeof part === "object" &&
+    part !== null &&
+    "type" in part &&
+    part.type === "text" &&
+    "text" in part &&
+    typeof part.text === "string"
+  );
+}
+
+export function toV1ToolResult(result: Tool.Result | string): V1ToolResult {
   if (typeof result === "string") return result;
-  if (Array.isArray(result?.content)) {
-    const text = result.content
-      .filter((part: any) => part?.type === "text" && typeof part.text === "string")
-      .map((part: any) => part.text)
-      .join("\n");
-    return { output: text, metadata: result.metadata };
+  const metadata = result.metadata;
+  const content = result.content;
+  if (Array.isArray(content)) {
+    const text = content.filter(isTextContent).map((part) => part.text).join("\n");
+    return { output: text, metadata };
   }
-  if (typeof result?.content === "string") {
-    return { output: result.content, metadata: result.metadata };
+  if (typeof content === "string") {
+    return { output: content, metadata };
   }
-  if (typeof result?.output === "string") {
-    return { output: result.output, metadata: result.metadata };
+  if (typeof result.output === "string") {
+    return { output: result.output, metadata };
   }
-  return { output: JSON.stringify(result), metadata: result?.metadata };
+  return { output: JSON.stringify(result), metadata };
 }
 
 /**
  * V1 `tool()` принимает `z.ZodRawShape`, а спецификации хранят `z.object(...)`.
  * Возвращаем именно shape, чтобы V1 не получил готовый объект схемы.
  */
-export function toV1ToolArgs(spec: ToolSpec): Record<string, any> {
+export function toV1ToolArgs(spec: ToolSpec): z.ZodRawShape {
   const shape = (spec.input as { shape?: unknown } | undefined)?.shape;
   if (!shape || typeof shape !== "object") {
     throw new Error(
       `V1-адаптер: схема инструмента "${spec.name}" должна быть z.object(...)`,
     );
   }
-  return shape as Record<string, any>;
+  return shape as z.ZodRawShape;
 }
 
 /**
@@ -6346,17 +6414,28 @@ export function toV1ToolArgs(spec: ToolSpec): Record<string, any> {
  * V2, плюс тот же аудит. Отличие одно — у V1 `tool()` нет `codemode`, поэтому
  * флаг не передаётся (см. docs/COMPATIBILITY.md).
  */
-export function createV1Tools(runtime: SchedulerRuntime): Record<string, any> {
-  const tools: Record<string, any> = {};
+/**
+ * Локальное описание V1-реестра. V1-плагин тянет свою копию zod (4.1.8),
+ * поэтому его `ToolDefinition` структурно несовместим с нашим zod (4.6.7).
+ * Приведение типов делается один раз на границе `createV1Hooks`.
+ */
+interface V1ToolDefinition {
+  description: string;
+  args: z.ZodRawShape;
+  execute(args: unknown, context: unknown): Promise<V1ToolResult>;
+}
+type V1ToolRegistry = Record<string, V1ToolDefinition>;
+
+export function createV1Tools(runtime: SchedulerRuntime): V1ToolRegistry {
+  const tools: V1ToolRegistry = {};
   for (const spec of createToolSpecs(runtime)) {
     const execute = spec.audit
       ? withAudit(spec.name, spec.audit, spec.execute)
       : spec.execute;
     tools[spec.name] = v1Tool({
       description: spec.description,
-      args: toV1ToolArgs(spec) as any,
-      execute: (async (args: any, context: any) =>
-        toV1ToolResult(await execute(args, context))) as any,
+      args: toV1ToolArgs(spec),
+      execute: async (args, context) => toV1ToolResult(await execute(args, context)),
     });
   }
   return tools;
@@ -6379,7 +6458,9 @@ export async function createV1Hooks(
     await startSchedulerDashboard();
   }
   return {
-    tool: tools,
+    // QA-A2.1: граница внешнего V1 API — у плагина отдельная копия zod,
+    // типы несовместимы структурно. Значения и поведение не меняются.
+    tool: tools as unknown as V1Hooks["tool"],
     dispose: createShutdownHandler(runtime),
   };
 }
@@ -6823,8 +6904,8 @@ export async function schedulerCreateTask(
       // Расширенная грамматика (Спринт 19): диапазоны, списки, шаги,
       // имена месяцев/дней, @every, L и FRI#3.
       parseCron(schedule);
-    } catch (err: any) {
-      throw new Error(err.message || String(err));
+    } catch (err) {
+      throw new Error(err instanceof Error ? err.message : String(err));
     }
     if (normalizedTz && !isValidIanaTimeZone(normalizedTz)) {
       throw new Error(
@@ -6936,18 +7017,18 @@ export async function schedulerCreateTask(
   if (effectiveWatchPath) {
     try {
       effectiveWatchPath = normalizeWatchPath(effectiveWatchPath, effectiveWorkingDirectory);
-    } catch (err: any) {
+    } catch (err) {
       throw new Error(
-        t("tool.error.taskReason", { name, error: err.message || String(err) }),
+        t("tool.error.taskReason", { name, error: err instanceof Error ? err.message : String(err) }),
       );
     }
   }
   try {
     validateWatchGlobs(normalizedWatchGlobs);
     validateWatchGlobs(normalizedWatchIgnore);
-  } catch (err: any) {
+  } catch (err) {
     throw new Error(
-      t("tool.error.taskReason", { name, error: err.message || String(err) }),
+      t("tool.error.taskReason", { name, error: err instanceof Error ? err.message : String(err) }),
     );
   }
 
@@ -6979,10 +7060,10 @@ export async function schedulerCreateTask(
     // задача создана, но ещё не запускалась (не путать с реальным Run started,
     // который пишется обёрткой только при фактическом запуске; QA #8).
     await fs.appendFile(logFile, formatLogRunMarker("prepare", name), "utf8");
-  } catch (err: any) {
+  } catch (err) {
     throw new Error(
       t("tool.error.prepareFiles", {
-        error: err.message || String(err),
+        error: err instanceof Error ? err.message : String(err),
       }),
     );
   }
@@ -7060,10 +7141,10 @@ export async function schedulerCreateTask(
           : {}),
       });
     }
-  } catch (err: any) {
+  } catch (err) {
     throw new Error(
       t("tool.error.wrapper", {
-        error: err.message || String(err),
+        error: err instanceof Error ? err.message : String(err),
       }),
     );
   }
@@ -7097,7 +7178,7 @@ export async function schedulerCreateTask(
       notAfter: normalizedNotAfter,
       runWhenLoggedOff: normalizedRunWhenLoggedOff,
     });
-  } catch (err: any) {
+  } catch (err) {
     await rollbackArtifacts();
     throw new Error(err instanceof Error ? err.message : String(err));
   }
@@ -7376,7 +7457,7 @@ export async function schedulerCreateTask(
           try {
             await createClone(clone);
             createdInRun.push(clone.name);
-          } catch (err: any) {
+          } catch (err) {
             const workspaceLabel = clone.workspaceId
               ? getWorkspace(clone.workspaceId)?.name ?? clone.workspaceId
               : "без workspace";
@@ -7390,7 +7471,7 @@ export async function schedulerCreateTask(
           }
         }
         await syncAggregator();
-      } catch (err: any) {
+      } catch (err) {
         for (const child of [...createdInRun].reverse()) {
           await removeChild(child);
         }
@@ -7432,7 +7513,7 @@ export async function schedulerCreateTask(
     for (const target of pauseTargets) {
       try {
         await scheduler.pauseTask(target);
-      } catch (err: any) {
+      } catch (err) {
         console.warn(
           `[agent-steward] Задача "${target}": пауза не восстановлена после пересоздания: ${
             err instanceof Error ? err.message : String(err)
