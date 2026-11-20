@@ -65,7 +65,39 @@ export interface RunResult {
   finishedAt?: string;
 }
 
-function rowToRecord(row: any): StoredHistoryRecord {
+/**
+ * QA-A2-T3: сырая строка таблицы history на границе `node:sqlite`.
+ *
+ * `SqliteStatement.get()/all()` в src/db/index.ts объявлены как `any`/`any[]`
+ * (модуль грузится через createRequire без статических типов). Это граница БД:
+ * сужаем `unknown` к доменному типу строки здесь и не пускаем `any` дальше.
+ * Типы полей соответствуют схеме: TEXT → string|null, INTEGER/REAL →
+ * number|bigint|null. Приведение не меняет поведение — 기존ные String()/Number()/
+ * JSON.parse() в rowToRecord остаются без изменений.
+ */
+interface HistoryRow {
+  id: number | bigint;
+  task_name: string;
+  status: string;
+  started_at: string;
+  finished_at: string | null;
+  duration_ms: number | bigint | null;
+  error: string | null;
+  tokens: number | bigint | null;
+  cost_usd: number | null;
+  model: string | null;
+  pre_flight_status: string | null;
+  post_flight_status: string | null;
+  next_task: string | null;
+  workspace_id: string | null;
+  allowed_tools: string | null;
+  denied_tools: string | null;
+  owner_pid: number | bigint | null;
+  owner_host: string | null;
+  owner_started_at: string | null;
+}
+
+function rowToRecord(row: HistoryRow): StoredHistoryRecord {
   const status = String(row.status) as HistoryStatus;
   return {
     id: Number(row.id),
@@ -88,8 +120,11 @@ function rowToRecord(row: any): StoredHistoryRecord {
         ? undefined
         : (String(row.post_flight_status) as "success" | "error" | "skipped"),
     workspaceId: row.workspace_id == null ? null : String(row.workspace_id),
-    allowedTools: row.allowed_tools == null ? null : JSON.parse(String(row.allowed_tools)),
-    deniedTools: row.denied_tools == null ? null : JSON.parse(String(row.denied_tools)),
+    // QA-A2-T3: JSON.parse возвращает any — сужаем к доменному типу без as any.
+    allowedTools:
+      row.allowed_tools == null ? null : (JSON.parse(String(row.allowed_tools)) as string[]),
+    deniedTools:
+      row.denied_tools == null ? null : (JSON.parse(String(row.denied_tools)) as string[]),
     ownerPid: row.owner_pid == null ? null : Number(row.owner_pid),
     ownerHost: row.owner_host == null ? null : String(row.owner_host),
     ownerStartedAt: row.owner_started_at == null ? null : String(row.owner_started_at),
@@ -189,9 +224,10 @@ export function finishRun(
 
   const ok = withTransaction(() => {
     const instance = getDb();
+    // QA-A2-T3: граница node:sqlite — get() возвращает any, сужаем к доменному типу.
     const row = instance
       .prepare("SELECT finished_at FROM history WHERE id = ?")
-      .get(id);
+      .get(id) as unknown as Pick<HistoryRow, "finished_at"> | undefined;
     if (!row || row.finished_at != null) return false;
 
     instance
@@ -218,7 +254,7 @@ export function finishRun(
 
     const taskRow = instance
       .prepare("SELECT task_name, started_at FROM history WHERE id = ?")
-      .get(id);
+      .get(id) as unknown as Pick<HistoryRow, "task_name" | "started_at">;
     incrementMetricsUnsafe(String(taskRow.task_name), status, tokens, costUsd);
     completed = {
       taskName: String(taskRow.task_name),
@@ -328,7 +364,8 @@ export function getHistory(
 ): StoredHistoryRecord[] {
   const safeLimit = Math.max(1, Math.min(100000, Math.floor(limit) || 1));
   const clauses: string[] = [];
-  const params: any[] = [];
+  // QA-A2-T3: параметры привязки — только string/number (domain type вместо any[]).
+  const params: (string | number)[] = [];
   if (taskName) {
     clauses.push("lower(task_name) = lower(?)");
     params.push(taskName);
@@ -355,7 +392,8 @@ export function getHistory(
        ORDER BY started_at DESC, id DESC
        LIMIT ?`,
     )
-    .all(...params);
+    // QA-A2-T3: граница node:sqlite — all() возвращает any[], сужаем к HistoryRow[].
+    .all(...params) as unknown as HistoryRow[];
   return rows.map(rowToRecord);
 }
 
@@ -379,7 +417,7 @@ export function getHistoryForBudget(
        ORDER BY started_at DESC, id DESC
        LIMIT ?`,
     )
-    .all(periodStart, safeLimit);
+    .all(periodStart, safeLimit) as unknown as HistoryRow[];
   return rows.map(rowToRecord);
 }
 
@@ -401,7 +439,7 @@ export function getLatestHistoryByTask(limit = 5000): StoredHistoryRecord[] {
        ORDER BY started_at DESC, id DESC
        LIMIT ?`,
     )
-    .all(safeLimit);
+    .all(safeLimit) as unknown as HistoryRow[];
   return rows.map(rowToRecord);
 }
 
@@ -434,7 +472,7 @@ export function getHistorySince(
        ORDER BY started_at DESC, id DESC
        LIMIT ?`,
     )
-    .all(timestamp, safeLimit);
+    .all(timestamp, safeLimit) as unknown as HistoryRow[];
   return rows.map(rowToRecord);
 }
 
@@ -554,7 +592,10 @@ export function recoverInterrupted(
 
 /** Количество записей истории (для миграции и тестов). */
 export function countHistory(): number {
-  const row = getDb().prepare("SELECT COUNT(*) AS count FROM history").get();
+  // QA-A2-T3: граница node:sqlite — get() возвращает any, сужаем к строке счётчика.
+  const row = getDb().prepare("SELECT COUNT(*) AS count FROM history").get() as unknown as
+    | { count: unknown }
+    | undefined;
   return Number(row?.count) || 0;
 }
 
@@ -562,7 +603,7 @@ export function countHistory(): number {
 export function countRunningRecords(): number {
   const row = getDb()
     .prepare("SELECT COUNT(*) AS count FROM history WHERE finished_at IS NULL")
-    .get();
+    .get() as unknown as { count: unknown } | undefined;
   return Number(row?.count) || 0;
 }
 
@@ -581,7 +622,8 @@ export function listRunningRecords(): RunningHistoryRecord[] {
        WHERE finished_at IS NULL
        ORDER BY started_at ASC, id ASC`,
     )
-    .all();
+    // QA-A2-T3: граница node:sqlite — all() возвращает any[], сужаем к доменному типу.
+    .all() as unknown as Pick<HistoryRow, "id" | "task_name" | "started_at">[];
   return rows.map((row) => ({
     id: Number(row.id) || 0,
     taskName: String(row.task_name ?? ""),
