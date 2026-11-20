@@ -126,16 +126,64 @@ export interface StepLease {
   leaseUntil: string;
 }
 
+/**
+ * QA-A2-T4: граница `node:sqlite`. Драйвер через `SqliteStatement.get()/all()`
+ * возвращает `any`; в колонках runs/run_steps реально лежат только TEXT
+ * (string), INTEGER (number|bigint) и SQL NULL. Сужаем `any` до `unknown`, затем
+ * type guard-ом до `SqliteRow` — так каскад no-unsafe-* не расползается по файлу.
+ */
+type SqliteCell = string | number | bigint | null;
+type SqliteRow = Record<string, SqliteCell>;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isSqliteRow(value: unknown): value is SqliteRow {
+  if (!isRecord(value)) return false;
+  return Object.values(value).every(
+    (cell) =>
+      cell === null ||
+      typeof cell === "string" ||
+      typeof cell === "number" ||
+      typeof cell === "bigint",
+  );
+}
+
+/** Строковое представление ячейки — то же, что давал `String(row.col)` раньше. */
+function asText(cell: SqliteCell): string {
+  if (cell === null) return "null";
+  return typeof cell === "string" ? cell : String(cell);
+}
+
+/** Nullable TEXT-колонка: SQL NULL → null, иначе строковое представление. */
+function nullableText(cell: SqliteCell): string | null {
+  return cell === null ? null : asText(cell);
+}
+
+/** Одна строка результата или undefined (SELECT ... WHERE id = ?). */
+function queryRow(sql: string, ...params: unknown[]): SqliteRow | undefined {
+  const raw: unknown = getDb().prepare(sql).get(...params);
+  return isSqliteRow(raw) ? raw : undefined;
+}
+
+/** Все строки результата (SELECT ... с several строками). */
+function queryRows(sql: string, ...params: unknown[]): SqliteRow[] {
+  const raw: unknown = getDb().prepare(sql).all(...params);
+  return Array.isArray(raw) ? raw.filter(isSqliteRow) : [];
+}
+
 function nowIso(): string {
   return new Date().toISOString();
 }
 
-function parseJson(value: unknown): unknown {
+/** JSON-колонка хранит текст (результат serializeJson) или SQL NULL. */
+function parseJson(value: string | null): unknown {
   if (value == null) return null;
   try {
-    return JSON.parse(String(value));
+    return JSON.parse(value);
   } catch {
-    return String(value);
+    return value;
   }
 }
 
@@ -148,39 +196,41 @@ function serializeJson(value: unknown): string | null {
   }
 }
 
-function runRowToRecord(row: any): RunRecord {
+function runRowToRecord(row: SqliteRow): RunRecord {
   return {
-    id: String(row.id),
-    taskName: String(row.task_name),
-    status: String(row.status) as RunStatus,
-    parentRunId: row.parent_run_id == null ? null : String(row.parent_run_id),
-    workspaceId: row.workspace_id == null ? null : String(row.workspace_id),
-    startedAt: row.started_at == null ? null : String(row.started_at),
-    finishedAt: row.finished_at == null ? null : String(row.finished_at),
-    error: row.error == null ? null : String(row.error),
-    metadata: parseJson(row.metadata_json),
-    createdAt: String(row.created_at),
-    updatedAt: String(row.updated_at),
+    id: asText(row.id),
+    taskName: asText(row.task_name),
+    // Доменное приведение: значения приходят из CHECK-ограниченых наших же записей.
+    status: asText(row.status) as RunStatus,
+    parentRunId: nullableText(row.parent_run_id),
+    workspaceId: nullableText(row.workspace_id),
+    startedAt: nullableText(row.started_at),
+    finishedAt: nullableText(row.finished_at),
+    error: nullableText(row.error),
+    metadata: parseJson(nullableText(row.metadata_json)),
+    createdAt: asText(row.created_at),
+    updatedAt: asText(row.updated_at),
   };
 }
 
-function stepRowToRecord(row: any): RunStepRecord {
+function stepRowToRecord(row: SqliteRow): RunStepRecord {
   return {
-    id: String(row.id),
-    runId: String(row.run_id),
-    stepName: String(row.step_name),
+    id: asText(row.id),
+    runId: asText(row.run_id),
+    stepName: asText(row.step_name),
     position: Number(row.position) || 0,
-    status: String(row.status) as StepStatus,
+    // Доменное приведение: см. комментарий в runRowToRecord.
+    status: asText(row.status) as StepStatus,
     attempt: Number(row.attempt) || 1,
-    idempotencyKey: row.idempotency_key == null ? null : String(row.idempotency_key),
-    ownerId: row.owner_id == null ? null : String(row.owner_id),
-    leaseUntil: row.lease_until == null ? null : String(row.lease_until),
-    startedAt: row.started_at == null ? null : String(row.started_at),
-    finishedAt: row.finished_at == null ? null : String(row.finished_at),
-    error: row.error == null ? null : String(row.error),
-    output: parseJson(row.output_json),
-    createdAt: String(row.created_at),
-    updatedAt: String(row.updated_at),
+    idempotencyKey: nullableText(row.idempotency_key),
+    ownerId: nullableText(row.owner_id),
+    leaseUntil: nullableText(row.lease_until),
+    startedAt: nullableText(row.started_at),
+    finishedAt: nullableText(row.finished_at),
+    error: nullableText(row.error),
+    output: parseJson(nullableText(row.output_json)),
+    createdAt: asText(row.created_at),
+    updatedAt: asText(row.updated_at),
   };
 }
 
@@ -267,9 +317,10 @@ function insertStepUnsafe(
 
 /** Следующая позиция шага в цепочке запуска. */
 function nextStepPosition(runId: string): number {
-  const row = getDb()
-    .prepare("SELECT COALESCE(MAX(position), -1) + 1 AS next FROM run_steps WHERE run_id = ?")
-    .get(runId) as { next?: number } | undefined;
+  const row = queryRow(
+    "SELECT COALESCE(MAX(position), -1) + 1 AS next FROM run_steps WHERE run_id = ?",
+    runId,
+  );
   return Number(row?.next) || 0;
 }
 
@@ -295,7 +346,7 @@ export function createSteps(runId: string, steps: CreateStepOptions[]): RunStepR
 }
 
 export function getRun(id: string): RunRecord | undefined {
-  const row = getDb().prepare("SELECT * FROM runs WHERE id = ?").get(id);
+  const row = queryRow("SELECT * FROM runs WHERE id = ?", id);
   return row ? runRowToRecord(row) : undefined;
 }
 
@@ -303,18 +354,17 @@ export function getRun(id: string): RunRecord | undefined {
 export function listRuns(taskName?: string | null, limit = 100): RunRecord[] {
   const safeLimit = Math.max(1, Math.min(10000, Math.floor(limit) || 1));
   if (taskName) {
-    return getDb()
-      .prepare(
-        `SELECT * FROM runs WHERE lower(task_name) = lower(?)
-         ORDER BY created_at DESC, id DESC LIMIT ?`,
-      )
-      .all(taskName, safeLimit)
-      .map(runRowToRecord);
+    return queryRows(
+      `SELECT * FROM runs WHERE lower(task_name) = lower(?)
+       ORDER BY created_at DESC, id DESC LIMIT ?`,
+      taskName,
+      safeLimit,
+    ).map(runRowToRecord);
   }
-  return getDb()
-    .prepare("SELECT * FROM runs ORDER BY created_at DESC, id DESC LIMIT ?")
-    .all(safeLimit)
-    .map(runRowToRecord);
+  return queryRows(
+    "SELECT * FROM runs ORDER BY created_at DESC, id DESC LIMIT ?",
+    safeLimit,
+  ).map(runRowToRecord);
 }
 
 /** pending → running. Возвращает false, если запуск не найден. */
@@ -391,24 +441,26 @@ export function reopenRun(id: string, startedAt = nowIso()): boolean {
 }
 
 export function getStepById(id: string): RunStepRecord | undefined {
-  const row = getDb().prepare("SELECT * FROM run_steps WHERE id = ?").get(id);
+  const row = queryRow("SELECT * FROM run_steps WHERE id = ?", id);
   return row ? stepRowToRecord(row) : undefined;
 }
 
 /** Шаг по имени внутри запуска (имя уникально). */
 export function getStep(runId: string, stepName: string): RunStepRecord | undefined {
-  const row = getDb()
-    .prepare("SELECT * FROM run_steps WHERE run_id = ? AND step_name = ?")
-    .get(runId, stepName);
+  const row = queryRow(
+    "SELECT * FROM run_steps WHERE run_id = ? AND step_name = ?",
+    runId,
+    stepName,
+  );
   return row ? stepRowToRecord(row) : undefined;
 }
 
 /** Все шаги запуска в порядке создания. */
 export function listRunSteps(runId: string): RunStepRecord[] {
-  return getDb()
-    .prepare("SELECT * FROM run_steps WHERE run_id = ? ORDER BY position ASC, rowid ASC")
-    .all(runId)
-    .map(stepRowToRecord);
+  return queryRows(
+    "SELECT * FROM run_steps WHERE run_id = ? ORDER BY position ASC, rowid ASC",
+    runId,
+  ).map(stepRowToRecord);
 }
 
 /** Поиск шага по ключу идемпотентности (36.3) в пределах запуска. */
@@ -416,9 +468,11 @@ export function findStepByIdempotencyKey(
   runId: string,
   idempotencyKey: string,
 ): RunStepRecord | undefined {
-  const row = getDb()
-    .prepare("SELECT * FROM run_steps WHERE run_id = ? AND idempotency_key = ? LIMIT 1")
-    .get(runId, idempotencyKey);
+  const row = queryRow(
+    "SELECT * FROM run_steps WHERE run_id = ? AND idempotency_key = ? LIMIT 1",
+    runId,
+    idempotencyKey,
+  );
   return row ? stepRowToRecord(row) : undefined;
 }
 
@@ -508,9 +562,7 @@ export function renewStepLease(id: string, lease: StepLease): boolean {
 
 /** Количество шагов запуска (для health/отчётов). */
 export function countRunSteps(runId: string): number {
-  const row = getDb()
-    .prepare("SELECT COUNT(*) AS count FROM run_steps WHERE run_id = ?")
-    .get(runId);
+  const row = queryRow("SELECT COUNT(*) AS count FROM run_steps WHERE run_id = ?", runId);
   return Number(row?.count) || 0;
 }
 
@@ -522,9 +574,9 @@ export function deleteRun(id: string): boolean {
 
 /** Готова ли схема к работе с durable DAG (runs + run_steps). */
 export function isRunStateReady(): boolean {
-  const rows = getDb()
-    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('runs', 'run_steps')")
-    .all();
+  const rows = queryRows(
+    "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('runs', 'run_steps')",
+  );
   return rows.length === 2;
 }
 
