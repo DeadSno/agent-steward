@@ -89,7 +89,12 @@ import {
 } from "./core/pipeline-map.js";
 import { stringify as yamlStringify } from "yaml";
 import { latestHistoryByTask, loadHistory, loadMetrics } from "./history.js";
-import { defaultNotifications, loadSettings, saveSettings } from "./settings.js";
+import {
+  defaultNotifications,
+  loadSettings,
+  saveSettings,
+  type FeedbackSettings,
+} from "./settings.js";
 import { resolveLocale, setLocale, t, type Locale, type LocaleMode } from "./i18n.js";
 import type {
   AuditSettings,
@@ -1278,6 +1283,18 @@ export const manageSettingsSchema = z.object({
     .optional()
     .describe(
       "Daily/weekly USD budgets (0 = no limit). Accounting is exposed by get_analytics as report.budgets.",
+    ),
+  feedback: z
+    .object({
+      enabled: z.boolean().optional(),
+      endpoint: z.string().max(2048).optional(),
+      includeLogs: z.boolean().optional(),
+      contactEmail: z.string().max(254).optional(),
+      maxPerHour: z.number().int().min(1).max(100).optional(),
+    })
+    .optional()
+    .describe(
+      "Author feedback (bug reports → GitHub Issues). disabled by default; endpoint must be https (http only for localhost).",
     ),
 });
 
@@ -3477,7 +3494,8 @@ const manageSettingsExecute = wrapExecute<SettingsArgs>(async (args) => {
     args.integrations === undefined &&
     args.audit === undefined &&
     args.permissions === undefined &&
-    args.budgets === undefined
+    args.budgets === undefined &&
+    args.feedback === undefined
   ) {
     return {
       content: JSON.stringify({
@@ -3498,6 +3516,7 @@ const manageSettingsExecute = wrapExecute<SettingsArgs>(async (args) => {
     audit: args.audit as AuditSettings | undefined,
     permissions: args.permissions as PermissionSettings | undefined,
     budgets: args.budgets as BudgetSettings | undefined,
+    feedback: args.feedback as FeedbackSettings | undefined,
   });
   // Локаль процесса меняется сразу — перезапуск плагина не нужен.
   setLocale(resolveLocale(settings.locale, settings.uiLocale));
@@ -6116,7 +6135,7 @@ const v2Plugin = Plugin.define({
         return await loadSettings();
       },
       save_settings: async (input: unknown) => {
-        const { maxConcurrent, locale, uiLocale, winterMode, notifications, history, integrations, audit, permissions, budgets } = input as {
+        const { maxConcurrent, locale, uiLocale, winterMode, notifications, history, integrations, audit, permissions, budgets, feedback } = input as {
           maxConcurrent?: number;
           locale?: LocaleMode;
           uiLocale?: Locale;
@@ -6127,6 +6146,7 @@ const v2Plugin = Plugin.define({
           audit?: AuditSettings;
           permissions?: PermissionSettings;
           budgets?: BudgetSettings;
+          feedback?: FeedbackSettings;
         };
         const current = await loadSettings();
         if (
@@ -6139,7 +6159,8 @@ const v2Plugin = Plugin.define({
           integrations === undefined &&
           audit === undefined &&
           permissions === undefined &&
-          budgets === undefined
+          budgets === undefined &&
+          feedback === undefined
         ) {
           return {
             success: false,
@@ -6153,6 +6174,7 @@ const v2Plugin = Plugin.define({
             audit: current.audit,
             permissions: current.permissions,
             budgets: current.budgets,
+            feedback: current.feedback,
           };
         }
         const settings = await saveSettings({
@@ -6166,6 +6188,7 @@ const v2Plugin = Plugin.define({
           audit,
           permissions,
           budgets,
+          feedback,
         });
         // Локаль процесса меняется сразу — перезапуск не нужен.
         setLocale(resolveLocale(settings.locale, settings.uiLocale));
@@ -6181,6 +6204,7 @@ const v2Plugin = Plugin.define({
           audit: settings.audit,
           permissions: settings.permissions,
           budgets: settings.budgets,
+          feedback: settings.feedback,
         };
       },
       test_notification: async () => {

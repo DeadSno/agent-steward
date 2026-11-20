@@ -207,6 +207,50 @@ check(
   evaluateAntispam(many, "new report", base, 6).reason === "rate_limited",
 );
 
+/* F-3.2 — GUI/RPC/агент должны пробрасывать секцию feedback (регресс: чекбокс сбрасывался). */
+const { manageSettingsSchema } = await import("./dist/index.js");
+const parsedFeedbackPatch = manageSettingsSchema.parse({
+  action: "update",
+  feedback: {
+    enabled: true,
+    endpoint: "https://feedback.example.workers.dev/report",
+    includeLogs: false,
+    contactEmail: "",
+    maxPerHour: 6,
+  },
+});
+check(
+  "F-3.2 manage_settings: секция feedback проходит схему",
+  parsedFeedbackPatch.feedback?.enabled === true &&
+    parsedFeedbackPatch.feedback?.endpoint === "https://feedback.example.workers.dev/report",
+);
+
+const indexSource = fs.readFileSync(new URL("./dist/index.js", import.meta.url), "utf8");
+const rpcStart = indexSource.indexOf("save_settings: async");
+const rpcBlock = indexSource.slice(rpcStart, rpcStart + 3000);
+check(
+  "F-3.2 RPC save_settings: feedback принимается и возвращается в ответе",
+  rpcStart !== -1 && (rpcBlock.match(/feedback/g) ?? []).length >= 4,
+);
+
+const settingsModule = await import("./dist/settings.js");
+await settingsModule.saveSettings({
+  feedback: {
+    enabled: true,
+    endpoint: "https://feedback.example.workers.dev/report",
+    includeLogs: false,
+    contactEmail: "",
+    maxPerHour: 7,
+  },
+});
+const loadedFeedback = (await settingsModule.loadSettings()).feedback;
+check(
+  "F-3.2 saveSettings/loadSettings: feedback сохраняется",
+  loadedFeedback.enabled === true &&
+    loadedFeedback.endpoint === "https://feedback.example.workers.dev/report" &&
+    loadedFeedback.maxPerHour === 7,
+);
+
 closeDb();
 try {
   fs.rmSync(tmp, { recursive: true, force: true });
