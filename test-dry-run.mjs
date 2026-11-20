@@ -15,7 +15,9 @@ process.env.OPENCODE_SCHEDULER_HOME = path.join(tempRoot, "opencode", "windows-s
 const { initDb, closeDb } = await import("./dist/db/index.js");
 const { saveTask } = await import("./dist/db/tasks-repo.js");
 const { recordRun } = await import("./dist/db/history-repo.js");
-const { simulatePipeline, workingDirectoryDriftWarning, isFrequentCron } = await import("./dist/core/dry-run.js");
+const {
+  simulatePipeline, workingDirectoryDriftWarning, isFrequentCron, minimumCronIntervalMinutes,
+} = await import("./dist/core/dry-run.js");
 const { t } = await import("./dist/i18n.js");
 
 const results = [];
@@ -139,6 +141,28 @@ try {
   await saveTask({ name: "HeavyMinute", schedule: "* * * * *", prompt: "opencode run --model x \"analyze\"" });
   const heavy = await simulatePipeline("HeavyMinute");
   check("QV-9: предупреждение про частый cron + opencode run", heavy.warnings.some((w) => w.includes("QV-9")));
+
+  // 12. PL-49/PL-50: интервал cron, таймаут > интервала и минутный poll.
+  check("PL-49: '* * * * *' -> 1 мин", minimumCronIntervalMinutes("* * * * *") === 1);
+  check("PL-49: '*/5 * * * *' -> 5 мин", minimumCronIntervalMinutes("*/5 * * * *") === 5);
+  check("PL-49: '0,5,10 * * * *' -> 5 мин", minimumCronIntervalMinutes("0,5,10 * * * *") === 5);
+  check("PL-49: '0 4 * * *' -> интервал не вычисляется", minimumCronIntervalMinutes("0 4 * * *") === null);
+  await saveTask({
+    name: "PollTask", schedule: "0 4 */2 * *", timeoutSeconds: 3600,
+    prompt: "x",
+  });
+  const poll = await simulatePipeline("PollTask");
+  check("PL-50: triggerDetails.polling для cron вне подмножества schtasks",
+    poll.tasks[0]?.triggerDetails?.polling === true);
+  check("PL-50: предупреждение про минутный poll", poll.warnings.some((w) => w.includes("PL-50")));
+  // PL-49: */15 выразимо в schtasks, но интервал вычисляется — отдельная задача.
+  await saveTask({
+    name: "TimeoutTask", schedule: "*/15 * * * *", timeoutSeconds: 3600,
+    prompt: "x",
+  });
+  const heavyCron = await simulatePipeline("TimeoutTask");
+  check("PL-49: предупреждение про timeout > интервала cron",
+    heavyCron.warnings.some((w) => w.includes("PL-49")));
 } finally {
   closeDb();
 }

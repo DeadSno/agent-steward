@@ -152,6 +152,26 @@ assert(
   "у восстановленной записи рассчитан duration_ms"
 );
 
+// --- 3b-2. PL-46: живой PID, но запись просрочена (schtasks /End) --------
+const staleClock = new Date("2026-03-01T15:00:00.000Z");
+const staleStart = new Date(staleClock.getTime() - 3 * 60 * 60 * 1000).toISOString();
+getDb()
+  .prepare(
+    "INSERT INTO history (task_name, status, started_at, finished_at, owner_pid, owner_host, owner_started_at) VALUES (?, 'running', ?, NULL, ?, ?, ?)",
+  )
+  .run("Stale Live Owner", staleStart, process.pid, os.hostname(), staleStart);
+const staleOutcome = recoverInterrupted({ now: staleClock, staleAfterMs: 60 * 60 * 1000 });
+assert(
+  staleOutcome.recovered === 1 && staleOutcome.keptAlive === 0,
+  `PL-46: просроченная запись живого владельца финализирована (${JSON.stringify(staleOutcome)})`
+);
+const staleRecord = getHistory("Stale Live Owner", 1)[0];
+assert(staleRecord?.status === "timeout", "PL-46: статус просроченного запуска — timeout");
+assert(
+  typeof staleRecord?.error === "string" && staleRecord.error.includes("schtasks /End"),
+  "PL-46: причина указывает на завершение владельца"
+);
+
 // --- 3c. Legacy без владельца и чужой хост: решает возраст (B1.5) --------
 const clock = new Date("2026-03-01T12:00:00.000Z");
 const freshIso = new Date(clock.getTime() - 60_000).toISOString();

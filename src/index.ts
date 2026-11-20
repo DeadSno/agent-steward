@@ -40,7 +40,7 @@ import {
   writeSessionStateFile,
   type SessionMode,
 } from "./core/session.js";
-import { ensureWrapper, writePromptFile, writeWrapperCmd, lockFilePath, requestImmediateRun } from "./core/ps-wrapper.js";
+import { ensureWrapper, writePromptFile, writeWrapperCmd, lockFilePath, requestImmediateRun, gateAllowPathsFromAfterScript } from "./core/ps-wrapper.js";
 import { getSchedulerBackend, LinuxScheduler } from "./core/scheduler/index.js";
 import { SCHEDULER_SKILL_ID, loadSchedulerSkill } from "./skill.js";
 import { getTaskLogs } from "./core/scheduler/logs.js";
@@ -130,7 +130,9 @@ import {
   getHistoryForAnalytics,
   getHistoryForBudget,
   listRunningRecords,
+  recordRun,
 } from "./db/history-repo.js";
+import { appendStructuredLog } from "./core/structured-log.js";
 import { getAllMetrics } from "./db/metrics-repo.js";
 import { discardDlq, listDlq, retryDlq } from "./core/dlq-api.js";
 import {
@@ -1584,7 +1586,12 @@ function wrapExecute<Args>(
     } catch (err) {
       const shutdown =
         err instanceof PluginShutdownError
-          ? { code: err.code, hint: err.hint, shutdownState: err.state }
+          ? {
+            code: err.code,
+            hint: err.hint,
+            retryable: err.retryable,
+            shutdownState: err.state,
+          }
           : {};
       // PL-43: тот же payload отдаём и структурированным output, и строкой
       // content — V1-адаптер по-прежнему читает content.
@@ -2884,6 +2891,9 @@ async function checkStuckMatrices(): Promise<void> {
 /** get_history — история запусков с фильтрами по задаче и статусу. */
 const getHistoryExecute = wrapExecute<HistoryArgs>(async (args) => {
   const limit = Math.max(1, Math.min(args.limit ?? 20, 200));
+  // PL-46: зависшие записи (schtasks /End) должны закрываться не только при
+  // setup, но и при наблюдении истории — иначе остаются running навсегда.
+  recoverInterruptedRuns();
   const records = await loadHistory(args.taskName, limit, args.status);
 
   return {
@@ -4091,15 +4101,18 @@ export function matchesMcpEventSubscription(
   payload?: unknown,
 ): boolean {
   if ((def.triggerType ?? "cron") !== "mcp-event") return false;
-  if (def.mcpEvent?.event?.trim().toLowerCase() !== event.toLowerCase()) return false;
+  // PL-48: definition может хранить алиас `eventName` (PL-42), поэтому матчер
+  // читает нормализованное событие, а не только каноническое поле `event`.
+  const subscription = normalizeMcpEventTrigger(def.mcpEvent);
+  if (subscription?.event.toLowerCase() !== event.toLowerCase()) return false;
   const expectedServer = server?.trim();
   if (
     expectedServer &&
-    def.mcpEvent?.server?.trim().toLowerCase() !== expectedServer.toLowerCase()
+    subscription.server.toLowerCase() !== expectedServer.toLowerCase()
   ) {
     return false;
   }
-  return matchesEventFilter(def.mcpEvent?.filter, payload);
+  return matchesEventFilter(subscription.filter, payload);
 }
 
 export async function emitEventCore(
@@ -4471,7 +4484,27 @@ async function scheduleEventRun(taskName: string, reason: string): Promise<void>
   const state = activeWindowState(now, options);
 
   if (state.active || policy === "run") {
-    await runTaskEntry(taskName);
+    const startedAt = now.toISOString();
+    try {
+      await runTaskEntry(taskName);
+    } catch (err) {
+      // PL-53: отказ старта по событийному триггеру раньше уходил только
+      // в console.error хоста и не оставлял следа в истории/журнале.
+      const message = err instanceof Error ? err.message : String(err);
+      const runId = recordRun(taskName, "error", startedAt, 0, message);
+      appendStructuredLog({
+        event: "trigger.start_failed",
+        runId,
+        task: taskName,
+        status: "error",
+        startedAt,
+        finishedAt: new Date().toISOString(),
+        durationMs: 0,
+        error: message,
+        reason,
+      });
+      throw err;
+    }
     console.log(
       `[agent-steward] Запуск задачи "${taskName}" (${reason}).`,
     );
@@ -5276,6 +5309,10 @@ const v2Plugin = Plugin.define({
       console.log(`[qv8] ${CHILD_RUN_ENV}: дочерний прогон, пропускаю регистрацию плагина`);
       return async () => undefined;
     }
+    // PL-45: hot-reload/Code Mode может заново вызвать setup после того, как
+    // хост закрыл и «завершил» ворота, не выгрузив модуль. Открываем их,
+    // иначе все in-process запуски навсегда получают PLUGIN_SHUTTING_DOWN.
+    shutdownGate.reset();
     const runtime = await createRuntime(ctx);
     const registration = await ctx.tool.transform((editor) => {
       // editor.add регистрирует новые инструменты плагина с codemode: true,
@@ -6739,6 +6776,8 @@ export async function createV1Hooks(
     console.log(`[qv8] ${CHILD_RUN_ENV}: дочерний прогон, пропускаю регистрацию плагина`);
     return { tool: {}, dispose: async () => undefined };
   }
+  // PL-45: см. V2 setup — повторная регистрация должна открывать ворота.
+  shutdownGate.reset();
   const runtime = await createRuntime({ location: { directory: input.directory } });
   const tools = createV1Tools(runtime);
   if (options.startDashboard !== false) {
@@ -7420,6 +7459,7 @@ export async function schedulerCreateTask(
         worktreeHelperPath,
         normalizedGuards,
         guardHelperPath,
+        gateAllowPathsFromAfterScript(normalizedAfter),
       );
     } else {
       wrapperPath = await writeBashWrapper({
@@ -7449,6 +7489,7 @@ export async function schedulerCreateTask(
         worktreeHelper: worktreeHelperPath,
         guards: normalizedGuards,
         guardHelper: guardHelperPath,
+        gateAllowPaths: gateAllowPathsFromAfterScript(normalizedAfter),
         ...(effectiveTriggerType === "once" && scheduler.platform === "darwin"
           ? { oneShotCleanupCommand: buildLaunchdOneShotCleanup(sanitized, getProfileName()) }
           : {}),
@@ -7953,6 +7994,8 @@ export class PluginShutdownError extends Error {
   readonly hint: string;
   /** PL-10/QV-2: наблюдаемое состояние ворот в момент отказа. */
   readonly state: ShutdownGateState;
+  /** PL-45: повтор возможен после перерегистрации плагина. */
+  readonly retryable = true;
 
   constructor(message: string, hint: string, state: ShutdownGateState) {
     super(message);

@@ -505,6 +505,14 @@ export interface RecoverInterruptedOptions {
   now?: Date;
   /** Порог возраста для записей с непроверяемым владельцем. */
   maxUnverifiableAgeMs?: number;
+  /**
+   * PL-46: порог, после которого запись живого владельца считается
+   * «зависшей» (например, процесс убит через schtasks /End) и финализируется
+   * как timeout. 0 отключает проверку. По умолчанию 0 — прямой вызов
+   * recoverInterrupted() сохраняет crash-recovery-поведение; порог задаёт
+   * recoverInterruptedRuns() (см. db/recovery.ts).
+   */
+  staleAfterMs?: number;
   /** Имя текущего хоста (для тестов). */
   hostname?: string;
   /** Проверка живости PID (для тестов). */
@@ -563,6 +571,26 @@ export function recoverInterrupted(
        )
      WHERE id = ? AND finished_at IS NULL`,
   );
+  // PL-46: «живой» владелец может быть мёртвой записью после schtasks /End —
+  // такой прогон помечается timeout, а не error crash recovery.
+  const staleUpdate = db.prepare(
+    `UPDATE history SET
+       status = 'timeout',
+       error = CASE
+         WHEN error IS NULL OR error = '' THEN 'Запуск прерван: владелец завершён (schtasks /End или аналог)'
+         ELSE error
+       END,
+       finished_at = COALESCE(finished_at, ?),
+       duration_ms = COALESCE(
+         duration_ms,
+         CAST((julianday(?) - julianday(started_at)) * 86400000 AS INTEGER)
+       )
+     WHERE id = ? AND finished_at IS NULL`,
+  );
+  const staleAfter =
+    typeof options.staleAfterMs === "number" && Number.isFinite(options.staleAfterMs)
+      ? Math.max(0, options.staleAfterMs)
+      : 0;
 
   let recovered = 0;
   let keptAlive = 0;
@@ -574,7 +602,14 @@ export function recoverInterrupted(
         ownerPid != null && ownerPid > 0 && ownerHost != null && ownerHost === hostname;
 
       if (verifiable && ownerPid != null && isAlive(ownerPid)) {
-        keptAlive += 1;
+        const since = Date.parse(String(row.started_at ?? ""));
+        const age = Number.isFinite(since) ? now.getTime() - since : 0;
+        if (staleAfter > 0 && age >= staleAfter) {
+          const result = staleUpdate.run(nowIso, nowIso, row.id);
+          if (Number(result.changes) > 0) recovered += 1;
+        } else {
+          keptAlive += 1;
+        }
         continue;
       }
       if (!verifiable) {

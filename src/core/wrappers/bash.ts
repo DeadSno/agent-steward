@@ -87,6 +87,8 @@ export interface BashWrapperOptions {
   guards?: TaskGuards;
   /** Путь к dist/core/guard-run.js (обязателен при guards). */
   guardHelper?: string;
+  /** PL-47: пути, которые задача вправе изменить (из -Files afterScript). */
+  gateAllowPaths?: string;
 }
 
 /**
@@ -153,6 +155,7 @@ export function buildBashWrapperScript(options: BashWrapperOptions): string {
     worktreeHelper,
     guards,
     guardHelper,
+    gateAllowPaths,
   } = options;
 
   // G-1.2: фиксируем входы гейта при создании обёртки и передаём путь
@@ -215,6 +218,7 @@ export function buildBashWrapperScript(options: BashWrapperOptions): string {
     // G-1.2: путь к snapshot'у и CLI проверки целостности входов гейта.
     `GATE_SNAPSHOT=${shellQuote(gateSnapshot)}`,
     `GATE_INTEGRITY=${shellQuote(gateIntegrity)}`,
+    `GATE_ALLOW_PATHS=${shellQuote(gateAllowPaths ?? "")}`,
     `MODEL=${shellQuote(model ?? "")}`,
     // Спринт 24: режим сессии — "new" (по умолчанию), "reuse" (--session <id>), "last" (--continue).
     `SESSION_MODE=${shellQuote(sessionMode ?? "new")}`,
@@ -503,7 +507,9 @@ export function buildBashWrapperScript(options: BashWrapperOptions): string {
     'WT_SNAPSHOT=""',
     'if [ -n "$QUALITY_GATE" ] && [ -n "$GATE_SNAPSHOT" ] && [ -n "$GATE_INTEGRITY" ] && [ -n "$WORKDIR" ] && [ -f "$GATE_INTEGRITY" ]; then',
     '  WT_SNAPSHOT="${GATE_SNAPSHOT%.json}.worktree.json"',
-    '  node "$GATE_INTEGRITY" worktree-snapshot --dir "$WORKDIR" --out "$WT_SNAPSHOT" >> "$LOG_FILE" 2>&1 || true',
+    '  ALLOW_ARGS=""',
+    '  if [ -n "$GATE_ALLOW_PATHS" ]; then ALLOW_ARGS="--allow $GATE_ALLOW_PATHS"; fi',
+    '  node "$GATE_INTEGRITY" worktree-snapshot --dir "$WORKDIR" --out "$WT_SNAPSHOT" $ALLOW_ARGS >> "$LOG_FILE" 2>&1 || true',
     "fi",
     "EXIT_CODE=0",
     'ERROR_MESSAGE=""',
@@ -672,7 +678,7 @@ export function buildBashWrapperScript(options: BashWrapperOptions): string {
     "    GATE_INTEGRITY_OK=0",
     "  fi",
     '  if [ "$GATE_INTEGRITY_OK" -eq 1 ] && [ -n "$WT_SNAPSHOT" ] && [ -f "$WT_SNAPSHOT" ] && [ -n "$WORKDIR" ]; then',
-    '    node "$GATE_INTEGRITY" worktree-verify --dir "$WORKDIR" --snapshot "$WT_SNAPSHOT" >> "$LOG_FILE" 2>&1',
+    '    node "$GATE_INTEGRITY" worktree-verify --dir "$WORKDIR" --snapshot "$WT_SNAPSHOT" $ALLOW_ARGS >> "$LOG_FILE" 2>&1',
     "    WT_CODE=$?",
     '    if [ "$WT_CODE" -ne 0 ]; then GATE_INTEGRITY_OK=0; WORKTREE_FAIL=1; fi',
     "  fi",

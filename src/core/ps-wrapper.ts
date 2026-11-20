@@ -85,6 +85,8 @@ export const WRAPPER_SCRIPT = `param(
     [string]$QualityGate,
     # G-1.2: snapshot входов гейта, снятый при создании обёртки.
     [string]$GateSnapshotFile = "",
+    # PL-47: пути, которые задача вправе изменить (из -Files afterScript).
+    [string]$GateAllowPaths = "",
     [string]$BeforeScript,
     [string]$AfterScript,
     [string]$EnvFile,
@@ -385,6 +387,10 @@ function Invoke-OpenCodeOnce {
 
     $watch = $null
     $timeoutMarker = ""
+    # PL-51: состояние health-check лога (отдельный сторожевой job).
+    $healthWatch = $null
+    $healthMarker = ""
+    $healthFailure = ""
     if ($TimeoutSeconds -gt 0) {
         $timeoutMarker = Join-Path ([System.IO.Path]::GetTempPath()) ("sched-timeout-" + [guid]::NewGuid().ToString("N") + ".flag")
         $watch = Start-Job -ScriptBlock {
@@ -444,6 +450,45 @@ function Invoke-OpenCodeOnce {
         } -ArgumentList $PID, $TimeoutSeconds, $timeoutMarker
     }
 
+    # PL-51: health-check лога. Некоторые модели уходят в бесконечный retry
+    # (ECONNRESET / Free usage limit reached / Insufficient Balance) и висят
+    # до самого TimeoutSeconds, не делая полезной работы. Сторожевой job читает
+    # хвост лога и при повторяющейся ошибке пишет причину в лог, маркер и
+    # завершает дерево процесса задачи — как сторож таймаута.
+    # Пороги настраиваются env, по умолчанию: 15 с, 3 повтора, 40 строк.
+    if ($env:AGENT_STEWARD_HEALTH_CHECK -ne "0" -and $LogFile) {
+        $healthInterval = 15
+        $healthThreshold = 3
+        $healthTail = 40
+        try {
+            if ($env:AGENT_STEWARD_HEALTH_INTERVAL_SEC -match '^\\d+$') { $healthInterval = [Math]::Max(2, [int]$env:AGENT_STEWARD_HEALTH_INTERVAL_SEC) }
+            if ($env:AGENT_STEWARD_HEALTH_REPEAT_THRESHOLD -match '^\\d+$') { $healthThreshold = [Math]::Max(1, [int]$env:AGENT_STEWARD_HEALTH_REPEAT_THRESHOLD) }
+            if ($env:AGENT_STEWARD_HEALTH_TAIL_LINES -match '^\\d+$') { $healthTail = [Math]::Max(5, [int]$env:AGENT_STEWARD_HEALTH_TAIL_LINES) }
+        } catch {}
+        $healthMarker = Join-Path ([System.IO.Path]::GetTempPath()) ("sched-health-" + [guid]::NewGuid().ToString("N") + ".flag")
+        $healthWatch = Start-Job -ScriptBlock {
+            param([int]$RootId, [string]$Marker, [string]$LogPath, [int]$IntervalSec, [int]$Threshold, [int]$TailLines)
+            $pattern = 'ECONNRESET|Free usage limit reached|Insufficient Balance|ECONNREFUSED|ETIMEDOUT'
+            # Базовая линия: старые ошибки из предыдущих попыток не должны
+            # убивать здоровый запуск — реагируем только на рост числа ошибок.
+            $baseline = -1
+            while ($true) {
+                Start-Sleep -Seconds $IntervalSec
+                if (-not $LogPath -or -not (Test-Path -LiteralPath $LogPath)) { continue }
+                try { $tail = @(Get-Content -LiteralPath $LogPath -Tail $TailLines -ErrorAction Stop) } catch { continue }
+                $bad = @($tail | Where-Object { $_ -match $pattern })
+                if ($baseline -lt 0 -or $bad.Count -lt $baseline) { $baseline = $bad.Count; continue }
+                if ($bad.Count -ge $baseline + $Threshold) {
+                    $reason = "PL-51: модель повторяет ошибку ($($bad.Count) за последние $TailLines строк): $($bad[-1])"
+                    try { Add-Content -LiteralPath $LogPath -Value "[agent-steward] $reason" -Encoding UTF8 } catch {}
+                    try { Set-Content -LiteralPath $Marker -Value $reason -Encoding UTF8 } catch {}
+                    try { & taskkill.exe /F /T /PID $RootId 2>$null | Out-Null } catch {}
+                    break
+                }
+            }
+        } -ArgumentList $PID, $healthMarker, $LogFile, $healthInterval, $healthThreshold, $healthTail
+    }
+
     # QV-8: дочерний opencode run не должен загружать инструменты планировщика
     # (иначе ребёнок видит все 30 инструментов и может рекурсивно создавать задачи).
     # Маркер живёт только время запуска ИИ и восстанавливается в finally.
@@ -489,12 +534,22 @@ function Invoke-OpenCodeOnce {
         if ($timeoutMarker -and (Test-Path -LiteralPath $timeoutMarker)) {
             $script:timedOut = $true
         }
+        if ($healthMarker -and (Test-Path -LiteralPath $healthMarker)) {
+            try { $healthFailure = (Get-Content -LiteralPath $healthMarker -Raw -ErrorAction Stop).Trim() } catch { $healthFailure = "модель повторяет ошибку подряд" }
+        }
         if ($watch) {
             Stop-Job -Job $watch -ErrorAction SilentlyContinue
             Remove-Job -Job $watch -Force -ErrorAction SilentlyContinue
         }
+        if ($healthWatch) {
+            Stop-Job -Job $healthWatch -ErrorAction SilentlyContinue
+            Remove-Job -Job $healthWatch -Force -ErrorAction SilentlyContinue
+        }
         if ($timeoutMarker) {
             Remove-Item -LiteralPath $timeoutMarker -Force -ErrorAction SilentlyContinue
+        }
+        if ($healthMarker) {
+            Remove-Item -LiteralPath $healthMarker -Force -ErrorAction SilentlyContinue
         }
     }
 
@@ -502,6 +557,11 @@ function Invoke-OpenCodeOnce {
         Write-Log "[agent-steward] Таймаут: задача '$TaskName' превысила лимит $TimeoutSeconds с — процесс остановлен."
         $script:errorMessage = "Таймаут: превышено $TimeoutSeconds с"
         return 124
+    }
+    if ($healthFailure) {
+        Write-Log "[agent-steward] PL-51: задача '$TaskName' остановлена health-check: $healthFailure"
+        $script:errorMessage = "Ошибка модели при запуске: $healthFailure"
+        return 125
     }
     return $script:attemptExitCode
 }
@@ -655,7 +715,9 @@ try {
     # сверяем его, чтобы чужие незакоммиченные правки src/ не давали ложный зелёный.
     if ($QualityGate -and $GateSnapshotFile -and $Workdir -and $gateIntegrityFile -and (Test-Path -LiteralPath $gateIntegrityFile)) {
         $worktreeSnapshotFile = [System.IO.Path]::ChangeExtension($GateSnapshotFile, ".worktree.json")
-        $snapOut = & node $gateIntegrityFile worktree-snapshot --dir "$Workdir" --out "$worktreeSnapshotFile" 2>&1
+        $snapAllowArgs = @()
+        if ($GateAllowPaths) { $snapAllowArgs = @("--allow", $GateAllowPaths) }
+        $snapOut = & node $gateIntegrityFile worktree-snapshot --dir "$Workdir" --out "$worktreeSnapshotFile" @snapAllowArgs 2>&1
         foreach ($line in $snapOut) { Write-Log "[agent-steward] $line" }
     }
 
@@ -894,7 +956,9 @@ try {
         }
 
         if ($gateIntegrityOk -and $worktreeSnapshotFile -and (Test-Path -LiteralPath $worktreeSnapshotFile)) {
-            $worktreeOut = & node $gateIntegrityFile worktree-verify --dir "$Workdir" --snapshot "$worktreeSnapshotFile" 2>&1
+            $verifyAllowArgs = @()
+            if ($GateAllowPaths) { $verifyAllowArgs = @("--allow", $GateAllowPaths) }
+            $worktreeOut = & node $gateIntegrityFile worktree-verify --dir "$Workdir" --snapshot "$worktreeSnapshotFile" @verifyAllowArgs 2>&1
             $worktreeCode = $LASTEXITCODE
             foreach ($line in $worktreeOut) { Write-Log "[agent-steward] $line" }
             if ($worktreeCode -ne 0) {
@@ -1047,6 +1111,22 @@ export function lockFilePath(taskName: string): string {
 }
 
 /**
+ * PL-47: извлекает список `-Files "a;b"` из PowerShell afterScript; возвращает
+ * строку `a|b` для gate-integrity. Возвращает "", если afterScript не коммитит
+ * через pl-commit.ps1 (тогда гейт работает по старой схеме).
+ */
+export function gateAllowPathsFromAfterScript(afterScript?: string): string {
+  if (!afterScript) return "";
+  const match = /-Files\s+"([^"]+)"/i.exec(afterScript);
+  if (!match) return "";
+  return match[1]
+    .split(";")
+    .map((item) => item.trim().replace(/\\/g, "/").replace(/^\.\//, ""))
+    .filter(Boolean)
+    .join("|");
+}
+
+/**
  * Генерирует per-task .cmd-обёртку, которую schtasks вызывает через /tr.
  * Внутри .cmd — жёстко заданный вызов run-task.ps1 с задачей, промптом,
  * таймаутом и lock-файлом. schtasks получает только один путь (в кавычках),
@@ -1131,6 +1211,8 @@ export async function writeWrapperCmd(
   guards?: TaskGuards,
   /** Путь к dist/core/guard-run.js (обязателен при guards). */
   guardHelperFile?: string,
+  /** PL-47: RELATIVE-пути, которые задача вправе изменить (из -Files). */
+  gateAllowPaths?: string,
 ): Promise<string> {
   await fs.mkdir(WRAPPER_DIR, { recursive: true });
   const cmdPath = path.join(WRAPPER_DIR, `run-${sanitizedName}.cmd`);
@@ -1195,6 +1277,8 @@ export async function writeWrapperCmd(
       gateTimeoutSeconds: safeGateTimeout,
     });
     psArgs.push(`-GateSnapshotFile "${snapshotFile}"`);
+    const safeAllow = (gateAllowPaths ?? "").replace(/[\r\n"]+/g, "").trim();
+    if (safeAllow) psArgs.push(`-GateAllowPaths "${safeAllow}"`);
   }
 
   if (model?.trim()) {

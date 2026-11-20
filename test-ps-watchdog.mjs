@@ -64,6 +64,46 @@ check(
     WRAPPER_SCRIPT.indexOf('"taskkill.exe" -ArgumentList')
 );
 
+// PL-51: health-check лога против зависших моделей (бесконечный retry).
+check(
+  "PL-51: health-check включается для задач с LogFile и отключается env",
+  /AGENT_STEWARD_HEALTH_CHECK -ne "0" -and \$LogFile/.test(WRAPPER_SCRIPT)
+);
+check(
+  "PL-51: пороги health-check настраиваются env",
+  ["AGENT_STEWARD_HEALTH_INTERVAL_SEC", "AGENT_STEWARD_HEALTH_REPEAT_THRESHOLD", "AGENT_STEWARD_HEALTH_TAIL_LINES"].every(
+    (name) => WRAPPER_SCRIPT.includes(name)
+  )
+);
+check(
+  "PL-51: сторож ищет известные повторяющиеся ошибки моделей",
+  /ECONNRESET\|Free usage limit reached\|Insufficient Balance\|ECONNREFUSED\|ETIMEDOUT/.test(
+    WRAPPER_SCRIPT
+  )
+);
+check(
+  "PL-51: старые ошибки не убивают запуск (базовая линия)",
+  /\$baseline\s*=\s*-1/.test(WRAPPER_SCRIPT) &&
+    /\$bad\.Count\s*-ge\s*\$baseline\s*\+\s*\$Threshold/.test(WRAPPER_SCRIPT)
+);
+const healthSection = WRAPPER_SCRIPT.slice(
+  WRAPPER_SCRIPT.indexOf("PL-51: health-check")
+);
+check(
+  "PL-51: причина пишется в лог и маркер до kill дерева",
+  healthSection.indexOf("Add-Content -LiteralPath $LogPath") >= 0 &&
+    healthSection.indexOf("Add-Content -LiteralPath $LogPath") <
+      healthSection.indexOf("Set-Content -LiteralPath $Marker") &&
+    healthSection.indexOf("Set-Content -LiteralPath $Marker") <
+      healthSection.indexOf("taskkill.exe /F /T /PID $RootId")
+);
+check(
+  "PL-51: отдельный код возврата и cleaned-up маркер",
+  WRAPPER_SCRIPT.includes("$healthFailure") &&
+    WRAPPER_SCRIPT.includes("return 125") &&
+    /Remove-Item -LiteralPath \$healthMarker -Force/.test(WRAPPER_SCRIPT)
+);
+
 // Синтаксис сгенерированного скрипта: powershell.exe должен разобрать его без ошибок.
 if (process.platform === "win32") {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ws-scheduler-watchdog-"));

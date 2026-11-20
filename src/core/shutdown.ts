@@ -44,6 +44,12 @@ export interface ShutdownGate {
   begin(reason?: string): void;
   /** Подтверждает, что выгрузка завершена (запрещает автосброс). */
   complete(): void;
+  /**
+   * PL-45: принудительно открывает ворота. Вызывается при повторной
+   * регистрации плагина (V2 setup / V1 hooks), когда хост ранее вызвал
+   * begin()+complete(), но модуль остался в памяти (Code Mode / hot-reload).
+   */
+  reset(): void;
   /** Снимок состояния для диагностики и структурированных ошибок. */
   state(): ShutdownGateState;
   /** Учитывает промис до его завершения (успех или ошибка). */
@@ -65,7 +71,6 @@ export function createShutdownGate(): ShutdownGate {
   const maybeResetStale = (): void => {
     if (
       !shuttingDown ||
-      unloadCompleted ||
       active.size !== 0 ||
       startedAtMs === null ||
       Date.now() - startedAtMs < STALE_GATE_MS
@@ -75,7 +80,9 @@ export function createShutdownGate(): ShutdownGate {
     const waitedMs = Date.now() - startedAtMs;
     lastAutoReset =
       `ворота оставались закрытыми ${waitedMs} мс без активных операций ` +
-      "и без complete() — автосброс после hot-reload";
+      (unloadCompleted
+        ? "после complete() без выгрузки модуля — автосброс в Code Mode"
+        : "и без complete() — автосброс после hot-reload");
     shuttingDown = false;
     reason = null;
     startedAtMs = null;
@@ -94,6 +101,15 @@ export function createShutdownGate(): ShutdownGate {
     },
     complete: () => {
       unloadCompleted = true;
+    },
+    reset: () => {
+      if (shuttingDown) {
+        lastAutoReset = "ворота открыты повторной регистрацией плагина (PL-45)";
+      }
+      shuttingDown = false;
+      reason = null;
+      startedAtMs = null;
+      unloadCompleted = false;
     },
     state: () => ({
       shuttingDown,

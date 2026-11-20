@@ -149,6 +149,25 @@ export function worktreeGuardPaths(env: NodeJS.ProcessEnv = process.env): string
   return parts.length ? parts : ["src"];
 }
 
+/**
+ * PL-47: пути, которые задача изменить вправе (обычно из `-Files` afterScript).
+ * Исключаются из сравнения со snapshot: агент спокойно правит свои файлы,
+ * а чужие правки в остальной части `src/` по-прежнему срывают гейт.
+ */
+export function worktreeAllowPaths(env: NodeJS.ProcessEnv = process.env): string[] {
+  const raw = env.AGENT_STEWARD_GATE_ALLOW_PATHS?.trim();
+  if (!raw) return [];
+  return raw
+    .split(/[|;]/)
+    .map((item) => item.trim().replace(/\\/g, "/").replace(/^\.\//, "").replace(/^\/+/, ""))
+    .filter(Boolean);
+}
+
+function pathIsAllowed(relative: string, allowed: string[]): boolean {
+  const normalized = relative.replace(/\\/g, "/").replace(/^\.\//, "").trim();
+  return allowed.some((prefix) => normalized === prefix || normalized.startsWith(`${prefix}/`));
+}
+
 function gitOutput(dir: string, args: string[]): string | null {
   try {
     return execFileSync("git", ["-C", dir, ...args], {
@@ -170,7 +189,19 @@ export function readWorktreeState(
   if (head === null) return null;
   const status = gitOutput(dir, ["status", "--porcelain", "--untracked-files=no", "--", ...worktreeGuardPaths(env)]);
   if (status === null) return null;
-  return { head: head.trim(), status };
+  const allowed = worktreeAllowPaths(env);
+  let filtered = status;
+  if (allowed.length > 0) {
+    filtered = status
+      .split("\n")
+      .filter((line) => {
+        if (line.length < 4) return false;
+        const relative = line.slice(3).split(" -> ").pop()?.trim() ?? "";
+        return !pathIsAllowed(relative, allowed);
+      })
+      .join("\n");
+  }
+  return { head: head.trim(), status: filtered };
 }
 
 /** Пишет snapshot дерева; null — не git-репозиторий (гейт не блокируем). */
@@ -226,7 +257,8 @@ export function verifyWorktreeSnapshot(
     return { ok: false, reason: "HEAD изменился с момента старта задачи" };
   }
   if (actual.status !== snapshot.status) {
-    return { ok: false, reason: "исходники в src/ изменились с момента старта задачи" };
+    const paths = worktreeGuardPaths(env).join(", ");
+    return { ok: false, reason: `защищённые пути (${paths}) изменились с момента старта задачи` };
   }
   return { ok: true };
 }
@@ -244,7 +276,8 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       console.error("gate-integrity: worktree-snapshot требует --dir и --out");
       return 2;
     }
-    captureWorktreeSnapshot(dir, outFile);
+    const allow = optionValue(argv, "--allow");
+    captureWorktreeSnapshot(dir, outFile, allow ? { ...process.env, AGENT_STEWARD_GATE_ALLOW_PATHS: allow } : process.env);
     return 0;
   }
   if (argv[0] === "worktree-verify") {
@@ -254,7 +287,12 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       console.error("gate-integrity: worktree-verify требует --dir и --snapshot");
       return 2;
     }
-    const result = verifyWorktreeSnapshot(dir, file);
+    const allow = optionValue(argv, "--allow");
+    const result = verifyWorktreeSnapshot(
+      dir,
+      file,
+      allow ? { ...process.env, AGENT_STEWARD_GATE_ALLOW_PATHS: allow } : process.env,
+    );
     if (!result.ok) {
       console.error(`gate-integrity: ${result.reason ?? "рабочее дерево изменилось"}`);
       return 1;

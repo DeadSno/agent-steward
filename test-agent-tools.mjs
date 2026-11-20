@@ -441,6 +441,18 @@ check(
     !rpcHandler.includes("normalizePriority")
 );
 
+// PL-53: отказ старта по событийному триггеру обязан попадать в историю и
+// структурированный журнал, а не только в console.error хоста.
+const eventStart = rpcSource.indexOf("async function scheduleEventRun(");
+const eventBody = rpcSource.slice(eventStart, eventStart + 2000);
+check(
+  "PL-53: отказ scheduleEventRun пишется в историю и журнал",
+  eventStart >= 0 &&
+    /recordRun\(taskName,\s*"error"/.test(eventBody) &&
+    eventBody.includes('event: "trigger.start_failed"') &&
+    eventBody.includes("reason,")
+);
+
 // QV-3: emit_event различает подписчиков по mcpEvent.server.
 const qv3Def = (server, event = "deploy.done") => ({
   name: `qv3-${server}`,
@@ -465,6 +477,17 @@ check(
   matchesMcpEventSubscription(qv3Github, "deploy.done") === true &&
     matchesMcpEventSubscription(qv3Jira, "deploy.done", "   ") === true &&
     matchesMcpEventSubscription({ name: "cron", triggerType: "cron" }, "deploy.done") === false
+);
+
+// PL-48: definition может быть сохранена с алиасом eventName — матчер должен
+// через normalizeMcpEventTrigger, иначе задача не получит событие.
+const pl48Def = (mcpEvent) => ({ name: "pl48-alias", triggerType: "mcp-event", mcpEvent });
+check(
+  "PL-48: матчер понимает алиас eventName в сохранённой задаче",
+  matchesMcpEventSubscription(pl48Def({ server: "agent-steward", eventName: "qa.pl48.start" }), "QA.PL48.START", "AGENT-STEWARD") === true &&
+    matchesMcpEventSubscription(pl48Def({ server: "github", event: "qa.pl48.start", eventName: "ignored" }), "ignored") === false &&
+    matchesMcpEventSubscription(pl48Def({ eventName: "qa.pl48.start", filter: "ok = true" }), "qa.pl48.start", undefined, { ok: true }) === true &&
+    matchesMcpEventSubscription(pl48Def({ eventName: "qa.pl48.start", filter: "ok = true" }), "qa.pl48.start", undefined, { ok: false }) === false
 );
 
 // PL-42: mcpEvent принимает и event, и алиас eventName (совместимость с emit_event).

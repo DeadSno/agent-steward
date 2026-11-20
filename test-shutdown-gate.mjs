@@ -52,16 +52,33 @@ check(
     completed.lastAutoReset === null
 );
 
+// PL-45: повторная регистрация плагина открывает ворота даже после complete().
+gate.reset();
+const afterReset = gate.state();
+check(
+  "PL-45: reset() открывает ворота после complete()",
+  afterReset.shuttingDown === false &&
+    afterReset.unloadCompleted === false &&
+    afterReset.reason === null &&
+    afterReset.lastAutoReset?.includes("PL-45") === true &&
+    gate.isShuttingDown() === false
+);
+
 // QV-2: «зависшие» ворота (begin без complete, нет активных, истёк порог)
 // автоматически открываются при первом же запросе. Порог обнуляем в дочернем
 // процессе, чтобы не ждать 30 секунд.
+// PL-45: тот же автосброс должен работать и после complete() без выгрузки.
 const child = `
   import { createShutdownGate } from ${JSON.stringify(new URL("./dist/core/shutdown.js", import.meta.url).href)};
   const g = createShutdownGate();
   g.begin("stale hot-reload");
   const before = g.isShuttingDown();
   const after = g.state();
-  console.log(JSON.stringify({ before, after }));
+  g.begin("completed but still loaded");
+  g.complete();
+  const beforeCompleted = g.isShuttingDown();
+  const afterCompleted = g.state();
+  console.log(JSON.stringify({ before, after, beforeCompleted, afterCompleted }));
 `;
 const out = execFileSync(process.execPath, ["--input-type=module", "-e", child], {
   env: { ...process.env, AGENT_STEWARD_SHUTDOWN_STALE_MS: "0" },
@@ -74,6 +91,12 @@ check(
     probe.after.shuttingDown === false &&
     probe.after.lastAutoReset !== null &&
     probe.after.lastAutoReset.includes("автосброс")
+);
+check(
+  "PL-45: ворота автосбрасываются и после complete() без выгрузки модуля",
+  probe.beforeCompleted === false &&
+    probe.afterCompleted.shuttingDown === false &&
+    probe.afterCompleted.lastAutoReset?.includes("Code Mode") === true
 );
 
 console.log(`Shutdown gate: ${checks} проверок пройдено.`);

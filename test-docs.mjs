@@ -215,7 +215,7 @@ check(
   "src/index.ts: setup V2 стартует через общий createRuntime",
   /export async function createRuntime\(/.test(indexSrc) &&
     // QV-8: перед createRuntime допустим ранний возврат для дочернего прогона.
-    /setup: async \(ctx\) => \{\s*(?:if \(isChildRunMode\(\)\) \{[\s\S]*?\}\s*)?const runtime = await createRuntime\(ctx\);/.test(indexSrc)
+    /setup: async \(ctx\) => \{[\s\S]{0,800}?const runtime = await createRuntime\(ctx\);/.test(indexSrc)
 );
 // Регресс: GUI вызывает rpc.<method>, но метод обязан быть объявлен в
 // SchedulerRpc.methods, иначе клиент падает с "TypeError: ... is not a function".

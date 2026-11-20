@@ -9,13 +9,19 @@ const JSON_FILES = ["tasks.json", "history.json", "metrics.json", "templates.jso
 
 /**
  * Crash recovery: помечает незавершённые записи истории как error.
- * Вызывается при setup() до запуска catch-up и файловых триггеров.
+ * Вызывается при setup() до запуска catch-up и файловых триггеров, а также
+ * перед выдачей истории (PL-46), чтобы «висящие» запуски не оставались
+ * running после schtasks /End.
  */
 export function recoverInterruptedRuns(): number {
-  const { recovered, keptAlive } = recoverInterrupted();
-  if (recovered > 0 || keptAlive > 0) {
+  // Порог можно переопределить: 0 отключает финализацию живого владельца.
+  const configured = Number(process.env.AGENT_STEWARD_STALE_RUN_MS);
+  const staleAfterMs =
+    Number.isFinite(configured) && configured > 0 ? configured : 2 * 60 * 60 * 1000;
+  const { recovered, keptAlive } = recoverInterrupted({ staleAfterMs });
+  if (recovered > 0) {
     console.log(
-      `[recovery] Восстановлено ${recovered} незавершённых записей истории — помечены как error.` +
+      `[recovery] Восстановлено ${recovered} незавершённых записей истории (error/timeout).` +
         (keptAlive > 0 ? ` Оставлено живым владельцам: ${keptAlive}.` : ""),
     );
   }

@@ -295,6 +295,22 @@ check(
   "PL-25: чужая правка src ловится",
   worktreeFail.ok === false && /src/i.test(worktreeFail.reason ?? ""),
 );
+// PL-47: файл из -Files afterScript считается «своим» и гейт не срывает.
+const allowEnv = { ...process.env, AGENT_STEWARD_GATE_ALLOW_PATHS: "src/file.txt" };
+check(
+  "PL-47: allow-путь исключается из сравнения со snapshot",
+  gateIntegrity.verifyWorktreeSnapshot(guardRepo, worktreeSnapshot, allowEnv).ok === true &&
+    gateIntegrity.readWorktreeState(guardRepo, allowEnv)?.status === "" &&
+    gateIntegrity.readWorktreeState(guardRepo)?.status !== "",
+);
+const psWrapper = await import("./dist/core/ps-wrapper.js");
+check(
+  "PL-47: -Files из afterScript превращаются в allow-список",
+  psWrapper.gateAllowPathsFromAfterScript(
+    'powershell.exe -File pl-commit.ps1 -Files "src/index.ts;ROADMAP.md;CHANGELOG.md" -Marker "m"',
+  ) === "src/index.ts|ROADMAP.md|CHANGELOG.md" &&
+    psWrapper.gateAllowPathsFromAfterScript("echo OK>m") === "",
+);
 const cliWtSnapshot = spawnSync(
   process.execPath,
   [integrityCli, "worktree-snapshot", "--dir", guardRepo, "--out", path.join(tempRoot, "cli-worktree.json")],

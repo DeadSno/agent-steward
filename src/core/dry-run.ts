@@ -11,7 +11,7 @@ import { loadTaskDefinitions } from "../task-transfer.js";
 import { getHistory } from "../db/history-repo.js";
 import { getWorkspace } from "../workspaces.js";
 import { expandMatrixTask } from "./matrix.js";
-import { nextRun, activeWindowState, assessCronWindowFeasibility, windowFeasibilityReasonText } from "./schedule-v2.js";
+import { nextRun, activeWindowState, assessCronWindowFeasibility, needsPollMode, windowFeasibilityReasonText } from "./schedule-v2.js";
 import { checkGitTrigger } from "./git-trigger.js";
 import { t } from "../i18n.js";
 import type { TaskDefinition } from "../task-transfer.js";
@@ -42,6 +42,33 @@ export function isFrequentCron(schedule: string): boolean {
   return false;
 }
 
+/**
+ * PL-49: минимальный интервал срабатывания cron в минутах для простых
+ * выражений. Возвращает null, если интервал нельзя надёжно вывести.
+ */
+export function minimumCronIntervalMinutes(schedule: string): number | null {
+  const parts = schedule.trim().split(/\s+/);
+  if (parts.length < 5) return null;
+  const [minute, hour, dom, month, dow] = parts;
+  if (hour !== "*" || dom !== "*" || month !== "*" || dow !== "*") return null;
+  if (minute === "*") return 1;
+  const step = /^\*\/(\d+)$/.exec(minute);
+  if (step) {
+    const n = Number(step[1]);
+    return n >= 1 && n <= 60 ? n : null;
+  }
+  const minutes = minute.split(",").map((m) => Number(m));
+  if (minutes.length > 1 && minutes.every((n) => Number.isInteger(n) && n >= 0 && n < 60)) {
+    const sorted = [...minutes].sort((a, b) => a - b);
+    let minStep = 60 - sorted[sorted.length - 1] + sorted[0];
+    for (let i = 1; i < sorted.length; i++) {
+      minStep = Math.min(minStep, sorted[i] - sorted[i - 1]);
+    }
+    return minStep;
+  }
+  return null;
+}
+
 export interface DryRunRoleScoped {
   allowed?: string[];
   denied?: string[];
@@ -55,6 +82,8 @@ export interface DryRunTriggerDetails {
   type: "manual" | "cron" | "file" | "git" | "mcp-event" | "once";
   /** Человекочитаемое объяснение условия запуска. */
   explanation: string;
+  /** PL-50: cron не expressible в schtasks — ОС опрашивает его каждую минуту. */
+  polling?: boolean;
   /** Состояние окна запуска и разрешённых дней недели (если заданы). */
   activeWindow?: {
     active: boolean;
@@ -353,6 +382,11 @@ async function describeTrigger(opts: DescribeTriggerOptions): Promise<DryRunTrig
           timezone: def.timezone,
         })
         : t("dryRun.cron", { schedule: def.schedule });
+      // PL-50: показываем, что расписание не зарегистрировано напрямую
+      // в schtasks, а проверяется минутным poll с schedule gate в обёртке.
+      if (def.schedule && needsPollMode(def.schedule, def.timezone ?? undefined)) {
+        base.polling = true;
+      }
       break;
     }
 
@@ -669,6 +703,32 @@ export async function simulatePipeline(taskName: string): Promise<DryRunReport> 
       taskWarnings.push(
         `QV-9: cron "${def.schedule}" запускает opencode run чаще, чем раз в 5 минут: ` +
           "каждый тик поднимает полную сессию агента. Используйте редкое расписание или событийный триггер (mcp-event/file/git).",
+      );
+    }
+
+    // PL-49: таймаут длиннее интервала cron — следующий тик наступит до
+    // завершения текущего, и запуск будет пропущен (lock-skip).
+    const intervalMinutes = triggerType === "cron" && def.schedule
+      ? minimumCronIntervalMinutes(def.schedule)
+      : null;
+    if (
+      intervalMinutes !== null &&
+      typeof def.timeoutSeconds === "number" &&
+      def.timeoutSeconds > intervalMinutes * 60
+    ) {
+      taskWarnings.push(
+        `PL-49: timeoutSeconds=${def.timeoutSeconds}с больше интервала cron "${def.schedule}" ` +
+          `(${intervalMinutes} мин): следующий тик наступит до завершения текущего прогона. ` +
+          "Увеличьте интервал или уменьшите таймаут.",
+      );
+    }
+
+    // PL-50: cron вне подмножества schtasks тикает каждую минуту — это не
+    // частота задачи, а частота опроса planner'а; без пометки легко ошибиться.
+    if (triggerDetails.polling) {
+      taskWarnings.push(
+        `PL-50: cron "${def.schedule}" не выражается в планировщике ОС: ` +
+          "записана ежеминутная проверка с schedule gate. Фактическая частота запуска — по cron, но каждую минуту создаётся ProcessID для проверки расписания.",
       );
     }
 
