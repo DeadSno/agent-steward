@@ -50,6 +50,22 @@ export interface StructuredLogRecord {
   workspaceId?: string | null;
   preFlightStatus?: string;
   postFlightStatus?: string;
+  /**
+   * PL-7.2: реальный код завершения хуков. Диагностика Git уходит в stderr
+   * даже при успешном push — без разделения потоков «пуш не состоялся» и
+   * «Git пишет в stderr» неразличимы.
+   */
+  preFlightExitCode?: number | null;
+  /** PL-7.2: stdout beforeScript — отдельно от диагностики. */
+  preFlightStdout?: string;
+  /** PL-7.2: stderr beforeScript. */
+  preFlightStderr?: string;
+  /** PL-7.2: реальный код завершения afterScript (post-flight). */
+  postFlightExitCode?: number | null;
+  /** PL-7.2: stdout afterScript — отдельно от диагностики. */
+  postFlightStdout?: string;
+  /** PL-7.2: stderr afterScript — может содержать diagnostics успешного git push. */
+  postFlightStderr?: string;
   /** Источник события: schedule, dashboard, hook, cli, mcp и т.п. */
   source?: string;
   /** HTTP-статус ответа на hook.received. */
@@ -146,12 +162,63 @@ export function appendStructuredLog(
     if (typeof payload.reason === "string") {
       payload.reason = redactSecretsInText(payload.reason);
     }
+    // PL-7.2: потоки хуков тоже могут содержать токены/URL — применяем ту же
+    // редакцию, что и к error/reason, до записи в JSONL.
+    if (typeof payload.preFlightStdout === "string") {
+      payload.preFlightStdout = redactSecretsInText(payload.preFlightStdout);
+    }
+    if (typeof payload.preFlightStderr === "string") {
+      payload.preFlightStderr = redactSecretsInText(payload.preFlightStderr);
+    }
+    if (typeof payload.postFlightStdout === "string") {
+      payload.postFlightStdout = redactSecretsInText(payload.postFlightStdout);
+    }
+    if (typeof payload.postFlightStderr === "string") {
+      payload.postFlightStderr = redactSecretsInText(payload.postFlightStderr);
+    }
     fs.appendFileSync(STRUCTURED_LOG_FILE, `${JSON.stringify(payload)}\n`, "utf8");
     return true;
   } catch (err) {
     warn("не удалось записать событие", err);
     return false;
   }
+}
+
+/** PL-7.2: данные одного хука (pre/post-flight) для журнала. */
+export interface HookOutputDetails {
+  /** Реальный код завершения процесса, а не «успех/ошибка» обёртки. */
+  exitCode: number | null;
+  stdout?: string;
+  stderr?: string;
+}
+
+/**
+ * PL-7.2: пишет отдельное событие `hook.output` с разделёнными stdout/stderr и
+ * реальным exit code. Обёртка вызывает его, когда хочет отличить «команда не
+ * выполнилась» от «команда выполнилась, но написала диагностику в stderr»
+ * (типичный случай git push под PowerShell $ErrorActionPreference='Stop').
+ */
+export function appendHookOutputLog(
+  phase: "preFlight" | "postFlight",
+  task: string,
+  details: HookOutputDetails,
+  runId?: number,
+): boolean {
+  const base = { event: "hook.output", task, runId } as const;
+  if (phase === "postFlight") {
+    return appendStructuredLog({
+      ...base,
+      postFlightExitCode: details.exitCode,
+      postFlightStdout: details.stdout ?? "",
+      postFlightStderr: details.stderr ?? "",
+    });
+  }
+  return appendStructuredLog({
+    ...base,
+    preFlightExitCode: details.exitCode,
+    preFlightStdout: details.stdout ?? "",
+    preFlightStderr: details.stderr ?? "",
+  });
 }
 
 function readLines(file: string): string[] {

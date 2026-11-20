@@ -34,6 +34,12 @@ summary, last run.
 Do not use a 5-field cron for a one-off reminder. Do not build a pipeline with chained
 prompts inside a single task when `dependsOn` exists: a failed step would be invisible.
 
+**Task names (PL-9.1).** `schedule_task` validates the name: letters (including Cyrillic),
+digits, space, dot, underscore and an **ASCII hyphen `-`** are allowed. The em dash `—`
+and round brackets `()` are **rejected**. Rewrite the title with words and `-` before
+creating the task so the original name is not silently replaced:
+`QA-A2 - Full plugin typing epic`, not `Задача QA-A2 — Полная типизация (эпик)`.
+
 ## 3. Write prompts that survive without context
 
 Every run starts from a clean slate: no chat history, no memory of the previous run, nobody
@@ -137,6 +143,12 @@ Rules of thumb:
   starts.
 - `nextTaskOnSuccess` / `nextTaskOnError` chain a single follow-up run; use them for
   notifications and rollbacks.
+- **One transition, one mechanism (PL-5.1/PL-5.2).** For a linear `A → B` step use
+  **either** `A.nextTaskOnSuccess = "B"` **or** `B.dependsOn = ["A"]`, never both.
+  If both describe the same transition, `B` is triggered twice when `A` finishes — once
+  as the chain target and once as a DAG dependent — producing duplicate runs. `dry_run`
+  warns about this overlap, and the recorder now de-duplicates targets by name, but the
+  configuration itself should be fixed.
 - Keep chains short and named by intent (`deploy` → `smoke-tests` → `notify-release`).
 - Cycles and self-dependencies are rejected; if a chain grows past 4–5 nodes, consider one
   task with an explicit internal checklist instead.
@@ -157,6 +169,11 @@ Rules of thumb:
   `timeout`, `partial`.
 - `get_task_logs` with `lines` — tail of the wrapper log; use it to distinguish model failure,
   Quality Gate failure, timeout and lock-skip.
+- Structured journal (`logs/runs.jsonl`, `hook.output` events, PL-7.2): post-flight stdout
+  and stderr are stored in **separate** fields with the real `postFlightExitCode`. Git writes
+  progress/diagnostics to stderr even on success, so compare the exit code and stdout — do
+  not treat a non-empty stderr as a failed push. See `references/recipes.md` §11 for the
+  commit/push wrapper that makes this reliable.
 - Matrix problems: `matrix_control` with `action: "results"` for counters, `action: "cancel"`
   to stop pending clones, `action: "cleanup"` to remove clones whose parent is gone.
 - A timeout usually means the prompt is too broad. Split it or raise `timeoutSeconds`
@@ -171,6 +188,7 @@ Rules of thumb:
 | `* * * * *` with a heavy prompt | Runs overlap, lock-skips, cost spikes | Realistic interval + timeout |
 | Prompt depending on chat context | Nonsense output at 03:00 | Self-contained prompt with paths |
 | No Quality Gate on a "fixer" job | Broken code reported as success | `qualityGate: "npm test"` |
+| `nextTaskOnSuccess` and `dependsOn` for one transition | Duplicate runs of the same step | Keep one mechanism only (PL-5.1/PL-5.2) |
 | Prompt demands `node`/tests but shell is denied | `tool.blocked`, fake "verified" report | `shell` in `allowedTools` or checks in `qualityGate`/`afterScript` |
 | Closed task left in `ROADMAP.md` with a missing/incorrect file name | Gate checks a file that does not exist | Exact line format + artifact checklist in the prompt (PL-3.1) |
 | Matrix with 20 workspaces, no concurrency cap | Machine and API saturation | `matrix.concurrency: 2–4` |

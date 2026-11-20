@@ -464,7 +464,7 @@ export const scheduleTaskSchema = z.object({
   name: z
     .string()
     .describe(
-      "Unique task name (the plugin prefix is applied automatically). Allowed: letters (including Cyrillic), digits, space, dot, underscore and hyphen.",
+      "Unique task name (the plugin prefix is applied automatically). Allowed: letters (including Cyrillic), digits, space, dot, underscore and ASCII hyphen '-'. Do NOT use the em dash '—' or round brackets '()': validation rejects them and the original title will be lost. Use ASCII '-' and plain words instead, e.g. 'QA-A2 - Full plugin typing epic'.",
     ),
   schedule: z
     .string()

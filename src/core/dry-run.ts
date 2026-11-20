@@ -6,6 +6,7 @@
  * Никогда не исполняет команды — только анализ определений.
  */
 import fs from "node:fs";
+import { execFileSync } from "node:child_process";
 import { loadTaskDefinitions } from "../task-transfer.js";
 import { getHistory } from "../db/history-repo.js";
 import { getWorkspace } from "../workspaces.js";
@@ -147,6 +148,71 @@ function shellIsForbidden(def: TaskDefinition): boolean {
   if (denied.length > 0) return denied.some(isShell);
   // Политика hybrid по умолчанию запрещает shell (см. SKILL.md §4).
   return true;
+}
+
+/**
+ * PL-5.1: цепочка и DAG могут указывать на один и тот же переход. Тогда при
+ * завершении шага он будет запущен дважды: как chainTarget и как зависимый.
+ * Возвращаем имя конфликтующей задачи или null. Fail-open: нет данных — тишина.
+ */
+function findChainDagOverlap(
+  def: TaskDefinition,
+  allDefs: TaskDefinition[],
+): string | null {
+  const next = (def.nextTaskOnSuccess ?? "").trim();
+  if (!next) return null;
+  const nextLower = next.toLowerCase();
+
+  // Случай 1: преемник прямо перечислен в dependsOn текущей задачи.
+  if (
+    (def.dependsOn ?? []).some(
+      (dep) => (dep ?? "").trim().toLowerCase() === nextLower,
+    )
+  ) {
+    return next;
+  }
+
+  // Случай 2 (типичная линейная цепочка): преемник сам зависит от текущей.
+  const nextDef = allDefs.find((d) => d.name.toLowerCase() === nextLower);
+  if (
+    nextDef &&
+    (nextDef.dependsOn ?? []).some(
+      (dep) => (dep ?? "").trim().toLowerCase() === def.name.toLowerCase(),
+    )
+  ) {
+    return next;
+  }
+  return null;
+}
+
+/**
+ * PL-8.1: рабочая директория могла уйти вперёд с момента постановки задачи —
+ * Quality Gate тогда проверяет уже другой код (расхождение счётчиков и т.п.).
+ * Сравниваем время HEAD-коммита с createdAt задачи. Fail-open: нет git, нет
+ * даты или команда недоступна — предупреждения нет.
+ */
+function workingDirectoryDriftWarning(def: TaskDefinition, cwd: string): string | null {
+  if (!def.createdAt || !cwd) return null;
+  const created = new Date(def.createdAt).getTime();
+  if (!Number.isFinite(created)) return null;
+  try {
+    const headIso = execFileSync("git", ["log", "-1", "--format=%cI"], {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 5000,
+    }).trim();
+    const headTime = new Date(headIso).getTime();
+    if (!Number.isFinite(headTime) || headTime <= created) return null;
+    return (
+      `PL-8.1: рабочая директория ушла вперёд с момента постановки задачи (${def.createdAt}); ` +
+      `HEAD датирован ${headIso}. Quality Gate может упасть на чужих правках. ` +
+      "Зафиксируйте commit, на котором гейт считается валидным (например, проверьте HEAD внутри qualityGate), " +
+      "или используйте изолированный worktree."
+    );
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -479,6 +545,11 @@ export async function simulatePipeline(taskName: string): Promise<DryRunReport> 
       }
     }
 
+    // PL-8.1: HEAD мог уйти вперёд с момента постановки задачи — гейт проверяет
+    // уже другой код. Предупреждаем и советуем зафиксировать commit.
+    const drift = workingDirectoryDriftWarning(def, cwd);
+    if (drift) taskWarnings.push(drift);
+
     // Триггер: корневая задача (или клон корневой матрицы) — manual,
     // остальные попали в конвейер через dependsOn — dag.
     const triggerType = def.triggerType ?? "cron";
@@ -534,6 +605,16 @@ export async function simulatePipeline(taskName: string): Promise<DryRunReport> 
           t("dryRun.dangerPattern", { message: t(messageKey) }),
         );
       }
+    }
+
+    // PL-5.1: nextTaskOnSuccess и dependsOn на одну задачу = дубль запуска.
+    const overlap = findChainDagOverlap(def, allDefs);
+    if (overlap) {
+      taskWarnings.push(
+        `PL-5.1: nextTaskOnSuccess="${overlap}" и dependsOn указывают на одну задачу: ` +
+          `при завершении "${def.name}" шаг "${overlap}" будет запущен дважды. ` +
+          "Используйте только один механизм перехода (nextTaskOnSuccess ИЛИ dependsOn; см. SKILL.md §6).",
+      );
     }
 
     // PL-2.2: самопроверка через node/тесты при запрещённом shell — источник

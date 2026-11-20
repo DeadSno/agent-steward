@@ -676,9 +676,18 @@ async function handleCompletion(
   }
 
   if (st === "success") {
+    // PL-5.1: один и тот же следующий шаг может прийти и из chainTarget
+    // (nextTaskOnSuccess), и из DAG-зависимых (dependsOn). Запускаем каждое
+    // имя ровно один раз за завершение: Set по имени, без учёта регистра —
+    // именно так сравнивает имена selectDependentsToTrigger.
+    const triggered = new Set<string>();
+    const nameKey = (name: string): string => name.trim().toLowerCase();
+
     // Успешный запуск сбрасывает счётчик повторов.
     await deleteSetting(retryStateKey(taskName));
     if (chainTarget) {
+      const key = nameKey(chainTarget);
+      triggered.add(key);
       const started = await triggerTask(chainTarget);
       if (started) {
         logRecorderEvent("chain.triggered", taskName, { nextTask: chainTarget });
@@ -694,6 +703,17 @@ async function handleCompletion(
       const definitions = listTasks();
       const dependents = selectDependentsToTrigger(taskName, definitions, history);
       for (const dependent of dependents) {
+        const key = nameKey(dependent);
+        if (triggered.has(key)) {
+          // Один шаг попал и в цепочку, и в DAG — второй triggerTask
+          // создал бы дублирующий запуск (наблюдалось 09:29:24Z).
+          logRecorderEvent("dag.dedup_skipped", taskName, {
+            reason: "already triggered via nextTaskOnSuccess",
+            nextTask: dependent,
+          });
+          continue;
+        }
+        triggered.add(key);
         const started = await triggerTask(dependent);
         if (started) {
           logRecorderEvent("dag.triggered", taskName, { nextTask: dependent });

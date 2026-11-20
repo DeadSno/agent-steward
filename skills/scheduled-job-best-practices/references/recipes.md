@@ -199,3 +199,96 @@ Notes and warnings:
 
 Why: the OS trigger is the documented escape hatch for the shutdown gate; the force marker
 only bypasses the schedule gate, and both need a duplicate check plus a chain check.
+
+## 10. Safe cleanup in `beforeScript` (PL-6.1)
+
+`Remove-Item -ErrorAction SilentlyContinue` returns exit code **1** when the file is already
+absent. A non-zero pre-flight code cancels the run with `Pre-flight script failed` and fires
+a false compensator. Guard the existence check and finish with an explicit `exit 0`:
+
+```powershell
+if (Test-Path -LiteralPath '<path>') { Remove-Item -LiteralPath '<path>' -Force }; exit 0
+```
+
+Rules:
+
+- Use `-LiteralPath`, not `-Path`, so brackets and wildcards in the path are literal.
+- Keep the guard and `exit 0` in the same script; for several paths repeat the guard for each
+  and put a single `exit 0` at the end.
+- In a Bash pre-flight the equivalent is `rm -f "<path>"` followed by `exit 0`.
+- The wrapper only sees the process exit code — it cannot tell "cleanup skipped, nothing to
+  do" from "cleanup failed". Make the script say `0` for the first case explicitly.
+
+## 11. Reliable commit + push from `afterScript` (PL-7.1)
+
+Proven pattern from `scripts/qa-a2-commit.ps1`. Native Git writes progress and diagnostics
+to **stderr**; under PowerShell 7 with `$ErrorActionPreference = 'Stop'` that becomes a
+terminating error even when the push succeeded. Relax the preference only around Git calls,
+capture `$LASTEXITCODE`, retry, and verify the remote before declaring failure.
+
+```powershell
+$ErrorActionPreference = 'Stop'
+Set-Location -LiteralPath $root
+
+function Invoke-Git([string]$what, [string[]]$gitArgs) {
+  $old = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'          # stderr diagnostics are not terminating errors
+  try {
+    $output = & git @gitArgs 2>&1              # capture/suppress stderr
+    $code = $LASTEXITCODE                      # the REAL exit code
+    foreach ($line in $output) { Write-Output ("[{0}] {1}" -f $what, [string]$line) }
+    return $code
+  } finally { $ErrorActionPreference = $old }
+}
+
+if ((Invoke-Git 'add' (@('add', '--') + $fileList)) -ne 0) { exit 1 }
+
+# "nothing to commit" = success, not an error
+$old = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+try { $nothing = git diff --cached --quiet; $clean = $LASTEXITCODE }
+finally { $ErrorActionPreference = $old }
+if ($clean -eq 0) { exit 0 }
+
+if ((Invoke-Git 'commit' @('commit', '-m', $Message)) -ne 0) { exit 1 }
+
+$pushed = $false
+for ($attempt = 1; $attempt -le 3; $attempt++) {   # 3 retries
+  if ((Invoke-Git "push#$attempt" @('push', 'origin', 'dev')) -eq 0) { $pushed = $true; break }
+  Start-Sleep -Seconds 3
+}
+if (-not $pushed) {
+  # A parallel task may already have pushed our commit: verify before failing.
+  $null = Invoke-Git 'fetch' @('fetch', 'origin', 'dev')
+  $old = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try {
+    $local  = (& git rev-parse HEAD      2>$null).Trim()
+    $remote = (& git rev-parse origin/dev 2>$null).Trim()
+  } finally { $ErrorActionPreference = $old }
+  if ($local -and $local -eq $remote) { $pushed = $true }  # HEAD/origin/dev agree
+}
+exit $(if ($pushed) { 0 } else { 1 })
+```
+
+Notes:
+
+- Gate the commit on a real Quality Gate success marker before `git add` (see the source
+  script); never commit untested files just because the afterScript ran.
+- Commit **only** the files owned by the task, never `git add -A`.
+- With the structured journal, read `postFlightExitCode` and the separate
+  `postFlightStdout` / `postFlightStderr` fields (`hook.output` events) instead of treating a
+  non-empty stderr as a failure (PL-7.2).
+
+## 12. Pin the commit your Quality Gate trusts (PL-8.1)
+
+During a multi-hour DAG a parallel task can commit to the same branch. `npm test` in the gate
+then fails on counter drift (`test-docs.mjs`) although this task's code is correct. `dry_run`
+warns when the working directory's HEAD is newer than the task's `createdAt`. Before running
+such a job:
+
+- Record the starting HEAD and require it in the gate, e.g.
+  `qualityGate: "git diff --quiet <sha> && npm test"` (adapt quoting to your shell), so a
+  foreign commit fails the gate deterministically instead of mid-run.
+- Or run the job in an isolated worktree / serialize writers to `src/`.
+- Re-check `git status` and `dry_run` immediately before the gate on a shared branch.
