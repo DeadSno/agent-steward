@@ -15,6 +15,7 @@ import {
   type SavingsRecord,
   type SavingsReport,
 } from "./savings.js";
+import { t } from "../i18n.js";
 
 // ==================== Типы ====================
 
@@ -204,19 +205,19 @@ export function calculateHealthScore(report: AnalyticsReport): HealthScore {
   // Рекомендации
   const recommendations: string[] = [];
   if (successRateScore < 80) {
-    recommendations.push("Повысьте успешность запусков: проверьте Quality Gate и логи ошибок");
+    recommendations.push(t("selfAnalysis.rec.successRate"));
   }
   if (errorRateScore < 80) {
-    recommendations.push("Снизьте частоту ошибок: добавьте retryCount для флакких задач");
+    recommendations.push(t("selfAnalysis.rec.errorRate"));
   }
   if (avgDurationScore < 70) {
-    recommendations.push("Оптимизируйте длительность: разбейте длинные задачи или увеличьте timeoutSeconds");
+    recommendations.push(t("selfAnalysis.rec.duration"));
   }
   if (timeoutRateScore < 80) {
-    recommendations.push("Уменьшите количество таймаутов: увеличьте timeoutSeconds или упростите промпты");
+    recommendations.push(t("selfAnalysis.rec.timeouts"));
   }
   if (crashRecoveryRateScore < 90) {
-    recommendations.push("Снизьте количество прерванных запусков: проверьте стабильность системы");
+    recommendations.push(t("selfAnalysis.rec.crashes"));
   }
 
   return {
@@ -752,37 +753,35 @@ function generateSummary(
   const parts: string[] = [];
 
   // Здоровье
-  const levelNames = {
-    excellent: "отличное",
-    good: "хорошее",
-    fair: "удовлетворительное",
-    poor: "плохое",
-    critical: "критическое",
-  };
-  parts.push(`Здоровье системы: ${levelNames[health.level]} (${health.score}/100)`);
+  parts.push(
+    t("selfAnalysis.health", {
+      level: t(`selfAnalysis.level.${health.level}`),
+      score: health.score,
+    }),
+  );
 
   // Аномалии
   if (anomalies.length > 0) {
     const highSeverity = anomalies.filter(a => a.severity > 70).length;
     if (highSeverity > 0) {
-      parts.push(`Обнаружено ${highSeverity} критических аномалий`);
+      parts.push(t("selfAnalysis.anomaliesHigh", { count: highSeverity }));
     } else {
-      parts.push(`Обнаружено ${anomalies.length} аномалий (все некритические)`);
+      parts.push(t("selfAnalysis.anomaliesAll", { count: anomalies.length }));
     }
   } else {
-    parts.push("Критических аномалий не обнаружено");
+    parts.push(t("selfAnalysis.noAnomalies"));
   }
 
   // Тренды
-  const degradingTrends = trends.filter(t => t.direction === "degrading").length;
+  const degradingTrends = trends.filter(trend => trend.direction === "degrading").length;
   if (degradingTrends > 0) {
-    parts.push(`${degradingTrends} метрик ухудшаются`);
+    parts.push(t("selfAnalysis.degrading", { count: degradingTrends }));
   }
 
   // Рекомендации
   const highPriority = recommendations.filter(r => r.priority >= 7).length;
   if (highPriority > 0) {
-    parts.push(`${highPriority} рекомендаций высокого приоритета`);
+    parts.push(t("selfAnalysis.highPriority", { count: highPriority }));
   }
 
   return parts.join(". ") + ".";

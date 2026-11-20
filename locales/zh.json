@@ -883,5 +883,21 @@
   "gui.missionTitle": "Ad-hoc 任务",
   "gui.missionEmptyPrompt": "请输入任务提示词。",
   "gui.missionStarted": "任务已完成",
-  "gui.missionFailed": "任务失败"
+  "gui.missionFailed": "任务失败",
+  "selfAnalysis.level.excellent": "优秀",
+  "selfAnalysis.level.good": "良好",
+  "selfAnalysis.level.fair": "一般",
+  "selfAnalysis.level.poor": "较差",
+  "selfAnalysis.level.critical": "严重",
+  "selfAnalysis.health": "系统健康度：{level} ({score}/100)",
+  "selfAnalysis.anomaliesHigh": "检测到 # 个严重异常",
+  "selfAnalysis.anomaliesAll": "检测到 # 个异常（均为非严重）",
+  "selfAnalysis.noAnomalies": "未检测到严重异常",
+  "selfAnalysis.degrading": "# 个指标正在恶化",
+  "selfAnalysis.highPriority": "# 条高优先级建议",
+  "selfAnalysis.rec.successRate": "提高运行成功率：检查 Quality Gate 和错误日志",
+  "selfAnalysis.rec.errorRate": "降低错误率：为不稳定的任务添加 retryCount",
+  "selfAnalysis.rec.duration": "优化耗时：拆分长任务或增加 timeoutSeconds",
+  "selfAnalysis.rec.timeouts": "减少超时：增加 timeoutSeconds 或简化提示词",
+  "selfAnalysis.rec.crashes": "减少中断的运行：检查系统稳定性"
 }

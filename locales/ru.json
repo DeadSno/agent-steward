@@ -883,5 +883,21 @@
   "gui.missionTitle": "Ad-hoc миссия",
   "gui.missionEmptyPrompt": "Введите промпт миссии.",
   "gui.missionStarted": "Миссия выполнена",
-  "gui.missionFailed": "Миссия не выполнена"
+  "gui.missionFailed": "Миссия не выполнена",
+  "selfAnalysis.level.excellent": "отличное",
+  "selfAnalysis.level.good": "хорошее",
+  "selfAnalysis.level.fair": "удовлетворительное",
+  "selfAnalysis.level.poor": "плохое",
+  "selfAnalysis.level.critical": "критическое",
+  "selfAnalysis.health": "Здоровье системы: {level} ({score}/100)",
+  "selfAnalysis.anomaliesHigh": "{count, plural, one {Обнаружена # критическая аномалия} few {Обнаружено # критические аномалии} many {Обнаружено # критических аномалий} other {Обнаружено # критических аномалий}}",
+  "selfAnalysis.anomaliesAll": "{count, plural, one {Обнаружена # аномалия (некритическая)} few {Обнаружено # аномалии (все некритические)} many {Обнаружено # аномалий (все некритические)} other {Обнаружено # аномалии (все некритические)}}",
+  "selfAnalysis.noAnomalies": "Критических аномалий не обнаружено",
+  "selfAnalysis.degrading": "{count, plural, one {# метрика ухудшается} few {# метрики ухудшаются} many {# метрик ухудшаются} other {# метрики ухудшаются}}",
+  "selfAnalysis.highPriority": "{count, plural, one {# рекомендация высокого приоритета} few {# рекомендации высокого приоритета} many {# рекомендаций высокого приоритета} other {# рекомендации высокого приоритета}}",
+  "selfAnalysis.rec.successRate": "Повысьте успешность запусков: проверьте Quality Gate и логи ошибок",
+  "selfAnalysis.rec.errorRate": "Снизьте частоту ошибок: добавьте retryCount для флакких задач",
+  "selfAnalysis.rec.duration": "Оптимизируйте длительность: разбейте длинные задачи или увеличьте timeoutSeconds",
+  "selfAnalysis.rec.timeouts": "Уменьшите количество таймаутов: увеличьте timeoutSeconds или упростите промпты",
+  "selfAnalysis.rec.crashes": "Снизьте количество прерванных запусков: проверьте стабильность системы"
 }

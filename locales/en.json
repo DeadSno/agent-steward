@@ -883,5 +883,21 @@
   "gui.missionTitle": "Ad-hoc mission",
   "gui.missionEmptyPrompt": "Enter a mission prompt.",
   "gui.missionStarted": "Mission completed",
-  "gui.missionFailed": "Mission failed"
+  "gui.missionFailed": "Mission failed",
+  "selfAnalysis.level.excellent": "excellent",
+  "selfAnalysis.level.good": "good",
+  "selfAnalysis.level.fair": "fair",
+  "selfAnalysis.level.poor": "poor",
+  "selfAnalysis.level.critical": "critical",
+  "selfAnalysis.health": "System health: {level} ({score}/100)",
+  "selfAnalysis.anomaliesHigh": "{count, plural, one {Detected # critical anomaly} other {Detected # critical anomalies}}",
+  "selfAnalysis.anomaliesAll": "{count, plural, one {Detected # anomaly (all non-critical)} other {Detected # anomalies (all non-critical)}}",
+  "selfAnalysis.noAnomalies": "No critical anomalies detected",
+  "selfAnalysis.degrading": "{count, plural, one {# metric is degrading} other {# metrics are degrading}}",
+  "selfAnalysis.highPriority": "{count, plural, one {# high-priority recommendation} other {# high-priority recommendations}}",
+  "selfAnalysis.rec.successRate": "Improve run success rate: check Quality Gate and error logs",
+  "selfAnalysis.rec.errorRate": "Reduce error rate: add retryCount for flaky tasks",
+  "selfAnalysis.rec.duration": "Optimize duration: split long tasks or increase timeoutSeconds",
+  "selfAnalysis.rec.timeouts": "Reduce timeouts: increase timeoutSeconds or simplify prompts",
+  "selfAnalysis.rec.crashes": "Reduce interrupted runs: check system stability"
 }

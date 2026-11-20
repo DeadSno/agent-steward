@@ -109,6 +109,43 @@ check(
   catalogKeys("ru").length === catalogKeys("en").length
 );
 
+// PL-36: self_analysis локализован — ключи есть во всех трёх локалях и
+// не возвращают сам ключ (t() не падает на фолбэк).
+const SELF_ANALYSIS_KEYS = [
+  "selfAnalysis.level.excellent",
+  "selfAnalysis.level.good",
+  "selfAnalysis.level.fair",
+  "selfAnalysis.level.poor",
+  "selfAnalysis.level.critical",
+  "selfAnalysis.health",
+  "selfAnalysis.anomaliesHigh",
+  "selfAnalysis.anomaliesAll",
+  "selfAnalysis.noAnomalies",
+  "selfAnalysis.degrading",
+  "selfAnalysis.highPriority",
+  "selfAnalysis.rec.successRate",
+  "selfAnalysis.rec.errorRate",
+  "selfAnalysis.rec.duration",
+  "selfAnalysis.rec.timeouts",
+  "selfAnalysis.rec.crashes",
+];
+check(
+  "PL-36: selfAnalysis.* ключи присутствуют в ru/en/zh",
+  SUPPORTED_LOCALES.every((loc) =>
+    SELF_ANALYSIS_KEYS.every((key) => hasKey(key, loc))
+  )
+);
+setLocale("ru");
+check(
+  "PL-36: selfAnalysis.health интерполируется и локализован",
+  t("selfAnalysis.health", { level: "отличное", score: 95 }).includes("95") &&
+    t("selfAnalysis.health", { level: "отличное", score: 95 }).startsWith("Здоровье")
+);
+check(
+  "PL-36: selfAnalysis.degrading склоняется по числу",
+  t("selfAnalysis.degrading", { count: 1 }) !== t("selfAnalysis.degrading", { count: 5 })
+);
+
 // --- 4. Подстановка параметров ---------------------------------------------
 resetI18n();
 setLocale("ru");
