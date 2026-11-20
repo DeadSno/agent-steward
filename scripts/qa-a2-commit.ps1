@@ -62,7 +62,9 @@ try {
     exit 0
   }
 
-  if ((Invoke-Git 'commit' @('commit', '-m', $Message)) -ne 0) {
+  # PL-41: pathspec commit — only this task's files enter the commit; a bare
+  # `git commit -m` would commit the whole index including foreign staged changes.
+  if ((Invoke-Git 'commit' (@('commit', '-m', $Message, '--') + $fileList)) -ne 0) {
     Log "FAIL commit: $Message"
     exit 1
   }

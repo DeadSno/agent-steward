@@ -3,6 +3,13 @@
 # and only when that task's quality gate wrote its own success marker.
 # Generalizes scripts/qa-a2-commit.ps1: the marker is a parameter, so parallel
 # tasks cannot consume each other's gate signal.
+# PL-41: the commit itself is pathspec-limited — `git commit -m <msg> -- <files>`
+# — so foreign staged changes never enter this task's commit. Plain
+# `git add -- <files>` is NOT enough: `git add` stages only our files, but a bare
+# `git commit -m <msg>` commits the WHOLE index, so anything another process
+# staged in the meantime (or left staged before this run) would be swept into the
+# commit. The `--` pathspec restricts the commit to the task's own file list
+# regardless of what else sits in the index.
 param(
   [Parameter(Mandatory = $true)][string]$Message,
   [Parameter(Mandatory = $true)][string]$Files,
@@ -65,7 +72,7 @@ try {
     exit 0
   }
 
-  if ((Invoke-Git 'commit' @('commit', '-m', $Message)) -ne 0) {
+  if ((Invoke-Git 'commit' (@('commit', '-m', $Message, '--') + $fileList)) -ne 0) {
     Log "FAIL commit: $Message"
     exit 1
   }
