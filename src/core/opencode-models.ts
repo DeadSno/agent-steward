@@ -21,8 +21,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
-import { opencodeCommand } from "./opencode-cli.js";
+import { runOpencode } from "./opencode-cli.js";
 
 /** Цена за 1M токенов модели в каталоге models.dev. */
 export interface ModelCatalogEntry {
@@ -207,30 +206,37 @@ export function catalogPricePerMillion(model: string | undefined): number | null
 }
 
 let cliCache: { at: number; models: string[] } | null = null;
+/** Один общий запуск CLI: параллельные запросы дашборда не плодят процессы. */
+let cliInflight: Promise<string[]> | null = null;
 
-/** Запускает `opencode models` один раз (на Windows — через cmd.exe). */
-function runModelsCli(): string[] {
-  try {
-    const command = opencodeCommand(["models"]);
-    const stdout = execFileSync(command.file, command.args, {
-      encoding: "utf8",
-      timeout: CLI_TIMEOUT_MS,
-      windowsHide: true,
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-    return parseModelList(stdout);
-  } catch {
-    return [];
-  }
+/**
+ * Запускает `opencode models` асинхронно.
+ *
+ * Раньше здесь был `execFileSync`, и это вешало event loop сервера, внутри
+ * которого живёт плагин. CLI в этот момент опрашивал тот же сервер как
+ * background service, не получал ответа, запускал recovery и перезапускал
+ * сервис вместе с дашбордом — отсюда `ERR_CONNECTION_REFUSED` каждые ~10 с.
+ * Асинхронный запуск event loop не блокирует.
+ */
+async function runModelsCli(): Promise<string[]> {
+  const result = await runOpencode(["models"], CLI_TIMEOUT_MS);
+  if (!result.ok) return [];
+  return parseModelList(result.stdout);
 }
 
 /** Доступные пользователю модели (`opencode models`), кэш 10 минут. */
-export function listAvailableModels(): string[] {
+export async function listAvailableModels(): Promise<string[]> {
   if (modelSourceMode() === "static") return [];
   const now = Date.now();
   if (cliCache && now - cliCache.at < CLI_TTL_MS) return cliCache.models;
-  const models = runModelsCli();
-  cliCache = { at: now, models };
+  if (!cliInflight) {
+    cliInflight = runModelsCli().finally(() => {
+      cliInflight = null;
+    });
+  }
+  const models = await cliInflight;
+  // Пустой результат тоже кэшируем: иначе каждый запрос снова дёргает CLI.
+  cliCache = { at: Date.now(), models };
   return models;
 }
 
@@ -304,12 +310,15 @@ export function selectWhatIfModels(
 }
 
 /** What-If по реальным источникам: история + `opencode models` + каталог цен. */
-export function resolveWhatIfModels(preferred: string[] = []): WhatIfSelection {
-  return selectWhatIfModels(preferred, listAvailableModels());
+export async function resolveWhatIfModels(
+  preferred: string[] = [],
+): Promise<WhatIfSelection> {
+  return selectWhatIfModels(preferred, await listAvailableModels());
 }
 
 /** Сбрасывает кэши (нужно тестам). */
 export function resetModelCaches(): void {
   catalogCache = null;
   cliCache = null;
+  cliInflight = null;
 }

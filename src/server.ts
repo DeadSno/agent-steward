@@ -23,7 +23,9 @@ import {
   catalogPricePerMillion,
   normalizeModelId,
   resolveWhatIfModels,
+  selectWhatIfModels,
 } from "./core/opencode-models.js";
+import type { WhatIfSelection } from "./core/opencode-models.js";
 import {
   authenticateHookRequest,
   extractHookSignature,
@@ -237,6 +239,8 @@ export function aggregateModels(
     costUsd?: number;
     model?: string;
   }[],
+  /** Готовая What-If выборка. Без неё CLI не вызывается: только история и встроенный список. */
+  whatIfSelection?: WhatIfSelection,
 ) {
   const map = new Map<
     string,
@@ -293,7 +297,7 @@ export function aggregateModels(
   const selection =
     Array.isArray(envWhatIfModels) && envWhatIfModels.length > 0
       ? { models: envWhatIfModels, source: "env" as const }
-      : resolveWhatIfModels(usedModels);
+      : (whatIfSelection ?? selectWhatIfModels(usedModels, []));
 
   const whatIf = selection.models.map((model) => ({
     model,
@@ -1055,7 +1059,13 @@ async function handleRequest(
 
     if (req.method === "GET" && pathname === "/api/models-analysis") {
       const history = await loadHistory();
-      sendJson(res, 200, aggregateModels(history));
+      // Список моделей OpenCode берём асинхронно: синхронный спавн CLI вешал
+      // event loop сервера и приводил к его перезапуску (см. opencode-models.ts).
+      const usedModels = history
+        .map((record) => (record.model ?? "").trim())
+        .filter((model) => model !== "" && model !== "по умолчанию");
+      const selection = await resolveWhatIfModels(usedModels);
+      sendJson(res, 200, aggregateModels(history, selection));
       return;
     }
 

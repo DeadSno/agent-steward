@@ -152,6 +152,7 @@
     "test:dag-latest-history": "node test-dag-latest-history.mjs",
     "test:retry-counter": "node test-retry-counter.mjs",
     "test:models-config": "node test-models-config.mjs",
+    "test:models-analysis": "node test-models-analysis.mjs",
     "test:dashboard": "node test-dashboard.mjs",
     "test:dashboard-dag": "node test-dashboard-dag.mjs",
     "test:dashboard-json": "node test-dashboard-json.mjs",
