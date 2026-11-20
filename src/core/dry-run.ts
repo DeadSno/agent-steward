@@ -16,6 +16,32 @@ import { checkGitTrigger } from "./git-trigger.js";
 import { t } from "../i18n.js";
 import type { TaskDefinition } from "../task-transfer.js";
 
+/**
+ * QV-9: cron срабатывает чаще, чем раз в 5 минут, круглосуточно.
+ * Поддерживаются `* * * * *`, каждый N-ю минуту (N <= 5) и списки минут с
+ * минимальным циклическим шагом <= 5. Часовой/дневной фильтр означает,
+ * что задача не является «постоянным опросом» и отдельно не предупреждается.
+ */
+export function isFrequentCron(schedule: string): boolean {
+  const parts = schedule.trim().split(/\s+/);
+  if (parts.length < 5) return false;
+  const [minute, hour, dom, month, dow] = parts;
+  if (hour !== "*" || dom !== "*" || month !== "*" || dow !== "*") return false;
+  if (minute === "*") return true;
+  const step = /^\*\/(\d+)$/.exec(minute);
+  if (step) return Number(step[1]) <= 5;
+  const minutes = minute.split(",").map((m) => Number(m));
+  if (minutes.length > 1 && minutes.every((n) => Number.isInteger(n) && n >= 0 && n < 60)) {
+    const sorted = [...minutes].sort((a, b) => a - b);
+    let minStep = 60 - sorted[sorted.length - 1] + sorted[0];
+    for (let i = 1; i < sorted.length; i++) {
+      minStep = Math.min(minStep, sorted[i] - sorted[i - 1]);
+    }
+    return minStep <= 5;
+  }
+  return false;
+}
+
 export interface DryRunRoleScoped {
   allowed?: string[];
   denied?: string[];
@@ -629,6 +655,20 @@ export async function simulatePipeline(taskName: string): Promise<DryRunReport> 
     ) {
       taskWarnings.push(
         "PL-2.2: промпт требует самопроверки (node/тесты), но shell запрещён: добавьте shell в allowedTools или перенесите проверки в qualityGate/afterScript.",
+      );
+    }
+
+    // QV-9: частый cron + тяжёлый промпт (`opencode run`) — антипаттерн из
+    // SKILL.md: каждый тик поднимает полную сессию агента и сжигает квоту.
+    if (
+      triggerType === "cron" &&
+      def.schedule &&
+      isFrequentCron(def.schedule) &&
+      /\bopencode\s+run\b/i.test(def.prompt ?? "")
+    ) {
+      taskWarnings.push(
+        `QV-9: cron "${def.schedule}" запускает opencode run чаще, чем раз в 5 минут: ` +
+          "каждый тик поднимает полную сессию агента. Используйте редкое расписание или событийный триггер (mcp-event/file/git).",
       );
     }
 

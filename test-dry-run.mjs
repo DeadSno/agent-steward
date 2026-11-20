@@ -15,7 +15,7 @@ process.env.OPENCODE_SCHEDULER_HOME = path.join(tempRoot, "opencode", "windows-s
 const { initDb, closeDb } = await import("./dist/db/index.js");
 const { saveTask } = await import("./dist/db/tasks-repo.js");
 const { recordRun } = await import("./dist/db/history-repo.js");
-const { simulatePipeline, workingDirectoryDriftWarning } = await import("./dist/core/dry-run.js");
+const { simulatePipeline, workingDirectoryDriftWarning, isFrequentCron } = await import("./dist/core/dry-run.js");
 const { t } = await import("./dist/i18n.js");
 
 const results = [];
@@ -129,6 +129,16 @@ try {
   const drift = workingDirectoryDriftWarning(driftDef, gitRoot);
   check("PL-8.1: предупреждение при HEAD новее createdAt", typeof drift === "string" && drift.includes("PL-8.1"));
   check("PL-8.1: без createdAt предупреждения нет", workingDirectoryDriftWarning({ ...driftDef, createdAt: "" }, gitRoot) === null);
+
+  // 11. QV-9: частый cron + тяжёлый промпт — антипаттерн.
+  check("QV-9: '* * * * *' — частый cron", isFrequentCron("* * * * *") === true);
+  check("QV-9: '*/5 * * * *' — частый cron", isFrequentCron("*/5 * * * *") === true);
+  check("QV-9: '0,5,10 * * * *' — частый cron", isFrequentCron("0,5,10 * * * *") === true);
+  check("QV-9: '0 4 * * *' — не частый cron", isFrequentCron("0 4 * * *") === false);
+  check("QV-9: '0 4 1 1 *' — не частый cron", isFrequentCron("0 4 1 1 *") === false);
+  await saveTask({ name: "HeavyMinute", schedule: "* * * * *", prompt: "opencode run --model x \"analyze\"" });
+  const heavy = await simulatePipeline("HeavyMinute");
+  check("QV-9: предупреждение про частый cron + opencode run", heavy.warnings.some((w) => w.includes("QV-9")));
 } finally {
   closeDb();
 }
