@@ -146,6 +146,28 @@ Legacy: `opencode-windows-scheduler@1.5.8`.
 
 ---
 
+## Деталь 1.8 — Находки при повторном прогоне QA-A2 через плагин (20.11.2026)
+
+> Воспроизведено при настройке и валидации задач T3/T4/T5 эпика QA-A2 через MCP-инструменты плагина (`schedule_task`, `update_task`, `dry_run`, `manage_templates`, `pipeline_validate`, `self_analysis`, `get_task_logs`, `list_tasks`). 20.11.2026. Все команды ниже — реальные вызовы с зафиксированным ответом. Новые находки продолжены с PL-26, чтобы не пересекаться с PL-10…PL-13 Детали 1.7.
+
+**Задача PL-26 — `dry_run` показывает неверное поле `trigger` у cron/mcp-event задач** · P3 · ⬜
+
+- [ ] PL-26.1 `dry_run неверный trigger: `dry_run({name:'QA-A2-T5-verify'})` вернул в `tasks[].trigger` значения `dag`/`manual` для задач, у которых `triggerDetails.type` корректно равен `cron` и `mcp-event` (проверено на `QA-A2-T3-history-os` и `QA-A2-T4-runs-event`) — P3. Действие: заполнять `trigger` из реального `triggerType` definition, а не из режима запуска в конвейере; добавить проверку в `test-dry-run.mjs`, что `tasks[].trigger === triggerDetails.type`.
+
+**Задача PL-27 — `pipeline_validate` не принимает относительный путь** · P2 · ⬜
+
+- [ ] PL-27.1 `pipeline_validate ENOENT: `pipeline_validate({path:'opencode.pipeline.yaml'})` из корня репозитория → `success:false`, ENOENT; абсолютный путь работает. Тот же дефект, что PL-18 для `pipeline_apply`, но в отдельном инструменте — P2. Действие: резолвить относительный путь относительно `workingDirectory`/cwd перед проверкой и добавить регрессионный тест для обоих инструментов.
+
+**Задача PL-28 — `manage_templates delete` по имени не работает, хотя исправление заявлено** · P2 · ⬜
+
+- [ ] PL-28.1 `delete по имени не работает: JSDoc схемы `manage_templates` говорит «for delete an id or a template name is accepted», CHANGELOG.md содержит запись QA-P3.3 об исправлении удаления по имени, но живой вызов `manage_templates({action:'delete', name:'PROBE-delete-by-name'})` вернул `{"success":false,"error":"Для action=delete нужен id шаблона."}`; удаление по `id` работает. ROADMAP PL-17.1 при этом остаётся открытой — P2. Действие: либо реально поддержать удаление по имени (и закрыть PL-17.1), либо убрать обещание из JSDoc/CHANGELOG и оставить только `id`; добавить тест «delete by name».
+
+**Задача PL-29 — `self_analysis.tasksAnalyzed` считает имена в истории, а не definition** · P3 · ⬜
+
+- [ ] PL-29.1 `tasksAnalyzed=35 при 17 definition: повторный замер `self_analysis({})` 20.11.2026 дал `sources.tasksAnalyzed=35`, хотя `list_tasks()` возвращает 17 задач; число менялось с 31 (замер Детали 1.7) — значит счётчик равен числу уникальных имён в истории, а не числу definition — P3. Действие: считать по таблице definition и переименовать поле в `taskDefinitions`; уточнить единицы из PL-13.1 в том же изменении.
+
+---
+
 # 2. Задачи согласно архитектуре (Execution model)
 
 agent-steward — execution engine с опциональной регистрацией триггеров. Четыре входа ведут в один путь исполнения; планировщик ОС — только полоса A (cron/once), а не центральный маршрут. Оркестрация (цепочки, DAG, ретраи, матрицы, эскалации) выполняется ядром и рекордером прямыми запусками обёрток.
