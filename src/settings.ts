@@ -494,6 +494,8 @@ export function normalizeFeedbackSettings(
   }
   const raw = value as Partial<FeedbackSettings>;
   let endpoint = typeof raw.endpoint === "string" ? raw.endpoint.trim() : fallback.endpoint;
+  // Апгрейд старых профилей: пустой endpoint из previous-версии заменяем дефолтным.
+  if (!endpoint) endpoint = fallback.endpoint;
   if (endpoint) {
     try {
       const url = new URL(endpoint);

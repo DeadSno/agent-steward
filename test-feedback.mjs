@@ -24,7 +24,7 @@ const {
   validateFeedbackEndpoint,
 } = await import("./dist/core/feedback.js");
 const { closeDb } = await import("./dist/db/index.js");
-const { DEFAULT_FEEDBACK_SETTINGS } = await import("./dist/settings.js");
+const { DEFAULT_FEEDBACK_SETTINGS, normalizeFeedbackSettings } = await import("./dist/settings.js");
 
 const results = [];
 function check(name, ok) {
@@ -96,7 +96,9 @@ check(
 check(
   "UX-3.8.1 default endpoint: валиден и включён только после согласия",
   DEFAULT_FEEDBACK_SETTINGS.enabled === false &&
-    validateFeedbackEndpoint(DEFAULT_FEEDBACK_SETTINGS.endpoint).ok === true,
+    validateFeedbackEndpoint(DEFAULT_FEEDBACK_SETTINGS.endpoint).ok === true &&
+    normalizeFeedbackSettings({ endpoint: "" }, DEFAULT_FEEDBACK_SETTINGS).endpoint ===
+      DEFAULT_FEEDBACK_SETTINGS.endpoint,
 );
 
 /* F-1.3 — валидация endpoint */
