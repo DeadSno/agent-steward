@@ -318,17 +318,56 @@ const ESTIMATED_COST_PER_1K_TOKENS_USD = 0.003;
 /** Единственный активный экземпляр сервера (защита от двойного запуска). */
 let running: { server: http.Server; port: number } | null = null;
 
+/**
+ * QA-P3.5: порт дашборда, найденного в другом экземпляре плагина/процессе.
+ * При переиспользовании чужого дашборда у нас нет его `http.Server`, но
+ * reporting-инструменты должны видеть реальный порт, а не null.
+ */
+let observedPort: number | null = null;
+
 /** Незавершённый запуск стартовой логики — повторные вызовы делят его между собой. */
 let starting: Promise<{ port: number } | null> | null = null;
 
-/** Запущен ли дашборд прямо сейчас. */
+/** Запущен ли дашборд прямо сейчас (локальный сервер этого процесса). */
 export function isDashboardRunning(): boolean {
   return running !== null;
 }
 
 /** Порт, на котором слушает дашборд (или null, если не запущен). */
 export function getDashboardPort(): number | null {
-  return running?.port ?? null;
+  return running?.port ?? observedPort ?? null;
+}
+
+/** Запоминает порт найденного дашборда (используется и при переиспользовании). */
+function rememberDashboardPort(port: number): void {
+  if (Number.isInteger(port) && port > 0) observedPort = port;
+}
+
+/**
+ * QA-P3.5: кандидаты для поиска живого дашборда. Порт профиля может быть
+ * «бумажным» (например, 4782 в env/profile.json), а реально сервер слушает
+ * 3782 — поэтому проверяем все стандартные порты зондированием маркера.
+ */
+export function dashboardPortCandidates(): number[] {
+  const preferred = getProfilePort(getProfileName());
+  return Array.from(
+    new Set(
+      [getDashboardPort(), preferred, PREFERRED_PORT, FALLBACK_PORT, ...EXTRA_PORTS].filter(
+        (port): port is number => Number.isInteger(port) && port! > 0,
+      ),
+    ),
+  );
+}
+
+/** Находит живой дашборд среди стандартных портов и запоминает его порт. */
+export async function discoverDashboardPort(): Promise<number | null> {
+  for (const port of dashboardPortCandidates()) {
+    if ((await probeDashboardOn(port)).dashboard) {
+      rememberDashboardPort(port);
+      return port;
+    }
+  }
+  return null;
 }
 
 /** Локальные имена, которым разрешено обращаться к дашборду. */
@@ -449,6 +488,9 @@ export async function startDashboardServer(
         // ни переиспользовать (покажет чужие данные), ни снимать как зомби.
         const probe = port !== 0 ? await probeDashboardOn(port) : null;
         if (probe?.dashboard && probe.profile === getProfileName()) {
+          // QA-P3.5: чужой дашборд не даёт нам http.Server, но его порт должен
+          // быть виден через getDashboardPort()/get_dashboard_info.
+          rememberDashboardPort(port);
           console.log(
             `[agent-steward] Дашборд уже запущен на http://localhost:${port} — переиспользуем его.`,
           );
@@ -732,8 +774,10 @@ export async function probeDashboardOn(port: number): Promise<DashboardProbe> {
  */
 export async function closeDashboardServer(): Promise<boolean> {
   if (!running) return false;
-  const { server } = running;
+  const { server, port } = running;
   running = null;
+  // QA-P3.5: не оставлять «фантомный» порт после закрытия нашего сервера.
+  if (observedPort === port) observedPort = null;
   return new Promise((resolve) => {
     server.close(() => resolve(true));
     // Закрываем и keep-alive соединения, чтобы порт освобождался сразу

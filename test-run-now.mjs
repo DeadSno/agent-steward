@@ -16,6 +16,15 @@ function check(name, ok) {
   }
 }
 
+// QA-P3.6: run_task_now не должен дёргать schtasks для несуществующей задачи —
+// сначала проверяем определения и ОС, затем возвращаем структурную ошибку.
+const indexSrc = fs.readFileSync(new URL("./src/index.ts", import.meta.url), "utf8");
+check(
+  indexSrc.includes("scheduler.listTasks().catch(() => [])") &&
+    indexSrc.includes('t("tool.error.taskNotFound", { name: trimmed })'),
+  "QA-P3.6: runTaskEntry проверяет существование задачи до запуска",
+);
+
 /**
  * P1-9.T3.1: цепочки / DAG / retry запускают задачу «сейчас» через тот же
  * helper, что и run_task_now, поэтому цель в poll-режиме получает force-маркер

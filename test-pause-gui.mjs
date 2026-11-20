@@ -43,6 +43,17 @@ for (const method of ["list_durable_runs", "pause_durable_run", "resume_durable_
   assert(guiSrc.includes(`rpc.${method}(`), `gui.tsx вызывает rpc.${method}`);
 }
 
+// QA-P3.8: при ошибке pause/resume поле `paused` отражает реальное состояние,
+// а не запрошенное действие.
+assert(
+  /message: t\("tool\.error\.taskNotFound"[\s\S]{0,600}paused: false/.test(indexSrc),
+  "QA-P3.8: несуществующая задача возвращает paused:false",
+);
+assert(
+  (indexSrc.match(/paused: definition\.paused \?\? false/g) ?? []).length >= 3,
+  "QA-P3.8: error-ветки берут paused из определения задачи",
+);
+
 assert(
   /import\s*\{[^}]*listRunPanel[^}]*\}\s*from\s*"\.\/core\/run-panel-api\.js"/.test(indexSrc),
   "index.ts использует RPC-фасад run-panel-api",

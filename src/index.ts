@@ -53,6 +53,7 @@ import {
   expandMatrixTask,
   findOrphanedMatrixTasks,
   getMatrixDeletionGuard,
+  isKnownMatrix,
   matrixCompleteName,
   planMatrixFamilyDelete,
   removeMatrixChildren,
@@ -157,7 +158,13 @@ import type {
 } from "./task-transfer.js";
 import { loadTemplates, saveTemplate, deleteTemplate } from "./templates.js";
 import type { TaskTemplate } from "./templates.js";
-import { startDashboardServer, closeDashboardServer, getDashboardPort } from "./server.js";
+import {
+  startDashboardServer,
+  closeDashboardServer,
+  getDashboardPort,
+  probeDashboardOn,
+  discoverDashboardPort,
+} from "./server.js";
 import {
   DEFAULT_PROFILE,
   createProfile,
@@ -2509,7 +2516,10 @@ async function pauseOrResumeTask(
       message: t("tool.error.taskNotFound", { name: trimmed }),
       affected: [],
       warnings: [],
-      paused,
+      // QA-P3.8: в ошибке `paused` должен отражать реальное состояние,
+      // а не запрошенное действие (иначе resume про несуществующей задаче
+      // сообщает paused:false, а pause — paused:true).
+      paused: false,
       nextRun: null,
       pausedUntil: null,
     };
@@ -2525,7 +2535,7 @@ async function pauseOrResumeTask(
         message: t("tool.error.pauseDateInvalid", { name: trimmed, until }),
         affected: [],
         warnings: [],
-        paused,
+        paused: definition.paused ?? false,
         nextRun: null,
         pausedUntil: definition.pausedUntil ?? null,
       };
@@ -2536,7 +2546,7 @@ async function pauseOrResumeTask(
         message: t("tool.error.pauseDatePast", { name: trimmed }),
         affected: [],
         warnings: [],
-        paused,
+        paused: definition.paused ?? false,
         nextRun: null,
         pausedUntil: definition.pausedUntil ?? null,
       };
@@ -2553,7 +2563,7 @@ async function pauseOrResumeTask(
       message: t("tool.error.matrixNoClones", { name: trimmed }),
       affected: [],
       warnings: [],
-      paused,
+      paused: definition.paused ?? false,
       nextRun: null,
       pausedUntil: definition.pausedUntil ?? null,
     };
@@ -3268,6 +3278,18 @@ const matrixControlExecute = wrapExecute<MatrixControlArgs>(async (args) => {
     }
   }
 
+  // QA-P3.7: `results` должен так же проверять тип задачи, как `cancel`.
+  // Иначе неизвестное имя даёт success:true с пустым отчётом вместо
+  // внятной ошибки «задача не является матрицей».
+  if (!isKnownMatrix(name)) {
+    return {
+      content: JSON.stringify({
+        success: false,
+        error: t("tool.error.matrixNotMatrix", { name }),
+      }),
+    };
+  }
+
   try {
     const report = aggregateMatrixResults(name);
     return { content: JSON.stringify({ success: true, report }) };
@@ -3760,7 +3782,18 @@ const reportBugExecute = wrapExecute<ReportBugArgs>(async (args) => {
 
 /** get_dashboard_info — порт дашборда, платформа и активный профиль. */
 const getDashboardInfoExecute = wrapExecute<DashboardInfoArgs>(async () => {
-  const port = getDashboardPort();
+  // QA-P3.5: порт из профиля/env может быть «бумажным» (4782), а живой
+  // дашборд слушает 3782. Проверяем маркер и при необходимости находим порт
+  // зондированием стандартных кандидатов, чтобы отчёт совпадал с реальностью.
+  let port = getDashboardPort();
+  let probe = port ? await probeDashboardOn(port) : null;
+  if (!probe?.dashboard) {
+    const discovered = await discoverDashboardPort();
+    if (discovered) {
+      port = discovered;
+      probe = await probeDashboardOn(port);
+    }
+  }
   return {
     content: JSON.stringify({
       success: true,
@@ -3769,6 +3802,7 @@ const getDashboardInfoExecute = wrapExecute<DashboardInfoArgs>(async () => {
       platform: scheduler.platform,
       title: scheduler.title,
       profile: getProfileName(),
+      reachable: probe?.dashboard ?? false,
     }),
   };
 });
@@ -7497,12 +7531,27 @@ async function runTaskEntry(name: string): Promise<{ alreadyRunning: boolean }> 
   }
 
   const run = (async () => {
+    const trimmed = name.trim();
     const definition = (await loadTaskDefinitions()).find(
-      (def) => def.name.toLowerCase() === name.trim().toLowerCase(),
+      (def) => def.name.toLowerCase() === trimmed.toLowerCase(),
     );
     if (definition?.matrix) {
       await runMatrix(definition);
       return { alreadyRunning: false };
+    }
+
+    // QA-P3.6: если задачи нет ни в определениях, ни в планировщике ОС,
+    // не дёргаем schtasks /run — он возвращает сырую ошибку ОС. Возвращаем
+    // структурированное «задача не найдена», как и остальные инструменты.
+    // Legacy-задачи, живущие только в ОС (без definition), остаются запускаемыми.
+    if (!definition) {
+      const osTasks = await scheduler.listTasks().catch(() => []);
+      const osExists = osTasks.some(
+        (task) => (task.taskName ?? "").toLowerCase() === trimmed.toLowerCase(),
+      );
+      if (!osExists) {
+        throw new Error(t("tool.error.taskNotFound", { name: trimmed }));
+      }
     }
 
     // Любой запуск через этот вход — «сейчас», а не «по расписанию»:

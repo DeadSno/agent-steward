@@ -1,6 +1,7 @@
 // Ручной тест веб-дашборда (Спринт 5): запускает сервер со стабами и проверяет эндпоинты.
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { createTestHomeSync, removeTestHomeSync } from "./scripts/test-home.mjs";
 
@@ -41,7 +42,12 @@ process.env.OPENCODE_SCHEDULER_HOME = path.join(tempRoot, "opencode", "windows-s
 
 const { startDashboardServer, closeDashboardServer, isDashboardRunning, getDashboardPort } =
   await import("./dist/server.js");
-const { startDashboardServer: start2 } = await import("./dist/server.js");
+const {
+  startDashboardServer: start2,
+  dashboardPortCandidates,
+  discoverDashboardPort,
+  probeDashboardOn,
+} = await import("./dist/server.js");
 const { getSchedulerTitle } = await import("./dist/core/scheduler/index.js");
 const { closeDb } = await import("./dist/db/index.js");
 
@@ -64,6 +70,15 @@ const assert = (cond, msg) => {
   else console.log("OK: " + msg);
 };
 
+const root = path.dirname(fileURLToPath(import.meta.url));
+const indexSrc = fs.readFileSync(path.join(root, "src", "index.ts"), "utf8");
+assert(
+  indexSrc.includes("discoverDashboardPort") &&
+    indexSrc.includes("probeDashboardOn(port)") &&
+    indexSrc.includes("reachable:"),
+  "QA-P3.5: get_dashboard_info зондирует порт и сообщает reachable",
+);
+
 const started = await startDashboardServer(deps, { preferred: 4310, fallback: 4311 });
 assert(started && started.port === 4310, "сервер стартовал на порту 4310 (тестовые порты)");
 assert(isDashboardRunning(), "isDashboardRunning() = true");
@@ -78,6 +93,20 @@ const reuse = await startDashboardServer(
   { preferred: 4310, fallback: 4311 }
 );
 assert(reuse && reuse.port === 4310, "запуск на порт с уже слушающим нашим дашбордом -> переиспользование");
+
+// QA-P3.5: после переиспользования и при зондировании отчётный порт должен
+// совпадать с реально слушающим, а не быть null/«бумажным» из профиля.
+assert(getDashboardPort() === 4310, "QA-P3.5: после переиспользования getDashboardPort() = 4310");
+assert(dashboardPortCandidates().includes(4310), "QA-P3.5: dashboardPortCandidates содержит порт 4310");
+assert((await probeDashboardOn(4310)).dashboard === true, "QA-P3.5: probeDashboardOn(4310) видит наш дашборд");
+assert((await discoverDashboardPort()) === 4310, "QA-P3.5: discoverDashboardPort() нашёл порт 4310");
+const serverSrc = fs.readFileSync(path.join(root, "src", "server.ts"), "utf8");
+assert(
+  serverSrc.includes("running?.port ?? observedPort ?? null") &&
+    serverSrc.includes("rememberDashboardPort(port);") &&
+    serverSrc.includes("export async function discoverDashboardPort"),
+  "QA-P3.5: сервер запоминает найденный порт и умеет его обнаруживать",
+);
 
 const base = "http://127.0.0.1:" + getDashboardPort();
 

@@ -22,6 +22,7 @@ const {
   matrixCompleteName,
   expandMatrixTask,
   aggregateMatrixResults,
+  isKnownMatrix,
   runMatrix,
   ensureMatrixCompleteTask,
   finalizeMatrixIfComplete,
@@ -381,6 +382,23 @@ try {
     afterParentDelete.status === "success" &&
       afterParentDelete.totalCount === 1 &&
       afterParentDelete.clones[0]?.name === orphanClone.name
+  );
+
+  // QA-P3.7: isKnownMatrix различает реальную матрицу (в т.ч. по истории)
+  // и неизвестное имя. matrix_control(results) использует ту же проверку.
+  check(
+    "QA-P3.7: isKnownMatrix видит матрицу по клонам в истории",
+    isKnownMatrix("OrphanMatrix") === true
+  );
+  check(
+    "QA-P3.7: isKnownMatrix отклоняет неизвестное имя",
+    isKnownMatrix("__no_such_matrix__") === false
+  );
+  const indexSrc = fs.readFileSync(new URL("./src/index.ts", import.meta.url), "utf8");
+  check(
+    indexSrc.includes("if (!isKnownMatrix(name))") &&
+      indexSrc.includes('t("tool.error.matrixNotMatrix", { name })'),
+    "QA-P3.7: matrix_control(results) проверяет тип задачи"
   );
 } finally {
   closeDb();

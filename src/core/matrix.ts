@@ -197,6 +197,23 @@ function listMatrixClonesFromHistory(parentId: string): { name: string; workspac
   return clones;
 }
 
+/**
+ * QA-P3.7: задача считается матрицей, если у неё есть конфиг `matrix` либо
+ * в истории есть записи с каноническим префиксом клона `<name>-matrix-`
+ * (включая агрегатор `-matrix-complete`). Проверка истории важна для QA-P1.2:
+ * определение родителя могло быть удалено, но запуски клонов остались, и
+ * matrix_control должен продолжать их показывать.
+ */
+export function isKnownMatrix(name: string): boolean {
+  const trimmed = name.trim();
+  if (!trimmed) return false;
+  if (getTask(trimmed)?.matrix) return true;
+  const prefix = `${trimmed}-matrix-`.toLowerCase();
+  return getLatestHistoryByTask(5000).some((record) =>
+    (record.taskName ?? "").trim().toLowerCase().startsWith(prefix),
+  );
+}
+
 /** Источник клона для агрегации: определение задачи или запись истории. */
 interface MatrixCloneSource {
   name: string;
