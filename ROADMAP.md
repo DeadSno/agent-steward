@@ -85,10 +85,6 @@ Legacy: `opencode-windows-scheduler@1.5.8`.
 
 - [ ] PL-17.1 `manage_templates delete по имени: src/index.ts ~3524/~4801, вызов `delete({name:'qa27-probe-template'})` → «Для action=delete нужен id шаблона.», с `id` работает — P2. Действие: привести текст ошибки/схему и поведение к одному контракту (`id or name`) либо явно оставить только `id` в описании.
 
-**Задача PL-18 — `pipeline_apply` требует абсолютный путь** · P2 · ⬜
-
-- [ ] PL-18.1 `pipeline_apply без path: src/index.ts:2878 `loadPipelineFile(args.path!)` → `path must be a string or a file descriptor`; относительный путь → ENOENT (не резолвится против cwd), абсолютный работает — P2. Действие: резолвить относительный путь против `workingDirectory`/cwd и сделать обязательность `path` явной в схеме с внятной ошибкой.
-
 **Задача PL-19 — Параметры MCP инструментов не описаны в схеме** · P3 · ⬜
 
 - [ ] PL-19.1 `get_task_logs: tools.get_task_logs` принимает `name`, а не `taskName` (валидация падает) — P3. Действие: описать параметр в схеме/скилле и принять оба имени.

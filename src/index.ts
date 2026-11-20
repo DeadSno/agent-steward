@@ -1052,8 +1052,11 @@ const dryRunSchema = z.object({
 
 /** pipeline_validate — проверить опencode.pipeline.yaml (путь или исходник). */
 export const pipelineValidateSchema = z.object({
-  path: z.string().optional().describe("Путь к файлу opencode.pipeline.yaml."),
-  source: z.string().optional().describe("Исходное содержимое YAML."),
+  path: z
+    .string()
+    .optional()
+    .describe("Путь к файлу opencode.pipeline.yaml (относительный резолвится против cwd) или source."),
+  source: z.string().optional().describe("Исходное содержимое YAML (альтернатива path)."),
   dryRun: z
     .boolean()
     .optional()
@@ -1063,8 +1066,11 @@ export const pipelineValidateSchema = z.object({
 
 /** pipeline_apply — применить opencode.pipeline.yaml к текущему набору задач. */
 export const pipelineApplySchema = z.object({
-  path: z.string().optional().describe("Путь к файлу opencode.pipeline.yaml."),
-  source: z.string().optional().describe("Исходное содержимое YAML."),
+  path: z
+    .string()
+    .optional()
+    .describe("Путь к файлу opencode.pipeline.yaml (относительный резолвится против cwd) или source."),
+  source: z.string().optional().describe("Исходное содержимое YAML (альтернатива path)."),
   dryRun: z
     .boolean()
     .optional()
@@ -2831,7 +2837,6 @@ const dryRunExecute = wrapExecute<DryRunArgs>(async (args) => {
 
 /** pipeline_validate — проверить opencode.pipeline.yaml (путь или исходник). */
 const pipelineValidateExecute = wrapExecute<PipelineValidateArgs>(async (args) => {
-  const path = args.path ?? args.source ? undefined : undefined;
   if (args.path === undefined && args.source === undefined) {
     return {
       content: JSON.stringify({
@@ -2876,6 +2881,16 @@ function validatePipelineSpecFromSource(source: string): PipelineParseResult {
 /** pipeline_apply — применить opencode.pipeline.yaml к текущему набору задач. */
 const pipelineApplyExecute = wrapExecute<PipelineApplyArgs>(async (args) => {
   const dryRun = args.dryRun !== false;
+  if (args.path === undefined && args.source === undefined) {
+    return {
+      content: JSON.stringify({
+        success: false,
+        pipeline: null,
+        errors: ["Укажите path к файлу или source с содержимым YAML"],
+        warnings: [],
+      }),
+    };
+  }
   const parsed =
     args.source !== undefined
       ? validatePipelineSpecFromSource(args.source)
