@@ -128,7 +128,20 @@ function runWrapper(wrapperPath, env) {
   return { ...res, elapsedMs: Date.now() - started };
 }
 
-const readLog = (file) => (fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "");
+// QA-CI-6: на Windows/Node 24 лог может ещё удерживаться процессом обёртки —
+// повторяем чтение, вместо того чтобы падать с EBUSY/EPERM.
+function readLog(file) {
+  for (let attempt = 0; attempt < 10; attempt++) {
+    try {
+      return fs.readFileSync(file, "utf8");
+    } catch (err) {
+      if (err?.code !== "EBUSY" && err?.code !== "EPERM" && err?.code !== "ENOENT") throw err;
+      if (attempt === 9) return "";
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+    }
+  }
+  return "";
+}
 
 // --- 1. Успешный запуск + кавычки в хуках + recorder без сдвига аргументов ---
 {
