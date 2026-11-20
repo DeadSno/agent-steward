@@ -139,6 +139,10 @@ Legacy: `opencode-windows-scheduler@1.5.8`.
 
 - [ ] PL-38.1 `get_metrics` → `tokens:0, costUsd:0` на 606 запусков; у всех задач `tokens:0`, `savings:{runs:0,tokens:0}`, `tokenBudgetExceeded:false`, хотя установлены `tokenBudget:120000`; гейт `evaluateTaskTokenBudgetGate` (`src/core/budget.ts:282-331`) сравнивает 0 с бюджетом и никогда не срабатывает — P2. Действие: проверить, что обёртка/лог действительно пишет строку usage, обеспечить запись токенов в историю и предупреждать при `schedule_task` с `tokenBudget>0`, если ни один запуск ещё не сообщал токены.
 
+**Задача PL-39 — `test-agent-tools.mjs` зависит от текущей директории** · P3 · ⬜
+
+- [ ] PL-39.1 Запуск `node <абсолютный путь>/test-agent-tools.mjs` из родительской папки падает с `ENOENT ...\Системный анализ стажировка\src\db\templates-repo.ts` (путь без `opencode-windows-scheduler`), хотя из корня репозитория тот же тест проходит 31/31 — P3. Действие: вычислять путь к `src/` через `new URL("./src/db/templates-repo.ts", import.meta.url)`, а не через `process.cwd()`, и добавить проверку запуска теста из чужой директории в CI.
+
 ---
 
 # 2. Задачи согласно архитектуре (Execution model)
