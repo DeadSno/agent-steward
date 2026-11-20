@@ -93,10 +93,6 @@ Legacy: `opencode-windows-scheduler@1.5.8`.
 
 - [ ] PL-19.1 `get_task_logs: tools.get_task_logs` принимает `name`, а не `taskName` (валидация падает) — P3. Действие: описать параметр в схеме/скилле и принять оба имени.
 
-**Задача PL-21 — Устаревшее утверждение в отчёте QA-A2-final** · P3 · ⬜
-
-- [ ] PL-21.1 `CI-stрока lint:baseline: reports/QA-A2-final.md утверждает, что не запускается, факт `.github/workflows/ci.yml:54-55` она есть (как и `npm run lint` на line 51) — P3. Действие: обновить отчёт, не удаляя строку из CI (warning > 0, гейт нужен).
-
 **Задача PL-22 — `npm run lint` не является гейтом при warnings** · P2 · ⬜
 
 - [ ] PL-22.1 `lint exit 0 при warnings: фактический прогон `npm run lint` → 355 warning, exit 0 (нет `--max-warnings`); единственный реальный гейт — `lint:baseline` — P2. Действие: явно задокументировать, что lint в CI информационный, и/или добавить `--max-warnings=0` в отдельной check-цели.

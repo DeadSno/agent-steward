@@ -14,7 +14,7 @@
 По правилам подзадачи:
 
 - `ROADMAP.md` **не трогался** — QA-A2.2–A2.7 по-прежнему `[ ]`, эпик `⬜` (не помечен выполненным);
-- `.github/workflows/ci.yml` **не трогался** — строка `npm run lint:baseline` **не удалялась**;
+- `.github/workflows/ci.yml` **не трогался** — строка `npm run lint:baseline` **не удалялась**. Уточнение (PL-21.1): гейт в CI **реально запускается** — `.github/workflows/ci.yml:51` выполняет `npm run lint`, а `:54-55` — `npm run lint:baseline` («ESLint baseline (no new warnings)»). Утверждений об обратном нет; строка из CI не удалялась и удалять её не планируется, пока warning > 0;
 - коммит/push **не выполнялись** (это сделает afterScript);
 - суб-агенты **не спавнились**.
 
