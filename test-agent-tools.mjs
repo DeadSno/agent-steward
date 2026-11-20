@@ -249,6 +249,16 @@ check(
   psWrapper.includes("--force-file") && psWrapper.includes("requestImmediateRun")
 );
 
+// PL-6.1: подсказка про явный exit 0 в обеих обёртках.
+const bashWrapper = fs.readFileSync(
+  new URL("./dist/core/wrappers/bash.js", import.meta.url),
+  "utf8"
+);
+check(
+  "PL-6.1: pre-flight ошибка подсказывает явный exit 0 в PS и bash",
+  psWrapper.includes("exit 0") && bashWrapper.includes("exit 0")
+);
+
 // 13. Описания инструментов переведены на английский.
 check(
   "описания инструментов на английском",

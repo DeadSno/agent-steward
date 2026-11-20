@@ -704,7 +704,8 @@ try {
         Write-Log "[agent-steward] Pre-flight: $BeforeScript"
         $preCode = Invoke-HookScript -Command $BeforeScript
         if ($preCode -ne 0) {
-            Write-Log "[agent-steward] ОШИБКА: Pre-flight script failed (код $preCode)."
+            # PL-6.1: SilentlyContinue не гарантирует код 0 — подсказываем явный exit 0.
+            Write-Log "[agent-steward] ОШИБКА: Pre-flight script failed (код $preCode). Завершите хук явным 'exit 0' (например: if (Test-Path -LiteralPath '<path>') { Remove-Item -LiteralPath '<path>' -Force }; exit 0)."
             $script:preFlightStatus = "error"
             $script:errorMessage = "Pre-flight script failed"
             $script:exitCode = 1

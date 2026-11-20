@@ -63,10 +63,6 @@ Legacy: `opencode-windows-scheduler@1.5.8`.
 
 > Воспроизведено при выполнении эпика QA-A2 через agent-steward: 8 задач (корень, A2.2–A2.7, компенсатор), cron Europe/Moscow, guards, Quality Gate, before/afterScript, DAG-цепочка и ретраи. Все задачи доведены до успеха, предупреждения 543 → 355, коммиты запушены. Ниже — только открытые находки по самому плагину и инструментарию. Хорошее поведение тоже зафиксировано: force-маркер + `Start-ScheduledTask` обходит shutdown-gate MCP, цепочки `nextTask` срабатывают из отдельного процесса рекордера, компенсационная задача отрабатывает корректно. Закрытые подзадачи PL-5, PL-7.1, PL-9 перенесены в CHANGELOG.md (запись «Деталь 1.6 / PL-5…PL-9»).
 
-**Задача PL-6 — Штатная очистка в `beforeScript` не должна валить pre-flight** · P2 · 🔄
-
-- [ ] PL-6.1 `Remove-Item -ErrorAction SilentlyContinue` для несуществующего файла возвращает код 1 → `Pre-flight script failed` и ложный вызов компенсатора (09:16Z, корневая задача QA-A2). Рекомендованный шаблон: `if (Test-Path -LiteralPath '<path>') { Remove-Item -LiteralPath '<path>' -Force }; exit 0`. Добавить в `skills/scheduled-job-best-practices/references/recipes.md` и в текст ошибки pre-flight подсказку про явный `exit 0`. Частично закрыто 20.11.2026 (`ec0fc1b`→`63c9de4`): шаблон добавлен в `recipes.md` §10; подсказка в `src/core/ps-wrapper.ts` / `bash.ts` была вне SCOPE задачи.
-
 **Задача PL-7 — Надёжный push и читаемые логи `afterScript`** · P3 · 🔄
 
 - [ ] PL-7.2 Разделять в журнале stdout и stderr afterScript и показывать реальный exit code, чтобы отличать «пуш не состоялся» от «Git пишет диагностику в stderr». Частично закрыто `63c9de4`: поля ExitCode/Stdout/Stderr и `appendHookOutputLog()` добавлены в `src/core/structured-log.ts`; обёртки `ps-wrapper.ts`/`bash.ts` не подключены (вне SCOPE).
