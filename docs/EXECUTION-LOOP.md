@@ -13,10 +13,13 @@
 - **Эскалация не живая.** `escalateAfterGate` есть, но провал гейта идёт в retry/chain.
 - **Нет ad-hoc входа.** Любой запуск требует регистрации: `schedule_task` + `run_task_now`; `once` — это `at` / `schtasks ONCE` / launchd. Цепочки/DAG/retry обходят расписание костылём force-маркера. *(Закрыто в AB-8: `run_mission` / CLI `run` / GUI / RPC.)*
 
+Частично построено: контекст запуска (`src/db/run-context.ts`), per-task/per-window
+бюджеты (`src/core/budget.ts`), целостность гейта (`src/core/gate-integrity.ts`),
+worktree-изоляция (`src/core/worktree.ts`, `src/core/worktree-run.ts`).
+
 Не построено вовсе: ledger + provenance; класс риска и компиляция политики;
-бюджет миссии; целостность гейта, flake-aware, отложенные эффекты; context
-compilation, repo-map, инъекция scaffolding; worktree/sandbox, egress-контроль,
-approvals-очередь.
+flake-aware повторы и отложенные эффекты; полноценная context compilation
+(repo-map + инъекция scaffolding); egress-контроль и approvals-очередь.
 
 Подтверждение:
 

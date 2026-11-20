@@ -135,10 +135,6 @@ Legacy: `opencode-windows-scheduler@1.5.8`.
 
 - [ ] QV-3.1 `src/index.ts:3925` сопоставляет только `def.mcpEvent?.event?.trim().toLowerCase() === event.toLowerCase()`; `emit_event({eventName:'qwenval.probe'})` вернул `no_subscribers` для задачи с `server:'qwenval'` — P2. Действие: учитывать `server` при сопоставлении или убрать поле из контракта `schedule_task`; тест с двумя серверами и одинаковым именем события.
 
-**Задача QV-6 — ROADMAP §2 скрывает непостроенные части execution model** · P2 · ⬜
-
-- [ ] QV-6.1 В §2 этого файла сказано «Открытых задач нет», хотя `docs/EXECUTION-LOOP.md:16-19` перечисляет непостроенное (ledger/provenance, класс риска, бюджет миссии, flake-aware, отложенные эффекты, context compilation, worktree/sandbox, egress, approvals) — P2. Действие: восстановить открытую очередь в §2, но сначала перепроверить каждый пункт по коду: `src/core/gate-integrity.ts` (SHA-256, fail-closed, подключён в `src/core/ps-wrapper.ts:815-827`) и `src/core/worktree*.ts` уже реализованы — убрать их из списка «не построено» в EXECUTION-LOOP.
-
 **Задача QV-8 — дочерние `opencode run` перезагружают всю поверхность инструментов** · P2 · ⬜
 
 - [ ] QV-8.1 В `src/` нет маркеров `AGENT_STEWARD_RUN`, `RUN_MODE`, `isRunMode`, `childRun`; при глобально заданном плагине дочерний прогон видит все 30 инструментов и скилл — P2. Действие: выставлять маркер в обёртке и делать early return в entry плагина для дочернего прогона; замерить реальную поверхность до/после (числа qwen не подтверждены) и добавить тест «дочерний прогон не видит scheduler-tools».
@@ -164,9 +160,19 @@ Legacy: `opencode-windows-scheduler@1.5.8`.
 
 agent-steward — execution engine с опциональной регистрацией триггеров. Четыре входа ведут в один путь исполнения; планировщик ОС — только полоса A (cron/once), а не центральный маршрут. Оркестрация (цепочки, DAG, ретраи, матрицы, эскалации) выполняется ядром и рекордером прямыми запусками обёрток.
 
-> Реализованные части execution model (ядро, полосы A/B, wrapper, recorder, storage, in-process triggers) в ROADMAP не перечисляются — они в [CHANGELOG.md](./CHANGELOG.md). Здесь только открытые архитектурные задачи.
+> Реализованные части execution model (ядро, полосы A/B, wrapper, recorder, storage, in-process triggers, DAG/matrix/mission, budget, gate-integrity, worktree) в ROADMAP не перечисляются — они в [CHANGELOG.md](./CHANGELOG.md).
 
-Открытых задач нет: полосы A/B и ad-hoc вход (`run_mission`) реализованы. Оговорка: полнота этого утверждения перепроверяется в **QV-6** (Деталь 1.13) — часть пунктов `docs/EXECUTION-LOOP.md` не отражена в этой секции, а часть самого списка уже устарела.
+**Реализовано:** полосы A/B; ad-hoc вход (`run_mission` / CLI `run` / RPC / GUI); оркестрация цепочек, DAG, матриц, ретраев и эскалаций; per-task и per-window бюджеты (`src/core/budget.ts`); целостность гейта (`src/core/gate-integrity.ts`); worktree-изоляция (`src/core/worktree.ts`, `worktree-run.ts`); контекст запуска (`src/db/run-context.ts`).
+
+**Открытая очередь execution model** (сверена с кодом 20.11.2026, детали — [docs/EXECUTION-LOOP.md](./docs/EXECUTION-LOOP.md) §1):
+
+- ledger + provenance для результатов шагов;
+- класс риска и компификация политики по нему;
+- flake-aware повторы и отложенные эффекты;
+- context compilation: repo-map и инъекция scaffolding (базовый `run-context` уже есть);
+- egress-контроль и approvals-очередь (sandbox/worktree-часть реализована).
+
+Эти пункты не входят в «# 1. Бэклог» и ведутся как архитектурная очередь 0.2.0.
 
 ---
 
@@ -275,39 +281,40 @@ agent-steward — execution engine с опциональной регистра�
 **Задача X-6 — `systemd` в keywords** · P3 · ⏸️
 - [ ] X-6.1 Убрать, бэкенда нет
 
-## Деталь 3.8 — Обратная связь от пользователей (bug reports → GitHub Issues)
+## Деталь 3.8 — Обратная связь от пользователей (bug reports → GitHub Issues) ✅
 `src/core/feedback.ts`, `src/settings.ts`, `src/index.ts`, `infra/feedback-worker/`
 
-> Канал «чужой пользователь → автор». Сейчас `report_bug` отправляет отчёт в каналы **самого репортищего** (webhook/Telegram/native из его `settings.json`) — автор его не видит. Вариант B: публичный write-only приёмник на Cloudflare Worker, который создаёт issue в `DeadSno/agent-steward`.
-> **Ограничение безопасности:** npm-пакет публичный — в коде не может быть SMTP-пароля, bot token или GitHub PAT. В плагине только URL приёмника; токены живут в секретах Worker.
-> **Fail-open:** при недоступном приёмнике отчёт уходит в локальный outbox, запуск задачи не блокируется.
+**Закрыто и перенесено в CHANGELOG:** F-1.1–F-1.7, F-2.1–F-2.4, F-3.1–F-3.3,
+F-4.1–F-4.4. Реализованы контракт payload v1, POST с 10-секундным таймаутом и
+2 ретраями, настройки `feedback` с валидацией URL, редакция секретов, `report_bug`
+с `destination`/`dryRun`, outbox с повтором при старте, антиспам, Cloudflare
+Worker → GitHub Issues, GUI-настройки, i18n ru/en/zh, тесты и документация.
+Подтверждение отправки — двухшаговое: `dryRun: true` показывает payload,
+повторный вызов без `dryRun` отправляет его.
 
-**Задача F-1 — Клиентская часть: сбор и отправка отчёта** · P2 · ⬜
-- [ ] F-1.1 Контракт payload и `schemaVersion` (pluginVersion, os, node, locale, profile, taskName, description, contactEmail, redactedLogs, metrics)
-- [ ] F-1.2 `src/core/feedback.ts`: POST, timeout 10 с, 2 ретрая с backoff, `User-Agent: agent-steward/<version>`, идемпотентный `reportId`
-- [ ] F-1.3 Настройки `feedback`: `enabled`, `endpoint`, `includeLogs` (default **false**), `contactEmail`; валидация URL
-- [ ] F-1.4 Редакция секретов и приватности: `sk-`, `ghp_`, bot tokens, значения из `manage_secrets`, home → `~`, email в логах
-- [ ] F-1.5 `report_bug`: `destination: author | local | both` (default `author`) и `dryRun` — показать payload без отправки
-- [ ] F-1.6 Офлайн-outbox: таблица `feedback_outbox` + повтор при старте, лимит попыток
-- [ ] F-1.7 Антиспам: hash описания, окно 5 минут, лимит N отчётов в час
+### Осталось по детали (требует доступа автора)
 
-**Задача F-2 — Приёмник: Cloudflare Worker → GitHub Issues** · P2 · ⏸️
-- [ ] F-2.1 Worker: `POST /report`, валидация схемы, rate-limit по IP, honeypot-поле
-- [ ] F-2.2 Fine-grained PAT только `issues:write` на `DeadSno/agent-steward` в секретах Worker (wrangler)
-- [ ] F-2.3 Создание issue: `[user-report] <краткое описание>`, тело с метаданными, метки `user-report`, `needs-triage`; дедуп по `reportId`
-- [ ] F-2.4 Ответ `200 {issueUrl}`; 4xx/5xx с понятным телом; логи без PII
-- [ ] F-2.5 Деплой, секреты и короткий README для автора
+- [ ] F-2.5 Deploy Worker и запись секретов: `npx wrangler secret put GITHUB_TOKEN`
+      (fine-grained PAT, только `issues:write` на `DeadSno/agent-steward`),
+      создать KV `FEEDBACK_DEDUP` / `FEEDBACK_RATELIMIT`, `npx wrangler deploy`.
+      README и `wrangler.toml` готовы — без аккаунта Cloudflare deploying невозможен.
 
-**Задача F-3 — Прозрачность и локали** · P2 · ⬜
-- [ ] F-3.1 Показ payload пользователю перед отправкой (dryRun + подтверждение)
-- [ ] F-3.2 Документация: что уходит, что нет, как отключить; consent/приватность
-- [ ] F-3.3 i18n ru/en/zh для сообщений инструмента и ошибок
+### QA-находки, найденные при проверке работоспособности плагина
 
-**Задача F-4 — Тесты и документация** · P3 · ⬜
-- [ ] F-4.1 `test-feedback.mjs`: редакция секретов, payload, ретраи, dryRun, outbox
-- [ ] F-4.2 Тест Worker (валидация, дедуп, rate-limit) — unit или `wrangler dev` + fetch
-- [ ] F-4.3 TEST-PLAN: новая деталь D17 + матрица доступа; docs/FEATURES.md
-- [ ] F-4.4 CHANGELOG при реализации; проверить `test-docs` (счётчики tools/RPC не меняются)
+- [ ] QA-3.8.1 Задача `gui` в планировщике: промпт «crjkmrj ctqxfc dhtvtyb»
+      (клавиатурный сдвиг), 507 запусков / 197 ошибок — P2.
+      Действие: удалить или переписать промпт задачи через `update_task`.
+- [ ] QA-3.8.2 Задача `github-ci-check` (cron `0 9 * * *`) — 2/2 ошибок — P2.
+      Действие: посмотреть `get_task_logs`, починить `beforeScript` или саму задачу.
+- [ ] QA-3.8.3 `manage_settings` не поддерживает `action: "list"`, хотя остальные
+      `manage_*` поддерживают — P2. Действие: добавить `list` или явно задокументировать
+      get-only контракт, чтобы агент не терял вызовы.
+- [ ] QA-3.8.4 `AGENTS.md` сообщает `SCHEMA_VERSION = 10`, тогда как код перешёл
+      на 12 — P3. Действие: обновить справку и добавить автопроверку в `test-docs`.
+- [ ] QA-3.8.5 Суб-агент для F-2 заблокирован лимитом провайдера
+      (Free usage limit reached) — P3, окружение, не баг репозитория.
+      Действие: при доступном провайдере повторить F-2 через суб-агента и сравнить
+      результат с ручной реализацией.
 
 ---
 
