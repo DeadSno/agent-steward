@@ -50,6 +50,10 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      # QA-A2.0: новый warning ломает CI, пока эпик типизации не закрыт (A2.7).
+      - name: ESLint baseline (no new warnings)
+        run: npm run lint:baseline
+
       - name: Test in English locale
         if: matrix.os == 'ubuntu-latest'
         run: npm run test:parallel:en
