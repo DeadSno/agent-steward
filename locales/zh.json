@@ -315,6 +315,8 @@
   "gui.mcpSourceLabel": "MCP 服务器 / 来源",
   "gui.mcpSourcePlaceholder": "例如 github",
   "gui.metricsTotalsLine": "📊 历史运行数：{total} · ✅ {success} · ❌ {error} · ⏭ {skipped} · ⏸ {interrupted}",
+  "gui.metricsToolBlockedLine": "🛡 工具拦截次数（14 天）：{count}",
+  "gui.metricsToolBlockedTitle": "混合权限策略正常工作的指标，不是运行失败",
   "gui.metricsTotalsTitle": "所有任务的汇总指标（包括归档的指标记录）",
   "gui.modalShortcutHint": "Ctrl+Enter——保存，Escape——取消",
   "gui.modelHint": "留空——使用 OpenCode 默认模型。否则会传入 --model 标志。",

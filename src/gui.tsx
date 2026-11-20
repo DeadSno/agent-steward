@@ -443,7 +443,7 @@ export default Plugin.define({
     const [cronError, setCronError] = createSignal("")
 
     // Метрики и история запусков
-    const [metrics, setMetrics] = createSignal<{ total: number; success: number; error: number; skipped: number; interrupted: number }>({ total: 0, success: 0, error: 0, skipped: 0, interrupted: 0 })
+    const [metrics, setMetrics] = createSignal<{ total: number; success: number; error: number; skipped: number; interrupted: number; toolBlocked: number }>({ total: 0, success: 0, error: 0, skipped: 0, interrupted: 0, toolBlocked: 0 })
     const [historyOpen, setHistoryOpen] = createSignal<string | null>(null)
     const [history, setHistory] = createSignal<HistoryRecord[]>([])
 
@@ -2071,6 +2071,7 @@ export default Plugin.define({
           error: m.error ?? 0,
           skipped: m.skipped ?? 0,
           interrupted: m.interrupted ?? 0,
+          toolBlocked: m.toolBlocked ?? 0,
         })
       } catch (err: any) {
         console.error("RPC Error (get_metrics):", err)
@@ -3079,6 +3080,12 @@ export default Plugin.define({
                     skipped: metrics().skipped,
                     interrupted: metrics().interrupted,
                   })}
+                </div>
+                <div
+                  title={gt("gui.metricsToolBlockedTitle")}
+                  style="margin-top:2px;font-size:11px;color:#8e8e93"
+                >
+                  {gt("gui.metricsToolBlockedLine", { count: metrics().toolBlocked })}
                 </div>
               </div>
               <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">

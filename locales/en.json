@@ -315,6 +315,8 @@
   "gui.mcpSourceLabel": "MCP server / source",
   "gui.mcpSourcePlaceholder": "e.g. github",
   "gui.metricsTotalsLine": "📊 Runs in history: {total} · ✅ {success} · ❌ {error} · ⏭ {skipped} · ⏸ {interrupted}",
+  "gui.metricsToolBlockedLine": "🛡 Tool blocks (14 days): {count}",
+  "gui.metricsToolBlockedTitle": "Hybrid policy working as intended, not a run failure",
   "gui.metricsTotalsTitle": "Total metrics across all tasks (including archived metric records)",
   "gui.modalShortcutHint": "Ctrl+Enter — save, Escape — cancel",
   "gui.modelHint": "Empty — the default OpenCode model. Otherwise the --model flag is passed.",

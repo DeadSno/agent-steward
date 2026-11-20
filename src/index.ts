@@ -3352,7 +3352,10 @@ const matrixControlExecute = wrapExecute<MatrixControlArgs>(async (args) => {
 /** get_metrics — суммарная статистика запусков. */
 const getMetricsExecute = wrapExecute<MetricsArgs>(async () => {
   const metrics = await loadMetrics();
-  return { content: JSON.stringify({ success: true, metrics }) };
+  // PL-4.1: блокировки инструментов — показатель корректности hybrid-политики.
+  const since = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
+  const toolBlocked = readAuditLog({ action: "tool.blocked", since, limit: 1 }).total;
+  return { content: JSON.stringify({ success: true, metrics: { ...metrics, toolBlocked } }) };
 });
 
 /** get_analytics — аналитика запусков и стоимости за период. */
@@ -5500,7 +5503,10 @@ const v2Plugin = Plugin.define({
         return { records };
       },
       get_metrics: async () => {
-        return await loadMetrics();
+        const metrics = await loadMetrics();
+        const since = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
+        const toolBlocked = readAuditLog({ action: "tool.blocked", since, limit: 1 }).total;
+        return { ...metrics, toolBlocked };
       },
       cleanup_history: async (input: unknown) => {
         const { retentionDays, maxRecords } = input as {

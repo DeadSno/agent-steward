@@ -361,6 +361,13 @@ check(
     !rpcHandler.includes("normalizePriority")
 );
 
+// PL-4: get_metrics отдаёт toolBlocked как показатель политики (а не ошибку).
+const metricsPayload = JSON.parse((await handlers.get_metrics({})).content);
+check(
+  "PL-4: get_metrics содержит счётчик toolBlocked",
+  typeof metricsPayload.metrics.toolBlocked === "number" && metricsPayload.metrics.toolBlocked >= 0
+);
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\nAgent tools: ${results.length - failed.length}/${results.length} проверок пройдено.`);
 process.exit(failed.length > 0 ? 1 : 0);
