@@ -6,6 +6,8 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **QA-3.8.5 — F-2 проверен вручную, задача закрыта.** Суб-агент дважды заблокирован `Free usage limit reached`; вместо него выполнена ручная верификация `infra/feedback-worker/`: POST /report, валидация payload и reportId, rate-limit по IP (429), honeypot `website`, KV + in-memory dedup, метки `user-report`/`needs-triage`, 200 {issueUrl}, PAT только из `GITHUB_TOKEN`, без PII в логах. `node test-feedback-worker.mjs` — 16/16. Результат совпадает с ручной реализацией, расхождений не найдено.
+
 - **QA-3.8.6 — чтение лога больше не падает при гонке с запуском задачи.** `src/core/scheduler/logs.ts`: `readLogWithRetry()` повторяет `fs.readFile` при `EBUSY`/`EPERM`/`EACCES` (6 попыток, растущая задержка); воспроизведено через `schedule_task` (mcp-event) + `emit_event` + немедленный `get_task_logs`.
 
 - **QA-3.8.5 — повторная проверка F-2 суб-агентом заблокирована.** Выделенный суб-агент (ровно 1, как требовалось) запущен, но снова получил `Free usage limit reached`; задача остаётся открытой в ROADMAP до появления доступного провайдера.
