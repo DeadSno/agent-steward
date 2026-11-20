@@ -453,10 +453,13 @@ export function getLatestHistoryByTask(limit = 5000): StoredHistoryRecord[] {
 export function getHistoryForAnalytics(
   days: number,
   now: Date = new Date(),
+  includeInternal = false,
 ): StoredHistoryRecord[] {
   const safeDays = Math.max(1, Math.min(365, Math.floor(days) || 1));
   const since = new Date(now.getTime() - (safeDays + 1) * 24 * 60 * 60 * 1000);
-  return getHistorySince(since.toISOString(), 100000);
+  const records = getHistorySince(since.toISOString(), 100000);
+  // PL-37: служебные задачи (__*) — артефакты тестов/проб, не пользовательская аналитика.
+  return includeInternal ? records : records.filter((record) => !record.taskName.startsWith("__"));
 }
 
 /** История запусков, начатых не раньше timestamp (ISO-строка). */

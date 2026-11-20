@@ -34,7 +34,7 @@ export interface MetricsTotals {
 const GLOBAL_TASK = "__global__";
 export const LEGACY_METRICS_TASK = "__legacy__";
 
-function isInternal(taskName: string): boolean {
+export function isInternalTaskName(taskName: string): boolean {
   return taskName.startsWith("__");
 }
 
@@ -106,7 +106,7 @@ export function getAllMetrics(includeInternal = false): TaskMetricsRow[] {
   const rows = getDb()
     .prepare("SELECT * FROM metrics ORDER BY task_name COLLATE NOCASE ASC")
     .all();
-  return rows.map(rowToMetrics).filter((row) => includeInternal || !isInternal(row.taskName));
+  return rows.map(rowToMetrics).filter((row) => includeInternal || !isInternalTaskName(row.taskName));
 }
 
 /**
@@ -122,7 +122,10 @@ export function getAllMetrics(includeInternal = false): TaskMetricsRow[] {
  * Примечание: поточечные метрики	getMetrics()/getAllMetrics() остаются
  * таблицей metrics — там хранится в том числе legacy-хвост без истории.
  */
-export function getTotals(): MetricsTotals {
+export function getTotals(includeInternal = false): MetricsTotals {
+  // PL-37: служебные задачи (__*), используемые тестами/пробами, не должны
+  // попадать в агрегированные метрики — getAllMetrics их уже фильтрует.
+  const internalFilter = includeInternal ? "" : "AND task_name NOT LIKE '\\_\\_%' ESCAPE '\\'";
   const row = getDb()
     .prepare(
       `SELECT
@@ -133,7 +136,7 @@ export function getTotals(): MetricsTotals {
          COALESCE(SUM(CASE WHEN tokens > 0 THEN CAST(tokens AS INTEGER) ELSE 0 END), 0) AS tokens,
          COALESCE(SUM(CASE WHEN cost_usd > 0 THEN cost_usd ELSE 0 END), 0) AS cost_usd
        FROM history
-       WHERE status <> 'running'`,
+       WHERE status <> 'running' ${internalFilter}`,
     )
     .get();
   return {

@@ -228,6 +228,21 @@ assert(
   "QA-P1.1: getTotals совпадает с buildAnalytics по одной выборке history"
 );
 
+// PL-37: внутренние probe-задачи (__*) не попадают в агрегаты.
+historyRepo.recordRun("__bugprobe_internal", "success", new Date().toISOString(), 10, null);
+const totalsWithoutInternal = metricsRepo.getTotals();
+const totalsWithInternal = metricsRepo.getTotals(true);
+assert(
+  totalsWithoutInternal.total === afterRecoveryTotals.total &&
+    totalsWithInternal.total === afterRecoveryTotals.total + 1,
+  "PL-37: getTotals исключает внутренние задачи, includeInternal=true возвращает их"
+);
+const analyticsRecords = historyRepo.getHistoryForAnalytics(3650);
+assert(
+  analyticsRecords.every((record) => !record.taskName.startsWith("__")),
+  "PL-37: getHistoryForAnalytics не возвращает внутренние задачи"
+);
+
 // --- 5. QA-F.3: running — отдельное состояние, не ошибка ------------------
 const qafId = historyRepo.startRun("QA-F3-Test", new Date().toISOString());
 const during = await loadHistory("QA-F3-Test", 10);

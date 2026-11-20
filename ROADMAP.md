@@ -131,10 +131,6 @@ Legacy: `opencode-windows-scheduler@1.5.8`.
 
 - [ ] PL-36.1 `src/core/self-analysis.ts:768` → «Обнаружено 1 критических аномалий», `:779` → «2 метрик ухудшаются», плюс заголовки/рекомендации в `:207-219,:570-677`; в файле нет импорта `t()` — P3. Действие: перевести строки через `t()` (ru/en/zh) и добавить тест паритета локалей для `self_analysis`.
 
-**Задача PL-37 — агрегатные метрики включают внутренние `__*` probe-задачи** · P3 · ⬜
-
-- [ ] PL-37.1 `isInternal` (`src/db/metrics-repo.ts:37-39`) фильтрует `getAllMetrics`, но не `getTotals` (`:125-147`) и не список задач `get_analytics`; в истории видны `__bugprobe_*`, `__matrixprobe__`, `__selftest_probe__` — P3. Действие: применять `isInternal` (или флаг `includeInternal`) к `getTotals` и `get_analytics.tasks`, чтобы «Запусков в истории» отражало пользовательские задачи.
-
 **Задача PL-38 — токенные бюджеты и аналитика стоимости работают на пустых данных** · P2 · ⬜
 
 - [ ] PL-38.1 `get_metrics` → `tokens:0, costUsd:0` на 606 запусков; у всех задач `tokens:0`, `savings:{runs:0,tokens:0}`, `tokenBudgetExceeded:false`, хотя установлены `tokenBudget:120000`; гейт `evaluateTaskTokenBudgetGate` (`src/core/budget.ts:282-331`) сравнивает 0 с бюджетом и никогда не срабатывает — P2. Действие: проверить, что обёртка/лог действительно пишет строку usage, обеспечить запись токенов в историю и предупреждать при `schedule_task` с `tokenBudget>0`, если ни один запуск ещё не сообщал токены.

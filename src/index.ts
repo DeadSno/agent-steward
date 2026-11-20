@@ -3363,7 +3363,7 @@ const getAnalyticsExecute = wrapExecute<AnalyticsArgs>(async (args) => {
   const report = buildAnalytics(records, {
     days: windowDays,
     topLimit: Math.max(1, Math.floor(Number(args.topLimit) || 10)),
-    tasks: definitions.map((definition) => ({
+    tasks: definitions.filter((d) => !d.name.startsWith("__")).map((definition) => ({
       name: definition.name,
       matrixParentId: definition.matrixParentId,
       tokenBudget: definition.tokenBudget,
@@ -3394,7 +3394,7 @@ const selfAnalysisExecute = wrapExecute<SelfAnalysisArgs>(async (args) => {
   const report = generateSelfAnalysisReport(records, {
     days: windowDays,
     topLimit: Math.max(1, Math.floor(Number(args.topLimit) || 10)),
-    tasks: definitions.map((definition) => ({
+    tasks: definitions.filter((d) => !d.name.startsWith("__")).map((definition) => ({
       name: definition.name,
       matrixParentId: definition.matrixParentId,
       tokenBudget: definition.tokenBudget,
@@ -3810,7 +3810,7 @@ const reportBugExecute = wrapExecute<ReportBugArgs>(async (args) => {
       const report = buildAnalytics(records, {
         days: 7,
         topLimit: 10,
-        tasks: definitions.map((definition) => ({
+        tasks: definitions.filter((d) => !d.name.startsWith("__")).map((definition) => ({
           name: definition.name,
           matrixParentId: definition.matrixParentId,
           tokenBudget: definition.tokenBudget,
@@ -5556,7 +5556,7 @@ const v2Plugin = Plugin.define({
           const report = buildAnalytics(records, {
             days: windowDays,
             topLimit: Math.max(1, Math.floor(Number(topLimit) || 10)),
-            tasks: definitions.map((definition) => ({
+            tasks: definitions.filter((d) => !d.name.startsWith("__")).map((definition) => ({
               name: definition.name,
               matrixParentId: definition.matrixParentId,
               tokenBudget: definition.tokenBudget,
@@ -5595,7 +5595,7 @@ const v2Plugin = Plugin.define({
           const report = generateSelfAnalysisReport(records, {
             days: windowDays,
             topLimit: Math.max(1, Math.floor(Number(topLimit) || 10)),
-            tasks: definitions.map((definition) => ({
+            tasks: definitions.filter((d) => !d.name.startsWith("__")).map((definition) => ({
               name: definition.name,
               matrixParentId: definition.matrixParentId,
               tokenBudget: definition.tokenBudget,
@@ -5678,7 +5678,7 @@ const v2Plugin = Plugin.define({
               const report = buildAnalytics(records, {
                 days: 7,
                 topLimit: 10,
-                tasks: definitions.map((definition) => ({
+                tasks: definitions.filter((d) => !d.name.startsWith("__")).map((definition) => ({
                   name: definition.name,
                   matrixParentId: definition.matrixParentId,
                   tokenBudget: definition.tokenBudget,
