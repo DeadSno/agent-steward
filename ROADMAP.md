@@ -143,10 +143,6 @@ Legacy: `opencode-windows-scheduler@1.5.8`.
 
 - [ ] PL-26.1 `dry_run неверный trigger: `dry_run({name:'QA-A2-T5-verify'})` вернул в `tasks[].trigger` значения `dag`/`manual` для задач, у которых `triggerDetails.type` корректно равен `cron` и `mcp-event` (проверено на `QA-A2-T3-history-os` и `QA-A2-T4-runs-event`) — P3. Действие: заполнять `trigger` из реального `triggerType` definition, а не из режима запуска в конвейере; добавить проверку в `test-dry-run.mjs`, что `tasks[].trigger === triggerDetails.type`.
 
-**Задача PL-27 — `pipeline_validate` не принимает относительный путь** · P2 · ⬜
-
-- [ ] PL-27.1 `pipeline_validate ENOENT: `pipeline_validate({path:'opencode.pipeline.yaml'})` из корня репозитория → `success:false`, ENOENT; абсолютный путь работает. Тот же дефект, что PL-18 для `pipeline_apply`, но в отдельном инструменте — P2. Действие: резолвить относительный путь относительно `workingDirectory`/cwd перед проверкой и добавить регрессионный тест для обоих инструментов.
-
 **Задача PL-28 — `manage_templates delete` по имени не работает, хотя исправление заявлено** · P2 · ⬜
 
 - [ ] PL-28.1 `delete по имени не работает: JSDoc схемы `manage_templates` говорит «for delete an id or a template name is accepted», CHANGELOG.md содержит запись QA-P3.3 об исправлении удаления по имени, но живой вызов `manage_templates({action:'delete', name:'PROBE-delete-by-name'})` вернул `{"success":false,"error":"Для action=delete нужен id шаблона."}`; удаление по `id` работает. ROADMAP PL-17.1 при этом остаётся открытой — P2. Действие: либо реально поддержать удаление по имени (и закрыть PL-17.1), либо убрать обещание из JSDoc/CHANGELOG и оставить только `id`; добавить тест «delete by name».

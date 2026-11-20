@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { isAbsolute, resolve } from "node:path";
 import { parseDocument } from "yaml";
 import {
   validatePipelineSpec,
@@ -65,9 +66,12 @@ export function parsePipelineYaml(source: string): PipelineParseResult {
 
 /** Читает YAML-файл и валидирует его. Ошибки ввода-вывода также попадают в `errors`. */
 export async function loadPipelineFile(filePath: string): Promise<PipelineParseResult> {
+  // PL-18/PL-27: относительные пути резолвим против cwd — MCP-инструменты
+  // pipeline_validate/pipeline_apply получают путь от агента без абсолютного префикса.
+  const resolvedPath = isAbsolute(filePath) ? filePath : resolve(process.cwd(), filePath);
   let source: string;
   try {
-    source = await readFile(filePath, "utf8");
+    source = await readFile(resolvedPath, "utf8");
   } catch (err) {
     return {
       ok: false,

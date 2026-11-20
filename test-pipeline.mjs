@@ -271,6 +271,31 @@ function hasError(result, pathFragment, textFragment) {
   check("YAML: отсутствующий файл — ошибка чтения", !result.ok && hasError(result, "missing.pipeline.yaml"));
 }
 
+{
+  // PL-18/PL-27: pipeline_validate/pipeline_apply должны принимать относительный путь.
+  const yaml = [
+    "version: 1",
+    "name: ci-rel",
+    "defaults:",
+    '  schedule: "0 3 * * *"',
+    "steps:",
+    "  - id: lint",
+    "    prompt: make lint",
+  ].join("\n");
+  const yamlPath = path.join(tempRoot, "relative.pipeline.yaml");
+  fs.writeFileSync(yamlPath, yaml, "utf8");
+  const prevCwd = process.cwd();
+  try {
+    process.chdir(tempRoot);
+    const relative = await loadPipelineFile("relative.pipeline.yaml");
+    check("YAML: относительный путь против cwd — ok", relative.ok && relative.spec?.name === "ci-rel");
+    const absolute = await loadPipelineFile(yamlPath);
+    check("YAML: абсолютный путь по-прежнему работает", absolute.ok && absolute.spec?.name === "ci-rel");
+  } finally {
+    process.chdir(prevCwd);
+  }
+}
+
 // 30-38. Маппинг PipelineSpec → TaskDefinition[] (P2-33.T2.2).
 {
   const spec = pipeline([
