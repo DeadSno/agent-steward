@@ -115,6 +115,7 @@
     "test:matrix-lifecycle": "node test-matrix-lifecycle.mjs",
     "test:matrix-sync": "node test-matrix-sync.mjs",
     "test:retention": "node test-retention.mjs",
+    "test:history-load": "node test-history-load.mjs",
     "test:metrics": "node test-metrics.mjs",
     "test:budget": "node test-budget.mjs",
     "test:validation": "node test-validation.mjs",

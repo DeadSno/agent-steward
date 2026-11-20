@@ -203,7 +203,7 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 | S03.1.BP.1 | 🧪 Узкое место: «вечный running» после kill-9 | убить процесс во время запуска | Запись помечена `error/interrupted`, lock снят через TTL, повторный старт чистый |
 | S03.1.BP.2 | 🧪 Узкое место: лог растёт бесконечно | длинный запуск с большим выводом | Лог обрезается/ ротируется, не съедает всю память |
 | S03.1.BP.3 | 🧪 Улучшение: прогресс ранга в логах | запуск с этапами | В логах есть метки этапов (`preFlight`, `run`, `postFlight`, `gate`) |
-| S03.1.BP.4 | 🧪 Баг: `run_task_now` на несуществующую задачу | несуществующее имя | Читаемая ошибка «задача не найдена», без stack trace наружу (QA-P3.6) |
+| S03.1.BP.4 | 🧪 Был баг `run_task_now` на несуществующую задачу — исправлен (QA-P3.6, `3e35d9c`) | несуществующее имя | ✅ `runTaskEntry()` бросает `t("tool.error.taskNotFound")`; регрессия `test-run-now.mjs`. См. §7.1 |
 
 ---
 
@@ -270,7 +270,7 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 | S06.1.BP.1 | 🧪 Узкое место: «сирота» после crash родителя | убить процесс родителя во время матрицы | Клоны завершаются, агрегатор помечает status `partial` с причиной `parent-died` |
 | S06.1.BP.2 | 🧪 Узкое место: concurrency = 0 или отрицательный | `concurrency: 0` | Валидация отклоняет, `concurrency: 1` по умолчанию |
 | S06.1.BP.3 | 🧪 Улучшение: прогресс матрицы в реальном времени | дашборд во время выполнения | Бейдж обновляется каждые 5 с, не требует перезагрузки страницы |
-| S06.1.BP.4 | 🧪 Баг: `matrix_control(results)` на не-матрицу | несуществующее/обычное имя | `success: false`, ошибка «не является матрицей» (QA-P3.7) |
+| S06.1.BP.4 | 🧪 Был баг `matrix_control(results)` на не-матрицу — исправлен (QA-P3.7, `3e35d9c`) | несуществующее/обычное имя | ✅ `isKnownMatrix()` → `{success:false, error:t("tool.error.matrixNotMatrix")}`; регрессия `test-matrix.mjs` (27/27). См. §7.1 |
 
 ---
 
@@ -399,7 +399,7 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 | S10.1.9 | 🧪 Инъекции | имя задачи `'; DROP TABLE` | Экранировано, БД цела |
 | S10.1.BP.1 | 🧪 Узкое место: аудит растёт бесконечно | много операций | Ретеншн аудита работает, старые записи удаляются |
 | S10.1.BP.2 | 🧪 Улучшение: экспорт аудита | `get_audit_log` → CSV | Экспорт аудита доступен, поля не обрезаны |
-| S10.1.BP.3 | 🧪 Баг: `pause`/`resume` несуществующей задачи — противоречивые поля | `success:false`, но `paused:true` | При ошибке не выставлять `paused` (QA-P3.8) |
+| S10.1.BP.3 | 🧪 Был баг `pause`/`resume` несуществующей задачи — исправлен (QA-P3.8, `3e35d9c`) | `success:false`, но `paused:true` | ✅ error-ветки возвращают реальное состояние: `paused:false`, `nextRun:null`; регрессия `test-pause-gui.mjs`. См. §7.1 |
 
 ---
 
@@ -710,6 +710,7 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 | `test-delete-profile.mjs` | D11.1.4 |
 | `test-integrations.mjs` | D07.4, D12, D13 |
 | `test-retention.mjs` | D08.5, D10.8 |
+| `test-history-load.mjs` | D08 (QA-A3/BP-D08-1: 100500 записей, индексы lower(task_name)/lower(status), скорость выборок и ретеншна) |
 | `test-metrics.mjs` | D08.3–08.4 |
 | `test-dashboard.mjs` | D14.2 |
 | `test-dashboard-trust.mjs` | D13 |
@@ -758,12 +759,14 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 
 ### 7.1 Найденные баги (из ROADMAP.md и прогона)
 
-| ID | Деталь | Приоритет | Статус | Суть | Действие |
+> **Все четыре бага закрыты** коммитом `3e35d9c` (2026-11-20, `fix(qa): resolve QA-P3.5-P3.8 tool inconsistencies`), перенесены в `CHANGELOG.md:52–55` и покрыты регрессионными тестами. Статус ниже — ✅ исправлено; в колонке «Исправление» указано фактическое решение. Повторно исправлять не требуется.
+
+| ID | Деталь | Приоритет | Статус | Суть (была) | Исправление |
 |---|---|---|---|---|---|
-| QA-P3.5 | D13 | P3 | ⬜ | `get_dashboard_info` после перезапуска сервера вернул `port:null, url:null`, но дашборд поднялся на порту 3782. Несоответствие reported port vs real. | Проверить, почему порт не сообщается; синхронизировать reported port с реальным; добавить health-check в инструмент. |
-| QA-P3.6 | D03 | P3 | ⬜ | `run_task_now({name:'__no_such_task__'})` возвращает сырую ошибку ОС вместо «задача не найдена». | Проверять существование задачи до вызова `schtasks` и возвращать структурированную ошибку. |
-| QA-P3.7 | D06 | P3 | ⬜ | `matrix_control({action:'results', name:'__no_such_matrix__'})` → `success:true, status=empty` вместо ошибки. | Единообразно проверять тип задачи в `results`. |
-| QA-P3.8 | D02 | P3 | ⬜ | `pause_task`/`resume_task` для несуществующей задачи возвращают `success:false` но с полем `paused:true`/`paused:false`. | При ошибке не выставлять `paused` или ставить актуальное состояние. |
+| QA-P3.5 | D13 | P3 | ✅ исправлено | `get_dashboard_info` после перезапуска сервера вернул `port:null, url:null`, но дашборд поднялся на порту 3782. Несоответствие reported port vs real. | `src/server.ts`: `observedPort`/`rememberDashboardPort()`/`dashboardPortCandidates()`/`discoverDashboardPort()` (зондирование маркера); `get_dashboard_info` (`src/index.ts`) проверяет доступность и возвращает поле `reachable`. Регрессия — `test-dashboard.mjs`. См. `3e35d9c`, `CHANGELOG.md:52`. |
+| QA-P3.6 | D03 | P3 | ✅ исправлено | `run_task_now({name:'__no_such_task__'})` возвращал сырую ошибку ОС вместо «задача не найдена». | `runTaskEntry()` (`src/index.ts`) до `scheduler.runTask()` проверяет наличие задачи в определениях и в ОС, иначе бросает `t("tool.error.taskNotFound")`. Регрессия — `test-run-now.mjs`. См. `3e35d9c`, `CHANGELOG.md:53`. |
+| QA-P3.7 | D06 | P3 | ✅ исправлено | `matrix_control({action:'results', name:'__no_such_matrix__'})` → `success:true, status=empty` вместо ошибки. | `isKnownMatrix()` (`src/core/matrix.ts`); обработчик `results` возвращает `{success:false, error:t("tool.error.matrixNotMatrix")}` как и `cancel`. Регрессия — `test-matrix.mjs` (27/27). См. `3e35d9c`, `CHANGELOG.md:54`. |
+| QA-P3.8 | D02 | P3 | ✅ исправлено | `pause_task`/`resume_task` для несуществующей задачи возвращали `success:false` но с полем `paused:true`/`paused:false`. | `pauseOrResumeTask()` (`src/index.ts`) в error-ветках возвращает реальное состояние: `paused:false` для отсутствующей задачи, иначе `definition.paused ?? false`. Регрессия — `test-pause-gui.mjs`. См. `3e35d9c`, `CHANGELOG.md:55`. |
 
 ### 7.2 Узкие места (bottlenecks) — требующие внимания
 
@@ -772,7 +775,7 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 | BP-D01-1 | D01 | cron с шагом `*/N`, недостижимый для schtasks, проверяется только внутри wrapper-а | Пропуск запусков между проверками wrapper-а | Уменьшить интервал проверки wrapper-а или добавить буферизацию |
 | BP-D03-1 | D03 | «Вечный running» после kill-9 до снятия lock по TTL | Задача висит в running, блокирует повторный запуск | Уменьшить TTL lock-а, добавить активное обнаружение мёртвых процессов |
 | BP-D03-2 | D03 | Лог растёт бесконечно при largas запусках | Израсходование диска | Ротация/обрезка логов, лимит на размер одного лога |
-| BP-D08-1 | D08 | Большая история (100K+ записей) замедляет запросы | Таймауты на дашборде | Индексы на `taskName`/`status`, агрегация по дням |
+| BP-D08-1 | D08 | ✅ решено (QA-A3): фильтры `lower(task_name)`/`lower(status)` давали `SCAN history` на 100K+ записей | Таймауты на дашборде | Добавлены functional-индексы `idx_history_task_lower`/`idx_history_status_lower` (схема v11); нагрузочный тест `test-history-load.mjs` (100500 строк, выборки 0.9–0.8 мс вместо 14–17 мс) |
 | BP-D09-1 | D09 | Уведомление на каждый запуск при высокой частоте | Спам в канале | Дедупликация уведомлений, батчинг |
 | BP-D13-1 | D13 | Логи пишутся синхронно при высокой нагрузке | Блокировка основного потока | Асинхронная запись логов, буферизация |
 | BP-D14-1 | D14 | Перерисовка панели GUI при каждом изменении статуса | Мерцание UI | Диффающее обновление, не полная перерисовка |

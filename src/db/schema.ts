@@ -40,6 +40,11 @@ CREATE TABLE IF NOT EXISTS history (
 );
 
 CREATE INDEX IF NOT EXISTS idx_history_task ON history(task_name, started_at DESC);
+-- QA-A3 / BP-D08-1: getHistory() фильтрует через lower(task_name)/lower(status),
+-- поэтому обычный индекс по task_name не используется — нужен functional index.
+-- Без них EXPLAIN QUERY PLAN даёт SCAN history на 100K+ записей.
+CREATE INDEX IF NOT EXISTS idx_history_task_lower ON history(lower(task_name), started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_history_status_lower ON history(lower(status), started_at DESC);
 
 CREATE TABLE IF NOT EXISTS metrics (
   task_name TEXT PRIMARY KEY,
@@ -251,7 +256,7 @@ interface SchemaDb {
  * миграций. Увеличивайте при добавлении новой ступени в {@link MIGRATIONS}
  * и добавляйте соответствующую запись в массив.
  */
-export const SCHEMA_VERSION = 10;
+export const SCHEMA_VERSION = 11;
 
 /** Возвращает сохранённую версию схемы (0 у legacy-БД без user_version). */
 export function getSchemaVersion(db: SchemaDb): number {
@@ -522,6 +527,21 @@ const MIGRATIONS: { to: number; migrate: (db: SchemaDb) => void }[] = [
           "UPDATE capability_map SET first_pass_count = runs_passed WHERE first_pass_count IS NULL",
         );
       }
+    },
+  },
+  {
+    // Ступень 11 — QA-A3 / BP-D08-1: functional-индексы под lower()-фильтры
+    // getHistory(). Обычный idx_history_task не работает с lower(task_name),
+    // а по status индекса не было вовсе — на 100K записей план давал SCAN.
+    // CREATE INDEX IF NOT EXISTS идемпотентен, ступень безопасна для старых БД.
+    to: 11,
+    migrate(db) {
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_history_task_lower
+          ON history(lower(task_name), started_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_history_status_lower
+          ON history(lower(status), started_at DESC);
+      `);
     },
   },
 ];
