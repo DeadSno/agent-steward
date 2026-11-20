@@ -619,6 +619,20 @@ check(
     readmeSuiteCount === suitesInScriptUnique.length &&
     suitesInScript.length === suitesInScriptUnique.length
 );
+
+// REL-01: переведённые README должны показывать то же число уникальных сюит,
+// что и npm test. Эталон берём из suitesInScriptUnique, а не хардкодим: как
+// только в npm test добавят сюиту, счётчик в локалях тоже обязан обновиться.
+for (const rel of ["docs/README.ru.md", "docs/README.zh.md"]) {
+  const p = path.join(root, rel);
+  const text = fs.existsSync(p) ? fs.readFileSync(p, "utf8") : "";
+  const match = /npm test[^\n]*#\s*(\d+)/.exec(text);
+  const found = match ? Number(match[1]) : null;
+  check(
+    `${rel}: счётчик сюит в npm test ${found === null ? "отсутствует" : `найдено ${found}`}, ожидалось ${suitesInScriptUnique.length}`,
+    found !== null && found === suitesInScriptUnique.length
+  );
+}
 check(
   `package.json: все ${suiteFilesOnDisk.length} test-*.mjs на диске упомянуты в скриптах (не упомянуто: ${unlistedSuites.length})`,
   unlistedSuites.length === 0 && suiteFilesOnDisk.length > 0
