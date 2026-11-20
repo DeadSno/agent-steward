@@ -618,13 +618,12 @@ check(
   unlistedSuites.length === 0 && suiteFilesOnDisk.length > 0
 );
 
-// QV-7: закрытые подзадачи QA-A2.5/A2.6 обязаны иметь снятый чекбокс в роадмапе.
-const roadmapForCheckboxes = fs.readFileSync(path.join(root, "ROADMAP.md"), "utf8");
+// ROADMAP: закрытые подзадачи удаляются отсюда, остаются только открытые.
+// QA-A2.5/A2.6 закрыты по факту (QV-7) и больше не должны встречаться в роадмапе.
+const roadmapText = fs.readFileSync(path.join(root, "ROADMAP.md"), "utf8");
 check(
-  "QV-7: чекбоксы QA-A2.5/A2.6 сняты в ROADMAP",
-  /\[x\]\s*QA-A2\.5/.test(roadmapForCheckboxes) &&
-    /\[x\]\s*QA-A2\.6/.test(roadmapForCheckboxes) &&
-    !/\[\s*\]\s*QA-A2\.[56]/.test(roadmapForCheckboxes)
+  "ROADMAP: закрытых подзадач нет (QA-A2.5/A2.6 перенесены в CHANGELOG)",
+  !/\[[xX]\]\s/.test(roadmapText) && !/QA-A2\.[56]/.test(roadmapText)
 );
 
 const failed = results.filter((r) => !r.ok);
