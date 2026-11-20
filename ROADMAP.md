@@ -56,6 +56,42 @@ Legacy: `opencode-windows-scheduler@1.5.8`.
 - [ ] QA-A2.6 GUI/TUI: `src/gui.tsx`, `src/tui*.tsx` сейчас исключены из `tsconfig.json` и не попадают под `files: ["src/**/*.ts"]` ESLint. Для «полностью типизированного плагина» включить их в проверку (с JSX-парсером) или явно зафиксировать исключение в документации.
 - [ ] QA-A2.7 Финальная верификация: `npm run lint` → 0 ошибок и 0 предупреждений, `npm run build`, `npm test` зелёные; снять baseline-гейт, закрыть эпик.
 
+## Деталь 1.4 — Верификация TEST-PLAN.md (20.11.2026, QA-аудит документа)
+
+> Цель: план должен быть корректным, самодостаточным и пригодным как критерий приёмки. Сверка с кодом выявила 11 находок (P1 — 2, P2 — 6, P3 — 3). Подтверждено корректным: §7.1 (закрытые QA-P3.5–P3.8), 57 RPC в Приложении A, i18n-паритет 870/870/870, E2E-1…E2E-9, детали D01–D16, BP-D08-1. Источник — отчёт `reports/QA_AUDIT.md`, после переноса удалён.
+
+**Задача TP-1 — Корректность счётчиков** · P1 · ⬜
+
+- [ ] TP-1.1 Заменить «29 MCP-инструментов» → «30» в §1 (строка D04), заголовке D04, §6, §9 и заголовке Приложения B; добавить `report_bug` в строку D04. Фактически в `src/index.ts` зарегистрировано 30 инструментов, и сам список Приложения B уже содержит 30 имён.
+- [ ] TP-1.2 Заменить «~130 наборов» → «115 файлов `test-*.mjs` (108 npm-скриптов)» в §0.3 и S16.1.4.
+
+**Задача TP-2 — Полнота и точность матрицы покрытия §5** · P2 · ⬜
+
+- [ ] TP-2.1 Добавить в §5 33 отсутствующих теста: `test-at-e2e`, `test-budget`, `test-capability-map`, `test-chaos-dag`, `test-dlq-gui`, `test-dual-entry`, `test-escalation`, `test-execution-hardening`, `test-guards`, `test-model-validation`, `test-models-analysis`, `test-models-config`, `test-path-safety`, `test-pipeline`, `test-planner`, `test-posix-create-rollback`, `test-posix-cron`, `test-posix-e2e`, `test-savings`, `test-schtasks-errors`, `test-schtasks-locales`, `test-settings`, `test-shutdown`, `test-task-name-limit-profile`, `test-triage*` (7 файлов), `test-usage-from-log`, `test-v1-integration`, `test-validation`, `test-w4`, `test-windows-locales`, `test-windows-oem`, `test-worktree`, `test-pause-gui`.
+- [ ] TP-2.2 Исправить 9 неверных имён: `test:env.mjs` → `test-env.mjs`, `test:skill.mjs` → `test-skill.mjs`, `test:self-analysis.mjs` → `test-self-analysis.mjs`, `test:gui-bundle.mjs` → `test-gui-bundle.mjs`, `test:package-exports.mjs` → `test-package-exports.mjs`, `test:prod-install.mjs` → `test-prod-install.mjs`, `test:registry-resilience.mjs` → `test-registry-resilience.mjs`, `test:workflows.mjs` → `test-workflows.mjs`, `test:chaos.mjs` → `test-chaos-dag.mjs`.
+
+**Задача TP-3 — Самодостаточность плана: новые детали** · P2 · ⬜
+
+- [ ] TP-3.1 Декомпозировать pipeline-as-code: заявлен в шапке (объект проверки), но нет детали, строк в §1/§4 и `test-pipeline.mjs` в §5, хотя MCP-инструменты `pipeline_validate/apply/export` и RPC существуют.
+- [ ] TP-3.2 Добавить деталь «Обратная связь / `report_bug`» по задачам F-1…F-4 из Детали 3.8; согласовать нумерацию с подзадачей F-4.3, которая прямо ожидает «TEST-PLAN D17 + docs/FEATURES.md».
+- [ ] TP-3.3 Добавить проверку для `self_analysis`: инструмент есть в Приложении B, но в плане нет ни детали, ни задачи.
+
+**Задача TP-4 — Актуальность формулировок и чисел** · P2 · ⬜
+
+- [ ] TP-4.1 Переписать ограничение §4 п.6 «HTTP API не требует аутентификации для чтения»: сервер слушает только `127.0.0.1`, проверяет `Origin`/`Host` по `LOCAL_HOSTNAMES`, webhook защищён токеном/HMAC/timestamp.
+- [ ] TP-4.2 Согласовать счётчик HTTP-эндпоинтов: §6 «25+» vs Приложение C (19) vs код (17 литеральных `pathname` + 5 параметризованных). Зафиксировать одну методику подсчёта.
+- [ ] TP-4.3 Обновить дату шапки (19.11 → 20.11.2026) и указать `SCHEMA_VERSION = 11` с миграцией 10 → 11 в D15 / S15.1.2.
+
+**Задача TP-5 — Качество текста и реестра** · P3 · ⬜
+
+- [ ] TP-5.1 Вычистить языковые артефакты: «largas запусках», «jednym вызовом», «криticos», «Chakon (watch)», «mezclываются», «lожных», «ajuda», «полный прогона», «häufig обновление».
+- [ ] TP-5.2 Переименовать §7.1 «Найденные баги» → «Исправленные баги (реестр)»; синхронизировать §7.4 с текущим ROADMAP (F-1…F-4, закрытые E-1 / E-2.1 / E-2.2).
+
+**Задача TP-6 — Автоматизация контроля плана** · P3 · ⬜
+
+- [ ] TP-6.1 Добавить `test-test-plan.mjs`: каждый `test-*.mjs` упомянут в §5, все имена файлов существуют, счётчики совпадают с кодом.
+- [ ] TP-6.2 Генерировать счётчики MCP/RPC/HTTP/тестов скриптом по маркерам в плане, чтобы устранить ручное расхождение.
+
 ---
 
 # 2. Задачи согласно архитектуре (Execution model)
