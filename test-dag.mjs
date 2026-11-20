@@ -120,7 +120,41 @@ ok("DAG: имена сравниваются без учёта регистра"
   assert.deepEqual(selectDependentsToTrigger("ЛИНТЕР", definitions, history), ["Деплой"]);
 });
 
-// 7. Запись токенов и стоимости в history.json / metrics.json.
+// 7. Два родителя (PL-40): завершение зависимости — событие, а не одноразовая защёлка.
+// Пока все родители имеют успешную запись, downstream стартует на каждое завершение.
+const twoParentDefinitions = [
+  { name: "T3" },
+  { name: "T4" },
+  { name: "T5", dependsOn: ["T3", "T4"] },
+];
+
+ok("DAG: два dependsOn — завершение первого родителя запускает downstream", () => {
+  const history = [
+    record("T3", "success", "2026-01-01T10:54:00Z", "2026-01-01T10:54:55Z"),
+    record("T4", "success", "2026-01-01T10:00:00Z", "2026-01-01T10:00:30Z"),
+  ];
+  assert.deepEqual(selectDependentsToTrigger("T3", twoParentDefinitions, history), ["T5"]);
+});
+
+ok("DAG: два dependsOn — завершение второго родителя тоже запускает downstream", () => {
+  const history = [
+    record("T5", "success", "2026-01-01T10:56:45Z", "2026-01-01T10:58:41Z"),
+    record("T4", "success", "2026-01-01T11:20:00Z", "2026-01-01T11:20:11Z"),
+    record("T3", "success", "2026-01-01T10:54:00Z", "2026-01-01T10:54:55Z"),
+  ];
+  assert.deepEqual(selectDependentsToTrigger("T4", twoParentDefinitions, history), ["T5"]);
+});
+
+ok("DAG: два dependsOn — downstream начался позже обоих родителей → пропуск", () => {
+  const history = [
+    record("T5", "success", "2026-01-01T11:25:00Z", "2026-01-01T11:27:00Z"),
+    record("T4", "success", "2026-01-01T11:20:00Z", "2026-01-01T11:20:11Z"),
+    record("T3", "success", "2026-01-01T10:54:00Z", "2026-01-01T10:54:55Z"),
+  ];
+  assert.deepEqual(selectDependentsToTrigger("T4", twoParentDefinitions, history), []);
+});
+
+// 8. Запись токенов и стоимости в history.json / metrics.json.
 const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "scheduler-dag-"));
 const appData = path.join(tempRoot, "AppData");
 const pluginDir = path.join(appData, "opencode", "windows-scheduler");

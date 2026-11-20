@@ -166,6 +166,13 @@ Rules of thumb:
   as the chain target and once as a DAG dependent — producing duplicate runs. `dry_run`
   warns about this overlap, and the recorder now de-duplicates targets by name, but the
   configuration itself should be fixed.
+- **A dependency completion is an event, not a one-shot latch (PL-40).** A task with two
+  parents (`dependsOn: [A, B]`) is started whenever either parent finishes while all
+  parents' latest records are successful — so two completions can mean two runs. A stale
+  success also satisfies the gate. The dependent's own `startedAt` only suppresses a
+  re-trigger when it is newer than the newest dependency `finishedAt`. If you need
+  exactly one follow-up run, use `nextTaskOnSuccess` (a single-parent chain) instead of
+  a multi-parent `dependsOn`.
 - Keep chains short and named by intent (`deploy` → `smoke-tests` → `notify-release`).
 - Cycles and self-dependencies are rejected; if a chain grows past 4–5 nodes, consider one
   task with an explicit internal checklist instead.

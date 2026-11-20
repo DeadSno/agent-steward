@@ -498,6 +498,18 @@ All three are evaluated by the recorder after a run finishes:
 `selectDependentsToTrigger(taskName, definitions, history)` is a pure function, which
 keeps the rules testable.
 
+**Dependency completion is an event, not a one-shot latch (PL-40).** Every time a
+dependency finishes, its completion is evaluated against the dependencies' latest
+records. If all dependencies are currently successful, the dependent is started — even
+when an earlier run of the same generation already started it. With two parents this
+means the dependent may run once per parent completion (e.g. `T5` with
+`dependsOn: [T3, T4]` runs when `T3` finishes while `T4` is still successful, and again
+when `T4` finishes). This also applies to a stale but successful record: an older
+success still satisfies the gate. The dependent's own latest `startedAt` only suppresses
+a re-trigger when it is newer than the newest dependency `finishedAt`. Do not dedupe
+across generations — `test-dag-latest-history.mjs` locks this in. For a strict single
+run per trigger use `nextTaskOnSuccess` instead of a multi-parent `dependsOn`.
+
 ## Matrix builds
 
 A matrix task is a template, not a runnable job:
