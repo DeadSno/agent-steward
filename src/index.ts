@@ -142,6 +142,12 @@ import {
   sendTestNotification,
 } from "./notifications.js";
 import {
+  FEEDBACK_LIMITS,
+  flushOutbox,
+  redactText,
+  reportFeedback,
+} from "./core/feedback.js";
+import {
   shadowReport,
   resetShadowDecisions,
 } from "./core/triage-shadow.js";
@@ -202,6 +208,7 @@ import {
 import {
   deleteSecret,
   collectSecretNames,
+  getSecret,
   hasSecret,
   listSecrets,
   setSecret,
@@ -1392,13 +1399,20 @@ export const sendNotificationSchema = z.object({
     .describe("For action=test: which channel to check (default all enabled)."),
 });
 
-/** report_bug — отчёт о баге от пользователя плагина, отправляется разработчику через настроенные каналы уведомлений. */
+/** report_bug — отчёт о баге; по умолчанию уходит автору через приёмник F-2 (Деталь 3.8). */
 export const reportBugSchema = z.object({
-  description: z.string().min(1).describe("Описание бага от пользователя (обязательно)."),
-  taskName: z.string().optional().describe("Имя задачи, к которой относится баг (опционально, для прикрепления логов)."),
-  includeLogs: z.boolean().optional().default(true).describe("Включить логи задачи (если указан taskName)."),
+  description: z.string().min(1).max(FEEDBACK_LIMITS.description).describe("Описание бага от пользователя (обязательно)."),
+  taskName: z.string().max(FEEDBACK_LIMITS.taskName).optional().describe("Имя задачи, к которой относится баг (для прикрепления логов)."),
+  /** Приватность: по умолчанию логи НЕ прикладываются (F-1.3). */
+  includeLogs: z.boolean().optional().default(false).describe("Включить логи задачи (по умолчанию false)."),
   includeAnalytics: z.boolean().optional().default(true).describe("Включить метрики и аналитику за последние 7 дней."),
-  channel: z.enum(["all", "webhook", "telegram", "native"]).optional().describe("Канал уведомления (по умолчанию все включённые)."),
+  /** Канал локальных уведомлений (для destination local/both). */
+  channel: z.enum(["all", "webhook", "telegram", "native"]).optional().describe("Канал локального уведомления."),
+  /** Направление: автор (по умолчанию), локальные каналы или оба (F-1.5). */
+  destination: z.enum(["author", "local", "both"]).optional().default("author").describe("Куда отправить отчёт."),
+  contactEmail: z.string().max(FEEDBACK_LIMITS.contactEmail).optional().describe("Обратный адрес (опционально)."),
+  /** Показать точный payload без отправки (F-3.1). */
+  dryRun: z.boolean().optional().default(false).describe("Предпросмотр без отправки."),
 });
 
 /** get_dashboard_info — сведения о панели управления. */
@@ -3787,30 +3801,48 @@ const sendNotificationExecute = wrapExecute<NotificationArgs>(async (args) => {
   return { content: JSON.stringify(result) };
 });
 
-/** report_bug — отчёт о баге от пользователя плагина, отправляется разработчику. */
-const reportBugExecute = wrapExecute<ReportBugArgs>(async (args) => {
+/**
+ * Общий сборщик текста баг-репорта (устраняет дублирование между MCP-тулом
+ * и RPC-хендлером — QA-находка 3.8). Возвращает также сырые логи и метрики
+ * для структурированного payload (F-1.1).
+ */
+async function buildBugReportText(input: {
+  description: string;
+  taskName?: string;
+  includeLogs?: boolean;
+  includeAnalytics?: boolean;
+}): Promise<{ text: string; logs?: string; metrics?: Record<string, number> }> {
   const lines: string[] = [];
   lines.push("🐛 *Bug report — agent-steward plugin*");
   lines.push(`Время: ${new Date().toISOString()}`);
-  lines.push(`Описание: ${args.description}`);
-  if (args.taskName) {
-    lines.push(`Задача: ${args.taskName}`);
-    if (args.includeLogs !== false) {
+  lines.push(`Описание: ${input.description}`);
+  let logs: string | undefined;
+  if (input.taskName) {
+    lines.push(`Задача: ${input.taskName}`);
+    if (input.includeLogs) {
       try {
-        const logs = await getTaskLogs(args.taskName);
-        if (logs.logs) {
-          lines.push(`\n--- Логи задачи ${args.taskName} ---`);
-          lines.push(String(logs.logs).slice(0, 2000));
+        const taskLogs = await getTaskLogs(input.taskName);
+        if (taskLogs.logs) {
+          logs = String(taskLogs.logs).slice(0, 2000);
+          lines.push(`\n--- Логи задачи ${input.taskName} ---`);
+          lines.push(logs);
         }
       } catch (err) {
-        lines.push(`\n--- Логи задачи ${args.taskName}: ошибка чтения ---`);
+        lines.push(`\n--- Логи задачи ${input.taskName}: ошибка чтения ---`);
         lines.push(err instanceof Error ? err.message : String(err));
       }
     }
   }
-  if (args.includeAnalytics !== false) {
+  let metrics: Record<string, number> | undefined;
+  if (input.includeAnalytics !== false) {
     try {
-      const metrics = await loadMetrics();
+      const raw = await loadMetrics();
+      metrics = {
+        total: raw.total,
+        success: raw.success,
+        error: raw.error,
+        partial: raw.partial ?? 0,
+      };
       lines.push("\n--- Метрики ---");
       lines.push(`Всего запусков: ${metrics.total}`);
       lines.push(`Успех: ${metrics.success}`);
@@ -3836,20 +3868,74 @@ const reportBugExecute = wrapExecute<ReportBugArgs>(async (args) => {
       lines.push(`Успех: ${report.totals.success}`);
       lines.push(`Ошибок: ${report.totals.error}`);
       if (report.totals.partial) lines.push(`Частично: ${report.totals.partial}`);
-      const errorTasks = report.tasks.filter((t) => t.error > 0).slice(0, 5);
+      const errorTasks = report.tasks.filter((task) => task.error > 0).slice(0, 5);
       if (errorTasks.length > 0) {
         lines.push(
-          `Задачи с ошибками: ${errorTasks.map((t) => `${t.taskName} (${t.error})`).join(", ")}`,
+          `Задачи с ошибками: ${errorTasks.map((task) => `${task.taskName} (${task.error})`).join(", ")}`,
         );
       }
     } catch (err) {
       lines.push(`\n--- Аналитика: ошибка чтения: ${err instanceof Error ? err.message : String(err)} ---`);
     }
   }
+  return { text: lines.join("\n"), logs, metrics };
+}
 
-  const reportText = lines.join("\n");
-  const result = await sendBugReport(reportText, args.channel);
-  return { content: JSON.stringify(result) };
+/**
+ * Значения всех секретов из manage_secrets — используются только для
+ * редактирования текста (F-1.4). Ни одно значение не попадает в payload.
+ */
+function collectSecretValues(): string[] {
+  const values: string[] = [];
+  for (const item of listSecrets()) {
+    const value = getSecret(item.name);
+    if (value && value.length >= 4) values.push(value);
+  }
+  return values;
+}
+
+/** report_bug — отчёт о баге; по умолчанию уходит автору через приёмник F-2. */
+const reportBugExecute = wrapExecute<ReportBugArgs>(async (args) => {
+  const settings = await loadSettings();
+  const includeLogs = args.includeLogs ?? settings.feedback.includeLogs;
+  const built = await buildBugReportText({
+    description: args.description,
+    taskName: args.taskName,
+    includeLogs,
+    includeAnalytics: args.includeAnalytics,
+  });
+  const secretValues = collectSecretValues();
+  const localText = redactText(built.text, { secrets: secretValues, redactEmails: false });
+
+  const result = await reportFeedback({
+    settings: settings.feedback,
+    destination: args.destination ?? "author",
+    dryRun: args.dryRun,
+    description: args.description,
+    taskName: args.taskName,
+    contactEmail: args.contactEmail ?? settings.feedback.contactEmail,
+    redactedLogs: includeLogs ? built.logs : undefined,
+    metrics: built.metrics,
+    locale: settings.locale,
+    secrets: secretValues,
+    sendLocal: (text) => sendBugReport(text, args.channel),
+    localText,
+  });
+  return {
+    content: JSON.stringify({
+      ...result,
+      message:
+        result.mode === "dryRun"
+          ? t("feedback.dryRun")
+          : result.mode === "sent"
+            ? t("feedback.sent")
+            : result.mode === "outbox"
+              ? t("feedback.outbox")
+              : result.mode === "duplicate"
+                ? t("feedback.duplicate")
+                : t("feedback.local"),
+    }),
+  };
 });
 
 /** get_dashboard_info — порт дашборда, платформа и активный профиль. */
@@ -4388,6 +4474,22 @@ export async function createRuntime(ctxLike: RuntimeContextLike): Promise<Schedu
       }`,
     );
   }
+  // Деталь 3.8 (F-1.6): повторяем недоставленные отчёты из outbox.
+  // Fire-and-forget: сеть не должна задерживать или ломать старт плагина.
+  void loadSettings()
+    .then((settings) => flushOutbox(settings.feedback))
+    .then((result) => {
+      if (result.sent > 0) {
+        console.log(`[feedback] Из outbox доставлено отчётов: ${result.sent}`);
+      }
+    })
+    .catch((err: unknown) => {
+      console.error(
+        `[feedback] Ошибка повтора outbox: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    });
   // P1-14: pid:-записи fallback'а не переживают перезагрузку. Чистим их и
   // пересоздаём будущие one-shot, иначе после reboot можно убить чужой pid.
   if (scheduler instanceof LinuxScheduler) {
@@ -5649,81 +5751,63 @@ const v2Plugin = Plugin.define({
         }
       },
       report_bug: async (input: unknown) => {
-        const { description, taskName, includeLogs, includeAnalytics, channel } = input as {
+        const {
+          description,
+          taskName,
+          includeLogs,
+          includeAnalytics,
+          channel,
+          destination,
+          contactEmail,
+          dryRun,
+        } = input as {
           description?: string;
           taskName?: string;
           includeLogs?: boolean;
           includeAnalytics?: boolean;
           channel?: "all" | "webhook" | "telegram" | "native";
+          destination?: "author" | "local" | "both";
+          contactEmail?: string;
+          dryRun?: boolean;
         };
         try {
           if (!description || !description.trim()) {
             return { success: false, error: "description is required" };
           }
-          const lines: string[] = [];
-          lines.push("🐛 *Bug report — agent-steward plugin*");
-          lines.push(`Время: ${new Date().toISOString()}`);
-          lines.push(`Описание: ${description}`);
-          if (taskName) {
-            lines.push(`Задача: ${taskName}`);
-            if (includeLogs !== false) {
-              try {
-                const logs = await getTaskLogs(taskName);
-                if (logs.logs) {
-                  lines.push(`\n--- Логи задачи ${taskName} ---`);
-                  lines.push(String(logs.logs).slice(0, 2000));
-                }
-              } catch (err) {
-                lines.push(`\n--- Логи задачи ${taskName}: ошибка чтения ---`);
-                lines.push(err instanceof Error ? err.message : String(err));
-              }
-            }
-          }
-          if (includeAnalytics !== false) {
-            try {
-              const metrics = await loadMetrics();
-              lines.push("\n--- Метрики ---");
-              lines.push(`Всего запусков: ${metrics.total}`);
-              lines.push(`Успех: ${metrics.success}`);
-              lines.push(`Ошибок: ${metrics.error}`);
-              if (metrics.partial) lines.push(`Частично: ${metrics.partial}`);
-            } catch (err) {
-              lines.push(`\n--- Метрики: ошибка чтения: ${err instanceof Error ? err.message : String(err)} ---`);
-            }
-            try {
-              const records = getHistoryForAnalytics(7);
-              const definitions = await loadTaskDefinitions();
-              const report = buildAnalytics(records, {
-                days: 7,
-                topLimit: 10,
-                tasks: definitions.filter((d) => !d.name.startsWith("__")).map((definition) => ({
-                  name: definition.name,
-                  matrixParentId: definition.matrixParentId,
-                  tokenBudget: definition.tokenBudget,
-                })),
-              });
-              lines.push("\n--- Аналитика (7 дней) ---");
-              lines.push(`Всего запусков: ${report.totals.total}`);
-              lines.push(`Успех: ${report.totals.success}`);
-              lines.push(`Ошибок: ${report.totals.error}`);
-              if (report.totals.partial) lines.push(`Частично: ${report.totals.partial}`);
-              const errorTasks = report.tasks.filter((t) => t.error > 0).slice(0, 5);
-              if (errorTasks.length > 0) {
-                lines.push(
-                  `Задачи с ошибками: ${errorTasks.map((t) => `${t.taskName} (${t.error})`).join(", ")}`,
-                );
-              }
-            } catch (err) {
-              lines.push(`\n--- Аналитика: ошибка чтения: ${err instanceof Error ? err.message : String(err)} ---`);
-            }
-          }
-
-          const reportText = lines.join("\n");
-          const result = await sendBugReport(reportText, channel);
+          const settings = await loadSettings();
+          const logsAllowed = includeLogs ?? settings.feedback.includeLogs;
+          const built = await buildBugReportText({
+            description,
+            taskName,
+            includeLogs: logsAllowed,
+            includeAnalytics,
+          });
+          const secretValues = collectSecretValues();
+          const localText = redactText(built.text, {
+            secrets: secretValues,
+            redactEmails: false,
+          });
+          const result = await reportFeedback({
+            settings: settings.feedback,
+            destination: destination ?? "author",
+            dryRun,
+            description,
+            taskName,
+            contactEmail: contactEmail ?? settings.feedback.contactEmail,
+            redactedLogs: logsAllowed ? built.logs : undefined,
+            metrics: built.metrics,
+            locale: settings.locale,
+            secrets: secretValues,
+            sendLocal: (text) => sendBugReport(text, channel),
+            localText,
+          });
           return {
             success: result.success,
-            message: result.message,
-            results: result.results,
+            reportId: result.reportId,
+            mode: result.mode,
+            preview: result.preview,
+            error: result.error,
+            author: result.author,
           };
         } catch (err) {
           return {

@@ -116,6 +116,15 @@ interface BudgetSettings {
   weeklyUsd: number
 }
 
+/** Деталь 3.8: канал отчётов пользователей автору. */
+interface FeedbackSettings {
+  enabled: boolean
+  endpoint: string
+  includeLogs: boolean
+  contactEmail: string
+  maxPerHour: number
+}
+
 interface Job {
   name: string
   schedule: string
@@ -663,6 +672,14 @@ export default Plugin.define({
     const [budgetWeeklyUsd, setBudgetWeeklyUsd] = createSignal(0)
     const [budgetCollapsed, setBudgetCollapsed] = createSignal(true)
 
+    // Деталь 3.8: обратная связь пользователей (F-3.2).
+    const [feedbackEnabled, setFeedbackEnabled] = createSignal(false)
+    const [feedbackEndpoint, setFeedbackEndpoint] = createSignal("")
+    const [feedbackIncludeLogs, setFeedbackIncludeLogs] = createSignal(false)
+    const [feedbackContactEmail, setFeedbackContactEmail] = createSignal("")
+    const [feedbackMaxPerHour, setFeedbackMaxPerHour] = createSignal(6)
+    const [feedbackCollapsed, setFeedbackCollapsed] = createSignal(true)
+
     // Таймеры ожидания завершения ручных запусков (для тостов OpenCode).
     const pendingRunTimers = new Map<string, ReturnType<typeof setInterval>>()
     onCleanup(() => {
@@ -754,6 +771,12 @@ export default Plugin.define({
         setBudgetEnabled(Boolean(b?.enabled))
         setBudgetDailyUsd(Number(b?.dailyUsd ?? 0))
         setBudgetWeeklyUsd(Number(b?.weeklyUsd ?? 0))
+        const fb = s.feedback
+        setFeedbackEnabled(Boolean(fb?.enabled))
+        setFeedbackEndpoint(String(fb?.endpoint ?? ""))
+        setFeedbackIncludeLogs(Boolean(fb?.includeLogs))
+        setFeedbackContactEmail(String(fb?.contactEmail ?? ""))
+        setFeedbackMaxPerHour(Number(fb?.maxPerHour ?? 6))
         setUiLocaleKnown(normalizeLocale((s as { uiLocale?: string }).uiLocale, DEFAULT_LOCALE))
         const mode = normalizeLocaleMode((s as { locale?: string }).locale, DEFAULT_LOCALE_MODE)
         setLocaleMode(mode)
@@ -866,6 +889,17 @@ export default Plugin.define({
       }
     }
 
+    /** Настройки обратной связи из сигналов формы (Деталь 3.8). */
+    function currentFeedbackSettings(): FeedbackSettings {
+      return {
+        enabled: feedbackEnabled(),
+        endpoint: feedbackEndpoint().trim(),
+        includeLogs: feedbackIncludeLogs(),
+        contactEmail: feedbackContactEmail().trim(),
+        maxPerHour: Math.max(1, Math.min(100, Math.floor(Number(feedbackMaxPerHour()) || 6))),
+      }
+    }
+
     /** Текущие лимиты расхода из сигналов формы (Экономика v2, E-1.1). */
     function currentBudgetSettings(): BudgetSettings {
       return {
@@ -882,6 +916,7 @@ export default Plugin.define({
       notifications?: NotificationSettings
       history?: HistorySettings
       budgets?: BudgetSettings
+      feedback?: FeedbackSettings
     }): Promise<boolean> {
       try {
         const s = await rpc.save_settings(patch)
@@ -909,6 +944,14 @@ export default Plugin.define({
           setBudgetDailyUsd(Number(b?.dailyUsd ?? 0))
           setBudgetWeeklyUsd(Number(b?.weeklyUsd ?? 0))
         }
+        if (patch.feedback !== undefined) {
+          const fb = s.feedback
+          setFeedbackEnabled(Boolean(fb?.enabled))
+          setFeedbackEndpoint(String(fb?.endpoint ?? ""))
+          setFeedbackIncludeLogs(Boolean(fb?.includeLogs))
+          setFeedbackContactEmail(String(fb?.contactEmail ?? ""))
+          setFeedbackMaxPerHour(Number(fb?.maxPerHour ?? 6))
+        }
         setUiLocaleKnown(normalizeLocale((s as { uiLocale?: string }).uiLocale, DEFAULT_LOCALE))
         const mode = normalizeLocaleMode((s as { locale?: string }).locale, DEFAULT_LOCALE_MODE)
         setLocaleMode(mode)
@@ -935,6 +978,11 @@ export default Plugin.define({
     /** Сохраняет дневной/недельный лимит расхода (Экономика v2, E-1.1). */
     async function saveBudgetSettings() {
       await persistSettings({ budgets: currentBudgetSettings() })
+    }
+
+    /** Сохраняет настройки обратной связи (Деталь 3.8). */
+    async function saveFeedbackSettings() {
+      await persistSettings({ feedback: currentFeedbackSettings() })
     }
 
     /** Кнопка «🧹 Очистить сейчас»: фиксирует форму и запускает очистку. */
@@ -4105,6 +4153,86 @@ export default Plugin.define({
                       style="width:90px;padding:4px 6px;background:#1e1e1e;border:1px solid #333;border-radius:4px;color:#fff;font-size:12px;outline:none"
                     />
                     <span style="font-size:11px;color:#8e8e93">{gt("gui.budgetsZeroNoLimit")}</span>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Деталь 3.8: обратная связь пользователей с автором (F-3.2) */}
+            <div style="width:100%;max-width:700px;box-sizing:border-box;margin-top:8px;background:#1e1e1e;border:1px solid #333;border-radius:10px;overflow:hidden">
+              <button
+                onClick={() => setFeedbackCollapsed(!feedbackCollapsed())}
+                style="display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;box-sizing:border-box;padding:10px 14px;background:transparent;border:none;color:#e0e0e0;font-size:12px;font-weight:600;cursor:pointer;text-align:left"
+              >
+                <span>{gt("feedback.settingsTitle")}</span>
+                <span style="display:flex;align-items:center;gap:8px;font-size:11px;font-weight:400;color:#8e8e93">
+                  {feedbackEnabled() ? gt("gui.budgetsEnabled") : gt("gui.budgetsDisabled")}
+                  <span>{feedbackCollapsed() ? "▾" : "▴"}</span>
+                </span>
+              </button>
+              {!feedbackCollapsed() && (
+                <div style="padding:0 14px 14px;display:flex;flex-direction:column;gap:10px">
+                  <div style="font-size:11px;color:#8e8e93">{gt("feedback.settingsHint")}</div>
+                  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                    <label style="font-size:12px;color:#e0e0e0;white-space:nowrap">
+                      <input
+                        type="checkbox"
+                        checked={feedbackEnabled()}
+                        onChange={(e) => {
+                          setFeedbackEnabled(e.currentTarget.checked)
+                          void saveFeedbackSettings()
+                        }}
+                      />{" "}
+                      {gt("feedback.settingsEnabled")}
+                    </label>
+                  </div>
+                  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                    <label style="font-size:12px;color:#e0e0e0;white-space:nowrap">{gt("feedback.settingsEndpoint")}</label>
+                    <input
+                      type="url"
+                      value={feedbackEndpoint()}
+                      placeholder="https://feedback.example.workers.dev/report"
+                      onBlur={() => void saveFeedbackSettings()}
+                      onChange={(e) => setFeedbackEndpoint(e.currentTarget.value)}
+                      style="width:340px;padding:4px 6px;background:#1e1e1e;border:1px solid #333;border-radius:4px;color:#fff;font-size:12px;outline:none"
+                    />
+                  </div>
+                  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                    <label style="font-size:12px;color:#e0e0e0;white-space:nowrap">
+                      <input
+                        type="checkbox"
+                        checked={feedbackIncludeLogs()}
+                        onChange={(e) => {
+                          setFeedbackIncludeLogs(e.currentTarget.checked)
+                          void saveFeedbackSettings()
+                        }}
+                      />{" "}
+                      {gt("feedback.settingsIncludeLogs")}
+                    </label>
+                  </div>
+                  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                    <label style="font-size:12px;color:#e0e0e0;white-space:nowrap">{gt("feedback.settingsContactEmail")}</label>
+                    <input
+                      type="email"
+                      value={feedbackContactEmail()}
+                      onBlur={() => void saveFeedbackSettings()}
+                      onChange={(e) => setFeedbackContactEmail(e.currentTarget.value)}
+                      style="width:240px;padding:4px 6px;background:#1e1e1e;border:1px solid #333;border-radius:4px;color:#fff;font-size:12px;outline:none"
+                    />
+                  </div>
+                  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                    <label style="font-size:12px;color:#e0e0e0;white-space:nowrap">{gt("feedback.settingsMaxPerHour")}</label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="100"
+                      value={feedbackMaxPerHour()}
+                      onChange={(e) => {
+                        setFeedbackMaxPerHour(Math.max(1, Number(e.currentTarget.value) || 6))
+                        void saveFeedbackSettings()
+                      }}
+                      style="width:70px;padding:4px 6px;background:#1e1e1e;border:1px solid #333;border-radius:4px;color:#fff;font-size:12px;outline:none"
+                    />
                   </div>
                 </div>
               )}

@@ -280,14 +280,14 @@ Tasks are **interactive only** by default: Task Scheduler starts them only while
 npm install
 npm run build        # tsc
 npm run build:gui    # vite
-npm test             # 113 test suites, 600+ checks
+npm test             # 115 test suites, 600+ checks
 npm run test:en      # same suites with the English locale
 ```
 
-`npm run test:chaos` runs `test-chaos-dag.mjs` separately — it is one of two
-`test-*.mjs` files on disk (113 total) intentionally not part of `npm test`,
-alongside `test-prod-install.mjs`. The **111** in `npm test` counts exactly the
-suites listed in that script.
+`npm run test:chaos` runs `test-chaos-dag.mjs` separately; `test-prod-install.mjs`
+is likewise invoked through its own script. The **115** in `npm test` counts
+exactly the suites listed in that script; every `test-*.mjs` file on disk is
+reachable through at least one npm script.
 
 `npm run test:en` sets `OPENCODE_SCHEDULER_LOCALE=en` for every suite; the variable is a
 service hook, not a user setting.

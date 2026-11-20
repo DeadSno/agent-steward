@@ -356,6 +356,25 @@ export interface PermissionSettings {
 }
 
 /**
+ * Деталь 3.8: канал «пользователь → автор».
+ *
+ * В настройках хранится только URL write-only приёмника. Никаких токенов:
+ * PAT живёт в секретах Cloudflare Worker (infra/feedback-worker).
+ */
+export interface FeedbackSettings {
+  /** Включена ли отправка отчётов автору. По умолчанию выключена. */
+  enabled: boolean;
+  /** URL приёмника (`POST /report`). Пустой → fail-open в локальный outbox. */
+  endpoint: string;
+  /** Прикладывать логи. По умолчанию false — приватность важнее. */
+  includeLogs: boolean;
+  /** Обратный адрес (опционально, попадает в payload). */
+  contactEmail: string;
+  /** Лимит отчётов в час (антиспам, F-1.7). */
+  maxPerHour: number;
+}
+
+/**
  * Глобальные настройки плагина, которые меняются из GUI.
  * Хранятся в settings.json рядом с tasks.json / history.json.
  */
@@ -387,6 +406,8 @@ export interface SchedulerSettings {
   permissions: PermissionSettings;
   /** Бюджеты день/неделя (Экономика v2, E-1.1). */
   budgets: BudgetSettings;
+  /** Обратная связь пользователей (Деталь 3.8). */
+  feedback: FeedbackSettings;
 }
 
 export const SETTINGS_FILE = path.join(PLUGIN_DIR, "settings.json");
@@ -436,6 +457,59 @@ export function normalizeBudgetSettings(
     enabled: typeof raw.enabled === "boolean" ? raw.enabled : fallback.enabled,
     dailyUsd: normalizeFloatInRange(raw.dailyUsd, fallback.dailyUsd, 0, 1_000_000),
     weeklyUsd: normalizeFloatInRange(raw.weeklyUsd, fallback.weeklyUsd, 0, 1_000_000),
+  };
+}
+
+/** Деталь 3.8: по умолчанию канал автору выключен, логи не прикладываются. */
+export const DEFAULT_FEEDBACK_SETTINGS: FeedbackSettings = {
+  enabled: false,
+  endpoint: "",
+  includeLogs: false,
+  contactEmail: "",
+  maxPerHour: 6,
+};
+
+export function defaultFeedbackSettings(): FeedbackSettings {
+  return { ...DEFAULT_FEEDBACK_SETTINGS };
+}
+
+/**
+ * Валидация настроек обратной связи. Неверный URL не отбрасывает всю секцию —
+ * он заменяется пустым (fail-open): отправка деградирует до outbox.
+ */
+export function normalizeFeedbackSettings(
+  value: unknown,
+  fallback: FeedbackSettings,
+): FeedbackSettings {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { ...fallback };
+  }
+  const raw = value as Partial<FeedbackSettings>;
+  let endpoint = typeof raw.endpoint === "string" ? raw.endpoint.trim() : fallback.endpoint;
+  if (endpoint) {
+    try {
+      const url = new URL(endpoint);
+      const local = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+      if (
+        (url.protocol !== "https:" && !(url.protocol === "http:" && local)) ||
+        url.username ||
+        url.password ||
+        url.hash ||
+        endpoint.length > 2048
+      ) {
+        endpoint = "";
+      }
+    } catch {
+      endpoint = "";
+    }
+  }
+  return {
+    enabled: typeof raw.enabled === "boolean" ? raw.enabled : fallback.enabled,
+    endpoint,
+    includeLogs: typeof raw.includeLogs === "boolean" ? raw.includeLogs : fallback.includeLogs,
+    contactEmail:
+      typeof raw.contactEmail === "string" ? raw.contactEmail.trim().slice(0, 254) : fallback.contactEmail,
+    maxPerHour: normalizeIntInRange(raw.maxPerHour, fallback.maxPerHour, 1, 100),
   };
 }
 
@@ -1281,6 +1355,7 @@ export async function loadSettings(): Promise<SchedulerSettings> {
   const fallbackAudit = defaultAuditSettings();
   const fallbackPermissions = defaultPermissionsSettings();
   const fallbackBudgets = defaultBudgetSettings();
+  const fallbackFeedback = defaultFeedbackSettings();
   try {
     const raw = await fs.readFile(SETTINGS_FILE, "utf8");
     const parsed = JSON.parse(raw) as Partial<SchedulerSettings> | null;
@@ -1310,6 +1385,7 @@ export async function loadSettings(): Promise<SchedulerSettings> {
         fallbackPermissions,
       ),
       budgets: normalizeBudgetSettings(parsed?.budgets, fallbackBudgets),
+      feedback: normalizeFeedbackSettings(parsed?.feedback, fallbackFeedback),
     };
   } catch {
     return {
@@ -1323,6 +1399,7 @@ export async function loadSettings(): Promise<SchedulerSettings> {
       audit: fallbackAudit,
       permissions: fallbackPermissions,
       budgets: fallbackBudgets,
+      feedback: fallbackFeedback,
     };
   }
 }
@@ -1373,6 +1450,10 @@ export async function saveSettings(
       patch.budgets !== undefined
         ? normalizeBudgetSettings(patch.budgets, current.budgets)
         : current.budgets,
+    feedback:
+      patch.feedback !== undefined
+        ? normalizeFeedbackSettings(patch.feedback, current.feedback)
+        : current.feedback,
   };
 
   // Удобство: при включении хуков без явных учётных данных генерируем их,

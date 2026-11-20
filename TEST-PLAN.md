@@ -44,10 +44,11 @@
 cd agent-steward
 npm run build          # tsc: dist/ (сервер, RPC, ядро)
 npm run build:gui      # vite: gui-experimental.cjs (панель OpenCode)
-npm test               # 117 файлов test-*.mjs (109 npm-скриптов), полный регресс
+npm test               # 119 файлов test-*.mjs (111 npm-скриптов), полный регресс
 node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с сид-данными
 ```
 
+- Текущая схема БД: `SCHEMA_VERSION = 12` (таблицы обратной связи `feedback_outbox`/`feedback_spam`; историческая миграция 10 → 11 описана в S15.1.2).
 - GUI: OpenCode → боковая панель «Планировщик Windows». После пересборки панель перезагрузить.
 - MCP: 30 инструментов доступны агенту в этой же сессии.
 - Дашборд: `http://127.0.0.1:3782/` (порт может отличаться, смотреть `get_dashboard_info`).
@@ -557,7 +558,7 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 | S16.1.1 | 🧪 tsc | `npm run build` | 0 ошибок |
 | S16.1.2 | 🧪 vite | `npm run build:gui` | `gui-experimental.cjs` создан, каталоги внутри |
 | S16.1.3 | 🧪 Экспорты | `package.json.exports` | `./gui-experimental` и основные точки входа валидны |
-| S16.1.4 | 🧪 Тесты | `npm test` | 117 файлов `test-*.mjs` (109 npm-скриптов), 0 падений |
+| S16.1.4 | 🧪 Тесты | `npm test` | 119 файлов `test-*.mjs` (111 npm-скриптов), 0 падений |
 | S16.1.5 | 🧪 Docs | `node test-docs.mjs` | Команды и ключи в README/CHANGELOG актуальны |
 | S16.1.6 | 🧪 Чистая установка | `npm pack` → установка в пустой проект | Плагин стартует, панель открывается |
 | S16.1.7 | 🧪 Версия | `version.ts` / CHANGELOG | Совпадают, дата и раздел Fixed на месте |
@@ -811,7 +812,8 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 | `test-eslint-baseline.mjs` | D16 (baseline-гейт ESLint, QA-A2.0) |
 | `test-pipeline.mjs` | D18 (pipeline-as-code: схема/валидатор/CLI, S18.1.1–S18.1.7) |
 | `test-test-plan.mjs` | D16 (TP-6.1: качество TEST-PLAN.md, 17 проверок) |
-| test-feedback.mjs | D17 (обратная связь / report_bug, S17.1.1–S17.1.6; F-4.1) |
+| `test-feedback.mjs` | D17 (обратная связь / report_bug, S17.1.1–S17.1.6; F-4.1) |
+| `test-feedback-worker.mjs` | D17 (приёмник: валидация, дедуп, rate-limit, honeypot; F-4.2) |
 | `test-v1-integration.mjs` | D16 (V1-адаптер без OpenCode CLI) |
 | `test-package-exports.mjs` | D16.1.3 |
 | `test-prod-install.mjs` | D16.1.6 |
@@ -898,10 +900,10 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 
 | ID | Деталь | Приоритет | Статус | Суть |
 |---|---|---|---|---|
-| F-1 | D17 (обратная связь) | P2 | ⬜ | Клиент: контракт payload, `feedback.ts`, настройки, редакция секретов, `report_bug` (`destination`/`dryRun`), outbox, антиспам |
-| F-2 | D17 (приёмник) | P2 | ⏸️ | Cloudflare Worker → GitHub Issues: валидация, rate-limit, PAT `issues:write`, дедуп по `reportId` |
-| F-3 | D17 (прозрачность) | P2 | ⬜ | Показ payload перед отправкой, consent/приватность, i18n ru/en/zh |
-| F-4 | D17 (тесты и документация) | P3 | ⬜ | `test-feedback.mjs`, тест Worker, **F-4.3: TEST-PLAN D17 + docs/FEATURES.md**, CHANGELOG + `test-docs` |
+| F-1 | D17 (обратная связь) | P2 | ✅ закрыто | Клиент: контракт payload, `feedback.ts`, настройки, редакция секретов, `report_bug` (`destination`/`dryRun`), outbox, антиспам — перенесено в `CHANGELOG.md` |
+| F-2 | D17 (приёмник) | P2 | ✅ закрыто (кроме деплоя) | Cloudflare Worker → GitHub Issues: валидация, rate-limit, PAT `issues:write`, дедуп по `reportId`; F-2.5 (deploy + секреты) остаётся в ROADMAP |
+| F-3 | D17 (прозрачность) | P2 | ✅ закрыто | Показ payload перед отправкой, consent/приватность, i18n ru/en/zh — перенесено в `CHANGELOG.md` |
+| F-4 | D17 (тесты и документация) | P3 | ✅ закрыто | `test-feedback.mjs`, тест Worker, **F-4.3: TEST-PLAN D17 + docs/FEATURES.md**, CHANGELOG + `test-docs` — перенесено в `CHANGELOG.md` |
 | E-1 / E-2.1 / E-2.2 | D08 (бюджеты) | P2 | ✅ закрыто | Бюджеты день/неделя, лимит токенов на задачу и остановка при превышении — перенесены в `CHANGELOG.md` [Unreleased] → Added |
 | E-3 | D08 | P3 | ⬜ | Token efficiency score |
 | E-4 | D08 | P3 | ⬜ | Прогноз затрат + экспорт в Grafana JSON |

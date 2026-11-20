@@ -712,6 +712,39 @@ plugin, no installation step required.
 The `manage_local_ai` tool reads, updates and tests the local triage settings
 (`action: "get" | "update" | "test"`); see [LOCAL-AI.md](LOCAL-AI.md).
 
+## Author feedback (bug reports)
+
+`report_bug` sends a structured report to the plugin author through a **write-only**
+receiver (a Cloudflare Worker that creates a GitHub Issue in `DeadSno/agent-steward`).
+The npm package contains **no tokens**: the fine-grained PAT (`issues: write` only)
+lives in the receiver secrets. See [infra/feedback-worker/README.md](../infra/feedback-worker/README.md)
+for deployment.
+
+Arguments: `description` (required), `destination: "author" | "local" | "both"`
+(default `author`), `dryRun` (preview only, no network), `includeLogs` (default
+**false**), `includeAnalytics` (default true), `contactEmail`, `taskName`, `channel`.
+
+What is sent in the payload (`schemaVersion: 1`): plugin/OS/Node versions,
+locale, active profile, optional task name, the description, and — only when
+explicitly allowed — redacted logs and aggregate metrics. What is **not** sent by
+default: logs, emails, raw environment variables. Client-side redaction removes
+`sk-`/`ghp_`/`xox*`/bot tokens, all values stored via `manage_secrets`, the home
+directory (replaced with `~`) and email addresses (replaced with `[EMAIL]`).
+`contactEmail` is included only if the user provided it explicitly.
+
+Privacy controls: `feedback.enabled` defaults to **false**; `includeLogs` defaults
+to **false**; the endpoint must be HTTPS (HTTP only for localhost) and is validated
+on save. Use `report_bug` with `dryRun: true` to inspect the exact payload before
+sending — the plugin displays `schemaVersion`, `reportId`, OS, locale, profile,
+description, contact email, logs and metrics (F-3.1). The GUI has a dedicated
+**Author feedback** settings section. Messages are localized to ru/en/zh.
+
+Delivery is fail-open (F-1.6): if the receiver is unavailable, the report is saved
+to the local `feedback_outbox` table and retried on plugin start (max 5 attempts);
+it never blocks task execution. A hash of the description, a 5-minute window and
+an hourly limit (default 6) prevent spam; only hashes, never report text, are stored
+in `feedback_spam`.
+
 ## Local assistant (triage)
 
 An optional offline model classifies failed and partial runs (category, severity,

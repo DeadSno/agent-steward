@@ -67,6 +67,27 @@ CREATE TABLE IF NOT EXISTS settings (
   value_json TEXT NOT NULL
 );
 
+-- Деталь 3.8 (F-1.6): локальный outbox отчётов, когда приёмник недоступен.
+-- Отправка повторяется при старте плагина, попытки ограничены.
+CREATE TABLE IF NOT EXISTS feedback_outbox (
+  id TEXT PRIMARY KEY,
+  report_id TEXT NOT NULL UNIQUE,
+  payload_json TEXT NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT,
+  created_at TEXT NOT NULL,
+  last_attempt_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_feedback_outbox_created ON feedback_outbox(created_at);
+
+-- Деталь 3.8 (F-1.7): антиспам — только хеш описания и время, без PII.
+CREATE TABLE IF NOT EXISTS feedback_spam (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  hash TEXT NOT NULL,
+  at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_feedback_spam_at ON feedback_spam(at DESC);
+
 CREATE TABLE IF NOT EXISTS workspaces (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
@@ -256,7 +277,7 @@ interface SchemaDb {
  * миграций. Увеличивайте при добавлении новой ступени в {@link MIGRATIONS}
  * и добавляйте соответствующую запись в массив.
  */
-export const SCHEMA_VERSION = 11;
+export const SCHEMA_VERSION = 12;
 
 /** Возвращает сохранённую версию схемы (0 у legacy-БД без user_version). */
 export function getSchemaVersion(db: SchemaDb): number {
@@ -541,6 +562,34 @@ const MIGRATIONS: { to: number; migrate: (db: SchemaDb) => void }[] = [
           ON history(lower(task_name), started_at DESC);
         CREATE INDEX IF NOT EXISTS idx_history_status_lower
           ON history(lower(status), started_at DESC);
+      `);
+    },
+  },
+  {
+    // Ступень 12 — Деталь 3.8: outbox и антиспам для обратной связи.
+    // CREATE TABLE IF NOT EXISTS идемпотентен: legacy-БД получает таблицы
+    // и здесь, и через SCHEMA_SQL — повтор безопасен.
+    to: 12,
+    migrate(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS feedback_outbox (
+          id TEXT PRIMARY KEY,
+          report_id TEXT NOT NULL UNIQUE,
+          payload_json TEXT NOT NULL,
+          attempts INTEGER NOT NULL DEFAULT 0,
+          last_error TEXT,
+          created_at TEXT NOT NULL,
+          last_attempt_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_feedback_outbox_created
+          ON feedback_outbox(created_at);
+        CREATE TABLE IF NOT EXISTS feedback_spam (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          hash TEXT NOT NULL,
+          at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_feedback_spam_at
+          ON feedback_spam(at DESC);
       `);
     },
   },

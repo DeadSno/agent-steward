@@ -650,6 +650,27 @@ GUI 面板）支持 `list`、`set` 和 `delete`。密钥名匹配
 `manage_local_ai` 工具读取、更新并测试本地分诊设置
 （`action: "get" | "update" | "test"`）；见 [LOCAL-AI.md](LOCAL-AI.md)。
 
+## 作者反馈（bug 报告）
+
+`report_bug` 通过**只写**接收端（Cloudflare Worker，在 `DeadSno/agent-steward`
+创建 GitHub Issue）把结构化报告发送给插件作者；npm 包里不含任何 token，
+fine-grained PAT（仅 `issues:write`）保存在 Worker 的 secrets 中。
+
+参数：`description`（必填）、`destination: "author" | "local" | "both"`
+（默认 `author`）、`dryRun`（只展示 payload，不发网络请求）、
+`includeLogs`（默认 **false**）、`includeAnalytics`、`contactEmail`、`taskName`。
+
+默认发送的 payload（`schemaVersion: 1`）包含插件/操作系统/Node 版本、locale、
+当前 profile、可选任务名、描述，以及明确允许时才附上的脱敏日志和汇总指标。
+默认**不**发送日志、邮箱或原始环境变量；客户端会剔除 `sk-`/`ghp_`/`xox*`/bot
+token、`manage_secrets` 中的值、home → `~`、email → `[EMAIL]`。
+
+隐私控制：`feedback.enabled` 默认 **false**，`includeLogs` 默认 **false**；
+endpoint 必须是 https（localhost 可用 http），保存时校验。先调用
+`report_bug` 且 `dryRun: true` 可查看完整 payload，确认后再发送。GUI 中有
+专门的「作者反馈」设置区，消息提供 ru/en/zh 三种语言。投递采用 fail-open：
+接收端不可用时报告写入本地 outbox，启动时重试（最多 5 次），不阻塞任务。
+
 ## 本地助手（分诊）
 
 一个可选的离线模型对失败和 partial 的运行进行分类（类别、严重程度、
