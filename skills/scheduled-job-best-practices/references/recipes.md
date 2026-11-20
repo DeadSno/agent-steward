@@ -161,3 +161,41 @@ fail-open, and shadow mode makes false skips visible. Only disable shadow mode
 after the shadow report shows no false positives. See `docs/LOCAL-AI.md` for
 model tiers by RAM, `OLLAMA_CONTEXT_LENGTH` troubleshooting and the full JSON
 report format.
+
+## 9. Restarting a `once` task after a plugin reload (PL-1.2)
+
+While the plugin is unloading, `run_task_now` refuses new launches with the structured
+error `PLUGIN_SHUTTING_DOWN` (`message` + `hint`: retry after restart, or use a force
+marker / delayed start). For a `once` task already registered in Windows Task Scheduler,
+the OS can start it without the MCP gate:
+
+```powershell
+# 1. Plain OS trigger (no force marker needed if the schedule gate is not involved):
+schtasks /run /tn "<task name>"
+# Equivalent modern cmdlet:
+Start-ScheduledTask -TaskName "<task name>"
+
+# 2. If the wrapper might be skipped by its cron/window gate, put the force marker
+#    in the task locks directory first (slug = task name lowercased, spaces -> '-'):
+New-Item -ItemType File -Force -Path "locks/<slug>.lock.force" | Out-Null
+Start-ScheduledTask -TaskName "<task name>"
+```
+
+Notes and warnings:
+
+- The wrapper removes `locks/<slug>.lock.force` after the run **and** on failure. If the
+  OS refuses to start, delete the marker yourself — a stale marker can allow a later
+  scheduled tick out of turn.
+- **Never combine both paths in one recovery.** `schtasks /run` plus a manual
+  `run_task_now` (or two `Start-ScheduledTask` calls) creates duplicate runs: locks are
+  per task name, so the second start can be accepted for the next tick.
+- Verify exactly one run: `get_history({ taskName: "<task name>" })` must show a single
+  new `running`/`success` record, and `get_task_logs` must not contain a lock-skip for the
+  same interval. Check again after the plugin restarts — a reload must not leave a second run.
+- Check `nextTaskOnSuccess` / `nextTaskOnError` chains explicitly. They are recorded by a
+  separate process, so the follow-up task can fire after the OS-started run. Look for the
+  chained task in `get_history`; do **not** re-run the parent to "make the chain happen" —
+  that is the classic way to get a duplicate chain entry.
+
+Why: the OS trigger is the documented escape hatch for the shutdown gate; the force marker
+only bypasses the schedule gate, and both need a duplicate check plus a chain check.

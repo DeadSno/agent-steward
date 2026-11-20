@@ -15,6 +15,7 @@ const read = (name) => fs.readFileSync(path.join(root, name), "utf8");
 
 const plan = read("TEST-PLAN.md");
 const roadmap = read("ROADMAP.md");
+const changelog = read("CHANGELOG.md");
 const schemaSrc = read("src/db/schema.ts");
 const pkg = JSON.parse(read("package.json"));
 
@@ -83,6 +84,17 @@ check("ROADMAP: все TP-3/4/5/6 подзадачи закрыты", !/^- \[ \]
 check("артефакты TP-6 созданы",
   testFiles.includes("test-test-plan.mjs") &&
     fs.existsSync(path.join(root, "scripts", "gen-test-plan-counters.mjs")));
+
+// PL-3.2: закрытые подзадачи уходят из ROADMAP и остаются только в CHANGELOG.
+const movedIds = ["TP-3", "TP-4", "TP-5", "TP-6"];
+check("PL-3.2: Деталь 1.4 / TP-3…TP-6 отсутствуют в ROADMAP",
+  !/^##\s+Деталь 1\.4\b/m.test(roadmap) &&
+    movedIds.every((id) =>
+      !new RegExp(`^-\\s*\\[[ xX]\\]\\s*${id}\\b`, "m").test(roadmap)));
+check("PL-3.2: Деталь 1.4 / TP-3…TP-6 зафиксированы в CHANGELOG",
+  /Деталь 1\.4/.test(changelog) &&
+    /TP-3\s*[–—-]\s*TP-6/.test(changelog) &&
+    /удалена из ROADMAP/i.test(changelog));
 
 const failed = results.filter((r) => !r.ok);
 console.log(`\nИТОГО: ${results.length - failed.length}/${results.length} проверок пройдено.`);

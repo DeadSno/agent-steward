@@ -765,7 +765,11 @@ const deleteTaskSchema = z.object({
 });
 
 const runTaskNowSchema = z.object({
-  name: z.string().describe("Task name to run immediately."),
+  name: z
+    .string()
+    .describe(
+      "Task name to run immediately. While the plugin unloads the tool returns a structured PLUGIN_SHUTTING_DOWN error (message + retry hint).",
+    ),
 });
 
 export const updateTaskSchema = z.object({
@@ -3337,7 +3341,17 @@ const getAnalyticsExecute = wrapExecute<AnalyticsArgs>(async (args) => {
   // Экономика v2 (E-1.1): учёт расхода за день/неделю рядом с аналитикой.
   const settings = await loadSettings();
   const budgets = buildBudgetReport(records, settings.budgets, new Date());
-  return { content: JSON.stringify({ success: true, report: { ...report, budgets } }) };
+  // PL-4.1: tool.blocked — метрика корректности прав политики, а не ошибка
+  // запуска. Считаем за то же окно, что и аналитику; readAuditLog отдаёт total
+  // независимо от limit, поэтому одной строки выборки достаточно для счётчика.
+  const since = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000).toISOString();
+  const toolBlocked = readAuditLog({ action: "tool.blocked", since, limit: 1 }).total;
+  return {
+    content: JSON.stringify({
+      success: true,
+      report: { ...report, budgets, toolBlocked },
+    }),
+  };
 });
 
 /** self_analysis — система самоанализа: здоровье, аномалии, тренды, рекомендации. */
@@ -5510,7 +5524,10 @@ const v2Plugin = Plugin.define({
           // Экономика v2 (E-1.1): тот же учёт, что и в агент-инструменте.
           const settings = await loadSettings();
           const budgets = buildBudgetReport(records, settings.budgets, new Date());
-          return { success: true, report: { ...report, budgets } };
+          // PL-4.1: та же метрика корректности прав, что и в MCP get_analytics.
+          const since = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000).toISOString();
+          const toolBlocked = readAuditLog({ action: "tool.blocked", since, limit: 1 }).total;
+          return { success: true, report: { ...report, budgets, toolBlocked } };
         } catch (err) {
           return {
             success: false,
@@ -7630,10 +7647,27 @@ function checkTaskTokenBudgetGate(
   return evaluateTaskTokenBudgetGate(records, taskName, tokenBudget, now);
 }
 
+/**
+ * PL-1.1: структурированная ошибка отказа запуска во время выгрузки плагина.
+ * Текст `message` сохранён дословно для совместимости с существующими
+ * вызывающими; `code` и `hint` дают кнопке повтора/оператору понятный путь.
+ */
+export class PluginShutdownError extends Error {
+  readonly code = "PLUGIN_SHUTTING_DOWN";
+  readonly hint: string;
+
+  constructor(message: string, hint: string) {
+    super(message);
+    this.name = "PluginShutdownError";
+    this.hint = hint;
+  }
+}
+
 async function runTaskEntry(name: string): Promise<{ alreadyRunning: boolean }> {
   if (shutdownGate.isShuttingDown()) {
-    throw new Error(
+    throw new PluginShutdownError(
       "Плагин выгружается: новые запуски не принимаются. Повторите после перезапуска.",
+      "Повторите запуск после перезапуска плагина. Для once/cron-задач используйте force-маркер locks/<slug>.lock.force + Start-ScheduledTask (schtasks /run) либо отложенный запуск после перезапуска.",
     );
   }
 

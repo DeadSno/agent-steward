@@ -53,6 +53,35 @@ reports/nightly-api.md with the failing test names and the commit you started fr
 Never ask the agent to "ask the user" in a scheduled prompt — nobody is there. If a decision
 is genuinely ambiguous, tell it to stop and write the question into the report.
 
+### Prompt template for planning-document updates (PL-3.1)
+
+When a prompt asks the agent to close tasks in `ROADMAP.md`, keep `TEST-PLAN.md` or
+write a CHANGELOG entry, put the exact line format and the artifact checklist into
+the prompt itself — do not rely on the agent to guess them:
+
+````text
+Roadmap line format (copy verbatim, one line per closed subtask):
+- [x] <ID> <title>: <files> — <P0|P1|P2|P3>. Действие: <what to do>
+
+Rule: wrap every EXISTING file path in backticks, e.g.
+  - [x] TP-6 test plan gate: `test-test-plan.mjs`, `scripts/gen-test-plan-counters.mjs` — P3. Действие: ...
+Never invent a file: a path that does not exist must not appear as an artifact and must
+not be given backticks. Verify each path before writing the line.
+
+Artifact checklist (copy into the prompt and tick before reporting done):
+- [ ] ROADMAP.md: closed lines removed (or [x] only if the doc explicitly keeps them),
+      no duplicate of a closed ID remains.
+- [ ] CHANGELOG.md: one entry per closed detail/subtask with the ID and the result.
+- [ ] TEST-PLAN.md: §5 row for each existing `test-*.mjs`, filename in backticks;
+      no row for a missing file; counters match the code.
+- [ ] reports/<name>.md: report written with statuses, verification commands and results.
+- [ ] Verification commands actually run (build / target test / lint baseline).
+````
+
+This is the concrete form of items 4–5 above: "Verification" and "Output" must be
+machine-checkable, not a wish. A line for a non-existent `test-feedback.mjs` is worse
+than a missing line, because the gate then checks a file that will never appear.
+
 ## 4. Safety defaults
 
 - **Least privilege**: the default `hybrid` policy already denies `shell` and `question`; keep it
@@ -60,6 +89,12 @@ is genuinely ambiguous, tell it to stop and write the question into the report.
   for `shell` just to run `git commit`, a build or tests — put those in `qualityGate`/`afterScript`,
   which the wrapper runs outside the agent. If a job truly needs shell, list `shell` in
   `allowedTools` (or set `legacyShell: true` for a migrated task) and explain why.
+- **Self-check prompts (PL-2.1/PL-2.2)**: decide the tool policy at creation time. If the prompt
+  says "run `node`", "`npm test`", "`pytest`" or otherwise verifies its own work, then either put
+  `shell` into `allowedTools` immediately, or move every such check into `qualityGate`/`afterScript`
+  so the wrapper runs it. Leaving shell denied while demanding a self-check produces
+  `tool.blocked` in the audit log and a "verified" report that verified nothing. `dry_run` warns
+  about this combination.
 - **Timeout**: always set `timeoutSeconds` for jobs that call networks or models. Default
   timeouts are a safety net, not a plan.
 - **Quality Gate**: pass `qualityGate` whenever a machine-checkable success criterion exists
@@ -136,6 +171,8 @@ Rules of thumb:
 | `* * * * *` with a heavy prompt | Runs overlap, lock-skips, cost spikes | Realistic interval + timeout |
 | Prompt depending on chat context | Nonsense output at 03:00 | Self-contained prompt with paths |
 | No Quality Gate on a "fixer" job | Broken code reported as success | `qualityGate: "npm test"` |
+| Prompt demands `node`/tests but shell is denied | `tool.blocked`, fake "verified" report | `shell` in `allowedTools` or checks in `qualityGate`/`afterScript` |
+| Closed task left in `ROADMAP.md` with a missing/incorrect file name | Gate checks a file that does not exist | Exact line format + artifact checklist in the prompt (PL-3.1) |
 | Matrix with 20 workspaces, no concurrency cap | Machine and API saturation | `matrix.concurrency: 2–4` |
 | Secrets inside the prompt | Leak into DB, logs and dashboard | Env vars or files |
 | Deleting a matrix parent's clone by hand | Orphaned history, broken aggregate | `update_task` on the parent |
@@ -147,9 +184,12 @@ Before saying the job is done, confirm:
 
 - [ ] `list_tasks` checked; no duplicate exists.
 - [ ] Trigger type matches the need (cron / file / MCP event).
-- [ ] Prompt states goal, scope, constraints, verification and output.
+- [ ] Prompt states goal, scope, constraints, verification and output; for doc updates it
+      includes the exact line format and the artifact checklist from §3 (PL-3.1).
 - [ ] `timeoutSeconds` set; `qualityGate` set when checkable.
 - [ ] `allowedTools` / `deniedTools` follow least privilege; shell is absent unless justified.
+      If the prompt demands a self-check, shell is in `allowedTools` or the check lives in
+      `qualityGate`/`afterScript` — never both "no shell" and "verify with node/tests" (PL-2.1).
 - [ ] Matrix: workspaces correct, concurrency capped, failure mode justified.
 - [ ] `dry_run` reviewed.
 - [ ] One successful `run_task_now` with clean `get_history`.

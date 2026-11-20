@@ -124,6 +124,32 @@ const DANGEROUS_PATTERNS: { test: RegExp; messageKey: string }[] = [
 ];
 
 /**
+ * PL-2.2: команды самопроверки, которые агент не выполнит без инструмента
+ * shell. Если они есть в промпте, а shell запрещён, агент получает tool.blocked
+ * и рапортует об «успешной проверке», ничего не проверив.
+ */
+const SELF_CHECK_PATTERNS: readonly RegExp[] = [
+  /\bnpm\s+(?:test|run\s+[\w-]*test[\w-]*)\b/i,
+  /\bnode(?:\.exe)?\s+\S/i,
+  /\bpytest\b/i,
+  /\b(?:go|dotnet)\s+test\b/i,
+  /\btest\b/i,
+  /тест/iu,
+];
+
+/** PL-2.2: эффективный запрет shell с учётом legacy-режима и политик. */
+function shellIsForbidden(def: TaskDefinition): boolean {
+  if (def.legacyShell === true) return false;
+  const isShell = (tool: string): boolean => /^(?:shell|bash)$/i.test(tool.trim());
+  const allowed = Array.isArray(def.allowedTools) ? def.allowedTools : [];
+  const denied = Array.isArray(def.deniedTools) ? def.deniedTools : [];
+  if (allowed.length > 0) return !allowed.some(isShell);
+  if (denied.length > 0) return denied.some(isShell);
+  // Политика hybrid по умолчанию запрещает shell (см. SKILL.md §4).
+  return true;
+}
+
+/**
  * Свойства для описания триггера задачи в dry-run (Спринт 27).
  */
 interface DescribeTriggerOptions {
@@ -508,6 +534,18 @@ export async function simulatePipeline(taskName: string): Promise<DryRunReport> 
           t("dryRun.dangerPattern", { message: t(messageKey) }),
         );
       }
+    }
+
+    // PL-2.2: самопроверка через node/тесты при запрещённом shell — источник
+    // tool.blocked в аудите и ложного «проверено» в отчёте агента.
+    if (
+      shellIsForbidden(def) &&
+      typeof def.prompt === "string" &&
+      SELF_CHECK_PATTERNS.some((pattern) => pattern.test(def.prompt ?? ""))
+    ) {
+      taskWarnings.push(
+        "PL-2.2: промпт требует самопроверки (node/тесты), но shell запрещён: добавьте shell в allowedTools или перенесите проверки в qualityGate/afterScript.",
+      );
     }
 
     const roleScoped: DryRunRoleScoped | null =
