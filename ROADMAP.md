@@ -268,3 +268,15 @@ agent-steward — execution engine с опциональной регистра�
 - [ ] GitHub release создан для тега.
 - [ ] Пока жив legacy: диапазон шима актуален, deprecation не снят.
 - [ ] Критические баги аудита закрыты или документированы как known issues.
+
+## Находки при выполнении PL-41..PL-44 (20.11.2026)
+
+- [ ] PL-45: in-process запуск заблокирован: `run_task_now`/`emit_event` в Code Mode возвращают `start_failed` «Плагин выгружается: новые запуски не принимаются», хотя ОС-запуск `schtasks /Run` работает; `src/core/shutdown.ts`, `src/index.ts`. Проверка: живой вызов + код-ревью — P1. Действие: не выставлять `unloadCompleted` без реальной выгрузки либо сбрасывать stale-gate при инициализации сессии, возвращать `retryable:true`.
+- [ ] PL-46: при `schtasks /End` прогон навсегда остаётся `status:"running"`, `finishedAt:""`; `src/index.ts` (`get_history`). Проверка: `get_history` по PL-42 — P2. Действие: watchdog помечать записи старше `timeoutSeconds + N` как `error`/`timeout` либо проверять живость PID.
+- [ ] PL-47: Quality Gate после PL-25 несовместим с задачами, правящими `src/`: `src/core/gate-integrity.ts` (guard `["src"]`), `src/core/ps-wrapper.ts` (снапшот до прогона, сверка перед гейтом). Проверка: код + прогон PL-42/PL-43 — P1. Действие: исключать из сверки пути, объявленные в `-Files`/scope задачи.
+- [ ] PL-48: `mcpEvent.server` не участвует в сопоставлении события `emit_event`; `src/index.ts`. Проверка: код-ревью и живой `emit_event` — P2. Действие: фильтровать по `server` либо убрать поле из схемы.
+- [ ] PL-49: `dry_run` не предупреждает про `* * * * *` и про `timeoutSeconds` больше интервала; `src/index.ts` (`dryRunExecute`). Проверка: код-ревью — P3. Действие: добавить warning.
+- [ ] PL-50: cron вне подмножества `schtasks` тикает каждую минуту без пометки; `src/core/scheduler/windows.ts`. Проверка: код-ревью — P3. Действие: писать `polling: 1m` в `dry_run`/`list_tasks`.
+- [ ] PL-51: модель по умолчанию `mimo-v2.6-flash-free` зависает: `ECONNRESET` на `Read`, 9+ минут без правок (прогон PL-42) — P2. Действие: сменить дефолт на стабильную модель или добавить health-check/таймаут первого токена.
+- [ ] PL-52: несуществующий `scripts/qa38-commit.ps1` в тексте PL-41 — P3. Действие: ссылаться на реальный `scripts/qa-a2-commit.ps1` (ссылка убрана вместе с PL-41).
+- [ ] PL-53: отказ старта по file-триггеру не оставляет записи в `get_history`: файлы в watchPath не дают ни запуска, ни ошибки, причина видна только в `console.error` хоста — P2. Действие: писать неудачный `scheduleEventRun` в журнал/историю задачи.
