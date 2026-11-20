@@ -60,11 +60,6 @@ Legacy: `opencode-windows-scheduler@1.5.8`.
 
 > Цель: план должен быть корректным, самодостаточным и пригодным как критерий приёмки. Сверка с кодом выявила 11 находок (P1 — 2, P2 — 6, P3 — 3). Подтверждено корректным: §7.1 (закрытые QA-P3.5–P3.8), 57 RPC в Приложении A, i18n-паритет 870/870/870, E2E-1…E2E-9, детали D01–D16, BP-D08-1. Источник — отчёт `reports/QA_AUDIT.md`, после переноса удалён.
 
-**Задача TP-1 — Корректность счётчиков** · P1 · ⬜
-
-- [ ] TP-1.1 Заменить «29 MCP-инструментов» → «30» в §1 (строка D04), заголовке D04, §6, §9 и заголовке Приложения B; добавить `report_bug` в строку D04. Фактически в `src/index.ts` зарегистрировано 30 инструментов, и сам список Приложения B уже содержит 30 имён.
-- [ ] TP-1.2 Заменить «~130 наборов» → «115 файлов `test-*.mjs` (108 npm-скриптов)» в §0.3 и S16.1.4.
-
 **Задача TP-2 — Полнота и точность матрицы покрытия §5** · P2 · ⬜
 
 - [ ] TP-2.1 Добавить в §5 33 отсутствующих теста: `test-at-e2e`, `test-budget`, `test-capability-map`, `test-chaos-dag`, `test-dlq-gui`, `test-dual-entry`, `test-escalation`, `test-execution-hardening`, `test-guards`, `test-model-validation`, `test-models-analysis`, `test-models-config`, `test-path-safety`, `test-pipeline`, `test-planner`, `test-posix-create-rollback`, `test-posix-cron`, `test-posix-e2e`, `test-savings`, `test-schtasks-errors`, `test-schtasks-locales`, `test-settings`, `test-shutdown`, `test-task-name-limit-profile`, `test-triage*` (7 файлов), `test-usage-from-log`, `test-v1-integration`, `test-validation`, `test-w4`, `test-windows-locales`, `test-windows-oem`, `test-worktree`, `test-pause-gui`.
