@@ -1033,8 +1033,9 @@ const getHistorySchema = z.object({
     .describe("Maximum number of records to return (default 20, max 200)."),
 });
 
-const getTaskLogsSchema = z.object({
-  name: z.string().describe("Task name to read logs for."),
+export const getTaskLogsSchema = z.object({
+  name: z.string().optional().describe("Task name to read logs for (alias: taskName)."),
+  taskName: z.string().optional().describe("Alias for name; both spellings are accepted."),
   lines: z
     .number()
     .optional()
@@ -2786,7 +2787,14 @@ const getHistoryExecute = wrapExecute<HistoryArgs>(async (args) => {
 
 /** get_task_logs — последние строки лога задачи. */
 const getTaskLogsExecute = wrapExecute<TaskLogsArgs>(async (args) => {
-  const result = await getTaskLogs(args.name, args.lines ?? 200);
+  // PL-19: MCP-клиенты передают и name, и taskName — принимаем оба написания.
+  const taskName = args.name?.trim() || args.taskName?.trim();
+  if (!taskName) {
+    return {
+      content: JSON.stringify({ success: false, logs: "", error: "Укажите name или taskName задачи" }),
+    };
+  }
+  const result = await getTaskLogs(taskName, args.lines ?? 200);
   if (result.error) {
     return {
       content: JSON.stringify({ success: false, logs: "", error: result.error }),
@@ -5453,8 +5461,12 @@ const v2Plugin = Plugin.define({
         return await updateTaskFromInput(input as UpdateArgs);
       },
       get_task_logs: async (input: unknown) => {
-        const { name } = input as { name: string };
-        const result = await getTaskLogs(name);
+        const { name, taskName } = input as { name?: string; taskName?: string };
+        const resolved = name?.trim() || taskName?.trim();
+        if (!resolved) {
+          return { success: false, logs: "", error: "Укажите name или taskName задачи" };
+        }
+        const result = await getTaskLogs(resolved);
         if (result.error) {
           return { success: false, logs: "", error: result.error };
         }

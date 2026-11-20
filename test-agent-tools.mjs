@@ -21,6 +21,7 @@ const {
   manageProfilesSchema,
   transferTasksSchema,
   emitEventSchema,
+  getTaskLogsSchema,
   createToolHandlers,
 } = await import("./dist/index.js");
 const { getTaskLogs } = await import("./dist/core/scheduler/logs.js");
@@ -319,6 +320,23 @@ check(
   "PL-32: manage_templates delete по имени через MCP-обработчик",
   mcpDelete.success === true &&
     !(await loadTemplates()).some((template) => template.name === mcpProbe.name)
+);
+
+// PL-19: get_task_logs принимает name и taskName.
+check(
+  "PL-19: схема get_task_logs принимает name и taskName",
+  getTaskLogsSchema.safeParse({ name: logName }).success &&
+    getTaskLogsSchema.safeParse({ taskName: logName }).success
+);
+const logsByAlias = JSON.parse((await handlers.get_task_logs({ taskName: logName, lines: 3 })).content);
+const logsByName = JSON.parse((await handlers.get_task_logs({ name: logName, lines: 3 })).content);
+const logsNoName = JSON.parse((await handlers.get_task_logs({})).content);
+check(
+  "PL-19: обработчик get_task_logs читает логи по taskName/name",
+  logsByAlias.success === true &&
+    logsByName.success === true &&
+    logsByAlias.logs.endsWith("line-10") &&
+    logsNoName.success === false
 );
 
 const failed = results.filter((r) => !r.ok);
