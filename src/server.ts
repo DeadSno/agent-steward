@@ -72,6 +72,16 @@ function normalizeProcessName(name: string): string {
   return name;
 }
 
+/**
+ * Type guard для ошибок с полем `code` (например, `EADDRINUSE` от listen()).
+ * Сужает `unknown` из catch до безопасного чтения поля без `as any`.
+ */
+function hasErrorCode(err: unknown): err is { code?: unknown } {
+  return err !== null &&
+    (typeof err === "object" || typeof err === "function") &&
+    "code" in err;
+}
+
 /** Маркер-заголовок: по нему узнаём «свой» дашборд, уже слушающий порт. */
 const DASHBOARD_HEADER = "x-plugin-dashboard";
 const DASHBOARD_MARKER = "agent-steward";
@@ -476,8 +486,8 @@ export async function startDashboardServer(
         running = { server, port: actualPort };
         console.log(`[agent-steward] Веб-дашборд запущен: http://localhost:${actualPort}`);
         return { port: actualPort };
-      } catch (err: any) {
-        if (err?.code !== "EADDRINUSE") {
+      } catch (err: unknown) {
+        if (!(hasErrorCode(err) && err.code === "EADDRINUSE")) {
           console.error(
             `[agent-steward] Не удалось запустить дашборд на порту ${port}: ${
               err instanceof Error ? err.message : String(err)
@@ -590,7 +600,7 @@ async function tryFreeZombiePort(port: number): Promise<boolean> {
         `[agent-steward] Снят зомби-процесс ${info.name} (PID ${pid}), державший порт ${port}.`,
       );
       killed = true;
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.warn(
         `[agent-steward] Не удалось снять процесс PID ${pid}: ${
           err instanceof Error ? err.message : String(err)
@@ -1020,7 +1030,7 @@ async function handleRequest(
       try {
         const report = await simulatePipeline(taskName);
         sendJson(res, 200, report);
-      } catch (err: any) {
+      } catch (err: unknown) {
         sendJson(res, 404, {
           success: false,
           taskName,
@@ -1169,7 +1179,7 @@ async function handleRequest(
           data,
           `scheduler-${stamp}.db`,
         );
-      } catch (err: any) {
+      } catch (err: unknown) {
         sendJson(res, 500, {
           error: `Не удалось экспортировать БД: ${sanitizeError(err)}`,
         });
@@ -1199,7 +1209,7 @@ async function handleRequest(
           limit: Number.isFinite(limitRaw) ? limitRaw : undefined,
         });
         sendJson(res, 200, { success: true, ...result });
-      } catch (err: any) {
+      } catch (err: unknown) {
         sendJson(res, 500, {
           error: sanitizeError(err),
         });
@@ -1274,7 +1284,7 @@ async function handleRequest(
       let tasks: Awaited<ReturnType<DashboardDeps["getTasks"]>>;
       try {
         tasks = await deps.getTasks();
-      } catch (err: any) {
+      } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
         logHook(500, "rejected", `Не удалось получить список задач: ${message}`, bodyResult.body.length);
         sendJson(res, 500, { success: false, error: sanitizeError(err) });
@@ -1312,7 +1322,7 @@ async function handleRequest(
           alreadyRunning: Boolean(result?.alreadyRunning),
           message,
         });
-      } catch (err: any) {
+      } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
         logHook(500, "rejected", message, bodyResult.body.length);
         sendJson(res, 500, { success: false, error: sanitizeError(err) });
@@ -1345,7 +1355,7 @@ async function handleRequest(
             ? `Задача "${name}" уже выполняется.`
             : `Задача "${name}" запущена.`,
         });
-      } catch (err: any) {
+      } catch (err: unknown) {
         sendJson(res, 500, {
           success: false,
           error: sanitizeError(err),
@@ -1383,7 +1393,7 @@ async function handleRequest(
           message: result.message,
           cancelled: result.cancelled,
         });
-      } catch (err: any) {
+      } catch (err: unknown) {
         sendJson(res, 500, {
           success: false,
           error: sanitizeError(err),
@@ -1417,7 +1427,7 @@ async function handleRequest(
               ? `Удалено осиротевших задач: ${removed.length}.`
               : "Осиротевших задач не найдено.",
         });
-      } catch (err: any) {
+      } catch (err: unknown) {
         sendJson(res, 500, {
           success: false,
           error: sanitizeError(err),
@@ -1445,7 +1455,7 @@ async function handleRequest(
           remote: req.socket.remoteAddress ?? null,
         });
         sendJson(res, 200, { success: true, message: `Задача "${name}" удалена.` });
-      } catch (err: any) {
+      } catch (err: unknown) {
         sendJson(res, 500, {
           success: false,
           error: sanitizeError(err),
@@ -1457,7 +1467,7 @@ async function handleRequest(
     // Любой неизвестный путь — строго JSON, чтобы клиент не пытался
     // разобрать HTML/картинку как JSON.
     sendJson(res, 404, { error: t("server.notFound") });
-  } catch (err: any) {
+  } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[agent-steward] Ошибка обработки запроса ${req.url}: ${message}`);
     if (res.headersSent) {
@@ -1481,7 +1491,7 @@ function sendJson(res: http.ServerResponse, status: number, payload: unknown): v
 
 /** Санитизирует сообщение об ошибке для клиентского ответа.
  * Подробности стека/пути/токенов не утекают наружу — пишем только в лог. */
-function sanitizeError(err: any): string {
+function sanitizeError(err: unknown): string {
   if (err instanceof Error) {
     const msg = err.message;
     // Убираем внутренние пути и стеки
