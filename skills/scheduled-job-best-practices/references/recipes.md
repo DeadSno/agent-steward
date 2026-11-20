@@ -280,6 +280,14 @@ Notes:
   `postFlightStdout` / `postFlightStderr` fields (`hook.output` events) instead of treating a
   non-empty stderr as a failure (PL-7.2).
 
+## 13. Which lint command is a real gate? (PL-22)
+
+`npm run lint` runs plain ESLint and exits 0 even with hundreds of warnings — it is
+**informational** (colored diagnostics in the editor). The real CI gate is
+`npm run lint:baseline`, which fails when the warning count exceeds the committed baseline.
+`npm run lint:strict` (`eslint src --max-warnings=0`) is an opt-in target for a fully cleaned
+tree; do not put it in a required gate while the baseline is non-zero.
+
 ## 12. Pin the commit your Quality Gate trusts (PL-8.1)
 
 During a multi-hour DAG a parallel task can commit to the same branch. `npm test` in the gate

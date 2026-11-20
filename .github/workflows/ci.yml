@@ -46,8 +46,9 @@ jobs:
       - name: Test
         run: npm run test:parallel
 
-      # P3-2: ESLint — цветной вывод в редакторе, не падает на legacy-аннотации any/unsafe
-      - name: Lint
+      # P3-2: ESLint — информационный шаг: выход 0 даже при warnings (PL-22).
+      # Реальный гейт — следующий шаг lint:baseline.
+      - name: Lint (informational)
         run: npm run lint
 
       # QA-A2.0: новый warning ломает CI, пока эпик типизации не закрыт (A2.7).

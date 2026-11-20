@@ -81,10 +81,6 @@ Legacy: `opencode-windows-scheduler@1.5.8`.
 
 > Находки QA-A2.7 (20.11.2026) добавлены с номерами PL-17+, чтобы не пересекаться с PL-10..PL-13 из Детали 1.7 ниже. Повтор `emit_event` (уже PL-11.1) и регистрации mcp-event в ОС (уже PL-12.1) здесь не дублируются: оба воспроизведены и на задачах QA-A2.7.
 
-**Задача PL-22 — `npm run lint` не является гейтом при warnings** · P2 · ⬜
-
-- [ ] PL-22.1 `lint exit 0 при warnings: фактический прогон `npm run lint` → 355 warning, exit 0 (нет `--max-warnings`); единственный реальный гейт — `lint:baseline` — P2. Действие: явно задокументировать, что lint в CI информационный, и/или добавить `--max-warnings=0` в отдельной check-цели.
-
 **Задача PL-25 — Параллельная задача ломает Quality Gate другой через незакоммиченные правки** · P2 · ⬜
 
 - [ ] PL-25.1 `qualityGate гонка с параллельной задачей: задача `QA-A2.7-verify-event` во время прогона зафиксировала 0 error / 355 warning и зелёный `lint:baseline`, но повторный гейт в post-flight упал (`src/core/dry-run.ts`: 3 > baseline 1, `no-unused-vars`: 2 > baseline 0), потому что фоновая задача PL15 изменила `src/core/dry-run.ts` и `src/index.ts` без коммита — P2. Действие: проверять дерево на start/end прогона (git status/diff) и либо блокировать запуск при чужом `src/`, либо гейтить только закоммиченное состояние / сериализовать задачи с mutually exclusive доступом к `src/`.

@@ -80,6 +80,7 @@
     "build": "tsc",
     "lint": "eslint src",
     "lint-job": "eslint src",
+    "lint:strict": "eslint src --max-warnings=0",
     "lint:baseline": "node scripts/check-eslint-baseline.mjs",
     "lint:baseline:update": "node scripts/check-eslint-baseline.mjs --update",
     "build:gui": "vite build",
