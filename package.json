@@ -145,6 +145,7 @@
     "test:profiles": "node test-profiles.mjs",
     "test:env": "node test-env.mjs",
     "test:agent": "node test-agent-tools.mjs",
+    "test:shutdown-gate": "node test-shutdown-gate.mjs",
     "test:skill": "node test-skill.mjs",
     "test:integrations": "node test-integrations.mjs",
     "test:session-continuity": "node test-session-continuity.mjs",

@@ -66,7 +66,7 @@ import {
   syncMatrixFamily,
 } from "./core/matrix.js";
 import { normalizeWatchPath, validateWatchGlobs } from "./core/watch-paths.js";
-import { createShutdownGate } from "./core/shutdown.js";
+import { createShutdownGate, type ShutdownGateState } from "./core/shutdown.js";
 import { SchedulerRpc } from "./rpc.js";
 import {
   validatePipelineSpec,
@@ -1517,10 +1517,15 @@ function wrapExecute<Args>(
     try {
       return await fn(input, context);
     } catch (err) {
+      const shutdown =
+        err instanceof PluginShutdownError
+          ? { code: err.code, hint: err.hint, shutdownState: err.state }
+          : {};
       return {
         content: JSON.stringify({
           success: false,
           error: err instanceof Error ? err.message : String(err),
+          ...shutdown,
         }),
       };
     }
@@ -4828,6 +4833,8 @@ export function createShutdownHandler(
     }
     // Чекпойнт WAL выполняется в closeDb.
     closeDb();
+    // QA/PL-10: выгрузка действительно завершена — запрещаем автосброс ворот.
+    shutdownGate.complete();
   };
 }
 
@@ -7822,11 +7829,14 @@ function checkTaskTokenBudgetGate(
 export class PluginShutdownError extends Error {
   readonly code = "PLUGIN_SHUTTING_DOWN";
   readonly hint: string;
+  /** PL-10/QV-2: наблюдаемое состояние ворот в момент отказа. */
+  readonly state: ShutdownGateState;
 
-  constructor(message: string, hint: string) {
+  constructor(message: string, hint: string, state: ShutdownGateState) {
     super(message);
     this.name = "PluginShutdownError";
     this.hint = hint;
+    this.state = state;
   }
 }
 
@@ -7835,6 +7845,7 @@ async function runTaskEntry(name: string): Promise<{ alreadyRunning: boolean }> 
     throw new PluginShutdownError(
       "Плагин выгружается: новые запуски не принимаются. Повторите после перезапуска.",
       "Повторите запуск после перезапуска плагина. Для once/cron-задач используйте force-маркер locks/<slug>.lock.force + Start-ScheduledTask (schtasks /run) либо отложенный запуск после перезапуска.",
+      shutdownGate.state(),
     );
   }
 
