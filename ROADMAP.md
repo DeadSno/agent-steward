@@ -291,18 +291,6 @@ i18n ru/en/zh, тесты и документация.
       it is being used by another process` (1/1 ошибка) — P2.
       Действие: открывать файл лога с `FileShare.ReadWrite` и/или ретраить чтение
       при `EBUSY`; сериализовать запуск задачи и чтение лога в планировщике.
-- [ ] QA-3.8.7 `wrangler secret put GITHUB_TOKEN`: при интерактивном вводе PAT
-      оказался сохранён как **имя** секреты, из-за чего живой `POST /report`
-      отвечал `500 receiver is not configured` — P2. Действие: в
-      `infra/feedback-worker/README.md` явно описать два шага (сначала имя
-      `GITHUB_TOKEN`, затем значение) и проверку `wrangler secret list`; воркер
-      оставить с явной ошибкой конфигурации. Исправлено в документации, проверено
-      `wrangler secret list` → `GITHUB_TOKEN`.
-- [ ] QA-3.8.8 Локальный `curl`/Node на этом Windows не могут сделать handshake
-      с `*.workers.dev` по TLS 1.2 (`SSL alert 40`), при этом `GET /health` и
-      `POST /report` проходят при `TLSv1.3` — P3, ограничение клиента, не воркера.
-      Действие: в README привести пример с `--tlsv1.3` / `minVersion:'TLSv1.3'`
-      (добавлено); для продакшен-проверок использовать браузер или клиент с TLS 1.3.
 
 ---
 
