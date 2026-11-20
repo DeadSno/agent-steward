@@ -460,10 +460,18 @@ export function normalizeBudgetSettings(
   };
 }
 
-/** Деталь 3.8: по умолчанию канал автору выключен, логи не прикладываются. */
+/**
+ * Деталь 3.8 / UX-3.8.1: рабочий приёмник автора подставлен по умолчанию,
+ * чтобы пользователю достаточно было только включить отправку чекбоксом.
+ * Отправка всё равно остаётся opt-in (`enabled: false`).
+ */
+export const DEFAULT_FEEDBACK_ENDPOINT =
+  "https://agent-steward-feedback.agent-steward.workers.dev/report";
+
+/** По умолчанию канал автору выключен, логи не прикладываются. */
 export const DEFAULT_FEEDBACK_SETTINGS: FeedbackSettings = {
   enabled: false,
-  endpoint: "",
+  endpoint: DEFAULT_FEEDBACK_ENDPOINT,
   includeLogs: false,
   contactEmail: "",
   maxPerHour: 6,

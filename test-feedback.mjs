@@ -24,6 +24,7 @@ const {
   validateFeedbackEndpoint,
 } = await import("./dist/core/feedback.js");
 const { closeDb } = await import("./dist/db/index.js");
+const { DEFAULT_FEEDBACK_SETTINGS } = await import("./dist/settings.js");
 
 const results = [];
 function check(name, ok) {
@@ -89,6 +90,13 @@ check(
 check(
   "F-1.1 payload: описание ограничено по длине",
   buildFeedbackPayload({ description: "x".repeat(9000) }).description.length <= 4000,
+);
+
+/* UX-3.8.1 — дефолтный endpoint, но отправка по-прежнему opt-in */
+check(
+  "UX-3.8.1 default endpoint: валиден и включён только после согласия",
+  DEFAULT_FEEDBACK_SETTINGS.enabled === false &&
+    validateFeedbackEndpoint(DEFAULT_FEEDBACK_SETTINGS.endpoint).ok === true,
 );
 
 /* F-1.3 — валидация endpoint */
