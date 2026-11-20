@@ -314,7 +314,7 @@
   "gui.mcpFilterPlaceholder": "например, repo=\"my-project\" или regex",
   "gui.mcpSourceLabel": "MCP-сервер / источник",
   "gui.mcpSourcePlaceholder": "например, github",
-  "gui.metricsTotalsLine": "📊 Всего по всем задачам: {total} · ✅ {success} · ❌ {error}",
+  "gui.metricsTotalsLine": "📊 Запусков в истории: {total} · ✅ {success} · ❌ {error} · ⏭ {skipped} · ⏸ {interrupted}",
   "gui.metricsTotalsTitle": "Суммарные метрики по всем задачам (включая архивные записи метрик)",
   "gui.modalShortcutHint": "Ctrl+Enter — сохранить, Escape — отмена",
   "gui.modelHint": "Пусто — модель OpenCode по умолчанию. Иначе будет передан флаг --model.",

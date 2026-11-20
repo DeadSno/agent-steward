@@ -167,6 +167,7 @@ const totals = metricsRepo.getTotals();
 // без истории в общие итоги больше не входит).
 assert(totals.total === 4, "общие метрики: 3 мигрировавших записи + 1 новый запуск");
 assert(totals.success === 2 && totals.error === 2, "общие метрики: success/error по истории");
+assert(totals.skipped === 0 && totals.interrupted === 0, "общие метрики: skipped/interrupted изначально нули");
 assert(totals.tokens === 360, "токены: 100+10+50+200 по истории");
 assert(Math.abs(totals.costUsd - 0.036) < 1e-9, "стоимость: 0.01+0.001+0.005+0.02 по истории");
 
@@ -215,8 +216,9 @@ assert(recoverInterruptedRuns() === 0, "повторный recovery ничего
 const afterRecoveryTotals = metricsRepo.getTotals();
 assert(
   afterRecoveryTotals.total === 6 && afterRecoveryTotals.success === 2 &&
-    afterRecoveryTotals.partial === 1 && afterRecoveryTotals.error === 3,
-  "QA-P1.1: crash recovery учтён в getTotals (error +1)"
+    afterRecoveryTotals.partial === 1 && afterRecoveryTotals.error === 2 &&
+    afterRecoveryTotals.interrupted === 1,
+  "PL-24: crash recovery учтён отдельным счётчиком interrupted, не error"
 );
 const { buildAnalytics } = await import("./dist/core/analytics.js");
 const analyticsTotals = buildAnalytics(await loadHistory(null, 200), { days: 3650 }).totals;
@@ -224,8 +226,8 @@ assert(
   afterRecoveryTotals.total === analyticsTotals.total &&
     afterRecoveryTotals.success === analyticsTotals.success &&
     afterRecoveryTotals.partial === analyticsTotals.partial &&
-    afterRecoveryTotals.error === analyticsTotals.error,
-  "QA-P1.1: getTotals совпадает с buildAnalytics по одной выборке history"
+    afterRecoveryTotals.error + afterRecoveryTotals.interrupted === analyticsTotals.error,
+  "QA-P1.1: getTotals совпадает с buildAnalytics (error + interrupted = общий bucket)"
 );
 
 // PL-37: внутренние probe-задачи (__*) не попадают в агрегаты.
@@ -241,6 +243,17 @@ const analyticsRecords = historyRepo.getHistoryForAnalytics(3650);
 assert(
   analyticsRecords.every((record) => !record.taskName.startsWith("__")),
   "PL-37: getHistoryForAnalytics не возвращает внутренние задачи"
+);
+
+// PL-24: skipped — отдельныйbucket, не real failure.
+historyRepo.recordRun("Skipped Task", "skipped", new Date().toISOString(), 0, null);
+const totalsWithSkipped = metricsRepo.getTotals();
+assert(
+  totalsWithSkipped.skipped === 1 &&
+    totalsWithSkipped.error === afterRecoveryTotals.error &&
+    totalsWithSkipped.interrupted === afterRecoveryTotals.interrupted &&
+    totalsWithSkipped.total === afterRecoveryTotals.total + 1,
+  "PL-24: skipped учитывается отдельно и не увеличивает error"
 );
 
 // --- 5. QA-F.3: running — отдельное состояние, не ошибка ------------------

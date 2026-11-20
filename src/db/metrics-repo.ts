@@ -25,7 +25,12 @@ export interface TaskMetricsRow {
 export interface MetricsTotals {
   total: number;
   success: number;
+  /** Реальные отказы (error/timeout/неизвестный статус) без прерванных и пропусков. */
   error: number;
+  /** Пропуски (status=skipped) — не падения. */
+  skipped: number;
+  /** Прерванные crash recovery (error с текстом «Прервано …»). */
+  interrupted: number;
   partial: number;
   tokens: number;
   costUsd: number;
@@ -132,7 +137,11 @@ export function getTotals(includeInternal = false): MetricsTotals {
          COUNT(*) AS total,
          COALESCE(SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END), 0) AS success,
          COALESCE(SUM(CASE WHEN status = 'partial' THEN 1 ELSE 0 END), 0) AS partial,
-         COALESCE(SUM(CASE WHEN status NOT IN ('success', 'partial', 'running') THEN 1 ELSE 0 END), 0) AS error,
+         COALESCE(SUM(CASE WHEN status = 'skipped' THEN 1 ELSE 0 END), 0) AS skipped,
+          COALESCE(SUM(CASE WHEN status NOT IN ('success', 'partial', 'running', 'skipped')
+                             AND COALESCE(error, '') NOT LIKE '%Прервано%' THEN 1 ELSE 0 END), 0) AS error,
+          COALESCE(SUM(CASE WHEN status NOT IN ('success', 'partial', 'running', 'skipped')
+                             AND COALESCE(error, '') LIKE '%Прервано%' THEN 1 ELSE 0 END), 0) AS interrupted,
          COALESCE(SUM(CASE WHEN tokens > 0 THEN CAST(tokens AS INTEGER) ELSE 0 END), 0) AS tokens,
          COALESCE(SUM(CASE WHEN cost_usd > 0 THEN cost_usd ELSE 0 END), 0) AS cost_usd
        FROM history
@@ -143,6 +152,8 @@ export function getTotals(includeInternal = false): MetricsTotals {
     total: Number(row?.total) || 0,
     success: Number(row?.success) || 0,
     error: Number(row?.error) || 0,
+    skipped: Number((row as { skipped?: number } | undefined)?.skipped) || 0,
+    interrupted: Number((row as { interrupted?: number } | undefined)?.interrupted) || 0,
     partial: Number(row?.partial) || 0,
     tokens: Number(row?.tokens) || 0,
     costUsd: Number(row?.cost_usd) || 0,

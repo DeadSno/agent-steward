@@ -49,7 +49,12 @@ export interface HistoryRecord {
 export interface Metrics {
   total: number;
   success: number;
+  /** Реальные отказы без пропусков и прерванных crash recovery. */
   error: number;
+  /** Пропуски (status=skipped) — не падения. */
+  skipped: number;
+  /** Прерванные crash recovery (error содержит «Прервано …»). */
+  interrupted: number;
   /** Частичные выполнения (post-flight/quality gate не прошёл). */
   partial: number;
   tokens?: number;

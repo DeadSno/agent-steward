@@ -443,7 +443,7 @@ export default Plugin.define({
     const [cronError, setCronError] = createSignal("")
 
     // Метрики и история запусков
-    const [metrics, setMetrics] = createSignal<{ total: number; success: number; error: number }>({ total: 0, success: 0, error: 0 })
+    const [metrics, setMetrics] = createSignal<{ total: number; success: number; error: number; skipped: number; interrupted: number }>({ total: 0, success: 0, error: 0, skipped: 0, interrupted: 0 })
     const [historyOpen, setHistoryOpen] = createSignal<string | null>(null)
     const [history, setHistory] = createSignal<HistoryRecord[]>([])
 
@@ -2065,7 +2065,13 @@ export default Plugin.define({
     async function loadMetrics() {
       try {
         const m = await rpc.get_metrics({})
-        setMetrics({ total: m.total ?? 0, success: m.success ?? 0, error: m.error ?? 0 })
+        setMetrics({
+          total: m.total ?? 0,
+          success: m.success ?? 0,
+          error: m.error ?? 0,
+          skipped: m.skipped ?? 0,
+          interrupted: m.interrupted ?? 0,
+        })
       } catch (err: any) {
         console.error("RPC Error (get_metrics):", err)
       }
@@ -3066,7 +3072,13 @@ export default Plugin.define({
                   title={gt("gui.metricsTotalsTitle")}
                   style="margin-top:4px;font-size:11px;color:#8e8e93"
                 >
-                  {gt("gui.metricsTotalsLine", { total: metrics().total, success: metrics().success, error: metrics().error })}
+                  {gt("gui.metricsTotalsLine", {
+                    total: metrics().total,
+                    success: metrics().success,
+                    error: metrics().error,
+                    skipped: metrics().skipped,
+                    interrupted: metrics().interrupted,
+                  })}
                 </div>
               </div>
               <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
