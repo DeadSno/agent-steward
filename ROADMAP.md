@@ -311,6 +311,12 @@ Worker → GitHub Issues, GUI-настройки, i18n ru/en/zh, тесты и �
       (Free usage limit reached) — P3, окружение, не баг репозитория.
       Действие: при доступном провайдере повторить F-2 через суб-агента и сравнить
       результат с ручной реализацией.
+- [ ] QA-3.8.6 `emit_event('f38.feedback.done')` с последующим немедленным
+      `get_task_logs` — задача `F38-3_8-event-gate` упала через 754 мс:
+      `The process cannot access the file ... logs\f38-3_8-event-gate.log because
+      it is being used by another process` (1/1 ошибка) — P2.
+      Действие: открывать файл лога с `FileShare.ReadWrite` и/или ретраить чтение
+      при `EBUSY`; сериализовать запуск задачи и чтение лога в планировщике.
 
 ---
 
