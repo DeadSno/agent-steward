@@ -38,6 +38,10 @@ try {
   await saveTask({
     name: "Danger", schedule: "* * * * *", prompt: "rm -rf / и git push --force",
   });
+  await saveTask({
+    name: "EventRoot", prompt: "event root", triggerType: "mcp-event",
+    mcpEvent: { server: "test", event: "probe" },
+  });
 
   // История для оценок: 2 успешных запуска Lint по 10 с, 1000 токенов.
   const base = Date.now();
@@ -59,10 +63,23 @@ try {
   const order = report.tasks.map((t) => t.name);
   check("топологический порядок: Lint перед Build",
     order.indexOf("Lint") < order.indexOf("Build") && order.indexOf("Build") < order.indexOf("Root"));
-  check("корневая задача имеет trigger=manual", report.tasks.find((t) => t.name === "Root")?.trigger === "manual");
-  check("зависимости имеют trigger=dag",
-    report.tasks.find((t) => t.name === "Build")?.trigger === "dag" &&
-    report.tasks.find((t) => t.name === "Lint")?.trigger === "dag");
+  // PL-26/PL-30: trigger — реальный triggerType, entryMode — режим входа.
+  check("корневая задача имеет trigger=cron и entryMode=manual",
+    report.tasks.find((t) => t.name === "Root")?.trigger === "cron" &&
+    report.tasks.find((t) => t.name === "Root")?.entryMode === "manual");
+  check("зависимости имеют trigger=cron и entryMode=dag",
+    report.tasks.find((t) => t.name === "Build")?.trigger === "cron" &&
+    report.tasks.find((t) => t.name === "Build")?.entryMode === "dag" &&
+    report.tasks.find((t) => t.name === "Lint")?.trigger === "cron" &&
+    report.tasks.find((t) => t.name === "Lint")?.entryMode === "dag");
+  check("trigger совпадает с triggerDetails.type",
+    report.tasks.every((t) => t.trigger === t.triggerDetails?.type));
+
+  const eventReport = await simulatePipeline("EventRoot");
+  check("PL-26: trigger=mcp-event для event-задачи",
+    eventReport.tasks[0]?.trigger === "mcp-event" &&
+    eventReport.tasks[0]?.triggerDetails?.type === "mcp-event" &&
+    eventReport.tasks[0]?.entryMode === "manual");
 
   // 3. Команды.
   const rootItem = report.tasks.find((t) => t.name === "Root");

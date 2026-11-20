@@ -54,7 +54,10 @@ export interface DryRunTriggerDetails {
 export interface DryRunTaskItem {
   name: string;
   order: number;
-  trigger: "manual" | "cron" | "dag" | "once";
+  /** PL-26/PL-30: реальный triggerType definition (совпадает с triggerDetails.type). */
+  trigger: DryRunTriggerDetails["type"];
+  /** Как задача попала в симуляцию: manual — корень, dag — через dependsOn. */
+  entryMode: "manual" | "dag";
   cwd: string;
   command: string;
   workspace?: { name: string; path: string };
@@ -550,15 +553,15 @@ export async function simulatePipeline(taskName: string): Promise<DryRunReport> 
     const drift = workingDirectoryDriftWarning(def, cwd);
     if (drift) taskWarnings.push(drift);
 
-    // Триггер: корневая задача (или клон корневой матрицы) — manual,
-    // остальные попали в конвейер через dependsOn — dag.
+    // PL-26/PL-30: trigger отражает реальный triggerType задачи и совпадает
+    // с triggerDetails.type. Режим входа в симуляцию вынесен в entryMode,
+    // чтобы не подменять тип триггера значениями manual/dag.
     const triggerType = def.triggerType ?? "cron";
-    const trigger: DryRunTaskItem["trigger"] =
-      triggerType === "once"
-        ? "once"
-        : lower === rootLower || (matrixParent && matrixParent.toLowerCase() === rootLower)
-          ? "manual"
-          : "dag";
+    const trigger = triggerType as DryRunTaskItem["trigger"];
+    const entryMode: DryRunTaskItem["entryMode"] =
+      lower === rootLower || (matrixParent && matrixParent.toLowerCase() === rootLower)
+        ? "manual"
+        : "dag";
 
     // Детали триггера (Спринт 27): состояние окна/дней недели, git-статус.
     const triggerDetails = await describeTrigger({
@@ -679,6 +682,7 @@ export async function simulatePipeline(taskName: string): Promise<DryRunReport> 
       name: def.name,
       order: index,
       trigger,
+      entryMode,
       session: def.session ?? "new",
       sessionId: def.session === "reuse" ? def.sessionId ?? null : null,
       // Спринт 27.5.4: показываем режим входа до регистрации в ОС.

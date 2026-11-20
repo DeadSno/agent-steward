@@ -135,10 +135,6 @@ Legacy: `opencode-windows-scheduler@1.5.8`.
 
 > Воспроизведено при настройке и валидации задач T3/T4/T5 эпика QA-A2 через MCP-инструменты плагина (`schedule_task`, `update_task`, `dry_run`, `manage_templates`, `pipeline_validate`, `self_analysis`, `get_task_logs`, `list_tasks`). 20.11.2026. Все команды ниже — реальные вызовы с зафиксированным ответом. Новые находки продолжены с PL-26, чтобы не пересекаться с PL-10…PL-13 Детали 1.7.
 
-**Задача PL-26 — `dry_run` показывает неверное поле `trigger` у cron/mcp-event задач** · P3 · ⬜
-
-- [ ] PL-26.1 `dry_run неверный trigger: `dry_run({name:'QA-A2-T5-verify'})` вернул в `tasks[].trigger` значения `dag`/`manual` для задач, у которых `triggerDetails.type` корректно равен `cron` и `mcp-event` (проверено на `QA-A2-T3-history-os` и `QA-A2-T4-runs-event`) — P3. Действие: заполнять `trigger` из реального `triggerType` definition, а не из режима запуска в конвейере; добавить проверку в `test-dry-run.mjs`, что `tasks[].trigger === triggerDetails.type`.
-
 **Задача PL-28 — `manage_templates delete` по имени не работает, хотя исправление заявлено** · P2 · ⬜
 
 - [ ] PL-28.1 `delete по имени не работает: JSDoc схемы `manage_templates` говорит «for delete an id or a template name is accepted», CHANGELOG.md содержит запись QA-P3.3 об исправлении удаления по имени, но живой вызов `manage_templates({action:'delete', name:'PROBE-delete-by-name'})` вернул `{"success":false,"error":"Для action=delete нужен id шаблона."}`; удаление по `id` работает. ROADMAP PL-17.1 при этом остаётся открытой — P2. Действие: либо реально поддержать удаление по имени (и закрыть PL-17.1), либо убрать обещание из JSDoc/CHANGELOG и оставить только `id`; добавить тест «delete by name».
@@ -146,6 +142,24 @@ Legacy: `opencode-windows-scheduler@1.5.8`.
 **Задача PL-29 — `self_analysis.tasksAnalyzed` считает имена в истории, а не definition** · P3 · ⬜
 
 - [ ] PL-29.1 `tasksAnalyzed=35 при 17 definition: повторный замер `self_analysis({})` 20.11.2026 дал `sources.tasksAnalyzed=35`, хотя `list_tasks()` возвращает 17 задач; число менялось с 31 (замер Детали 1.7) — значит счётчик равен числу уникальных имён в истории, а не числу definition — P3. Действие: считать по таблице definition и переименовать поле в `taskDefinitions`; уточнить единицы из PL-13.1 в том же изменении.
+
+---
+
+## Деталь 1.9 — Независимая верификация плагина суб-агентом (20.11.2026)
+
+> Один read-only суб-агент проверил работоспособность MCP-инструментов по исходникам и живым вызовам. Подтверждённые находки PL-30/PL-31/PL-32 дублируют PL-26/PL-13/PL-29/PL-17/PL-28 и сведены в единые задачи: PL-30 закрыта вместе с PL-26, PL-31/PL-32 остаются открытыми. По остальным пунктам (PL-4, PL-10, PL-19, PL-24) новых свидетельств нет. Гипотеза «emit_event регистрирует mcp-event в ОС» (PL-12.1/PL-23) НЕ подтвердилась: первая проверка попала на уже приостановленную задачу, повтор на свежем событии `qa.agent-steward.probe.v2` создал `mcp-event` без OS-объекта.
+
+**Задача PL-31 (дубль PL-13.1 / PL-29.1) — единицы счётчиков self_analysis** · P3 · ⬜
+
+- [ ] PL-31.1 `sources.tasksAnalyzed` считает уникальные имена в истории (35 при 17 definition) и не совпадает с `get_metrics().tasksTotal` (24) — P3. Действие: считать definition, переименовать в `taskDefinitions`, явно документировать единицы всех счётчиков в `self_analysis`.
+
+**Задача PL-32 (дубль PL-17.1 / PL-28.1) — удаление шаблона по имени** · P2 · ⬜
+
+- [ ] PL-32.1 Живой вызов `manage_templates({action:'delete', name:'PROBE-delete-by-name'})` → `{"success":false,"error":"Для action=delete нужен id шаблона."}`; `id` работает — P2. Действие: поддержать delete by name или убрать обещание из JSDoc/CHANGELOG, добавить регрессионный тест.
+
+**Задача PL-33 — смешанные cron/mcp-event в одной DAG-группе** · P3 · ⬜
+
+- [ ] PL-33.1 По исходникам: задача с cron-триггером может стартовать по DAG от mcp-event задачи, если обе в одной группе зависимостей; на живых задачах не воспроизведено — P3. Действие: поставить контролируемый пробный конвейер и либо подтвердить/исправить, либо снять находку как спекулятивную.
 
 ---
 
