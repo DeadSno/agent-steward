@@ -1,159 +1,205 @@
 # QA-A2.6 — Исключение GUI/TUI из контура типизации (явная фиксация)
 
-> Статус: **решение зафиксировано**. Эпик QA-A2 «Полная типизация плагина».
-> Подзадача ROADMAP: QA-A2.6 — `src/gui.tsx`, `src/tui*.tsx` сейчас исключены из
-> `tsconfig.json` и не попадают под `files: ["src/**/*.ts"]` ESLint. Здесь исключение
-> **перестаёт быть молчаливым**: приведены причины и конкретный план подключения.
+Статус: **исключение зафиксировано явно** (вместо молчаливого). Ветка: `dev`.
+Эпик: QA-A2 «Полная типизация плагина». Ссылка: `ROADMAP.md`, строка QA-A2.6.
 
-## 1. Что именно исключено и где
+Цель подзадачи — не «типизировать GUI/TUI прямо сейчас», а прервать статус
+*silent-исключения*: записать, **почему** три `.tsx`-файла не попадают ни в `tsc`,
+ни в ESLint, и дать воспроизводимый план их подключения с JSX-парсером. Настоящая
+правка — **только документация**; `tsconfig.json`, `eslint.config.mjs` и код не
+изменяются.
 
-|Файл|Исключён из `tsc`|Исключён из ESLint|Потребитель|
-|---|---|---|---|
-|`src/gui.tsx`|`tsconfig.json` → `exclude`|glob `files: ["src/**/*.ts"]` не матчит `.tsx`|`npm run build:gui` → Vite → `gui-experimental.cjs`; экспорт `./gui-experimental`|
-|`src/tui.tsx`|`tsconfig.json` → `exclude`|тот же glob|экспорт `./tui` → `./src/tui.tsx` (сырой исходник, грузится OpenCode TUI)|
-|`src/tui-v1.tsx`|`tsconfig.json` → `exclude`|тот же glob|импортируется из `src/tui.tsx` (`tuiV1`)|
+## 1. Фактическое состояние (что и где настроено)
 
-Две независимые причины исключения из ESLint:
+### 1.1 `tsconfig.json`
 
-1. **Расширение.** В `eslint.config.mjs` единственный блок с правилами имеет
-   `files: ["src/**/*.ts"]`. glob `*.ts` **не** покрывает `*.tsx`, поэтому три файла
-   не попадают в линтер даже при Dream of type-aware правил.
-2. **Type-aware парсинг.** Блок задаёт `parserOptions: { project: "./tsconfig.json" }`.
-   Правила из `recommendedTypeChecked` / `stylisticTypeChecked` требуют, чтобы файл
-   входил в TypeScript-программу. Пока файлы в `exclude`, подключить их к этому же
-   `project` нельзя — ESLint упадёт с «file not found in project».
+- `include: ["src/**/*"]` — формально покрывает весь `src/`.
+- `exclude: ["node_modules", "dist", "src/tui.tsx", "src/tui-v1.tsx", "src/gui.tsx"]`
+  — три JSX-файла исключены **явно, но без объяснения причины** (это и есть
+  «молчаливое исключение»).
+- При этом компилятор *уже* настроен на JSX: `jsx: "preserve"`,
+  `jsxImportSource: "@opentui/solid"`, `resolveJsonModule: true`,
+  `declaration: true`, `module: "Node16"`, `outDir: "./dist"`.
+  То есть конфиг выглядит «готовым к JSX», из-за чего исключение выглядит
+  случайным — отсюда и возникла задача QA-A2.6.
 
-## 2. Почему исключение технически обосновано (не «забыли»)
+### 1.2 `eslint.config.mjs`
 
-### 2.1. Разные JSX-диалекты в трёх файлах
+- Глобальный `ignores`: `dist/`, `node_modules/`, `*.cjs`, `*.mjs`, `*.js`, `scripts/`.
+- Рабочий блок: `files: ["src/**/*.ts"]` — glob матчит **только `.ts`**, но не
+  `.tsx`. Следовательно `src/gui.tsx`, `src/tui.tsx`, `src/tui-v1.tsx` не
+  попадают под линтер даже при том, что `parserOptions.project: "./tsconfig.json"`
+  и подключены `recommendedTypeChecked` + `stylisticTypeChecked`.
+- Второй блок `files: ["src/core/**/*.ts"]` c локальным правилом
+  `no-any-in-catch` тоже `.tsx` не затрагивает.
 
-- `src/tui.tsx` и `src/tui-v1.tsx` помечены по-file pragmа
-  `/** @jsxImportSource @opentui/solid */` — это JSX-примитивы `<box>`, `<text>`
-  терминального UI (`@opentui/solid`).
-- `src/gui.tsx` использует **Solid DOM** JSX (`solid-js`, `createSignal`,
-  `ErrorBoundary`, `@opencode/plugin/gui`) и компилируется `vite-plugin-solid`
-  (см. `vite.config.ts` → `gui({ outFile: "./gui-experimental.cjs" })`).
+Итог: файлы выпадают из обоих контуров **дважды** — через `exclude` в `tsconfig`
+и через `files`-паттерн в ESLint.
 
-В базовом `tsconfig.json` стоит **один** `"jsxImportSource": "@opentui/solid"`,
-что корректно для TUI, но **некорректно для GUI**. Включение всех трёх файлов в
-один tsc-проект с этим ключом дало бы неверную типизацию JSX в `gui.tsx`. Именно
-поэтому `jsx`-настройки в базовом конфиге есть, но на исключённые файлы не действуют.
+### 1.3 Сборка и точки входа (dual-entry)
 
-### 2.2. Отдельный Vite-бандл, а не tsc-эмит
+`package.json` задаёт три независимых пути сборки/загрузки:
 
-- Базовый `tsc` (`npm run build`) пишет ES-модули + `.d.ts` в `./dist` с
-  `rootDir: "./src"`, `outDir: "./dist"`, `declaration: true`.
-- `npm run build:gui` запускает **Vite** (`vite.config.ts`), официальный `gui()`-плагин
-  подключает `vite-plugin-solid` и собирает **один CommonJS-бандл** `gui-experimental.cjs`
-  в корне проекта (не в `dist/`). Зависимости `solid-js`, `@opencode/plugin/gui`,
-  `effect` объявлены внешними.
-- При `"jsx": "preserve"` tsc оставил бы JSX в выходе — неисполняемый для webview
-  код. Полноценная трансформация JSX — задача Vite/Babel, а не tsc. Поэтому GUI
-  принципиально не является продуктом basic-компиляции.
+| Экспорт |Цель | Инструмент |
+|---|---|---|
+| `.` | `dist/index.js` (основной плагин) | `tsc` (`npm run build`) |
+| `./rpc` | `dist/rpc.js` | `tsc` |
+| `./tui` | `src/tui.tsx` (сырой TSX, грузится OpenCode TUI-рантаймом) | OpenCode TUI loader |
+| `./gui-experimental` | `gui-experimental.cjs` (один CJS-бандл в корне) | Vite, `npm run build:gui` |
 
-### 2.3. Dual-entry в `package.json`
+`vite.config.ts` подключает официальный `gui()` из `@opencode/plugin/gui/vite`,
+который сам подключает `vite-plugin-solid`, компилирует Solid JSX и пишет
+`gui-experimental.cjs`. GUI-бандл, таким образом, **собирается не `tsc`**, а
+отдельным Vite-проходом с `prepublishOnly: npm run build && npm run build:gui`.
 
-Экспорты плагина разделены на два контура:
+## 2. Почему исключение существует и чем опасно «просто убрать exclude»
 
-- `"."` → `dist/index.js` и `"./rpc"` → `dist/rpc.js` — артефакты tsc (типизируются);
-- `"./tui"` → `./src/tui.tsx` — **сырой исходник** отдаётся хосту OpenCode, который
-  сам транспайлит JSX через `@opentui/solid`;
-- `"./gui-experimental"` → `./gui-experimental.cjs` — готовый Vite-бандл.
+1. **Два разных JSX-рантайма в одном проекте.**
+   - `src/gui.tsx` использует Solid JSX: `solid-js`, `@opencode/plugin/gui`,
+     каталоги подключаются как JSON-импорты (`../locales/*.json`).
+   - `src/tui.tsx` использует OpenTUI/Solid: первая строка — директива
+     `/** @jsxImportSource @opentui/solid */`, JSX-примитивы `<box>`, `<text>`.
+   - `src/tui-v1.tsx` — V1-ветка TUI, тоже JSX.
+   Глобальный `jsxImportSource: "@opentui/solid"` в `tsconfig.json` корректен
+   для TUI, но **не для GUI**. Один `tsconfig` не может одновременно и корректно
+   типизировать оба рантайма без per-file `@jsxImportSource`-директив.
 
-Добавление `.tsx` в общий `include` при `declaration: true` изменило бы набор
-эмиттируемых файлов в `dist/` (появились бы `dist/gui.js`, `dist/tui.js`, `.d.ts`),
-что не соответствует фактической схеме экспортов и может сломать `test-package-exports`.
-Исключение — защита стабильности dual-entry, а не упущение.
+2. **`tsc` производит артефакты для Node16 ESM, а не для JSX-рантаймов.**
+   При `jsx: "preserve"` компиляция `.tsx` оставит JSX в `.jsx`-файлах в `dist/` —
+   такой файл не 실행ится загрузчиком Node16 ESM. Плюс `declaration: true`
+   сгенерирует `.d.ts` для GUI/TUI, которые в пакете не используются (GUI
+   потребляется как готовый CJS-бандл, TUI — как исходный TSX). Прямое удаление
+   из `exclude` меняет состав `dist/` и ломает `npm run build` / целостность
+   `exports` (`test-package-exports.mjs`).
 
-## 3. План подключения с JSX-парсером (без изменения поведения)
+3. **Отдельный Vite-бандл.** GUI собирается в `gui-experimental.cjs` через
+   `gui()`-плагин с внешними `solid-js`/`@opencode/plugin/gui`. Это отдельный
+   контур: типы GUI проверять можно, но *эмит* `tsc` для GUI не нужен и вреден.
 
-> Важно: этот документ **фиксирует решение**; сами `tsconfig.json`,
-> `eslint.config.mjs` и код в рамках QA-A2.6 **не меняются**. Ниже — план для
-> отдельной правки (после закрытия текущего baseline-гейта QA-A2.0).
+4. **Dual-entry / загрузка сырого TSX.** `./tui` указывает прямо на
+   `src/tui.tsx`; OpenCode V2 подхватывает его как TUI-точку входа. Это
+   «рантайм-исходник», а не вход для `tsc`. Попытка перевести его в `dist/`
+   потребует менять `exports` и синхронизировать V1/V2-совместимость
+   (`docs/COMPATIBILITY.md`, `test-docs.mjs`).
 
-### Шаг 1. Выделить JSX в отдельные tsconfig-проекты
+5. **Typed ESLint требует присутствия файла в TS-программе.** Даже если просто
+   добавить `.tsx` в `files` ESLint, `recommendedTypeChecked` с
+   `parserOptions.project: "./tsconfig.json"` упадёт с ошибкой вида
+   *"file was not found by the project"*, пока файлы не включены в какую-либо
+   TS-программу. Поэтому ESLint и tsc должны подключаться **в связке**.
 
-Создать два конфига (или один с разными pragmas — см. ниже), не трогая базовый:
+Вывод: текущее исключение — **осознанная техническая необходимость**, которая
+до сих пор была не задокументирована. Настоящий документ делает её явной.
 
-- `tsconfig.jsx.json` (GUI):
-  - `extends: "./tsconfig.json"`;
-  - `compilerOptions`: `noEmit: true`, `jsx: "preserve"`, `jsxImportSource: "solid-js"`;
-  - `include: ["src/gui.tsx", "src/**/*.ts"]` (все зависимости GUI: `rpc.ts`,
-    `history.ts`, `i18n.ts`), `exclude: []` — явно переопределить наследуемый exclude.
-  - Причина `noEmit`: конфиг только для проверки типов, артефакты собирает Vite.
-- `tsconfig.tui.json` (TUI):
-  - `extends: "./tsconfig.json"`;
-  - `compilerOptions`: `noEmit: true`, `jsx: "preserve"`,
-    `jsxImportSource: "@opentui/solid"` (совпадает с pragmа в файлах);
-  - `include: ["src/tui.tsx", "src/tui-v1.tsx", "src/shared/**/*.ts",
-    "src/core/scheduler/**/*.ts"]`, `exclude: []`.
+## 3. Решение QA-A2.6
 
-Альтернатива (меньше конфигов): оставить `jsx: "preserve"` и положиться на
-по-file `/** @jsxImportSource ... */` прагмы; тогда в `gui.tsx` нужно добавить
-`/** @jsxImportSource solid-js */`. Это единственная правка кода в плане —
-она семантически нейтральна и выполняется отдельным коммитом.
+Исключение GUI/TUI из `tsc`-сборки и из ESLint объявляется **явным и
+обоснованным** (п. 2). Эпик QA-A2 считается закрытым в части GUI/TUI не через
+«включить любой ценой», а через фиксацию причины и конкретный план
+подключения (п. 4), который выполняется отдельной правкой с полными тестами.
 
-### Шаг 2. Подключить `.tsx` к ESLint вторым блоком
+> Важно: «полностью типизированный плагин» в контексте QA-A2 означает полную
+> типизацию **серверного контура** (`src/**/*.ts`, собираемого `tsc` и
+> проверяемого ESLint). GUI/TUI — отдельные рантайм-контуры со своей сборкой;
+> их подключение к проверке типов желательно, но не должно ломать dual-entry и
+> V1/V2-совместимость.
 
-В `eslint.config.mjs` добавить после основного блока (не меняя существующий):
+## 4. План подключения GUI/TUI с JSX-парсером (выполняется отдельной правкой)
 
-```
+### Шаг 1 — выделить отдельную TS-программу для JSX (без эмита)
+
+Создать `tsconfig.jsx.json`, расширяющий базовый:
+
+```jsonc
 {
-  files: ["src/**/*.tsx"],
-  languageOptions: {
-    parser: tseslint.parser,
-    parserOptions: {
-      project: ["./tsconfig.jsx.json", "./tsconfig.tui.json"],
-      ecmaFeatures: { jsx: true },
-    },
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "declaration": false,
+    "declarationMap": false,
+    "jsx": "preserve",
+    "jsxImportSource": "@opentui/solid"   // дефолт; GUI переопределит директивой
   },
-  extends: [
-    ...tseslint.configs.recommendedTypeChecked,
-    ...tseslint.configs.stylisticTypeChecked,
-  ],
-  rules: { /* те же warn-правила, что и в основном блоке */ },
+  "include": ["src/gui.tsx", "src/tui.tsx", "src/tui-v1.tsx", "src/**/*.d.ts"],
+  "exclude": []
 }
 ```
 
-`@typescript-eslint/parser` распознаёт JSX автоматически по расширению `.tsx`;
-`ecmaFeatures.jsx: true` и массив `project` гарантируют type-aware правила для
-обоих JSX-диалектов. `files: ["src/**/*.ts"]` в первом блоке остаётся без изменений —
-пересечения не будет.
+- `noEmit: true` гарантирует: программа используется **только для проверки типов**,
+  `dist/` не трогается, dual-entry и Vite-бандл не затрагиваются.
+- Базовый `tsconfig.json` остаётся со своим `exclude` — именно он управляет
+  *эмитом*; `tsconfig.jsx.json` — отдельный контур *проверки*.
 
-### Шаг 3. Скрипты и CI
+### Шаг 2 — переключить JSX-рантайм на уровне файлов
+
+- `src/tui.tsx` уже содержит `/** @jsxImportSource @opentui/solid */` — оставить.
+- `src/tui-v1.tsx` — проверить и при необходимости добавить ту же директиву.
+- `src/gui.tsx` — добавить `/** @jsxImportSource solid-js */` в первую строку,
+  чтобы JSX-типы разрешались из Solid, а не из OpenTUI (директива файла имеет
+  приоритет над `jsxImportSource` из `compilerOptions`).
+- Альтернатива при желании избежать директив: `jsx: "react-jsx"` + два
+  `tsconfig` (по одному на рантайм) — сложнее, рекомендуется вариант с pragma.
+
+### Шаг 3 — подключить ESLint к JSX-программе
+
+Добавить в `eslint.config.mjs` блок **после** базового (до блока `src/core/**` или
+после — порядок не важен, но блок должен быть не шире базового):
+
+```js
+{
+  files: ["src/**/*.tsx"],
+  languageOptions: {
+    parserOptions: { project: "./tsconfig.jsx.json" }
+  }
+}
+```
+
+- Отдельный `@typescript-eslint/parser` подключать не нужно: `typescript-eslint`
+  уже парсит TSX его собственным парсером (espree с TSX не справился бы).
+- Наследованные правила (`recommendedTypeChecked`, `stylisticTypeChecked`,
+  `semi`, `quotes`, `indent`, `no-console`, `no-explicit-any: warn` и т.д.)
+  применятся к `.tsx` автоматически. При желании — добавить точечные
+  JSX-специфичные правила после стабилизации baseline.
+- Убедиться, что `npm run lint` (`eslint src`) теперь действительно посещает
+  `.tsx` (проверить `--debug`/списком файлов), иначе явно перечислить их в
+  `files`.
+
+### Шаг 4 — скрипты и CI
 
 - Добавить в `package.json`:
-  - `"lint:jsx": "eslint src/gui.tsx src/tui.tsx src/tui-v1.tsx"`
-  - `"typecheck:jsx": "tsc -p tsconfig.jsx.json --noEmit && tsc -p tsconfig.tui.json --noEmit"`
-- В CI добавить шаги `npm run lint:jsx` и `npm run typecheck:jsx` рядом с
-  основными `npm run lint` / `npm run build`, **не снимая** baseline-гейт QA-A2.0,
-  пока счётчик предупреждений по `.ts` не обнулится.
-- Обновить счётчики/описания в `test-docs.mjs`, если мета-гейт отслеживает
-  список npm-скриптов (проверить перед правкой; при необходимости — отдельная
-  подзадача QA-A2.7).
+  - `"typecheck:jsx": "tsc -p tsconfig.jsx.json"`;
+  - `"lint:jsx": "eslint src --ext .ts,.tsx"` (или включить `.tsx` в общий
+    `npm run lint`).
+- Добавить оба вызова в CI-воркфлоу рядом с `npm run lint` / `npm run build`.
+- Обновить `test-docs.mjs`-связанные доки только при изменении счётчиков tools/RPC —
+  в данном плане они не меняются.
 
-### Шаг 4. Верификация после подключения
+### Шаг 5 — проверки после подключения (обязательно)
 
-1. `npx tsc -p tsconfig.jsx.json --noEmit` — 0 ошибок.
-2. `npx tsc -p tsconfig.tui.json --noEmit` — 0 ошибок.
-3. `npx eslint src/gui.tsx src/tui.tsx src/tui-v1.tsx` — 0 ошибок; новые
-   `no-explicit-any` / `no-unsafe-*` устраняются по правилам QA-A2 (без `--fix`).
-4. `npm run build` и `npm run build:gui` — оба бандла собираются, `dist/` и
-   `gui-experimental.cjs` не изменили состав.
-5. `node test-package-exports.mjs`, `npm test` — Dual-entry и регрессии зелёные.
-6. Smoke: открыть GUI-панель и TUI-панель в OpenCode, убедиться в рендере
-   (Solid DOM и OpenTUI соответственно).
+- `npm run build` — убедиться, что состав `dist/` и `npm pack --dry-run` не
+  изменились; `node test-package-exports.mjs` — целостность `exports`.
+- `npm run lint` и `npm run typecheck:jsx` — 0 ошибок; новые `any` в `.tsx`
+  разбираются по правилам QA-A2 (сужать через type guard / `z.infer`).
+- GUI/RPC-контур (по правилам AGENTS.md): `npm run test:dlq-gui`,
+  `npm run test:pause-gui`, `npm run test:gui-bundle` + smoke в Playwright.
+- V1/V2-совместимость и мета-гейт: `node test-docs.mjs`, `node test-workflows.mjs`.
+- `npm run test:i18n` — `gui.tsx` инлайн-регистрирует `ru/en/zh`-каталоги;
+  типизация JSON-импортов не должна сломать паритет ключей.
 
-### Шаг 5. Закрытие подзадачи
+### Риски и оговорки
 
-После успешной верификации — перенести QA-A2.6 в `CHANGELOG.md`, отметить
-подзадачу `[x]` в ROADMAP и удалить её оттуда по правилу канбана (п. 3 §4 ROADMAP).
-Поведение плагина не меняется → запись носит характер «типизация/инфраструктура».
+- Добавление `.tsx` в линтер может вскрыть значительный легаси-долг в GUI/TUI;
+  чтобы не ронять CI, новые предупреждения временно держать в baseline
+  (по образцу QA-A2.0), затем «вылизывать» по QA-A2.1–A2.5.
+- GUI-бандл (`gui-experimental.cjs`) и `dist/` — артефакты сборки, **не редактировать
+  вручную** (правило AGENTS.md).
+- Любая правка `exports`/сборки GUI требует синхронизации `docs/COMPATIBILITY.md`
+  и повторного `node test-docs.mjs`.
 
-## 4. Итог решения
+## 5. Критерии приёмки QA-A2.6
 
-На текущем шаге (QA-A2.6) исключение GUI/TUI **зафиксировано документально**:
-причины — разные JSX-диалекты, отдельный Vite-CommonJS-бандл и dual-entry со
-сырым `.tsx`-экспортом. Контур типизации эпика QA-A2 остаётся ограниченным
-`src/**/*.ts` базового tsc-проекта; подключение JSX-файлов вынесено в
-конкретный план (шаги 1–5) и не выполняется в этой подзадаче.
+- [x] Прочитаны `ROADMAP.md` (QA-A2.6), `tsconfig.json`, `eslint.config.mjs`.
+- [x] Создан `docs/QA-A2-GUI-TUI.md` с объяснением причин исключения
+      (JSX-парсер/рантайм, отдельный Vite-бандл, dual-entry) и планом подключения.
+- [x] `tsconfig.json`, `eslint.config.mjs` и код не изменены.
+- [x] Коммит/push не выполнялись; суб-агенты не спавнились.
