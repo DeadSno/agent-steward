@@ -83,4 +83,23 @@ assert.match(
   "параллельные вызовы должны кэшировать один и тот же async-результат",
 );
 
+// QV-1: in-process-триггеры (file/git/mcp-event) действительно регистрируют
+// включённую OS-запись-плейсхолдер ONCE 31.12.2099 — это задокументированное
+// поведение, а не артефакт приостановленной задачи.
+assert.match(
+  windowsSource,
+  /triggerType && triggerType !== "cron"/,
+  "QV-1: ветка для не-cron триггеров должна регистрировать OS-плейсхолдер",
+);
+assert.match(
+  windowsSource,
+  /"ONCE"/,
+  "QV-1: плейсхолдер должен использовать ONCE",
+);
+assert.match(
+  windowsSource,
+  /buildNeverDate\(dateFormat\)/,
+  "QV-1: дата 31.12.2099 берётся из buildNeverDate в формате системной локали",
+);
+
 console.log(`Schtasks locales: ${cases.length} заголовков (включая ZH) — OK.`);

@@ -407,7 +407,7 @@ avg_cost / avg_time / last_10_runs`. Обучается на исходах ге
 
 | Platform | Backend | Notes |
 | --- | --- | --- |
-| Windows | `schtasks.exe` | Cron is translated to `MINUTE/HOURLY/DAILY/WEEKLY/MONTHLY` flags; non-cron triggers are registered as `ONCE` at `31.12.2099` |
+| Windows | `schtasks.exe` | Cron is translated to `MINUTE/HOURLY/DAILY/WEEKLY/MONTHLY` flags; non-cron triggers are registered as an **enabled** `ONCE` entry at `31.12.2099` (Status `Ready`, never fires by itself) |
 | Linux | `crontab` | Task lines with the plugin marker are rewritten via `crontab -` |
 | macOS | `launchd` | `StartCalendarInterval` plists |
 | POSIX fallback | `crontab` | Used when launchd is unavailable |

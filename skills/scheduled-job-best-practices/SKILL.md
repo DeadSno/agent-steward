@@ -39,10 +39,14 @@ one-minute OS poll with a schedule gate in the wrapper. A yearly cron such as
 `0 4 1 1 *` is now converted natively to `MONTHLY /d 1 /m JANUARY /st 04:00`,
 so the OS does not tick every minute for a task that runs once a year.
 
-`triggerType: "mcp-event"` is event-only: it does **not** register an OS scheduler task
-(PL-12). A historical `31.12.2099` entry seen for a paused event task was an artifact of
-that already-paused task; a fresh event (`qa.agent-steward.probe.v2`) creates an `mcp-event`
-definition with no OS object, so no placeholder cleanup is needed.
+`triggerType: "mcp-event"` (as well as `file`/`git`) is event-driven, but it **still
+registers an enabled OS placeholder entry**: `ONCE 31.12.2099 00:00`, Status `Ready`
+(`src/core/scheduler/windows.ts`, the non-cron branch). The OS never fires it on its own;
+the entry exists only so manual start (`schtasks /run`), DAG dependencies and `runMatrix`
+have an OS object to run, and it is removed together with the task by `delete_task`.
+A fresh task `QV1-live-mcp-os-probe` with `mcpEvent:{server:'qv1probe',event:'qv1.live.probe'}`
+was verified in `schtasks` on 20.11.2026 (QV-1) — the `31.12.2099` date is intentional,
+not an artifact of a paused task.
 
 Do not use a 5-field cron for a one-off reminder. Do not build a pipeline with chained
 prompts inside a single task when `dependsOn` exists: a failed step would be invisible.
