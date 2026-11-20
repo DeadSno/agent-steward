@@ -25,6 +25,7 @@ const {
   emitEventSchema,
   emitEventCore,
   matchesMcpEventSubscription,
+  normalizeMcpEventTrigger,
   getTaskLogsSchema,
   createToolHandlers,
   createToolSpecs,
@@ -464,6 +465,71 @@ check(
   matchesMcpEventSubscription(qv3Github, "deploy.done") === true &&
     matchesMcpEventSubscription(qv3Jira, "deploy.done", "   ") === true &&
     matchesMcpEventSubscription({ name: "cron", triggerType: "cron" }, "deploy.done") === false
+);
+
+// PL-42: mcpEvent принимает и event, и алиас eventName (совместимость с emit_event).
+check(
+  "PL-42: схема schedule_task принимает eventName и event",
+  scheduleTaskSchema.safeParse({
+    name: "pl42-alias",
+    schedule: "",
+    prompt: "probe",
+    triggerType: "mcp-event",
+    mcpEvent: { server: "github", eventName: "deploy.done" },
+  }).success &&
+    scheduleTaskSchema.safeParse({
+      name: "pl42-event",
+      schedule: "",
+      prompt: "probe",
+      triggerType: "mcp-event",
+      mcpEvent: { server: "github", event: "deploy.done" },
+    }).success
+);
+
+const pl42Alias = normalizeMcpEventTrigger({ server: "github", eventName: " deploy.done " });
+const pl42Event = normalizeMcpEventTrigger({
+  server: "github",
+  event: "deploy.done",
+  filter: "repo=x",
+});
+check(
+  "PL-42: eventName создаёт задачу с event из алиаса",
+  pl42Alias?.event === "deploy.done" && pl42Alias?.server === "github"
+);
+check(
+  "PL-42: mcpEvent.event работает как раньше (server + filter)",
+  pl42Event?.event === "deploy.done" &&
+    pl42Event?.server === "github" &&
+    pl42Event?.filter === "repo=x"
+);
+check(
+  "PL-42: при конфликте полей event имеет приоритет над eventName",
+  normalizeMcpEventTrigger({
+    server: "github",
+    event: "deploy.done",
+    eventName: "deploy.failed",
+  })?.event === "deploy.done"
+);
+const pl42Missing = JSON.parse(
+  (
+    await handlers.schedule_task({
+      name: "pl42-no-event",
+      schedule: "",
+      prompt: "probe",
+      triggerType: "mcp-event",
+      mcpEvent: { server: "github" },
+    })
+  ).content
+);
+check(
+  "PL-42: без event и eventName schedule_task возвращает ошибку",
+  pl42Missing.success === false &&
+    /mcpEvent\.event/.test(pl42Missing.error) &&
+    /mcpEvent\.eventName/.test(pl42Missing.error)
+);
+check(
+  "PL-42: path schedule_task использует общую нормализацию",
+  /normalizeMcpEventTrigger\(mcpEvent\)/.test(rpcSource)
 );
 
 // PL-4: get_metrics отдаёт toolBlocked как показатель политики (а не ошибку).

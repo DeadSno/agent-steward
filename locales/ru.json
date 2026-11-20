@@ -763,7 +763,7 @@
   "tool.error.matrixNotMatrix": "Задача \"{name}\" не является матрицей.",
   "tool.error.matrixOverride": "Задача \"{task}\": matrix.overrides содержит workspace \"{workspace}\", которого нет в workspaceIds.",
   "tool.error.modelInvalid": "Недопустимая модель «{model}»: {error}",
-  "tool.error.mcpEventRequired": "Для MCP-триггера нужно указать имя события (mcpEvent.event).",
+  "tool.error.mcpEventRequired": "Для MCP-триггера нужно указать имя события (mcpEvent.event или mcpEvent.eventName).",
   "tool.error.onceFields": "runAt/delaySeconds допустимы только при triggerType=once.",
   "tool.error.onceMatrixSchema": "One-shot нельзя комбинировать с matrix: матрица запускается только вручную.",
   "tool.error.onceMatrixUpdate": "One-shot нельзя комбинировать с matrix.",

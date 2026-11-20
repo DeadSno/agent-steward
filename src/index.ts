@@ -611,12 +611,23 @@ export const scheduleTaskSchema = z.object({
   mcpEvent: z
     .object({
       server: z.string(),
-      event: z.string(),
+      event: z
+        .string()
+        .optional()
+        .describe(
+          "event or eventName (alias); eventName is accepted for emit_event compatibility",
+        ),
+      eventName: z
+        .string()
+        .optional()
+        .describe(
+          "event or eventName (alias); eventName is accepted for emit_event compatibility",
+        ),
       filter: z.string().optional(),
     })
     .optional()
     .describe(
-      "MCP event trigger: server, event name and an optional filter (key=value or regex).",
+      "MCP event trigger: server, event (or its alias eventName) and an optional filter (key=value or regex). At least one of event/eventName is required for triggerType=mcp-event.",
     ),
   watchPath: z
     .string()
@@ -933,11 +944,24 @@ export const updateTaskSchema = z.object({
   mcpEvent: z
     .object({
       server: z.string(),
-      event: z.string(),
+      event: z
+        .string()
+        .optional()
+        .describe(
+          "event or eventName (alias); eventName is accepted for emit_event compatibility",
+        ),
+      eventName: z
+        .string()
+        .optional()
+        .describe(
+          "event or eventName (alias); eventName is accepted for emit_event compatibility",
+        ),
       filter: z.string().optional(),
     })
     .optional()
-    .describe("New MCP event trigger."),
+    .describe(
+      "New MCP event trigger: event (or its alias eventName); at least one of them is required for triggerType=mcp-event.",
+    ),
   watchPath: z
     .string()
     .optional()
@@ -1381,10 +1405,24 @@ export const manageTemplatesSchema = z.object({
   mcpEvent: z
     .object({
       server: z.string(),
-      event: z.string(),
+      event: z
+        .string()
+        .optional()
+        .describe(
+          "event or eventName (alias); eventName is accepted for emit_event compatibility",
+        ),
+      eventName: z
+        .string()
+        .optional()
+        .describe(
+          "event or eventName (alias); eventName is accepted for emit_event compatibility",
+        ),
       filter: z.string().optional(),
     })
-    .optional(),
+    .optional()
+    .describe(
+      "MCP event trigger: event (or its alias eventName); at least one of them is required for triggerType=mcp-event.",
+    ),
   watchPath: z.string().optional(),
   workingDirectory: z.string().optional(),
   allowedTools: z.array(z.string()).optional(),
@@ -5356,7 +5394,7 @@ const v2Plugin = Plugin.define({
           priority?: number;
           beforeScript?: string;
           afterScript?: string;
-          mcpEvent?: McpEventTrigger;
+          mcpEvent?: McpEventInput;
           workspaceId?: string;
           allowedTools?: string[];
           deniedTools?: string[];
@@ -6803,6 +6841,37 @@ export interface TriggerExtras {
   gitPollSeconds?: number;
 }
 
+/**
+ * PL-42: вход нормализации mcpEvent. `eventName` — алиас `event`, который
+ * присылает `emit_event`; оба поля необязательны, но хотя бы одно нужно
+ * для triggerType=mcp-event (проверяется после нормализации).
+ */
+type McpEventInput = {
+  server?: string;
+  /** Каноническое имя события. Приоритетнее алиаса. */
+  event?: string;
+  /** Алиас emit_event; используется, только если event пуст. */
+  eventName?: string;
+  filter?: string;
+};
+
+/**
+ * PL-42: приводит mcpEvent к каноническому виду `{ server, event, filter? }`.
+ * `event` имеет приоритет: если заданы оба поля и они различаются, alias
+ * `eventName` игнорируется — так поведение старых задач не меняется.
+ */
+export function normalizeMcpEventTrigger(
+  mcpEvent?: McpEventInput,
+): McpEventTrigger | undefined {
+  const rawEvent = mcpEvent?.event?.trim() || mcpEvent?.eventName?.trim();
+  if (!rawEvent) return undefined;
+  return {
+    server: mcpEvent?.server?.trim() || "",
+    event: rawEvent,
+    ...(mcpEvent?.filter?.trim() ? { filter: mcpEvent.filter.trim() } : {}),
+  };
+}
+
 export async function schedulerCreateTask(
   name: string,
   schedule: string,
@@ -6821,7 +6890,7 @@ export async function schedulerCreateTask(
   priority?: number,
   beforeScript?: string,
   afterScript?: string,
-  mcpEvent?: McpEventTrigger,
+  mcpEvent?: McpEventInput,
   workspaceId?: string,
   allowedTools?: string[],
   deniedTools?: string[],
@@ -6971,14 +7040,9 @@ export async function schedulerCreateTask(
     triggerExtras.gitPollSeconds >= 5
       ? Math.floor(triggerExtras.gitPollSeconds)
       : undefined;
-  const normalizedMcpEvent =
-    mcpEvent?.event?.trim()
-      ? {
-        server: mcpEvent.server?.trim() || "",
-        event: mcpEvent.event.trim(),
-        ...(mcpEvent.filter?.trim() ? { filter: mcpEvent.filter.trim() } : {}),
-      }
-      : undefined;
+  // PL-42: mcpEvent принимает event и его алиас eventName (emit_event).
+  // event приоритетнее: если оба заданы и различаются, побеждает event.
+  const normalizedMcpEvent = normalizeMcpEventTrigger(mcpEvent);
   let effectiveTriggerType = triggerType ?? "cron";
   // One-shot: нормализуем время до создания файлов и задачи в ОС.
   // Для остальных триггеров runAt не имеет смысла и отбрасывается.
