@@ -1227,8 +1227,8 @@ export const selfAnalysisSchema = z.object({
 /** manage_settings — глобальные настройки планировщика. */
 export const manageSettingsSchema = z.object({
   action: z
-    .enum(["get", "update"])
-    .describe("get — current settings; update — merge the provided fields and save."),
+    .enum(["get", "list", "update"])
+    .describe("get - current settings; list - same as get (agent-friendly alias); update - merge the provided fields and save."),
   maxConcurrent: z
     .number()
     .int()
@@ -3482,7 +3482,7 @@ const selfAnalysisExecute = wrapExecute<SelfAnalysisArgs>(async (args) => {
 /** manage_settings — чтение и изменение глобальных настроек. */
 const manageSettingsExecute = wrapExecute<SettingsArgs>(async (args) => {
   const current = await loadSettings();
-  if (args.action === "get") {
+  if (args.action === "get" || args.action === "list") {
     return { content: JSON.stringify({ success: true, settings: current }) };
   }
 
