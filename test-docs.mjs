@@ -624,6 +624,72 @@ check(
   unlistedSuites.length === 0 && suiteFilesOnDisk.length > 0
 );
 
+// PL-44: счётчики tools/RPC/сюит во всех локальных SKILL.md сверяются с кодом.
+const rpcMethodsBlock = (rpcSrc.match(/methods:\s*\{([\s\S]*?)\n\s*\},\n\s*events:/) || [])[1] || "";
+const rpcCountForSkills = [...rpcMethodsBlock.matchAll(/^\s{4}[a-z_]+:\s*\{/gm)].length;
+const skillFiles = [
+  ...fs
+    .readdirSync(path.join(root, ".opencode/skills"), { withFileTypes: true })
+    .filter((e) => e.isDirectory())
+    .map((e) => path.join(".opencode/skills", e.name, "SKILL.md")),
+  ...fs
+    .readdirSync(path.join(root, "skills"), { withFileTypes: true })
+    .filter((e) => e.isDirectory())
+    .map((e) => path.join("skills", e.name, "SKILL.md")),
+].filter((rel) => fs.existsSync(path.join(root, rel)));
+
+const skillCounters = {
+  tools: toolRegistry.length,
+  rpc: rpcCountForSkills,
+  suites: suitesInScriptUnique.length,
+};
+const skillPatterns = [
+  { kind: "tools", re: /\*\*(\d+)\*\*\s+tools\b/g },
+  { kind: "tools", re: /(?<!\*)\b(\d+)\s+tools\b/g },
+  { kind: "tools", re: /\*\*(\d+)\*\*\s+agent tools\b/g },
+  { kind: "tools", re: /(?<!\*)\b(\d+)\s+agent tools\b/g },
+  { kind: "tools", re: /\*\*(\d+)\*\*\s+MCP-инструментов/g },
+  { kind: "tools", re: /(?<!\*)\b(\d+)\s+MCP-инструментов/g },
+  { kind: "tools", re: /инструменты\s*\(из\s*\*\*(\d+)\*\*\)/g },
+  { kind: "tools", re: /инструменты\s*\(из\s*(\d+)\)/g },
+  { kind: "rpc", re: /\*\*(\d+)\*\*\s+RPC-методов/g },
+  { kind: "rpc", re: /(?<!\*)\b(\d+)\s+RPC-методов/g },
+  { kind: "rpc", re: /RPC-методы\s*\(из\s*\*\*(\d+)\*\*\)/g },
+  { kind: "rpc", re: /RPC-методы\s*\(из\s*(\d+)\)/g },
+  { kind: "suites", re: /\*\*(\d+)\*\*\s+наборов тестов/g },
+  { kind: "suites", re: /(?<!\*)\b(\d+)\s+наборов тестов/g },
+  { kind: "suites", re: /\*\*(\d+)\*\*\s+test suites\b/g },
+  { kind: "suites", re: /(?<!\*)\b(\d+)\s+test suites\b/g },
+];
+let skillCounterMatches = 0;
+let skillFilesWithAllThree = 0;
+for (const rel of skillFiles) {
+  const text = fs.readFileSync(path.join(root, rel), "utf8");
+  const seen = { tools: false, rpc: false, suites: false };
+  for (const { kind, re } of skillPatterns) {
+    re.lastIndex = 0;
+    for (const m of text.matchAll(re)) {
+      const found = Number(m[1]);
+      const expected = skillCounters[kind];
+      skillCounterMatches++;
+      seen[kind] = true;
+      check(
+        `${rel}: счётчик ${kind} найдено ${found}, ожидалось ${expected}`,
+        found === expected
+      );
+    }
+  }
+  if (seen.tools && seen.rpc && seen.suites) skillFilesWithAllThree++;
+}
+check(
+  `SKILL.md: найдено ${skillCounterMatches} упоминаний счётчиков в ${skillFiles.length} файлах`,
+  skillCounterMatches > 0 && skillFiles.length > 0
+);
+check(
+  `SKILL.md: хотя бы один файл объявляет все три счётчика (tools/RPC/suites), найдено ${skillFilesWithAllThree}`,
+  skillFilesWithAllThree >= 1
+);
+
 // ROADMAP: закрытые подзадачи удаляются отсюда, остаются только открытые.
 // QA-A2.5/A2.6 закрыты по факту (QV-7) и больше не должны встречаться в роадмапе.
 const roadmapText = fs.readFileSync(path.join(root, "ROADMAP.md"), "utf8");
