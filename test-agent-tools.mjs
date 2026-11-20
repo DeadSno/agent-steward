@@ -287,7 +287,7 @@ check(
 );
 
 // 17. QA-P3.3: delete_template принимает имя шаблона как алиас id.
-const repoSource = fs.readFileSync("./src/db/templates-repo.ts", "utf8");
+const repoSource = fs.readFileSync(new URL("./src/db/templates-repo.ts", import.meta.url), "utf8");
 check(
   "QA-P3.3: репозиторий удаляет по id или имени",
   repoSource.includes("DELETE FROM templates WHERE id = ? OR name = ?")
