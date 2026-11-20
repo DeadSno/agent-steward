@@ -24,6 +24,7 @@ const {
   transferTasksSchema,
   emitEventSchema,
   emitEventCore,
+  matchesMcpEventSubscription,
   getTaskLogsSchema,
   createToolHandlers,
 } = await import("./dist/index.js");
@@ -404,6 +405,32 @@ check(
   rpcStart >= 0 &&
     rpcHandler.includes("emitEventCore") &&
     !rpcHandler.includes("normalizePriority")
+);
+
+// QV-3: emit_event различает подписчиков по mcpEvent.server.
+const qv3Def = (server, event = "deploy.done") => ({
+  name: `qv3-${server}`,
+  triggerType: "mcp-event",
+  mcpEvent: { server, event },
+});
+const qv3Github = qv3Def("github");
+const qv3Jira = qv3Def("jira");
+check(
+  "QV-3: emitEventSchema принимает server",
+  emitEventSchema.safeParse({ eventName: "deploy.done", server: "github" }).success &&
+    emitEventSchema.safeParse({ eventName: "deploy.done" }).success
+);
+check(
+  "QV-3: сервер учитывается при сопоставлении подписки",
+  matchesMcpEventSubscription(qv3Github, "DEPLOY.DONE", "GitHub") === true &&
+    matchesMcpEventSubscription(qv3Github, "deploy.done", "jira") === false &&
+    matchesMcpEventSubscription(qv3Jira, "deploy.done", "github") === false
+);
+check(
+  "QV-3: без server сохраняется обратная совместимость",
+  matchesMcpEventSubscription(qv3Github, "deploy.done") === true &&
+    matchesMcpEventSubscription(qv3Jira, "deploy.done", "   ") === true &&
+    matchesMcpEventSubscription({ name: "cron", triggerType: "cron" }, "deploy.done") === false
 );
 
 // PL-4: get_metrics отдаёт toolBlocked как показатель политики (а не ошибку).

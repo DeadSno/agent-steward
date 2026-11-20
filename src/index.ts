@@ -1428,6 +1428,10 @@ export const cleanupHistorySchema = z.object({
 export const emitEventSchema = z.object({
   eventName: z.string().min(1).describe("Event name, for example 'deploy.finished'."),
   payload: z.any().optional().describe("Event payload passed to trigger filters."),
+  server: z
+    .string()
+    .optional()
+    .describe("Optional MCP source/server name (e.g. 'github'). When set, only tasks with the same mcpEvent.server are triggered."),
 });
 
 /** manage_secrets — зашифрованное хранилище секретов (Спринт 26). */
@@ -4001,9 +4005,33 @@ interface EmitEventResult {
 
 const DEFAULT_EVENT_PRIORITY = 5;
 
+/**
+ * QV-3: проверка, что задача подписана на MCP-событие. Источник `server`
+ * сравнивается только когда он передан вызывающим — это сохраняет обратную
+ * совместимость со старыми вызовами emit_event без указания источника.
+ */
+export function matchesMcpEventSubscription(
+  def: TaskDefinition,
+  event: string,
+  server?: string,
+  payload?: unknown,
+): boolean {
+  if ((def.triggerType ?? "cron") !== "mcp-event") return false;
+  if (def.mcpEvent?.event?.trim().toLowerCase() !== event.toLowerCase()) return false;
+  const expectedServer = server?.trim();
+  if (
+    expectedServer &&
+    def.mcpEvent?.server?.trim().toLowerCase() !== expectedServer.toLowerCase()
+  ) {
+    return false;
+  }
+  return matchesEventFilter(def.mcpEvent?.filter, payload);
+}
+
 export async function emitEventCore(
   rawEventName: string | undefined,
   payload: unknown,
+  server?: string,
 ): Promise<EmitEventResult> {
   const event = rawEventName?.trim() ?? "";
   if (!event) {
@@ -4020,12 +4048,7 @@ export async function emitEventCore(
 
   const definitions = await loadTaskDefinitions();
   const matched = definitions
-    .filter(
-      (def) =>
-        (def.triggerType ?? "cron") === "mcp-event" &&
-        def.mcpEvent?.event?.trim().toLowerCase() === event.toLowerCase() &&
-        matchesEventFilter(def.mcpEvent?.filter, payload),
-    )
+    .filter((def) => matchesMcpEventSubscription(def, event, server, payload))
     .sort(
       (a, b) =>
         (normalizePriority(b.priority) ?? DEFAULT_EVENT_PRIORITY) -
@@ -4066,7 +4089,7 @@ export async function emitEventCore(
 
 /** emit_event — запуск задач, подписанных на MCP-событие. */
 const emitEventExecute = wrapExecute<EmitEventArgs>(async (args) => {
-  const result = await emitEventCore(args.eventName, args.payload ?? {});
+  const result = await emitEventCore(args.eventName, args.payload ?? {}, args.server);
   if (!result.success) {
     return { content: JSON.stringify({ ...result, error: result.message }) };
   }
@@ -5571,11 +5594,12 @@ const v2Plugin = Plugin.define({
         }
       },
       emit_event: async (input: unknown) => {
-        const { eventName, payload } = input as {
+        const { eventName, payload, server } = input as {
           eventName?: string;
           payload?: unknown;
+          server?: string;
         };
-        return await emitEventCore(eventName, payload);
+        return await emitEventCore(eventName, payload, server);
       },
       pause_task: async (input: unknown) => {
         const { name, until } = input as { name: string; until?: string };

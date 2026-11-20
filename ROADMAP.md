@@ -131,10 +131,6 @@ Legacy: `opencode-windows-scheduler@1.5.8`.
 
 - [ ] QV-2.1 `emit_event({eventName:'probe'})` → `code:start_failed`, `matched:['QWEN-PROBE - MCP event']`, причина «Плагин выгружается: новые запуски не принимаются»; `run_task_now` той же задачи → `success:false` с той же причиной, хотя параллельно ОС-планировщик продолжал тикать (`QWEN-PROBE - OS cron`: Last Run 14:31:01, Last Result 0). Код флага присутствует (`src/index.ts:7697` `PLUGIN_SHUTTING_DOWN`, `:7708` `isShuttingDown`) — дефект в застрявшем состоянии и отсутствии диагностики — P1. Действие: воспроизвести в штатном tool-host (наблюдение сделано в Code Mode), выставлять наблюдаемую причину/PID/счётчик активных операций и автосброс при нуле активных; тест «emit_event и run_task_now не отклоняются, пока ОС-путь жив».
 
-**Задача QV-3 — `emit_event` игнорирует поле `mcpEvent.server`** · P2 · ⬜
-
-- [ ] QV-3.1 `src/index.ts:3925` сопоставляет только `def.mcpEvent?.event?.trim().toLowerCase() === event.toLowerCase()`; `emit_event({eventName:'qwenval.probe'})` вернул `no_subscribers` для задачи с `server:'qwenval'` — P2. Действие: учитывать `server` при сопоставлении или убрать поле из контракта `schedule_task`; тест с двумя серверами и одинаковым именем события.
-
 **Задача QV-8 — дочерние `opencode run` перезагружают всю поверхность инструментов** · P2 · ⬜
 
 - [ ] QV-8.1 В `src/` нет маркеров `AGENT_STEWARD_RUN`, `RUN_MODE`, `isRunMode`, `childRun`; при глобально заданном плагине дочерний прогон видит все 30 инструментов и скилл — P2. Действие: выставлять маркер в обёртке и делать early return в entry плагина для дочернего прогона; замерить реальную поверхность до/после (числа qwen не подтверждены) и добавить тест «дочерний прогон не видит scheduler-tools».
