@@ -38,7 +38,18 @@ Write-only приёмник баг-репортов: `POST /report` → GitHub I
 1. Создайте fine-grained PAT с единственным правом **Issues: write** на
    `DeadSno/agent-steward` (Repository permissions → Issues → Read and write;
    остальное — None). Срок — минимально возможный.
-2. Установите секрет: `npx wrangler secret put GITHUB_TOKEN`.
+2. Установите секрет **в два шага** (встречающаяся ошибка — вставить сам PAT
+   в ответ на вопрос «Enter the name of your secret variable», тогда секрет
+   сохраняется под именем токена, а воркер отвечает `500 receiver is not
+   configured`):
+
+   ```powershell
+   npx wrangler secret put GITHUB_TOKEN
+   # Enter the name of your secret variable: GITHUB_TOKEN
+   # Enter a secret value: <вставьте PAT сюда>
+   npx wrangler secret list   # в списке должно быть имя GITHUB_TOKEN
+   ```
+
 3. KV-привязки по умолчанию отключены: воркер использует in-memory хранилища
    для дедупа по `reportId` и rate-limit по IP (сбрасываются при рестарте
    изолята). Для персистентности создайте пространства и раскомментируйте
@@ -58,6 +69,15 @@ Write-only приёмник баг-репортов: `POST /report` → GitHub I
 curl -X POST "$URL" -H 'content-type: application/json' \
   -d '{"schemaVersion":1,"reportId":"probe-0001","createdAt":"2026-01-01T00:00:00Z","pluginVersion":"probe","os":{"platform":"test"},"node":"v22","description":"probe"}'
 ```
+
+> На Windows с устаревшим Schannel `curl`/Node по умолчанию выбирают TLS 1.2 и
+> получают от `*.workers.dev` `SSL alert 40`. В таком случае форсируйте TLS 1.3:
+> `curl --tlsv1.3 …` либо в Node `https.request(..., { minVersion: 'TLSv1.3' })`.
+> Это ограничение локального клиента, не воркера.
+
+Живая проверка 20.11.2026: `POST /report` → `200` и
+`https://github.com/DeadSno/agent-steward/issues/6`
+(метки `user-report`, `needs-triage`).
 
 ## Приватность
 

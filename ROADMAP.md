@@ -260,20 +260,14 @@ agent-steward — execution engine с опциональной регистра�
 ## Деталь 3.8 — Обратная связь от пользователей (bug reports → GitHub Issues) ✅
 `src/core/feedback.ts`, `src/settings.ts`, `src/index.ts`, `infra/feedback-worker/`
 
-**Закрыто и перенесено в CHANGELOG:** F-1.1–F-1.7, F-2.1–F-2.4, F-3.1–F-3.3,
+**Закрыто и перенесено в CHANGELOG:** F-1.1–F-1.7, F-2.1–F-2.5, F-3.1–F-3.3,
 F-4.1–F-4.4. Реализованы контракт payload v1, POST с 10-секундным таймаутом и
 2 ретраями, настройки `feedback` с валидацией URL, редакция секретов, `report_bug`
 с `destination`/`dryRun`, outbox с повтором при старте, антиспам, Cloudflare
-Worker → GitHub Issues, GUI-настройки, i18n ru/en/zh, тесты и документация.
+Worker → GitHub Issues (задеплоен и проверен живым POST → issue #6), GUI-настройки,
+i18n ru/en/zh, тесты и документация.
 Подтверждение отправки — двухшаговое: `dryRun: true` показывает payload,
 повторный вызов без `dryRun` отправляет его.
-
-### Осталось по детали (требует доступа автора)
-
-- [ ] F-2.5 Deploy Worker и запись секретов: `npx wrangler secret put GITHUB_TOKEN`
-      (fine-grained PAT, только `issues:write` на `DeadSno/agent-steward`),
-      создать KV `FEEDBACK_DEDUP` / `FEEDBACK_RATELIMIT`, `npx wrangler deploy`.
-      README и `wrangler.toml` готовы — без аккаунта Cloudflare deploying невозможен.
 
 ### QA-находки, найденные при проверке работоспособности плагина
 
@@ -297,6 +291,18 @@ Worker → GitHub Issues, GUI-настройки, i18n ru/en/zh, тесты и �
       it is being used by another process` (1/1 ошибка) — P2.
       Действие: открывать файл лога с `FileShare.ReadWrite` и/или ретраить чтение
       при `EBUSY`; сериализовать запуск задачи и чтение лога в планировщике.
+- [ ] QA-3.8.7 `wrangler secret put GITHUB_TOKEN`: при интерактивном вводе PAT
+      оказался сохранён как **имя** секреты, из-за чего живой `POST /report`
+      отвечал `500 receiver is not configured` — P2. Действие: в
+      `infra/feedback-worker/README.md` явно описать два шага (сначала имя
+      `GITHUB_TOKEN`, затем значение) и проверку `wrangler secret list`; воркер
+      оставить с явной ошибкой конфигурации. Исправлено в документации, проверено
+      `wrangler secret list` → `GITHUB_TOKEN`.
+- [ ] QA-3.8.8 Локальный `curl`/Node на этом Windows не могут сделать handshake
+      с `*.workers.dev` по TLS 1.2 (`SSL alert 40`), при этом `GET /health` и
+      `POST /report` проходят при `TLSv1.3` — P3, ограничение клиента, не воркера.
+      Действие: в README привести пример с `--tlsv1.3` / `minVersion:'TLSv1.3'`
+      (добавлено); для продакшен-проверок использовать браузер или клиент с TLS 1.3.
 
 ---
 
