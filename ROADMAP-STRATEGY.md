@@ -22,7 +22,7 @@ Scheduler, уведомления, аналитика — триггеры и о
 
 ---
 
-## Текущая точка (agent-steward 0.0.5, milestone Д7 + Durable DAG)
+## Текущая точка (agent-steward 0.0.6, milestone Д7 + Durable DAG)
 
 - Опубликован в npm, CI зелёный на Windows / macOS / Linux
 - `plugin id` не меняется: `opencode-windows-scheduler` — имена SQLite/логов и ID действий TUI без изменений; каталог данных — `agent-steward` (legacy мигрирует автоматически)
@@ -157,9 +157,9 @@ Enforced `allowedTools` / `deniedTools` вместо advisory, scoped-инъек
 
 ## Метрики успеха
 
-| Метрика | Сейчас (0.0.5) | Через 2 мес | Через 6 мес |
+| Метрика | Сейчас (0.0.6) | Через 2 мес | Через 6 мес |
 |---------|---------------|-------------|-------------|
-| npm latest | 0.0.5 | регулярные патчи | 0.1.x |
+| npm latest | 0.0.6 | регулярные патчи | 0.1.x |
 | CI на 3 ОС | ✅ | ✅ | ✅ |
 | Доступно агенту из RPC-поверхности | 30 / 57 (остальное GUI/CLI-only) | ≥30 / 57 | ≥30 / 57 |
 | Telegram / toast | ✅ | ✅ | ✅ |
