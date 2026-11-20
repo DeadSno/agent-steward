@@ -229,13 +229,15 @@ export function aggregateMatrixResults(parentId: string): MatrixAggregate {
   const parent = getTask(parentId);
   const definedClones = listMatrixClones(parentId);
   // QA-F.2: объединяем определения с клонами, оставшимися только в истории,
-  // чтобы matrix_control показывал тот же набор, что и аналитика.
+  // чтобы matrix_control показывал тот же набор, что и аналитика. Но только
+  // пока существует сам родитель: если удалено всё семейство (родитель,
+  // клоны и агрегатор), матрица считается удалённой и агрегат остаётся empty
+  // (инвариант lifecycle-теста).
+  const historyClones = parent ? listMatrixClonesFromHistory(parentId) : [];
   const known = new Set(definedClones.map((clone) => clone.name.toLowerCase()));
   const clones: MatrixCloneSource[] = [
     ...definedClones,
-    ...listMatrixClonesFromHistory(parentId).filter(
-      (clone) => !known.has(clone.name.toLowerCase()),
-    ),
+    ...historyClones.filter((clone) => !known.has(clone.name.toLowerCase())),
   ];
   const failureMode = parent?.matrix?.failureMode ?? "continue";
 

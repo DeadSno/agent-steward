@@ -371,6 +371,14 @@ try {
       afterDelete.status === "success" &&
       afterDelete.clones[0]?.name === orphanClone.name
   );
+  // Пока родитель существует — история клонов видна; после удаления родителя
+  // всё семейство считается удалённым, и агрегат снова empty.
+  deleteTask(orphanParent.name);
+  const afterParentDelete = aggregateMatrixResults("OrphanMatrix");
+  check(
+    "QA-F.2: после удаления родителя агрегат матрицы снова пуст",
+    afterParentDelete.status === "empty" && afterParentDelete.totalCount === 0
+  );
 } finally {
   closeDb();
 }
