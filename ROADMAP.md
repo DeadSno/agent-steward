@@ -135,10 +135,6 @@ Legacy: `opencode-windows-scheduler@1.5.8`.
 
 - [ ] QV-3.1 `src/index.ts:3925` сопоставляет только `def.mcpEvent?.event?.trim().toLowerCase() === event.toLowerCase()`; `emit_event({eventName:'qwenval.probe'})` вернул `no_subscribers` для задачи с `server:'qwenval'` — P2. Действие: учитывать `server` при сопоставлении или убрать поле из контракта `schedule_task`; тест с двумя серверами и одинаковым именем события.
 
-**Задача QV-4 — расхождение счётчика инструментов 30 против 29** · P2 · ⬜
-
-- [ ] QV-4.1 `createToolSpecs()` = 30 (включая `report_bug`), но `docs/ARCHITECTURE.md:166,363`, `ROADMAP-STRATEGY.md:30`, `docs/README.ru.md:49,109`, `docs/COMPATIBILITY.md:18,105`, `AGENTS.md:31`, `.opencode/skills/agent-steward-dev/SKILL.md:17` говорят 29/~29, а таблица `README.md:132-160` содержит 29 строк — P2. Действие: унифицировать цифры и добавить недостающую строку `report_bug`; расширить гейт `test-docs.mjs:61-65` (сейчас проверяет только README/FEATURES) на ARCHITECTURE и STRATEGY.
-
 **Задача QV-5 — `run_mission` ошибочно назван инструментом агента** · P2 · ⬜
 
 - [ ] QV-5.1 `docs/ARCHITECTURE.md:166` называет `run_mission` «agent tool / RPC method», хотя его нет в реестре 30 инструментов (только RPC/CLI/GUI); метрика `ROADMAP-STRATEGY.md:164` «Покрытие RPC инструментами агента 100%» поэтому неверна — P2. Действие: исправить формулировку в ARCHITECTURE и переопределить метрику в STRATEGY без ложного 100%.

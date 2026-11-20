@@ -14,7 +14,7 @@ GUI — SolidJS + Vite; TUI — OpenTUI; SQLite `scheduler.db`, `SCHEMA_VERSION=
 
 ## Что где лежит
 
-- `src/index.ts` — `Plugin.define`, ~29 agent tools, регистрация RPC и встроенного скилла.
+- `src/index.ts` — `Plugin.define`, ~30 agent tools, регистрация RPC и встроенного скилла.
 - `src/core/*` — scheduler (Windows/POSIX/mac, cron↔schtasks, at-fallback), guard, matrix,
   worktree, execution, recovery, router/capability, notifications, triage, secrets.
 - `src/db/*` — схема/миграции, durable runs, DLQ, run journal, step idempotency.

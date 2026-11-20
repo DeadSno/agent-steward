@@ -64,6 +64,18 @@ check(
   readmeMain.includes(`${toolRegistry.length} agent tools`) &&
     readmeMain.includes(`${toolRegistry.length} tools covering`)
 );
+const toolsMissingInReadme = toolRegistry.filter((t) => !readmeMain.includes("`" + t + "`"));
+check(
+  `README: все ${toolRegistry.length} инструментов реестра описаны в таблице`,
+  toolsMissingInReadme.length === 0
+);
+const strategyDoc = fs.readFileSync(path.join(root, "ROADMAP-STRATEGY.md"), "utf8");
+check(
+  "DOCS: счётчик инструментов унифицирован в ARCHITECTURE/STRATEGY",
+  arch.includes(`${toolRegistry.length} agent tools`) &&
+    arch.includes(`${toolRegistry.length} tools registered`) &&
+    strategyDoc.includes(`${toolRegistry.length} инструментов агента`)
+);
 check("FEATURES: матрица со всеми полями конфига", ["strategy", "failureMode", "concurrency", "overrides", "createAggregator", "aggregation"].every((k) => feat.includes(k)));
 check("FEATURES: статусы истории incl. partial", feat.includes("`partial`"));
 check("FEATURES: ограничения (limits) честно перечислены", feat.includes("No one-shot") && feat.toLowerCase().includes("restrict the agent process") && feat.toLowerCase().includes("session continuity"));

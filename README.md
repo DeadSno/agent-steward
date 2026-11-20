@@ -137,7 +137,7 @@ The agent gets the full feature set — 30 tools covering scheduling, pipelines,
 | `pause_task` | `name` | Pauses a job (matrix parent pauses every clone) |
 | `resume_task` | `name` | Resumes a paused job |
 | `get_history` | `taskName?`, `status?`, `limit?` | Recent runs with duration, tokens, cost, model, quality gate and hooks |
-| `get_task_logs` | `name`, `lines?` | Tail of the run log |
+| `get_task_logs` | `name` or `taskName`, `lines?` | Tail of the run log |
 | `dry_run` | `name?` | Simulates a pipeline (or every task): order, DAG, matrix fan-out, estimates |
 | `manage_workspaces` | `action`, `id?`, `name?`, `path?`, `color?` | Multi-repo workspaces: list, add, update, delete |
 | `matrix_control` | `action`, `name?` | Matrix results, cancel pending clones, clean up orphans, preview clones |
@@ -158,6 +158,7 @@ The agent gets the full feature set — 30 tools covering scheduling, pipelines,
 | `pipeline_validate` | `path?`, `source?` | Validates `opencode.pipeline.yaml` without changing tasks |
 | `pipeline_apply` | `path?`, `source?`, `dryRun?` | Idempotently creates or updates pipeline tasks; `dryRun` only reports the diff |
 | `pipeline_export` | `pipeline` | Exports a pipeline's tasks back to YAML |
+| `report_bug` | `description`, `taskName?`, `includeLogs?`, `includeAnalytics?`, `channel?` | Reports an agent-steward issue with diagnostics and optional reproduction context |
 
 `schedule_task` also accepts the full matrix configuration (`workspaceIds`, `strategy`, `failureMode`, `aggregation`, `concurrency`, `overrides`, `createAggregator`).
 
