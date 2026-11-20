@@ -31,6 +31,11 @@ summary, last run.
 | "A then B then C" | `dependsOn` + `nextTaskOnSuccess` / `nextTaskOnError` | Explicit DAG, failures stop the line |
 | "Try again if it fails" | `retryCount` + `retryDelay` | Handles flaky networks and rate limits |
 
+`triggerType: "mcp-event"` is event-only: it does **not** register an OS scheduler task
+(PL-12). A historical `31.12.2099` entry seen for a paused event task was an artifact of
+that already-paused task; a fresh event (`qa.agent-steward.probe.v2`) creates an `mcp-event`
+definition with no OS object, so no placeholder cleanup is needed.
+
 Do not use a 5-field cron for a one-off reminder. Do not build a pipeline with chained
 prompts inside a single task when `dependsOn` exists: a failed step would be invisible.
 
