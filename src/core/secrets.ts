@@ -36,8 +36,9 @@ const KEY_BYTES = 32;
  * используется из CLI/GUI/плагина, переписывать его на async нельзя.
  */
 const SECRETS_LOCK_FILE = `${SECRETS_FILE}.lock`;
-const SECRETS_LOCK_STALE_MS = 10_000;
-const SECRETS_LOCK_TIMEOUT_MS = 5_000;
+// icacls на Windows под параллельной нагрузкой CI может занять секунды;
+// 5 с приводило к ложным «Не удалось получить блокировку» даже без краша.
+const SECRETS_LOCK_TIMEOUT_MS = 30_000;
 let secretsLockDepth = 0;
 
 function sleepSync(ms: number): void {
@@ -71,16 +72,22 @@ function withSecretsLock<T>(fn: () => T): T {
       if ((err as NodeJS.ErrnoException | undefined)?.code !== "EEXIST") throw err;
       try {
         const stat = fs.statSync(SECRETS_LOCK_FILE);
-        if (Date.now() - stat.mtimeMs > SECRETS_LOCK_STALE_MS) {
-          const owner = Number.parseInt(
-            fs.readFileSync(SECRETS_LOCK_FILE, "utf8").trim(),
-            10,
-          );
-          if (!Number.isInteger(owner) || !isProcessAlive(owner)) {
-            fs.rmSync(SECRETS_LOCK_FILE, { force: true });
-            continue;
-          }
+        const rawOwner = fs.readFileSync(SECRETS_LOCK_FILE, "utf8").trim();
+        const owner = /^\d+$/.test(rawOwner) ? Number(rawOwner) : NaN;
+        // Мёртвый владелец — лок осиротел. PID проверяем независимо от времени
+        // жизни файла: свежий лок упавшего процесса раньше блокировал запись
+        // на 10 с (stale) + 5 с (timeout) и ложно падал на загруженном CI.
+        if (Number.isInteger(owner) && owner > 0 && !isProcessAlive(owner)) {
+          fs.rmSync(SECRETS_LOCK_FILE, { force: true });
+          continue;
         }
+        // Пустой/битый лок с только что созданным mtime может ещё не содержать
+        // PID — даём процессу-создателю окно, прежде чем считать его осиротевшим.
+        if (Date.now() - stat.mtimeMs > 1_000 && !Number.isInteger(owner)) {
+          fs.rmSync(SECRETS_LOCK_FILE, { force: true });
+          continue;
+        }
+        // Лок с живым владельцем не крадём, даже если он создан давно.
       } catch {
         // Лок исчез между stat и read — повторяем попытку.
       }

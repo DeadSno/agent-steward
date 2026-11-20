@@ -102,7 +102,7 @@ SDK — совместимость мажора проверяется в `test-
 
 | Проверка | Что покрывает |
 |---|---|
-| `test-dual-entry.mjs` | форму default export (`id`, `setup`, `server`), `createV1Hooks` → `tool` + `dispose`, 29 инструментов, совпадение имён с V2-реестром `createToolHandlers`, кросс-версию zod |
+| `test-dual-entry.mjs` | форму default export (`id`, `setup`, `server`), `createV1Hooks` → `tool` + `dispose`, 30 инструментов, совпадение имён с V2-реестром `createToolHandlers`, кросс-версию zod |
 | `test-v1-integration.mjs` | реальный V1-путь: `server({ directory })`, изолированные `OPENCODE_SCHEDULER_HOME` и порт дашборда, три read-only инструмента, повторный `dispose` |
 | `test-docs.mjs` | контракт в документации и коде: `exports["./tui"]`, `sidebar_content`, ключи `plugin`/`plugins`, инварианты состояния |
 | CI `compat-v1` / `compat-v2` | отдельные jobs: V1 SDK `1.19.x` и V2 SDK `2.3.0` (устанавливается поверх `2.2.7`), не блокируют матрицу трёх ОС |

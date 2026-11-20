@@ -167,7 +167,18 @@ function runRecorder(args) {
     execFile(
       process.execPath,
       [recorder, ...args],
-      { env: { ...process.env, APPDATA: appData }, windowsHide: true },
+      // PL-38: collectOpenCodeUsage ищет БД и по USERPROFILE/HOME. Без их
+      // подмены короткоживущий recorder читал реальную БД пользователя и «восстанавливал»
+      // токены для sentinel "-", ломая проверку отсутствия данных.
+      {
+        env: {
+          ...process.env,
+          APPDATA: appData,
+          USERPROFILE: tempRoot,
+          HOME: tempRoot,
+        },
+        windowsHide: true,
+      },
       (err, stdout, stderr) => {
         if (err) reject(new Error(stderr || err.message));
         else resolve(stdout);

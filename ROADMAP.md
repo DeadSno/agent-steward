@@ -269,5 +269,6 @@ agent-steward — execution engine с опциональной регистра�
 - [ ] Пока жив legacy: диапазон шима актуален, deprecation не снят.
 - [ ] Критические баги аудита закрыты или документированы как known issues.
 - [ ] PL-41: scripts/pl-commit.ps1 делает git commit -m без pathspec и может захватить чужие staged-правки — P1. Действие: добавить -Files/pathspec-commit, как в qa38-commit.ps1.
-- [ ] PL-42: schedule_task для 	riggerType: mcp-event ожидает поле mcpEvent.event, но сообщение об ошибке и примеры используют ventName — P2. Действие: принять оба имени или исправить документацию.
+- [ ] PL-42: schedule_task для triggerType: mcp-event ожидает поле mcpEvent.event, но сообщение об ошибке и примеры используют eventName — P2. Действие: принять оба имени или исправить документацию.
 - [ ] PL-43: list_tasks возвращает JSON-строку, а не структурированный объект, в отличие от остальных MCP-инструментов — P3. Действие: нормализовать возвращаемый тип.
+- [ ] PL-44: счётчики в `.opencode/skills/*/SKILL.md` не проверяются `test-docs.mjs` и расходились с кодом (29/57/109 вместо 30/57/115) — P2. Действие: добавить в `test-docs.mjs` проверку счётчиков tools/RPC/сюит во всех локальных SKILL.md.

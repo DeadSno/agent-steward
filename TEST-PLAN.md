@@ -44,7 +44,7 @@
 cd agent-steward
 npm run build          # tsc: dist/ (сервер, RPC, ядро)
 npm run build:gui      # vite: gui-experimental.cjs (панель OpenCode)
-npm test               # 119 файлов test-*.mjs (111 npm-скриптов), полный регресс
+npm test               # 120 файлов test-*.mjs (112 npm-скриптов), полный регресс
 node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с сид-данными
 ```
 
@@ -744,6 +744,7 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 | `test-router-dispatch.mjs` | D03 (роутер: маршрутизация известных типов без модели) |
 | `test-router-rules.mjs` | D03 (роутер слой 1: статические правила, 0 токенов) |
 | `test-shutdown.mjs` | D03 (ворота выгрузки плагина, grace shutdown) |
+| `test-shutdown-gate.mjs` | D03 (PL-10/QV-2: наблюдаемость ворот выгрузки, автосброс) |
 | `test-w4.mjs` | D03 (видимый статус `skipped` для guard-пропусков) |
 | `test-worktree.mjs` | D03 (git worktree: изоляция и очистка, W-1/W-2) |
 | `test-sqlite.mjs` | D15 |

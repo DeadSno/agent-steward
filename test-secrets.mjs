@@ -264,6 +264,25 @@ check(
   !/fs\.rmSync\(SECRETS_FILE/.test(secretsSource),
 );
 
+// QA-CI-1: лок от упавшего процесса с «свежим» mtime раньше разблокировался
+// только через 10 с stale + 5 с timeout. Проверяем, что мёртвый PID
+// обнаруживается сразу, без ожидания таймаута.
+const lockTimeoutMs = Number(
+  /const SECRETS_LOCK_TIMEOUT_MS = ([\d_]+)/.exec(secretsSource)?.[1].replace(/_/g, ""),
+);
+check("таймаут лока секретов увеличен для медленного CI", lockTimeoutMs >= 30_000);
+const lockFile = path.join(pluginDir, "secrets.json.lock");
+fs.writeFileSync(lockFile, "999999", "utf8");
+const lockStartedAt = Date.now();
+setSecret("fresh_dead_owner_lock", "value-xyz");
+const lockElapsedMs = Date.now() - lockStartedAt;
+check(
+  "свежий лок с мёртвым PID снимается без ожидания таймаута",
+  lockElapsedMs < 5_000,
+);
+deleteSecret("fresh_dead_owner_lock");
+check("после снятия осиротевшего лока .lock-файла нет", !fs.existsSync(lockFile));
+
 // Каждый setSecret — отдельный процесс (как завершение задачи). Без лока
 // параллельные RMW теряли записи.
 const childScript = path.join(tempRoot, "set-secret-child.mjs");
@@ -286,12 +305,22 @@ function spawnSetSecret(name, value) {
         APPDATA: tempRoot,
         OPENCODE_SCHEDULER_HOME: process.env.OPENCODE_SCHEDULER_HOME,
       },
-      stdio: "ignore",
+      stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
+    });
+    // Сохраняем вывод ребёнка: раньше stdio:'ignore' скрывал причину child exit 1 на CI.
+    let output = "";
+    child.stdout?.on("data", (chunk) => {
+      output += chunk.toString();
+    });
+    child.stderr?.on("data", (chunk) => {
+      output += chunk.toString();
     });
     child.on("error", reject);
     child.on("exit", (code) =>
-      code === 0 ? resolve() : reject(new Error(`child exit ${code}`)),
+      code === 0
+        ? resolve()
+        : reject(new Error(`child exit ${code}${output.trim() ? `: ${output.trim()}` : ""}`)),
     );
   });
 }

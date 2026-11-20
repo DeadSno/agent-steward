@@ -55,8 +55,8 @@ GUI — SolidJS + Vite; TUI — OpenTUI; SQLite `scheduler.db`, `SCHEMA_VERSION=
 
 ## Важная оговорка про доки
 
-`Known limitations` в `docs/ARCHITECTURE.md` / `docs/EXECUTION-LOOP.md` отстают от закрытых
-B1.x-фиксов; `docs/FEATURES.md` содержит устаревшее «Secrets are not encrypted» (на деле
-AES-256-GCM). При ревью проверять фактом по коду, а не верить тексту. Счётчики tools/RPC в
-`TEST-PLAN.md`, `README.md`, `CHANGELOG.md`, `ARCHITECTURE.md` исторически расходятся —
-сверять через `test-docs`.
+`Known limitations` в `docs/ARCHITECTURE.md` / `docs/EXECUTION-LOOP.md` могут отставать от
+закрытых B1.x-фиксов — при ревью проверять фактом по коду, а не верить тексту. Утверждение
+«Secrets are not encrypted» в `docs/FEATURES.md` уже исправлено: сейчас там описан
+AES-256-GCM (см. CHANGELOG). Актуальные счётчики — 30 tools / 57 RPC / 115 наборов тестов;
+сверять через `node test-docs.mjs`, а не копировать из соседнего файла.

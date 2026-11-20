@@ -69,22 +69,44 @@ if (process.platform === "win32") {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ws-scheduler-watchdog-"));
   const scriptFile = path.join(tempRoot, "wrapper.ps1");
   fs.writeFileSync(scriptFile, "\uFEFF" + WRAPPER_SCRIPT, "utf8");
-  const parse = spawnSync(
+  const powershell = path.join(
+    process.env.SystemRoot || "C:\\Windows",
+    "System32",
+    "WindowsPowerShell",
+    "v1.0",
     "powershell.exe",
+  );
+  // QA-CI-2: ParseFile + путь в -Command оказались чувствительны к кодировке и
+  // экранированию кавычек на Windows-раннерах Node22. Читаем файл как UTF-8
+  // средствами .NET и передаём путь через env, чтобы исключить обе причины.
+  const parse = spawnSync(
+    powershell,
     [
       "-NoProfile",
       "-NonInteractive",
       "-Command",
-      `$tokens = $null; $errors = $null; [void][System.Management.Automation.Language.Parser]::ParseFile('${scriptFile.replace(/'/g, "''")}', [ref]$tokens, [ref]$errors); if ($errors.Count -gt 0) { $errors | ForEach-Object { $_.Message }; exit 1 }`,
+      `$ErrorActionPreference = "Stop"; $p = $env:QA_WATCHDOG_SCRIPT; ` +
+        `$text = [System.IO.File]::ReadAllText($p, [System.Text.Encoding]::UTF8).TrimStart([char]0xFEFF); ` +
+        `$tokens = $null; $errors = $null; ` +
+        `[void][System.Management.Automation.Language.Parser]::ParseInput($text, [ref]$tokens, [ref]$errors); ` +
+        `if ($errors.Count -gt 0) { $errors | ForEach-Object { Write-Output $_.Message }; exit 1 }`,
     ],
-    { encoding: "utf8", timeout: 30000 }
+    {
+      encoding: "utf8",
+      timeout: 60_000,
+      windowsHide: true,
+      env: { ...process.env, QA_WATCHDOG_SCRIPT: scriptFile },
+    }
   );
   check(
     "B8: сгенерированный скрипт разбирается PowerShell",
     parse.status === 0
   );
   if (parse.status !== 0) {
-    console.log((parse.stdout || "") + (parse.stderr || ""));
+    console.error(
+      `B8 parse: status=${parse.status} spawnError=${parse.error?.message ?? "none"}`,
+    );
+    console.error((parse.stdout || "") + (parse.stderr || ""));
   }
   fs.rmSync(tempRoot, { recursive: true, force: true });
 }
