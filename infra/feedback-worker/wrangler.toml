@@ -2,16 +2,18 @@ name = "agent-steward-feedback"
 main = "worker.js"
 compatibility_date = "2025-01-01"
 
-# Деталь 3.8 (F-2.5). Создайте KV-пространства и подставьте их ID:
+# Деталь 3.8 (F-2.5). KV-привязки опциональны: без них воркер использует
+# in-memory хранилища для дедупа по reportId и rate-limit по IP (сбрасываются
+# при рестарте изолята). Для персистентности создайте пространства и
+# раскомментируйте блоки ниже, подставив выданные Wrangler ID:
 #   npx wrangler kv namespace create FEEDBACK_DEDUP
 #   npx wrangler kv namespace create FEEDBACK_RATELIMIT
-[[kv_namespaces]]
-binding = "FEEDBACK_DEDUP"
-id = "REPLACE_WITH_DEDUP_KV_ID"
-
-[[kv_namespaces]]
-binding = "FEEDBACK_RATELIMIT"
-id = "REPLACE_WITH_RATELIMIT_KV_ID"
+# [[kv_namespaces]]
+# binding = "FEEDBACK_DEDUP"
+# id = "..."
+# [[kv_namespaces]]
+# binding = "FEEDBACK_RATELIMIT"
+# id = "..."
 
 # Секрет PAT с правом issues:write на репозиторий автора:
 #   npx wrangler secret put GITHUB_TOKEN

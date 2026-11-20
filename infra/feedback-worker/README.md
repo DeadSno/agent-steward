@@ -39,9 +39,15 @@ Write-only приёмник баг-репортов: `POST /report` → GitHub I
    `DeadSno/agent-steward` (Repository permissions → Issues → Read and write;
    остальное — None). Срок — минимально возможный.
 2. Установите секрет: `npx wrangler secret put GITHUB_TOKEN`.
-3. Создайте два KV-пространства (`FEEDBACK_DEDUP`, `FEEDBACK_RATELIMIT`) и
-   подставьте их ID в `wrangler.toml`. KV не обязателен: без привязки воркер
-   работает с in-memory storing (дедуп и лимит живут до перезапуска изолята).
+3. KV-привязки по умолчанию отключены: воркер использует in-memory хранилища
+   для дедупа по `reportId` и rate-limit по IP (сбрасываются при рестарте
+   изолята). Для персистентности создайте пространства и раскомментируйте
+   блоки `[[kv_namespaces]]` в `wrangler.toml`, подставив выданные ID:
+
+   ```powershell
+   npx wrangler kv namespace create FEEDBACK_DEDUP
+   npx wrangler kv namespace create FEEDBACK_RATELIMIT
+   ```
 4. Деплой: `npx wrangler deploy`. Скопируйте публичный URL.
 5. В плагине: **Settings → Обратная связь с автором** → включить, вставить
    URL вида `https://agent-steward-feedback.<account>.workers.dev/report`.
