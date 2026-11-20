@@ -661,10 +661,21 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 | `test-mac-launchctl.mjs` | D01.3 |
 | `test-mac-cron.mjs` | D01.3 |
 | `test-at-fallback.mjs` | D01 (Linux fallback) |
+| `test-at-e2e.mjs` | D01.4 (one-shot с реальным `at`, Linux/WSL) |
+| `test-posix-create-rollback.mjs` | D01 (POSIX: откат createTask при ошибке installEntry, P2-17) |
+| `test-posix-cron.mjs` | D01 (POSIX: crontab Vixie-синтаксис, P3-31) |
+| `test-posix-e2e.mjs` | D01 (POSIX: e2e bash-обёртки, T-10) |
+| `test-schtasks-errors.mjs` | D01.2 (разбор кодов и текстов ошибок schtasks) |
+| `test-schtasks-locales.mjs` | D01.2 (локали `schtasks /query /fo LIST`, P2-12.T3) |
+| `test-windows-locales.mjs` | D01 (формат даты one-shot en-US/zh-CN, P1-8.T1.4) |
+| `test-windows-oem.mjs` | D01 (декодирование консоли OEMCP, T-06) |
 | `test-agent-tools.mjs` | D02, D04 |
 | `test-task-status.mjs` | D02 |
 | `test-task-name-limit.mjs` | D02.1.15 |
 | `test-task-name-collision.mjs` | D02.1.5 |
+| `test-path-safety.mjs` | D02 (path-safety: writePromptFile / lockFilePath) |
+| `test-task-name-limit-profile.mjs` | D02.1.15 (лимит имени для не-default профиля, T-04) |
+| `test-validation.mjs` | D02 (отклонение невалидных значений create/update, QA-P2.1) |
 | `test-crash-recovery.mjs` | D03, D15 |
 | `test-session-continuity.mjs` | D03.9 |
 | `test-ps-watchdog.mjs` | D03 (watchdog, fail-closed kill) |
@@ -675,6 +686,16 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 | `test-pause-one-shot.mjs` | D03 (пауза one-shot) |
 | `test-stale-lock.mjs` | D03.BP.1 (застрявшие блокировки) |
 | `test-lock-format.mjs` | D03 (формат lock-файлов) |
+| `test-capability-map.mjs` | D03 (роутер слой 2: capability_map, 0 токенов) |
+| `test-escalation.mjs` | D03 (роутер: эскалация после Quality Gate) |
+| `test-execution-hardening.mjs` | D03 (исполнение: timeout / lock / retry / хуки) |
+| `test-guards.mjs` | D03 (guard-условия shell и семантические, CLI, обёртки) |
+| `test-planner.mjs` | D03 (роутер слой 3: декомпозиция миссии) |
+| `test-router-dispatch.mjs` | D03 (роутер: маршрутизация известных типов без модели) |
+| `test-router-rules.mjs` | D03 (роутер слой 1: статические правила, 0 токенов) |
+| `test-shutdown.mjs` | D03 (ворота выгрузки плагина, grace shutdown) |
+| `test-w4.mjs` | D03 (видимый статус `skipped` для guard-пропусков) |
+| `test-worktree.mjs` | D03 (git worktree: изоляция и очистка, W-1/W-2) |
 | `test-sqlite.mjs` | D15 |
 | `test-user-version.mjs` | D15 (версия схемы) |
 | `test-run-state.mjs` | D15 |
@@ -700,6 +721,14 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 | `test-notifications-embedding.mjs` | D09 |
 | `test-notifications-summary.mjs` | D09 |
 | `test-local-ai.mjs` | D09.2 (триаж, fail-open, shadow) |
+| `test-settings.mjs` | D09 (настройки триажа и семантики правил) |
+| `test-triage.mjs` | D09 (триаж: базовый сценарий) |
+| `test-triage-async.mjs` | D09 (триаж: асинхронный режим) |
+| `test-triage-audit.mjs` | D09 (триаж: аудит) |
+| `test-triage-chain.mjs` | D09 (триаж: цепочки) |
+| `test-triage-compare.mjs` | D09 (триаж: сравнение моделей) |
+| `test-triage-rules.mjs` | D09 (триаж: правила) |
+| `test-triage-shadow.mjs` | D09 (триаж: shadow-режим) |
 | `test-secrets.mjs` | D10.1–10.4 |
 | `test-audit.mjs` | D10.7, D13 |
 | `test-role-scoped.mjs` | D10.6 |
@@ -712,24 +741,36 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 | `test-retention.mjs` | D08.5, D10.8 |
 | `test-history-load.mjs` | D08 (QA-A3/BP-D08-1: 100500 записей, индексы lower(task_name)/lower(status), скорость выборок и ретеншна) |
 | `test-metrics.mjs` | D08.3–08.4 |
+| `test-budget.mjs` | D08 (бюджеты день/неделя и tokenBudget, E-1/E-2) |
+| `test-savings.mjs` | D08 (счётчик «сэкономлено $», 31.6) |
+| `test-usage-from-log.mjs` | D08 (парсинг токенов/стоимости из лога, QA-F.1) |
 | `test-dashboard.mjs` | D14.2 |
 | `test-dashboard-trust.mjs` | D13 |
 | `test-dashboard-dag.mjs` | D05.1.6 |
 | `test-dashboard-json.mjs` | D08.1.7 |
 | `test-dashboard-xss.mjs` | D14.2 (XSS в атрибутах) |
+| `test-dlq-gui.mjs` | D14, D15 (DLQ в GUI: список, retry/discard через RPC) |
+| `test-models-analysis.mjs` | D14 (What-If: анализ моделей без блокировки event loop) |
+| `test-models-config.mjs` | D14 (What-If: каталог моделей models.dev / `opencode models`) |
+| `test-pause-gui.mjs` | D14, D15 (пауза/resume durable-запусков в GUI) |
 | `test-jobs-view.mjs` | D14.3 |
 | `test-i18n.mjs` | D14.1 |
 | `test:en`, `test:zh` | D14.1 (локали) |
-| `test:gui-bundle.mjs` | D16.1.2 |
+| `test-gui-bundle.mjs` | D16.1.2 |
 | `test-docs.mjs` | D16 |
-| `test:package-exports.mjs` | D16.1.3 |
-| `test:prod-install.mjs` | D16.1.6 |
-| `test:registry-resilience.mjs` | D16 |
-| `test:workflows.mjs` | CI-структура |
-| `test:self-analysis.mjs` | D13 (самоанализ) |
-| `test:skill.mjs` | D04.1.6 |
-| `test:env.mjs` | D04 |
-| `test:chaos.mjs` | nightly crash/kill-9 |
+| `test-dual-entry.mjs` | D16 (dual-export V1/V2: id/setup + server) |
+| `test-eslint-baseline.mjs` | D16 (baseline-гейт ESLint, QA-A2.0) |
+| `test-pipeline.mjs` | D16 (pipeline-as-code: схема/валидатор/CLI; деталь — TP-3.1) |
+| `test-v1-integration.mjs` | D16 (V1-адаптер без OpenCode CLI) |
+| `test-package-exports.mjs` | D16.1.3 |
+| `test-prod-install.mjs` | D16.1.6 |
+| `test-registry-resilience.mjs` | D16 |
+| `test-workflows.mjs` | CI-структура |
+| `test-self-analysis.mjs` | D13 (самоанализ) |
+| `test-skill.mjs` | D04.1.6 |
+| `test-env.mjs` | D04 |
+| `test-model-validation.mjs` | D04 (валидация идентификатора модели в tool-аргументах, P2-11) |
+| `test-chaos-dag.mjs` | D05, D15 (nightly crash/kill-9 DAG) |
 
 ---
 

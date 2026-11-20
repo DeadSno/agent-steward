@@ -60,11 +60,6 @@ Legacy: `opencode-windows-scheduler@1.5.8`.
 
 > Цель: план должен быть корректным, самодостаточным и пригодным как критерий приёмки. Сверка с кодом выявила 11 находок (P1 — 2, P2 — 6, P3 — 3). Подтверждено корректным: §7.1 (закрытые QA-P3.5–P3.8), 57 RPC в Приложении A, i18n-паритет 870/870/870, E2E-1…E2E-9, детали D01–D16, BP-D08-1. Источник — отчёт `reports/QA_AUDIT.md`, после переноса удалён.
 
-**Задача TP-2 — Полнота и точность матрицы покрытия §5** · P2 · ⬜
-
-- [ ] TP-2.1 Добавить в §5 33 отсутствующих теста: `test-at-e2e`, `test-budget`, `test-capability-map`, `test-chaos-dag`, `test-dlq-gui`, `test-dual-entry`, `test-escalation`, `test-execution-hardening`, `test-guards`, `test-model-validation`, `test-models-analysis`, `test-models-config`, `test-path-safety`, `test-pipeline`, `test-planner`, `test-posix-create-rollback`, `test-posix-cron`, `test-posix-e2e`, `test-savings`, `test-schtasks-errors`, `test-schtasks-locales`, `test-settings`, `test-shutdown`, `test-task-name-limit-profile`, `test-triage*` (7 файлов), `test-usage-from-log`, `test-v1-integration`, `test-validation`, `test-w4`, `test-windows-locales`, `test-windows-oem`, `test-worktree`, `test-pause-gui`.
-- [ ] TP-2.2 Исправить 9 неверных имён: `test:env.mjs` → `test-env.mjs`, `test:skill.mjs` → `test-skill.mjs`, `test:self-analysis.mjs` → `test-self-analysis.mjs`, `test:gui-bundle.mjs` → `test-gui-bundle.mjs`, `test:package-exports.mjs` → `test-package-exports.mjs`, `test:prod-install.mjs` → `test-prod-install.mjs`, `test:registry-resilience.mjs` → `test-registry-resilience.mjs`, `test:workflows.mjs` → `test-workflows.mjs`, `test:chaos.mjs` → `test-chaos-dag.mjs`.
-
 **Задача TP-3 — Самодостаточность плана: новые детали** · P2 · ⬜
 
 - [ ] TP-3.1 Декомпозировать pipeline-as-code: заявлен в шапке (объект проверки), но нет детали, строк в §1/§4 и `test-pipeline.mjs` в §5, хотя MCP-инструменты `pipeline_validate/apply/export` и RPC существуют.
