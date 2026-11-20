@@ -1058,6 +1058,10 @@ export const pipelineValidateSchema = z.object({
     .optional()
     .describe("Путь к файлу opencode.pipeline.yaml (относительный резолвится против cwd) или source."),
   source: z.string().optional().describe("Исходное содержимое YAML (альтернатива path)."),
+  workingDirectory: z
+    .string()
+    .optional()
+    .describe("База для относительного path (по умолчанию cwd процесса, затем подсказки окружения)."),
   dryRun: z
     .boolean()
     .optional()
@@ -1072,6 +1076,10 @@ export const pipelineApplySchema = z.object({
     .optional()
     .describe("Путь к файлу opencode.pipeline.yaml (относительный резолвится против cwd) или source."),
   source: z.string().optional().describe("Исходное содержимое YAML (альтернатива path)."),
+  workingDirectory: z
+    .string()
+    .optional()
+    .describe("База для относительного path (по умолчанию cwd процесса, затем подсказки окружения)."),
   dryRun: z
     .boolean()
     .optional()
@@ -2858,7 +2866,7 @@ const pipelineValidateExecute = wrapExecute<PipelineValidateArgs>(async (args) =
   const parsed =
     args.source !== undefined
       ? validatePipelineSpecFromSource(args.source)
-      : await loadPipelineFile(args.path!);
+      : await loadPipelineFile(args.path!, args.workingDirectory);
   if (!parsed.ok) {
     return {
       content: JSON.stringify({
@@ -2902,7 +2910,7 @@ const pipelineApplyExecute = wrapExecute<PipelineApplyArgs>(async (args) => {
   const parsed =
     args.source !== undefined
       ? validatePipelineSpecFromSource(args.source)
-      : await loadPipelineFile(args.path!);
+      : await loadPipelineFile(args.path!, args.workingDirectory);
   if (!parsed.ok) {
     return {
       content: JSON.stringify({

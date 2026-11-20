@@ -291,6 +291,16 @@ function hasError(result, pathFragment, textFragment) {
     check("YAML: относительный путь против cwd — ok", relative.ok && relative.spec?.name === "ci-rel");
     const absolute = await loadPipelineFile(yamlPath);
     check("YAML: абсолютный путь по-прежнему работает", absolute.ok && absolute.spec?.name === "ci-rel");
+    // PL-34: cwd хоста не совпадает с каталогом задачи — помогает явный baseDir.
+    const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ws-pipeline-base-"));
+    fs.writeFileSync(path.join(projectRoot, "opencode.pipeline.yaml"), yaml, "utf8");
+    const byBase = await loadPipelineFile("opencode.pipeline.yaml", projectRoot);
+    check(
+      "YAML: относительный путь против workingDirectory — ok",
+      byBase.ok && byBase.spec?.name === "ci-rel",
+    );
+    const stillFails = await loadPipelineFile("definitely-missing.pipeline.yaml", projectRoot);
+    check("YAML: отсутствующий файл с baseDir — ошибка", !stillFails.ok);
   } finally {
     process.chdir(prevCwd);
   }

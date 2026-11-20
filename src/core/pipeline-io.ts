@@ -65,19 +65,32 @@ export function parsePipelineYaml(source: string): PipelineParseResult {
 }
 
 /** Читает YAML-файл и валидирует его. Ошибки ввода-вывода также попадают в `errors`. */
-export async function loadPipelineFile(filePath: string): Promise<PipelineParseResult> {
-  // PL-18/PL-27: относительные пути резолвим против cwd — MCP-инструменты
-  // pipeline_validate/pipeline_apply получают путь от агента без абсолютного префикса.
-  const resolvedPath = isAbsolute(filePath) ? filePath : resolve(process.cwd(), filePath);
-  let source: string;
-  try {
-    source = await readFile(resolvedPath, "utf8");
-  } catch (err) {
-    return {
-      ok: false,
-      errors: [{ path: filePath, message: `Не удалось прочитать файл: ${issueMessage(err)}` }],
-      warnings: [],
-    };
+export async function loadPipelineFile(
+  filePath: string,
+  baseDir?: string,
+): Promise<PipelineParseResult> {
+  // PL-34: cwd процесса-хоста OpenCode может не совпадать с каталогом задачи.
+  // Пробуем явный baseDir, затем cwd и подсказки окружения.
+  const roots = [
+    baseDir?.trim(),
+    process.cwd(),
+    process.env.OPENCODE_PROJECT_DIR,
+    process.env.INIT_CWD,
+  ].filter((root): root is string => Boolean(root));
+  const candidates = isAbsolute(filePath)
+    ? [filePath]
+    : roots.map((root) => resolve(root, filePath));
+  let lastError: unknown;
+  for (const candidate of [...new Set(candidates)]) {
+    try {
+      return parsePipelineYaml(await readFile(candidate, "utf8"));
+    } catch (err) {
+      lastError = err;
+    }
   }
-  return parsePipelineYaml(source);
+  return {
+    ok: false,
+    errors: [{ path: filePath, message: `Не удалось прочитать файл: ${issueMessage(lastError)}` }],
+    warnings: [],
+  };
 }
