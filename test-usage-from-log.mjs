@@ -133,6 +133,20 @@ check("только стоимость → tokens остаётся undefined", (
   assert.strictEqual(u.costUsd, 7.77);
 });
 
+// QA-F.1: OpenCode печатает стоимость без валютного знака.
+check("costUsd=0.1 без знака валюты распознаётся", () => {
+  const u = parseUsageFromLog(writeLog("task-f1a.log", `tokens=50\ncostUsd=0.1\n`));
+  assert.strictEqual(u.tokens, 50);
+  assert.strictEqual(u.costUsd, 0.1);
+});
+check("cost: 0.25 / cost=0.1 USD распознаются без $ перед числом", () => {
+  assert.strictEqual(parseUsageFromLog(writeLog("task-f1b.log", `cost: 0.25\n`)).costUsd, 0.25);
+  assert.strictEqual(parseUsageFromLog(writeLog("task-f1c.log", `cost=0.1 USD\n`)).costUsd, 0.1);
+});
+check("cost_usd=0.75 распознаётся", () => {
+  assert.strictEqual(parseUsageFromLog(writeLog("task-f1d.log", `cost_usd=0.75\n`)).costUsd, 0.75);
+});
+
 // --- B10: legacy-режим (без --start/--finish) читает usage из 11-го аргумента ---
 {
   const recorder = path.resolve("dist/core/record-history.js");

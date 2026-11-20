@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { LOG_DIR, sanitizeName } from "../../types.js";
+import { extractLastRunLog } from "../mission.js";
 
 /**
  * Читает файл лога задачи и возвращает последние 50 строк.
@@ -15,7 +16,8 @@ export async function getTaskLogs(
   const logPath = path.join(LOG_DIR, `${sanitizeName(name)}.log`);
   try {
     // PowerShell 5.1 пишет UTF-8 с BOM — убираем его, чтобы GUI не показывал мусор.
-    const content = (await fs.readFile(logPath, "utf8")).replace(/^\uFEFF/, "");
+    // Лог дописывается между запусками: показываем только последний прогон.
+    const content = extractLastRunLog(await fs.readFile(logPath, "utf8"));
     const lines = content.split(/\r?\n/).filter((line) => line.trim());
     if (lines.length === 0) {
       return {

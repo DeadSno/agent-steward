@@ -346,6 +346,30 @@ export function getHistory(
 }
 
 /**
+ * История для проверки бюджетов: записи, учётный момент которых
+ * (`finished_at`, при отсутствии `started_at`) не раньше `periodStart`.
+ *
+ * В отличие от `getHistorySince()` учитывает запуски, начатые в предыдущем
+ * периоде, но завершённые в текущем — именно по ним считается расход в
+ * `src/core/budget.ts`. Лимит 100000 совпадает с максимумом `getHistory`.
+ */
+export function getHistoryForBudget(
+  periodStart: string,
+  limit = 100000,
+): StoredHistoryRecord[] {
+  const safeLimit = Math.max(1, Math.min(100000, Math.floor(limit) || 1));
+  const rows = getDb()
+    .prepare(
+      `SELECT * FROM history
+       WHERE COALESCE(finished_at, started_at) >= ?
+       ORDER BY started_at DESC, id DESC
+       LIMIT ?`,
+    )
+    .all(periodStart, safeLimit);
+  return rows.map(rowToRecord);
+}
+
+/**
  * Последняя запись по каждой задаче (P2-29).
  *
  * DAG-зависимости нельзя проверять по «последним N записям»: на частой задаче
@@ -365,6 +389,22 @@ export function getLatestHistoryByTask(limit = 5000): StoredHistoryRecord[] {
     )
     .all(safeLimit);
   return rows.map(rowToRecord);
+}
+
+/**
+ * История для аналитики за окно `days` дней: все запуски, которые могут
+ * попасть в период по времени начала. Окно на один день шире запрашиваемого,
+ * чтобы полностью покрыть самый ранний UTC-день (buildAnalytics всё равно
+ * отфильтрует лишнее по дате). Лимит 100000 снимает потолок в 20000 записей,
+ * из-за которого отчёты за 365 дней молча недосчитывали запуски и расход.
+ */
+export function getHistoryForAnalytics(
+  days: number,
+  now: Date = new Date(),
+): StoredHistoryRecord[] {
+  const safeDays = Math.max(1, Math.min(365, Math.floor(days) || 1));
+  const since = new Date(now.getTime() - (safeDays + 1) * 24 * 60 * 60 * 1000);
+  return getHistorySince(since.toISOString(), 100000);
 }
 
 /** История запусков, начатых не раньше timestamp (ISO-строка). */

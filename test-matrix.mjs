@@ -12,7 +12,7 @@ process.env.APPDATA = tempRoot;
 process.env.OPENCODE_SCHEDULER_HOME = path.join(tempRoot, "opencode", "windows-scheduler");
 
 const { initDb, closeDb } = await import("./dist/db/index.js");
-const { saveTask, getTask, listTasks } = await import("./dist/db/tasks-repo.js");
+const { saveTask, getTask, listTasks, deleteTask } = await import("./dist/db/tasks-repo.js");
 const { recordRun, getHistory } = await import("./dist/db/history-repo.js");
 const {
   addWorkspace,
@@ -347,6 +347,29 @@ try {
   check(
     "export/import round-trip сохраняет matrixParentId клона",
     roundClone && roundClone.matrixParentId === "Deploy"
+  );
+
+  // 16. QA-F.2: клон без определения, но с историей виден в aggregate,
+  //     как и соответствующая задача в аналитике.
+  const orphanParent = {
+    name: "OrphanMatrix",
+    schedule: "* * * * *",
+    prompt: "p",
+    matrix: { workspaceIds: [frontend.id], failureMode: "continue" },
+  };
+  const orphanClone = expandMatrixTask(orphanParent)[0];
+  saveTask(orphanParent);
+  saveTask(orphanClone);
+  recordCloneStatus(orphanClone.name, "success");
+  const beforeDelete = aggregateMatrixResults("OrphanMatrix");
+  deleteTask(orphanClone.name);
+  const afterDelete = aggregateMatrixResults("OrphanMatrix");
+  check(
+    "QA-F.2: клон, оставшийся только в истории, не пропадает из aggregateMatrixResults",
+    beforeDelete.totalCount === 1 &&
+      afterDelete.totalCount === 1 &&
+      afterDelete.status === "success" &&
+      afterDelete.clones[0]?.name === orphanClone.name
   );
 } finally {
   closeDb();

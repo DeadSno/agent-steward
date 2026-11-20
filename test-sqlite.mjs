@@ -93,6 +93,7 @@ const { migrateJsonToDb } = await import("./dist/db/migrate.js");
 const { recoverInterruptedRuns } = await import("./dist/db/recovery.js");
 const tasksRepo = await import("./dist/db/tasks-repo.js");
 const historyRepo = await import("./dist/db/history-repo.js");
+const { loadHistory } = await import("./dist/history.js");
 const metricsRepo = await import("./dist/db/metrics-repo.js");
 const templatesRepo = await import("./dist/db/templates-repo.js");
 
@@ -207,6 +208,33 @@ assert(
 assert(typeof recovered.durationMs === "number" && recovered.durationMs >= 0, "duration_ms рассчитан");
 assert(recoverInterruptedRuns() === 0, "повторный recovery ничего не меняет");
 
+// --- 5. QA-F.3: running — отдельное состояние, не ошибка ------------------
+const qafId = historyRepo.startRun("QA-F3-Test", new Date().toISOString());
+const during = await loadHistory("QA-F3-Test", 10);
+const qafRecord = during.find((r) => r.taskName === "QA-F3-Test");
+assert(
+  Boolean(qafRecord) && qafRecord.status === "running",
+  "QA-F.3: незавершённый запуск в loadHistory — status running, не error"
+);
+assert(
+  during.every((r) => r.taskName !== "QA-F3-Test" || r.status !== "error"),
+  "QA-F.3: запуск в progress не считается ошибкой"
+);
+assert(
+  during.every((r) => r.taskName !== "QA-F3-Test" || r.finishedAt === ""),
+  "QA-F.3: у running-записи finishedAt пустой (не фантомное время)"
+);
+assert(
+  during.every((r) => r.taskName !== "QA-F3-Test" || r.durationMs === 0),
+  "QA-F.3: у running-записи durationMs = 0"
+);
+historyRepo.finishRun(qafId, "success", 1200, null, undefined, 10, 0.0003, "m");
+const after = await loadHistory("QA-F3-Test", 10);
+assert(
+  after.some((r) => r.taskName === "QA-F3-Test" && r.status === "success" && r.durationMs === 1200),
+  "QA-F.3: после завершения статус success, durationMs сохранён"
+);
+
 // --- 5. Миграция старой схемы metrics без partial ----------------------
 // Проверяем, что applySchema() добавляет колонку в уже существующую БД,
 // а накопленные счётчики при этом не теряются.
@@ -302,6 +330,48 @@ assert(
   "скачанный файл — настоящая SQLite БД"
 );
 assert(dbBytes.byteLength > 0, "размер экспортированной БД больше нуля");
+
+// QA-B.3: выборка для бюджетов по учётному моменту завершения (finished_at),
+// а не по started_at — иначе запуски, перешедшие через полуночь, теряются.
+historyRepo.recordRun(
+  "Budget Probe",
+  "success",
+  "2026-02-01T23:30:00.000Z",
+  3600000,
+  null,
+  null,
+  10,
+  0.01,
+  "test/model",
+  "success",
+  "success",
+  "2026-02-02T00:30:00.000Z"
+);
+const budgetRows = historyRepo.getHistoryForBudget("2026-02-02T00:00:00.000Z", 100);
+assert(
+  budgetRows.some((r) => r.taskName === "Budget Probe"),
+  "getHistoryForBudget: запуск, завершённый внутри периода, включён"
+);
+assert(
+  !budgetRows.some((r) => r.taskName === "Daily Report" && r.startedAt === "2026-02-01T09:00:00.000Z"),
+  "getHistoryForBudget: старые записи до периода исключены"
+);
+
+// QA-G.1: аналитика запрашивает всю историю за окно, а не первые 20000 записей.
+const analyticsRows = historyRepo.getHistoryForAnalytics(
+  1,
+  new Date("2026-02-02T00:00:00.000Z")
+);
+assert(
+  analyticsRows.some((r) => r.taskName === "Budget Probe"),
+  "getHistoryForAnalytics: запись внутри окна включена"
+);
+assert(
+  !historyRepo
+    .getHistoryForAnalytics(1, new Date("2026-02-10T00:00:00.000Z"))
+    .some((r) => r.taskName === "Budget Probe"),
+  "getHistoryForAnalytics: запись вне окна исключена"
+);
 
 await closeDashboardServer();
 closeDb();

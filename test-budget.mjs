@@ -6,6 +6,7 @@
  * Чистые функции: никаких БД, HTTP или ОС — только история и лимиты.
  */
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import {
   buildBudgetReport,
   defaultBudgetSettings,
@@ -15,7 +16,7 @@ import {
   startOfUtcDay,
   startOfUtcWeek,
 } from "./dist/core/budget.js";
-import { recordCost, ESTIMATED_COST_PER_1K_TOKENS_USD } from "./dist/core/analytics.js";
+import { buildAnalytics, recordCost, ESTIMATED_COST_PER_1K_TOKENS_USD } from "./dist/core/analytics.js";
 
 let passed = 0;
 let failed = 0;
@@ -178,6 +179,78 @@ check(
   exact.day.exceeded === true && exact.day.remainingUsd === 0
 );
 
+// 7a. Граничная атрибуция: расход относится ко времени завершения.
+const crossing = buildBudgetReport(
+  [
+    day("2026-06-16T23:30:00Z", {
+      finishedAt: "2026-06-17T00:30:00Z",
+      costUsd: 0.7,
+    }),
+    day("2026-06-14T23:30:00Z", {
+      finishedAt: "2026-06-14T23:59:00Z",
+      costUsd: 5,
+    }),
+    day("2026-06-16T23:30:00Z", {
+      finishedAt: "2026-06-18T00:30:00Z",
+      costUsd: 42,
+    }),
+  ],
+  { enabled: true, dailyUsd: 1, weeklyUsd: 10 },
+  now
+);
+check(
+  "buildBudgetReport: запуск, завершённый внутри дня, учтён в этом дне",
+  crossing.day.spentUsd === 0.7 && crossing.day.runs === 1
+);
+check(
+  "buildBudgetReport: завершение до начала периода не попадает в день",
+  crossing.week.spentUsd === 0.7 && crossing.week.runs === 1
+);
+check(
+  "buildBudgetReport: завершение в будущем не попадает в учёт",
+  crossing.exceeded === false
+);
+
+// 7b. Гейт запуска не должен зависеть от окна в 20000 записей.
+const gateSource = fs.readFileSync("./src/index.ts", "utf8");
+const gateBody = gateSource.slice(
+  gateSource.indexOf("async function checkBudgetGate"),
+  gateSource.indexOf("async function runTaskEntry"),
+);
+check(
+  "checkBudgetGate: использует getHistoryForBudget, а не getHistory(null, 20000)",
+  gateBody.includes("getHistoryForBudget(") &&
+    !gateBody.includes("getHistory(null, 20000)") &&
+    gateBody.includes("startOfUtcWeek(")
+);
+
+// 7c. Сквозная проводка tokenBudget из определений задач в аналитику.
+const analyticsCallers = [
+  ["./src/index.ts", "tokenBudget: definition.tokenBudget", 4],
+  ["./src/server.ts", "tokenBudget: task.tokenBudget", 1],
+];
+for (const [file, needle, expected] of analyticsCallers) {
+  const source = fs.readFileSync(file, "utf8");
+  const actual = source.split(needle).length - 1;
+  check(`${file}: tokenBudget передан в buildAnalytics (${expected} точек)`, actual === expected, `найдено ${actual}`);
+}
+
+// 7d. Аналитика/self_analysis не должны обрезаться окном в 20000 записей.
+check(
+  "аналитика: все 5 источников используют getHistoryForAnalytics, а не getHistory(null, 20000)",
+  !["src/index.ts", "src/server.ts"].some((file) =>
+    fs.readFileSync(file, "utf8").includes("getHistory(null, 20000)")
+  ) &&
+    fs.readFileSync("./src/index.ts", "utf8").split("getHistoryForAnalytics(windowDays)").length - 1 === 4 &&
+    fs.readFileSync("./src/server.ts", "utf8").includes("getHistoryForAnalytics(days)")
+);
+const analyticsRepoSource = fs.readFileSync("./src/db/history-repo.ts", "utf8");
+check(
+  "getHistoryForAnalytics: окно days+1 и лимит 100000",
+  analyticsRepoSource.includes("(safeDays + 1) * 24 * 60 * 60 * 1000") &&
+    analyticsRepoSource.includes("getHistorySince(since.toISOString(), 100000)")
+);
+
 // 8. Дефолтная фабрика возвращает независимые объекты.
 const copyA = defaultBudgetSettings();
 copyA.dailyUsd = 7;
@@ -259,6 +332,31 @@ check(
   "formatBudgetAlertMessage: недельный алерт помечает период",
   alertWeek.includes("Weekly spend") && alertWeek.includes("$1.50")
 );
+
+// 11. E-2.1: per-task token budget reflected in analytics.
+const analyticsNow = new Date("2026-06-17T12:00:00Z");
+const analytics = buildAnalytics(
+  [
+    day("2026-06-17T01:00:00Z", { taskName: "over", tokens: 1200 }),
+    day("2026-06-17T02:00:00Z", { taskName: "over", tokens: 300 }),
+    day("2026-06-17T03:00:00Z", { taskName: "under", tokens: 900 }),
+    day("2026-06-17T03:30:00Z", { taskName: "under", tokens: 900 }),
+    day("2026-06-17T04:00:00Z", { taskName: "no-budget", tokens: 5000 }),
+  ],
+  {
+    now: analyticsNow,
+    tasks: [
+      { name: "over", tokenBudget: 1000 },
+      { name: "under", tokenBudget: 1000 },
+    ],
+  }
+);
+const overRow = analytics.tasks.find((row) => row.taskName === "over");
+const underRow = analytics.tasks.find((row) => row.taskName === "under");
+const noBudgetRow = analytics.tasks.find((row) => row.taskName === "no-budget");
+check("analytics: tokenBudgetExceeded выставляется при превышении лимита запуска", overRow?.tokenBudgetExceeded === true && overRow?.tokenBudget === 1000);
+check("analytics: tokenBudgetExceeded=false, если лимит не превышен (даже при сумме > лимита)", underRow?.tokenBudgetExceeded === false);
+check("analytics: без лимита tokenBudgetExceeded=false", noBudgetRow?.tokenBudgetExceeded === false);
 
 console.log(`\nBudget: ${passed}/${passed + failed} проверок прошли.`);
 assert.equal(failed, 0, `${failed} проверок не прошли`);

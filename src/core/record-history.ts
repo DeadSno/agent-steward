@@ -8,6 +8,7 @@ import { notifyTaskCompletion } from "../notifications.js";
 import { finishRun, getLatestHistoryByTask, recordRun, startRun } from "../db/history-repo.js";
 import { deleteSetting, decrementCounterSetting } from "../db/settings-repo.js";
 import { getTask, listTasks } from "../db/tasks-repo.js";
+import { extractLastRunLog } from "./mission.js";
 import { rotateSessionIfNeeded } from "./session.js";
 import type { TaskDefinition } from "../task-transfer.js";
 import type { HistoryRecord } from "../history.js";
@@ -63,7 +64,9 @@ const LOG_TAIL_LINES = 500;
  */
 function readLogTail(filePath: string, maxLines: number): string[] {
   try {
-    const content = fs.readFileSync(filePath, "utf8");
+    // Токены/стоимость относятся к завершаемому запуску; старые прогоны
+    // в том же файле лога не должны портить оценку (QA-F.1).
+    const content = extractLastRunLog(fs.readFileSync(filePath, "utf8"));
     const lines = content.split(/\r?\n/);
     if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
     return lines.slice(-maxLines);
@@ -85,6 +88,11 @@ const TOKEN_PATTERNS: RegExp[] = [
 const COST_PATTERNS: RegExp[] = [
   new RegExp(USAGE_PREFIX + "(?:cost|total\\s+cost)\\s*[:=]?\\s*\\$\\s*([0-9]+(?:[.,][0-9]+)?)", "i"),
   new RegExp(USAGE_PREFIX + "(?:cost|total\\s+cost)\\s*[:=]\\s*([0-9]+(?:[.,][0-9]+)?)\\s*(?:usd|\\$)", "i"),
+  // QA-F.1: OpenCode печатает costUsd=0.1 / cost=0.25 без валютного знака —
+  // старые шаблоны требовали `$` перед числом или `usd` после, поэтому
+  // стоимость терялась и в метриках/аналитике оставалась нулевой.
+  new RegExp(USAGE_PREFIX + "(?:costUsd|cost_usd|cost(?:\\s*usd)?)\\s*[:=]\\s*\\$?\\s*([0-9]+(?:[.,][0-9]+)?)", "i"),
+  new RegExp(USAGE_PREFIX + "(?:costUsd|cost_usd|cost(?:\\s*usd)?)\\s*[:=]\\s*([0-9]+(?:[.,][0-9]+)?)\\s*(?:usd|\\$)", "i"),
 ];
 
 function parseUsageValue(raw: string, suffix?: string): number | undefined {

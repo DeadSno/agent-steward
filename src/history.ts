@@ -24,7 +24,7 @@ export type TaskStatus = "success" | "error" | "timeout" | "partial" | "skipped"
 
 export interface HistoryRecord {
   taskName: string;
-  status: TaskStatus;
+  status: TaskStatus | "running";
   startedAt: string;
   finishedAt: string;
   durationMs: number;
@@ -79,8 +79,10 @@ export async function loadHistory(
 ): Promise<HistoryRecord[]> {
   return getHistory(taskName, limit, status).map((record) => ({
     taskName: record.taskName,
-    // Незавершённые записи до recovery показываем как error для GUI.
-    status: (record.status === "running" ? "error" : record.status),
+    // QA-F.3: "running" — отдельное состояние дашборда, а не ошибка.
+    // Пока status="error" с пустым finishedAt/durationMs=0, дашборд мигал
+    // ошибкой во время любого незавершённого запуска.
+    status: record.status,
     startedAt: record.startedAt,
     finishedAt: record.finishedAt ?? "",
     durationMs: record.durationMs ?? 0,

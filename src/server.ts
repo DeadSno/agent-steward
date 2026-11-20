@@ -4,7 +4,11 @@ import fs from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { loadHistory, loadMetrics } from "./history.js";
-import { getHistory, countRunningRecords } from "./db/history-repo.js";
+import {
+  getHistory,
+  getHistoryForAnalytics,
+  countRunningRecords,
+} from "./db/history-repo.js";
 import { buildAnalytics, historyToCsv } from "./core/analytics.js";
 import { getSchedulerTitle } from "./core/scheduler/index.js";
 import { getPluginVersion } from "./version.js";
@@ -127,6 +131,8 @@ export interface DashboardDeps {
       } | null;
       /** Для клона матрицы — имя родительской задачи. */
       matrixParentId?: string | null;
+      /** Экономика v2 (E-2): лимит токенов на запуск (null — без лимита). */
+      tokenBudget?: number | null;
       /** true — задача является родителем матрицы (шаблоном). */
       isMatrixParent?: boolean;
       /** Агрегат по клонам матрицы (только у родителя). */
@@ -162,6 +168,8 @@ export interface TaskMetrics {
   error: number;
   /** Частичные выполнения: ответ получен, но проверка не прошла. */
   partial: number;
+  /** Запуски в процессе (последняя запись — running, ещё не завершились). */
+  running: number;
 }
 
 /** Агрегированная статистика по одной LLM-модели. */
@@ -1017,7 +1025,7 @@ async function handleRequest(
         1,
         Math.floor(Number(url.searchParams.get("top")) || 10),
       );
-      const records = getHistory(null, 20000);
+      const records = getHistoryForAnalytics(days);
       const tasks = await deps.getTasks();
       const report = buildAnalytics(records, {
         days,
@@ -1025,6 +1033,7 @@ async function handleRequest(
         tasks: tasks.map((task) => ({
           name: task.name,
           matrixParentId: task.matrixParentId ?? null,
+          tokenBudget: task.tokenBudget ?? undefined,
         })),
       });
       sendJson(res, 200, report);
@@ -1515,10 +1524,11 @@ async function collectTasksWithMetrics(deps: DashboardDeps) {
   for (const r of history) {
     const key = String(r.taskName || "").toLowerCase();
     if (!key) continue;
-    const m = byTask.get(key) ?? { total: 0, success: 0, error: 0, partial: 0 };
+    const m = byTask.get(key) ?? { total: 0, success: 0, error: 0, partial: 0, running: 0 };
     m.total += 1;
     if (r.status === "success") m.success += 1;
     else if (r.status === "partial") m.partial += 1;
+    else if (r.status === "running") m.running += 1;
     else m.error += 1;
     byTask.set(key, m);
   }
@@ -1530,6 +1540,7 @@ async function collectTasksWithMetrics(deps: DashboardDeps) {
       success: 0,
       error: 0,
       partial: 0,
+      running: 0,
     },
   }));
 }

@@ -17,7 +17,7 @@ import {
   listTasks,
   saveTask,
 } from "../db/tasks-repo.js";
-import { getHistory, recordRun } from "../db/history-repo.js";
+import { getHistory, getLatestHistoryByTask, recordRun } from "../db/history-repo.js";
 import { notifyMatrixCompletion } from "../notifications.js";
 import { getWorkspace } from "../workspaces.js";
 import { createSchedulerBackend } from "./scheduler/index.js";
@@ -174,6 +174,35 @@ function latestCloneStatus(cloneName: string): {
   };
 }
 
+/**
+ * QA-F.2: клон матрицы может остаться только в истории — определение удаляется
+ * при реконфигурации матрицы (`syncMatrixFamily`) или `cleanup`, но аналитика
+ * продолжает показывать задачу по имени. История не хранит `matrixParentId`,
+ * поэтому родитель восстанавливается из канонического префикса имени клона
+ * `<parent>-matrix-<workspace>` (тот же, что порождает `matrixCloneName`).
+ */
+function listMatrixClonesFromHistory(parentId: string): { name: string; workspaceId: string | null }[] {
+  const prefix = `${parentId.trim()}-matrix-`.toLowerCase();
+  const clones: { name: string; workspaceId: string | null }[] = [];
+  const seen = new Set<string>();
+  for (const record of getLatestHistoryByTask(5000)) {
+    const name = record.taskName?.trim();
+    if (!name) continue;
+    const key = name.toLowerCase();
+    // Агрегатор `-matrix-complete` тоже содержит префикс, но это не клон.
+    if (!key.startsWith(prefix) || isMatrixCompleteName(name) || seen.has(key)) continue;
+    seen.add(key);
+    clones.push({ name, workspaceId: record.workspaceId ?? null });
+  }
+  return clones;
+}
+
+/** Источник клона для агрегации: определение задачи или запись истории. */
+interface MatrixCloneSource {
+  name: string;
+  workspaceId?: string | null;
+}
+
 export interface MatrixCloneResult {
   name: string;
   workspaceId: string | null;
@@ -198,7 +227,16 @@ export interface MatrixAggregate {
 /** Собирает результаты клонов и вычисляет агрегированный статус. */
 export function aggregateMatrixResults(parentId: string): MatrixAggregate {
   const parent = getTask(parentId);
-  const clones = listMatrixClones(parentId);
+  const definedClones = listMatrixClones(parentId);
+  // QA-F.2: объединяем определения с клонами, оставшимися только в истории,
+  // чтобы matrix_control показывал тот же набор, что и аналитика.
+  const known = new Set(definedClones.map((clone) => clone.name.toLowerCase()));
+  const clones: MatrixCloneSource[] = [
+    ...definedClones,
+    ...listMatrixClonesFromHistory(parentId).filter(
+      (clone) => !known.has(clone.name.toLowerCase()),
+    ),
+  ];
   const failureMode = parent?.matrix?.failureMode ?? "continue";
 
   const results: MatrixCloneResult[] = clones.map((clone) => {

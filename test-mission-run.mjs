@@ -9,7 +9,7 @@ process.env.OPENCODE_SCHEDULER_DB = dbPath;
 
 const { initDb, closeDb } = await import("./dist/db/index.js");
 const { listRuns, listRunSteps } = await import("./dist/db/runs-repo.js");
-const { runMission, normalizeMissionSpec, formatLogRunMarker } = await import("./dist/core/mission.js");
+const { runMission, normalizeMissionSpec, formatLogRunMarker, extractLastRunLog } = await import("./dist/core/mission.js");
 
 let passed = 0;
 let failed = 0;
@@ -243,6 +243,36 @@ initDb(dbPath);
   check(
     "лог: подготовка запуска не очищает файл",
     !/writeFile\(logFile,\s*["']{2}/.test(indexSource),
+  );
+  // QA-E.1: потребители лога видят только последний прогон.
+  const combined = [
+    runMarker,
+    "старый вывод предыдущей задачи\n",
+    prepareMarker,
+    "вывод подготовки (не запуск)\n",
+    missionMarker,
+    "свежий вывод\n",
+    "tokens: 50\n",
+  ].join("");
+  const last = extractLastRunLog(combined);
+  check(
+    "лог: extractLastRunLog отсекает предыдущие прогоны",
+    last === `${missionMarker}свежий вывод\ntokens: 50\n`,
+    JSON.stringify(last),
+  );
+  check(
+    "лог: Task prepared не считается границей прогона",
+    extractLastRunLog(`${prepareMarker}нет запуска\n`) === `${prepareMarker}нет запуска\n`,
+  );
+  check(
+    "лог: без маркера возвращается весь текст (обратная совместимость)",
+    extractLastRunLog("\uFEFFстарый лог без маркеров\n") === "старый лог без маркеров\n",
+  );
+  const logsSource = fs.readFileSync("src/core/scheduler/logs.ts", "utf8");
+  const recorderSource = fs.readFileSync("src/core/record-history.ts", "utf8");
+  check(
+    "лог: getTaskLogs и парсер токенов используют extractLastRunLog",
+    logsSource.includes("extractLastRunLog(") && recorderSource.includes("extractLastRunLog("),
   );
   const wrapperSource = fs.readFileSync("src/core/ps-wrapper.ts", "utf8");
   check(

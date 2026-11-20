@@ -54,6 +54,22 @@ assert(
 );
 assert(guiSrc.includes("gui.runsRunningWarning"), "GUI показывает предупреждение о running-шаге");
 
+// QA-C.1: счётчик времени запуска сбрасывается, таймер очищается.
+assert(
+  /const runningTimer = setInterval\(\(\) => setRunningSec/.test(guiSrc),
+  "GUI сохраняет интервал счётчика runningSec в переменную",
+);
+assert(
+  /onCleanup\(\(\) => \{[\s\S]*?clearInterval\(runningTimer\)/.test(guiSrc),
+  "GUI очищает интервал runningSec в onCleanup",
+);
+assert(
+  guiSrc.includes("const previousStatuses = new Map") &&
+    guiSrc.includes('previousStatuses.get(j.name) !== "running"') &&
+    guiSrc.includes("setRunningSec(0)"),
+  "GUI сбрасывает счётчик при переходе задачи в running",
+);
+
 // --- 2. Локали: одинаковый набор ключей gui.runs* ---------------------------
 const localesDir = path.join(root, "locales");
 const localeKeys = {};
@@ -204,6 +220,24 @@ assert(panel.listRunPanel({ limit: 1 }).runs.length === 1, "лимит спис�
 assert(panel.listRunPanel({ filter: "bogus" }).success, "неизвестный фильтр безопасен");
 const missing = panel.resumeRunPanel("does-not-exist");
 assert(!missing.success && String(missing.error).includes("не найден"), "resume неизвестного запуска отклонён");
+
+// QA-B.4: бюджеты доступны и в дашборде, а не только через RPC.
+const guiSource = fs.readFileSync("./src/gui.tsx", "utf8");
+for (const [needle, label] of [
+  ["interface BudgetSettings", "тип настроек бюджетов"],
+  ["budgetEnabled", "сигнал включения бюджетов"],
+  ["budgetDailyUsd", "сигнал дневного лимита"],
+  ["budgetWeeklyUsd", "сигнал недельного лимита"],
+  ["budgets?: BudgetSettings", "patch save_settings с бюджетами"],
+  ["saveBudgetSettings()", "сохранение бюджетов из GUI"],
+  ['gt("gui.budgetsHeading")', "карточка бюджетов"],
+]) {
+  assert(guiSource.includes(needle), `gui.tsx: ${label} присутствует`);
+}
+for (const locale of ["ru", "en", "zh"]) {
+  const dict = JSON.parse(fs.readFileSync(`./locales/${locale}.json`, "utf8"));
+  assert(dict["gui.budgetsHeading"], `locales/${locale}.json: ключ gui.budgetsHeading`);
+}
 
 closeDb();
 fs.rmSync(tempRoot, { recursive: true, force: true });

@@ -109,6 +109,13 @@ interface HistorySettings {
   lastCleanupDeleted: number
 }
 
+/** Лимиты расхода день/неделя (Экономика v2). 0 — лимит выключен. */
+interface BudgetSettings {
+  enabled: boolean
+  dailyUsd: number
+  weeklyUsd: number
+}
+
 interface Job {
   name: string
   schedule: string
@@ -464,9 +471,11 @@ export default Plugin.define({
     // Пользовательские шаблоны (templates.json) — загружаются при монтировании панели.
     const [customTemplates, setCustomTemplates] = createSignal<CustomTemplate[]>([])
 
-    // Таймер для выполнения задачи (секунды)
+    // Таймер для выполнения задачи (секунды). Счётчик сбрасывается при старте
+    // нового запуска, иначе после долгого открытия дашборда любая задача
+    // показывала бы «running 3600s» с момента открытия страницы.
     const [runningSec, setRunningSec] = createSignal(0)
-    setInterval(() => setRunningSec((s) => s + 1), 1000)
+    const runningTimer = setInterval(() => setRunningSec((s) => s + 1), 1000)
 
     // Глобальные настройки (макс. одновременных задач, зимняя тема)
     const [maxConcurrent, setMaxConcurrent] = createSignal(1)
@@ -648,11 +657,18 @@ export default Plugin.define({
     const [historyCollapsed, setHistoryCollapsed] = createSignal(true)
     const [historyCleanupBusy, setHistoryCleanupBusy] = createSignal(false)
 
+    // Настройки бюджетов день/неделя (Экономика v2, E-1.1).
+    const [budgetEnabled, setBudgetEnabled] = createSignal(false)
+    const [budgetDailyUsd, setBudgetDailyUsd] = createSignal(0)
+    const [budgetWeeklyUsd, setBudgetWeeklyUsd] = createSignal(0)
+    const [budgetCollapsed, setBudgetCollapsed] = createSignal(true)
+
     // Таймеры ожидания завершения ручных запусков (для тостов OpenCode).
     const pendingRunTimers = new Map<string, ReturnType<typeof setInterval>>()
     onCleanup(() => {
       for (const timer of pendingRunTimers.values()) clearInterval(timer)
       pendingRunTimers.clear()
+      clearInterval(runningTimer)
     })
 
     // Название планировщика приходит с бэкенда: на Windows — «Планировщик Windows»,
@@ -733,6 +749,11 @@ export default Plugin.define({
         setAuditRetentionEnabled(Boolean(au?.enabled !== false))
         setAuditRetentionDays(Number(au?.retentionDays ?? 90))
         setAuditMaxRecords(Number(au?.maxRecords ?? 10000))
+        // Экономика v2 (E-1.1): лимиты день/неделя из настроек RPC.
+        const b = s.budgets
+        setBudgetEnabled(Boolean(b?.enabled))
+        setBudgetDailyUsd(Number(b?.dailyUsd ?? 0))
+        setBudgetWeeklyUsd(Number(b?.weeklyUsd ?? 0))
         setUiLocaleKnown(normalizeLocale((s as { uiLocale?: string }).uiLocale, DEFAULT_LOCALE))
         const mode = normalizeLocaleMode((s as { locale?: string }).locale, DEFAULT_LOCALE_MODE)
         setLocaleMode(mode)
@@ -845,12 +866,22 @@ export default Plugin.define({
       }
     }
 
+    /** Текущие лимиты расхода из сигналов формы (Экономика v2, E-1.1). */
+    function currentBudgetSettings(): BudgetSettings {
+      return {
+        enabled: budgetEnabled(),
+        dailyUsd: Math.max(0, Number(budgetDailyUsd()) || 0),
+        weeklyUsd: Math.max(0, Number(budgetWeeklyUsd()) || 0),
+      }
+    }
+
     async function persistSettings(patch: {
       maxConcurrent?: number
       locale?: LocaleMode
       winterMode?: boolean
       notifications?: NotificationSettings
       history?: HistorySettings
+      budgets?: BudgetSettings
     }): Promise<boolean> {
       try {
         const s = await rpc.save_settings(patch)
@@ -871,6 +902,12 @@ export default Plugin.define({
           setAuditRetentionEnabled(Boolean(au?.enabled !== false))
           setAuditRetentionDays(Number(au?.retentionDays ?? 90))
           setAuditMaxRecords(Number(au?.maxRecords ?? 10000))
+        }
+        if (patch.budgets !== undefined) {
+          const b = s.budgets
+          setBudgetEnabled(Boolean(b?.enabled))
+          setBudgetDailyUsd(Number(b?.dailyUsd ?? 0))
+          setBudgetWeeklyUsd(Number(b?.weeklyUsd ?? 0))
         }
         setUiLocaleKnown(normalizeLocale((s as { uiLocale?: string }).uiLocale, DEFAULT_LOCALE))
         const mode = normalizeLocaleMode((s as { locale?: string }).locale, DEFAULT_LOCALE_MODE)
@@ -893,6 +930,11 @@ export default Plugin.define({
     /** Сохраняет настройки ретеншна (вызывается после изменения любого поля). */
     async function saveHistorySettings() {
       await persistSettings({ history: currentHistorySettings() })
+    }
+
+    /** Сохраняет дневной/недельный лимит расхода (Экономика v2, E-1.1). */
+    async function saveBudgetSettings() {
+      await persistSettings({ budgets: currentBudgetSettings() })
     }
 
     /** Кнопка «🧹 Очистить сейчас»: фиксирует форму и запускает очистку. */
@@ -1961,6 +2003,7 @@ export default Plugin.define({
       try {
         const result = await rpc.get_tasks({})
         console.log("[GUI] Received tasks:", result)
+        const previousStatuses = new Map(jobs().map((j) => [j.name, j.status]))
         const tasks = Array.isArray(result?.tasks) ? (result.tasks as any[]) : []
         console.log("[GUI] tasks count:", tasks.length)
         const mapped: Job[] = tasks.map((t: any) => ({
@@ -2006,6 +2049,10 @@ export default Plugin.define({
           prompt: t.prompt ?? "",
         }))
         setJobs(mapped)
+        // Новый запуск (переход status → running) начинает отсчёт заново.
+        if (mapped.some((j) => j.status === "running" && previousStatuses.get(j.name) !== "running")) {
+          setRunningSec(0)
+        }
         console.log("[GUI] jobs:", jobs())
         await loadMetrics()
       } catch (err: any) {
@@ -3977,6 +4024,68 @@ export default Plugin.define({
                     <span style="font-size:11px;color:#8e8e93">
                       {gt("gui.historyCleanupHint")}
                     </span>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* 💰 Экономика v2 (E-1.1): лимиты расхода день/неделя */}
+            <div style="width:100%;max-width:700px;box-sizing:border-box;margin-top:8px;background:#1e1e1e;border:1px solid #333;border-radius:10px;overflow:hidden">
+              <button
+                onClick={() => setBudgetCollapsed(!budgetCollapsed())}
+                style="display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;box-sizing:border-box;padding:10px 14px;background:transparent;border:none;color:#e0e0e0;font-size:12px;font-weight:600;cursor:pointer;text-align:left"
+              >
+                <span>{gt("gui.budgetsHeading")}</span>
+                <span style="display:flex;align-items:center;gap:8px;font-size:11px;font-weight:400;color:#8e8e93">
+                  {budgetEnabled() ? gt("gui.budgetsEnabled") : gt("gui.budgetsDisabled")}
+                  <span>{budgetCollapsed() ? "▾" : "▴"}</span>
+                </span>
+              </button>
+              {!budgetCollapsed() && (
+                <div style="padding:0 14px 14px;display:flex;flex-direction:column;gap:10px">
+                  <div style="font-size:11px;color:#8e8e93">{gt("gui.budgetsHint")}</div>
+                  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                    <label style="font-size:12px;color:#e0e0e0;white-space:nowrap">
+                      <input
+                        type="checkbox"
+                        checked={budgetEnabled()}
+                        onChange={(e) => {
+                          setBudgetEnabled(e.currentTarget.checked)
+                          void saveBudgetSettings()
+                        }}
+                      />{" "}
+                      {gt("gui.budgetsEnabledLabel")}
+                    </label>
+                  </div>
+                  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                    <label style="font-size:12px;color:#e0e0e0;white-space:nowrap">{gt("gui.budgetsDailyLabel")}</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={budgetDailyUsd()}
+                      onChange={(e) => {
+                        setBudgetDailyUsd(Math.max(0, Number(e.currentTarget.value) || 0))
+                        void saveBudgetSettings()
+                      }}
+                      style="width:90px;padding:4px 6px;background:#1e1e1e;border:1px solid #333;border-radius:4px;color:#fff;font-size:12px;outline:none"
+                    />
+                    <span style="font-size:11px;color:#8e8e93">{gt("gui.budgetsZeroNoLimit")}</span>
+                  </div>
+                  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                    <label style="font-size:12px;color:#e0e0e0;white-space:nowrap">{gt("gui.budgetsWeeklyLabel")}</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={budgetWeeklyUsd()}
+                      onChange={(e) => {
+                        setBudgetWeeklyUsd(Math.max(0, Number(e.currentTarget.value) || 0))
+                        void saveBudgetSettings()
+                      }}
+                      style="width:90px;padding:4px 6px;background:#1e1e1e;border:1px solid #333;border-radius:4px;color:#fff;font-size:12px;outline:none"
+                    />
+                    <span style="font-size:11px;color:#8e8e93">{gt("gui.budgetsZeroNoLimit")}</span>
                   </div>
                 </div>
               )}

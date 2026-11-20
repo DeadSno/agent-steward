@@ -193,7 +193,7 @@ export function buildAnalytics(
     });
   }
 
-  const byTask = new Map<string, TaskAnalyticsRow>();
+  const byTask = new Map<string, TaskAnalyticsRow & { maxRunTokens: number }>();
   const byModel = new Map<string, ModelAnalyticsRow>();
   const byError = new Map<string, ErrorAnalyticsRow>();
   const cloneParent = new Map<string, string>();
@@ -268,7 +268,11 @@ export function buildAnalytics(
       costUsd: 0,
       isMatrixClone: cloneParent.has(taskKey),
       matrixParentId: cloneParent.get(taskKey) ?? null,
+      tokenBudget: taskTokenBudget.get(taskKey),
+      tokenBudgetExceeded: false,
+      maxRunTokens: 0,
     };
+    existing.maxRunTokens = Math.max(existing.maxRunTokens, tokens);
     existing.total += 1;
     if (status === "success") existing.success += 1;
     else existing.error += 1;
@@ -309,11 +313,16 @@ export function buildAnalytics(
   }
 
   const tasks = [...byTask.values()]
-    .map((row) => ({
+    .map(({ maxRunTokens, ...row }) => ({
       ...row,
       successRate: percent(row.success, row.total),
       avgDurationMs: Math.round(row.avgDurationMs),
       costUsd: Math.round(row.costUsd * 1e6) / 1e6,
+      // E-2: бюджет задаётся на один запуск, поэтому флаг выставляем по
+      // максимальному расходу токенов за запуск, а не по сумме за период.
+      tokenBudgetExceeded: row.tokenBudget
+        ? maxRunTokens > row.tokenBudget
+        : false,
     }))
     .sort((a, b) => b.total - a.total || a.taskName.localeCompare(b.taskName));
 

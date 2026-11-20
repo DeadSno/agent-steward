@@ -102,11 +102,16 @@ import {
   buildBudgetReport,
   evaluateBudgetGate,
   formatBudgetSkipMessage,
+  startOfUtcWeek,
   type BudgetGateDecision,
   type BudgetSettings,
 } from "./core/budget.js";
 import { generateSelfAnalysisReport } from "./core/self-analysis.js";
-import { getHistory, listRunningRecords } from "./db/history-repo.js";
+import {
+  getHistoryForAnalytics,
+  getHistoryForBudget,
+  listRunningRecords,
+} from "./db/history-repo.js";
 import { getAllMetrics } from "./db/metrics-repo.js";
 import { discardDlq, listDlq, retryDlq } from "./core/dlq-api.js";
 import {
@@ -3108,7 +3113,7 @@ const getMetricsExecute = wrapExecute<MetricsArgs>(async () => {
 /** get_analytics — аналитика запусков и стоимости за период. */
 const getAnalyticsExecute = wrapExecute<AnalyticsArgs>(async (args) => {
   const windowDays = Math.min(365, Math.max(1, Math.floor(Number(args.days) || 14)));
-  const records = getHistory(null, 20000);
+  const records = getHistoryForAnalytics(windowDays);
   const definitions = await loadTaskDefinitions();
   const report = buildAnalytics(records, {
     days: windowDays,
@@ -3116,6 +3121,7 @@ const getAnalyticsExecute = wrapExecute<AnalyticsArgs>(async (args) => {
     tasks: definitions.map((definition) => ({
       name: definition.name,
       matrixParentId: definition.matrixParentId,
+      tokenBudget: definition.tokenBudget,
     })),
   });
   // Экономика v2 (E-1.1): учёт расхода за день/неделю рядом с аналитикой.
@@ -3127,7 +3133,7 @@ const getAnalyticsExecute = wrapExecute<AnalyticsArgs>(async (args) => {
 /** self_analysis — система самоанализа: здоровье, аномалии, тренды, рекомендации. */
 const selfAnalysisExecute = wrapExecute<SelfAnalysisArgs>(async (args) => {
   const windowDays = Math.min(365, Math.max(1, Math.floor(Number(args.days) || 14)));
-  const records = getHistory(null, 20000);
+  const records = getHistoryForAnalytics(windowDays);
   const definitions = await loadTaskDefinitions();
   
   const report = generateSelfAnalysisReport(records, {
@@ -3136,6 +3142,7 @@ const selfAnalysisExecute = wrapExecute<SelfAnalysisArgs>(async (args) => {
     tasks: definitions.map((definition) => ({
       name: definition.name,
       matrixParentId: definition.matrixParentId,
+      tokenBudget: definition.tokenBudget,
     })),
   });
 
@@ -5110,7 +5117,7 @@ const v2Plugin = Plugin.define({
             365,
             Math.max(1, Math.floor(Number(days) || 14)),
           );
-          const records = getHistory(null, 20000);
+          const records = getHistoryForAnalytics(windowDays);
           const definitions = await loadTaskDefinitions();
           const report = buildAnalytics(records, {
             days: windowDays,
@@ -5118,6 +5125,7 @@ const v2Plugin = Plugin.define({
             tasks: definitions.map((definition) => ({
               name: definition.name,
               matrixParentId: definition.matrixParentId,
+              tokenBudget: definition.tokenBudget,
             })),
           });
           // Экономика v2 (E-1.1): тот же учёт, что и в агент-инструменте.
@@ -5145,7 +5153,7 @@ const v2Plugin = Plugin.define({
             365,
             Math.max(1, Math.floor(Number(days) || 14)),
           );
-          const records = getHistory(null, 20000);
+          const records = getHistoryForAnalytics(windowDays);
           const definitions = await loadTaskDefinitions();
           const report = generateSelfAnalysisReport(records, {
             days: windowDays,
@@ -5153,6 +5161,7 @@ const v2Plugin = Plugin.define({
             tasks: definitions.map((definition) => ({
               name: definition.name,
               matrixParentId: definition.matrixParentId,
+              tokenBudget: definition.tokenBudget,
             })),
           });
 
@@ -5248,7 +5257,7 @@ const v2Plugin = Plugin.define({
       pipeline_export: async (input: unknown) => {
         const { pipeline, pipelineName } = input as { pipeline?: string; pipelineName?: string };
         const result = await pipelineExportExecute(
-          { pipeline: pipeline ?? pipelineName } as PipelineExportArgs,
+          { pipeline: pipeline ?? pipelineName },
           {} as Tool.Context,
         );
         return JSON.parse(result.content as string);
@@ -6193,7 +6202,7 @@ export async function schedulerCreateTask(
   // Economics v2 (E-2): нормализация бюджета токенов. 0/отрицание/NaN = без лимита.
   const normalizedTokenBudget =
     Number.isFinite(tokenBudget) && (tokenBudget ?? 0) > 0
-      ? Math.floor(tokenBudget as number)
+      ? Math.floor(tokenBudget!)
       : undefined;
   // Спринт 27: дни недели, политика окна и glob/git-фильтры.
   const normalizeGlobList = (raw?: string[]): string[] | undefined => {
@@ -7079,10 +7088,12 @@ async function recreateTaskFromDefinition(definition: TaskDefinition): Promise<v
  * на клоны, а не выполняет свой промпт.
  */
 /** E-1.2: общий гейт бюджета для всех входов запуска задач. */
-async function checkBudgetGate(): Promise<BudgetGateDecision> {
+async function checkBudgetGate(now: Date = new Date()): Promise<BudgetGateDecision> {
   const settings = await loadSettings();
-  const records = getHistory(null, 20000);
-  const decision = evaluateBudgetGate(records, settings.budgets, new Date());
+  // Неделя — widest период бюджетов. Выбираем записи по моменту завершения
+  // (см. getHistoryForBudget), чтобы не зависеть от окна в 20000 запусков.
+  const records = getHistoryForBudget(startOfUtcWeek(now).toISOString());
+  const decision = evaluateBudgetGate(records, settings.budgets, now);
   if (!decision.allowed) {
     // E-1.3: алерт не должен задерживать или ломать запуск.
     void notifyBudgetExceeded(decision).catch((err: unknown) => {
@@ -7340,6 +7351,8 @@ async function collectTasksView() {
       deniedTools: Array.isArray(def?.deniedTools) ? def.deniedTools : null,
       matrix: def?.matrix ?? null,
       matrixParentId: def?.matrixParentId ?? null,
+      /** Экономика v2 (E-2): лимит токенов на запуск для аналитики дашборда. */
+      tokenBudget: def?.tokenBudget ?? null,
       isMatrixParent: Boolean(def?.matrix),
       matrixSummary: matrixAggregate
         ? {

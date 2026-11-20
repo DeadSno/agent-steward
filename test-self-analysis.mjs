@@ -3,6 +3,7 @@
  * Запуск: node test-self-analysis.mjs (после npm run build).
  * Чистые функции — БД, сервер и модель не нужны.
  */
+import { readFileSync } from "node:fs";
 import {
   calculateHealthScore,
   detectAnomalies,
@@ -338,6 +339,19 @@ console.log("\n=== Self Analysis Report ===");
 }
 
 // --- Итоги -------------------------------------------------------------------
+
+// QA-D.1: в комментариях не должно остаться китайских/смешанных артефактов.
+{
+  const source = readFileSync("./src/core/self-analysis.ts", "utf8");
+  check(
+    "self-analysis: комментарии без китайских иероглифов",
+    !/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u.test(source)
+  );
+  check(
+    "self-analysis: комментарии без смешанных русско-английских слов",
+    !/[А-Яа-яЁё][A-Za-z]|[A-Za-z][А-Яа-яЁё]/.test(source)
+  );
+}
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed > 0 ? 1 : 0);

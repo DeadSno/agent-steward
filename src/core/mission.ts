@@ -65,6 +65,27 @@ export function formatLogRunMarker(
   return `[agent-steward] === ${label} started ${now.toISOString()} (${taskName}) ===\n`;
 }
 
+/**
+ * Возвращает часть лога, относящуюся только к последнему запуску.
+ *
+ * Лог намеренно дописывается, а не очищается (иначе при падении до первого
+ * вывода обёртки диагностировать причину было бы невозможно). Маркеры
+ * `Run started`/`Mission started` разделяют прогоны: потребителям лога
+ * нужно показывать и разбирать только последний сегмент. `Task prepared`
+ * маркером запуска НЕ считается — он пишется при создании/редактировании
+ * задачи, когда реального прогона ещё не было.
+ */
+export function extractLastRunLog(content: string): string {
+  const lines = content.replace(/^\uFEFF/, "").split(/\r?\n/);
+  let start = 0;
+  for (let i = 0; i < lines.length; i += 1) {
+    if (/^\[agent-steward\] === (Run|Mission) started /.test(lines[i])) {
+      start = i;
+    }
+  }
+  return lines.slice(start).join("\n");
+}
+
 /** AB-8.1: спецификация ad-hoc миссии (цель + safety-контракт). */
 export interface MissionSpec {
   /** Цель миссии — тот же промпт, что получил бы OpenCode. */

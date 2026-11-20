@@ -103,7 +103,14 @@ function computeUsage(
   for (const record of records) {
     // Незавершённые запуски ещё нельзя оценить — как и в buildAnalytics.
     if (record.status === "running") continue;
-    const time = new Date(record.startedAt).getTime();
+    // Расход относится к моменту завершения: запуск, начатый до полуночи,
+    // но закончившийся внутри периода, должен попасть именно в этот период.
+    // Для старых записей без finishedAt сохраняем прежнюю атрибуцию по startedAt.
+    const finishedMs = record.finishedAt
+      ? new Date(record.finishedAt).getTime()
+      : NaN;
+    const startedMs = new Date(record.startedAt).getTime();
+    const time = Number.isFinite(finishedMs) ? finishedMs : startedMs;
     if (!Number.isFinite(time) || time < startMs || time > endMs) continue;
     spent += recordCost(record);
     runs += 1;
@@ -128,7 +135,8 @@ function computeUsage(
 
 /**
  * Считает расход за текущий UTC-день и UTC-неделю (с понедельника).
- * Даты вне периода и записи со статусом `running` игнорируются.
+ * Запуск относится к периоду по времени завершения (`finishedAt`, при
+ * отсутствии — `startedAt`); даты вне периода и статус `running` игнорируются.
  */
 export function buildBudgetReport(
   records: AnalyticsRecord[],
