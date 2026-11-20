@@ -46,6 +46,25 @@ export interface UpdateWorkspacePatch {
 /** Максимум пар env на workspace — защита от раздувания строки JSON. */
 export const MAX_WORKSPACE_ENV_PAIRS = 100;
 
+/**
+ * Строковое представление unknown для env и колонок БД (QA-A2.5).
+ * Для примитивов совпадает с String(); объекты дают стандартный '[object Object]'
+ * (в JSON и в текстовых колонках SQLite таких значений не бывает).
+ */
+function safeString(value: unknown): string {
+  if (value === null || value === undefined) return String(value);
+  switch (typeof value) {
+    case "string":
+    case "number":
+    case "boolean":
+    case "bigint":
+    case "symbol":
+      return String(value);
+    default:
+      return "[object Object]";
+  }
+}
+
 /** Палитра цветных маркеров для GUI/дашборда. */
 export const WORKSPACE_COLORS = [
   "#5b8def",
@@ -90,7 +109,7 @@ export function normalizeWorkspaceEnv(
     if (typeof rawValue === "object") {
       throw new Error(`Значение env '${key}' должно быть строкой.`);
     }
-    result[key] = String(rawValue);
+    result[key] = safeString(rawValue);
   }
   return result;
 }
@@ -279,24 +298,24 @@ export function writeWorkspaceEnvFile(
   return file;
 }
 
-function rowToWorkspace(row: any): Workspace {
+function rowToWorkspace(row: Record<string, unknown>): Workspace {
   let env: Record<string, string> | undefined;
   if (row.env_json) {
     try {
-      env = normalizeWorkspaceEnv(JSON.parse(String(row.env_json)));
+      env = normalizeWorkspaceEnv(JSON.parse(safeString(row.env_json)));
     } catch {
       env = undefined;
     }
   }
   return {
-    id: String(row.id),
-    name: String(row.name),
-    path: String(row.path),
-    gitRemote: row.git_remote == null ? undefined : String(row.git_remote),
-    color: row.color == null ? undefined : String(row.color),
+    id: safeString(row.id),
+    name: safeString(row.name),
+    path: safeString(row.path),
+    gitRemote: row.git_remote == null ? undefined : safeString(row.git_remote),
+    color: row.color == null ? undefined : safeString(row.color),
     env,
-    envFile: row.env_file == null ? undefined : String(row.env_file),
-    createdAt: String(row.created_at),
+    envFile: row.env_file == null ? undefined : safeString(row.env_file),
+    createdAt: safeString(row.created_at),
   };
 }
 
@@ -371,14 +390,16 @@ export function readGitBranch(workspacePath: string): string | undefined {
 export function listWorkspaces(): Workspace[] {
   const rows = getDb()
     .prepare("SELECT * FROM workspaces ORDER BY name COLLATE NOCASE ASC")
-    .all();
+    .all() as Record<string, unknown>[];
   return rows.map(rowToWorkspace);
 }
 
 /** Workspace по id. */
 export function getWorkspace(id: string): Workspace | undefined {
   if (!id) return undefined;
-  const row = getDb().prepare("SELECT * FROM workspaces WHERE id = ?").get(id);
+  const row = getDb()
+    .prepare("SELECT * FROM workspaces WHERE id = ?")
+    .get(id) as Record<string, unknown> | undefined;
   return row ? rowToWorkspace(row) : undefined;
 }
 
@@ -387,7 +408,7 @@ export function getWorkspaceByPath(workspacePath: string): Workspace | undefined
   const normalized = normalizePath(workspacePath);
   const row = getDb()
     .prepare("SELECT * FROM workspaces WHERE lower(path) = lower(?) LIMIT 1")
-    .get(normalized);
+    .get(normalized) as Record<string, unknown> | undefined;
   return row ? rowToWorkspace(row) : undefined;
 }
 
@@ -531,6 +552,8 @@ export function deleteWorkspace(id: string): boolean {
 
 /** Количество workspace (для сводок и тестов). */
 export function countWorkspaces(): number {
-  const row = getDb().prepare("SELECT COUNT(*) AS count FROM workspaces").get();
+  const row = getDb()
+    .prepare("SELECT COUNT(*) AS count FROM workspaces")
+    .get() as Record<string, unknown> | undefined;
   return Number(row?.count) || 0;
 }

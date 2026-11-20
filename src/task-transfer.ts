@@ -470,6 +470,25 @@ export interface ParsedImport {
 }
 
 /**
+ * Строковое представление unknown для текстов ошибок импорта (QA-A2.5).
+ * Примитивы превращаются в строку так же, как это делал String(); для
+ * объектов/функций сохраняется результат стандартной конверсии '[object Object]'.
+ */
+function describeImportValue(value: unknown): string {
+  if (value === null || value === undefined) return String(value);
+  switch (typeof value) {
+    case "string":
+    case "number":
+    case "boolean":
+    case "bigint":
+    case "symbol":
+      return String(value);
+    default:
+      return "[object Object]";
+  }
+}
+
+/**
  * Разбирает файл импорта. Поддерживает как { tasks: [...] }, так и просто массив.
  * Ошибки отдельных записей не прерывают импорт остальных.
  */
@@ -477,10 +496,14 @@ export function parseImportJson(raw: string): ParsedImport {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
-  } catch (err: any) {
-    throw new Error(
-      `Файл не является корректным JSON: ${err?.message ?? String(err)}`,
-    );
+  } catch (err: unknown) {
+    const detail =
+      err instanceof Error
+        ? err.message
+        : typeof err === "object" && err !== null && "message" in err
+          ? describeImportValue(err.message)
+          : describeImportValue(err);
+    throw new Error(`Файл не является корректным JSON: ${detail}`);
   }
 
   const list = Array.isArray(parsed)
@@ -598,7 +621,7 @@ export function parseImportJson(raw: string): ParsedImport {
         session = source.session;
       } else {
         errors.push(
-          `Запись ${position}${name ? ` (${name})` : ""}: неизвестный session «${String(source.session)}» (ожидается new, reuse или last).`,
+          `Запись ${position}${name ? ` (${name})` : ""}: неизвестный session «${describeImportValue(source.session)}» (ожидается new, reuse или last).`,
         );
         return;
       }
@@ -736,7 +759,7 @@ export function parseImportJson(raw: string): ParsedImport {
         windowPolicy = source.windowPolicy;
       } else {
         errors.push(
-          `Запись ${position}${name ? ` (${name})` : ""}: неизвестный windowPolicy «${String(source.windowPolicy)}» (ожидается skip, postpone или run).`,
+          `Запись ${position}${name ? ` (${name})` : ""}: неизвестный windowPolicy «${describeImportValue(source.windowPolicy)}» (ожидается skip, postpone или run).`,
         );
         return;
       }
