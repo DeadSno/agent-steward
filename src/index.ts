@@ -47,7 +47,11 @@ import { getTaskLogs } from "./core/scheduler/logs.js";
 import { findSanitizedNameConflict, sanitizedConflictMessage } from "./core/task-name.js";
 import { writeBashWrapper } from "./core/wrappers/bash.js";
 import { normalizeTaskGuards, type TaskGuards } from "./core/guard.js";
-import { simulatePipeline, type DryRunReport } from "./core/dry-run.js";
+import {
+  simulatePipeline,
+  workingDirectoryDriftWarning,
+  type DryRunReport,
+} from "./core/dry-run.js";
 import {
   aggregateMatrixResults,
   cancelPendingMatrixClones,
@@ -2133,6 +2137,13 @@ const deleteTaskExecute = wrapExecute<DeleteArgs>(async (args) => {
 const runTaskNowExecute = wrapExecute<RunNowArgs>(async (args) => {
   const { name } = args;
 
+  // PL-8.1: тот же дрейф HEAD, что и в dry_run, показываем при ручном старте.
+  const definition = getTask(name);
+  const warning =
+    definition?.workingDirectory && definition.createdAt
+      ? workingDirectoryDriftWarning(definition, definition.workingDirectory)
+      : null;
+
   let alreadyRunning = false;
   try {
     const result = await runTaskEntry(name);
@@ -2152,6 +2163,7 @@ const runTaskNowExecute = wrapExecute<RunNowArgs>(async (args) => {
       message: alreadyRunning
         ? t("tool.task.alreadyRunning", { name })
         : t("tool.task.started", { name }),
+      ...(warning ? { warning } : {}),
     }),
   };
 });

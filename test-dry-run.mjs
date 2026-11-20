@@ -3,6 +3,7 @@
  * Запуск: node test-dry-run.mjs (после npm run build).
  */
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -14,7 +15,7 @@ process.env.OPENCODE_SCHEDULER_HOME = path.join(tempRoot, "opencode", "windows-s
 const { initDb, closeDb } = await import("./dist/db/index.js");
 const { saveTask } = await import("./dist/db/tasks-repo.js");
 const { recordRun } = await import("./dist/db/history-repo.js");
-const { simulatePipeline } = await import("./dist/core/dry-run.js");
+const { simulatePipeline, workingDirectoryDriftWarning } = await import("./dist/core/dry-run.js");
 const { t } = await import("./dist/i18n.js");
 
 const results = [];
@@ -114,6 +115,20 @@ try {
 
   // 9. Реального запуска нет: команда — только текст.
   check("симуляция не исполняет команды", report.tasks.every((t) => typeof t.command === "string"));
+
+  // 10. PL-8.1: дрейф HEAD относительно createdAt задачи.
+  const gitRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ws-scheduler-drift-"));
+  execFileSync("git", ["init", "-q", gitRoot]);
+  execFileSync("git", ["-C", gitRoot, "config", "user.email", "test@example.com"]);
+  execFileSync("git", ["-C", gitRoot, "config", "user.name", "Test"]);
+  execFileSync("git", ["-C", gitRoot, "commit", "-q", "--allow-empty", "-m", "init"]);
+  const driftDef = {
+    name: "Drift", schedule: "* * * * *", prompt: "x",
+    workingDirectory: gitRoot, createdAt: "2020-01-01T00:00:00Z",
+  };
+  const drift = workingDirectoryDriftWarning(driftDef, gitRoot);
+  check("PL-8.1: предупреждение при HEAD новее createdAt", typeof drift === "string" && drift.includes("PL-8.1"));
+  check("PL-8.1: без createdAt предупреждения нет", workingDirectoryDriftWarning({ ...driftDef, createdAt: "" }, gitRoot) === null);
 } finally {
   closeDb();
 }

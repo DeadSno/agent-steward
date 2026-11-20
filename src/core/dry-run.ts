@@ -194,7 +194,7 @@ function findChainDagOverlap(
  * Сравниваем время HEAD-коммита с createdAt задачи. Fail-open: нет git, нет
  * даты или команда недоступна — предупреждения нет.
  */
-function workingDirectoryDriftWarning(def: TaskDefinition, cwd: string): string | null {
+export function workingDirectoryDriftWarning(def: TaskDefinition, cwd: string): string | null {
   if (!def.createdAt || !cwd) return null;
   const created = new Date(def.createdAt).getTime();
   if (!Number.isFinite(created)) return null;
