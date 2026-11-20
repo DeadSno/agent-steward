@@ -30,6 +30,14 @@ summary, last run.
 | "Same work in N repositories" | `matrix.workspaceIds` | One definition, isolated clones, aggregated status |
 | "A then B then C" | `dependsOn` + `nextTaskOnSuccess` / `nextTaskOnError` | Explicit DAG, failures stop the line |
 | "Try again if it fails" | `retryCount` + `retryDelay` | Handles flaky networks and rate limits |
+| "Once a month / once a year" | `schedule_task` with `M H D M *` | Native `MONTHLY` (with `/m` for a fixed month), no minute polling |
+
+**Cron-to-OS limitation (QV-10).** Windows Task Scheduler expresses `MINUTE`,
+`HOURLY`, `DAILY`, `WEEKLY` and `MONTHLY`. Expressions outside this subset (lists,
+ranges, `*/N` on day-of-month/weekday, a foreign IANA timezone) fall back to a
+one-minute OS poll with a schedule gate in the wrapper. A yearly cron such as
+`0 4 1 1 *` is now converted natively to `MONTHLY /d 1 /m JANUARY /st 04:00`,
+so the OS does not tick every minute for a task that runs once a year.
 
 `triggerType: "mcp-event"` is event-only: it does **not** register an OS scheduler task
 (PL-12). A historical `31.12.2099` entry seen for a paused event task was an artifact of

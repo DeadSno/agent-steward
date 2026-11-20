@@ -10,6 +10,7 @@ import {
   convertCronToSchTasks,
   buildScheduleFlags,
 } from "./dist/core/cron-to-schtasks.js";
+import { isNativeSchtasksExpr, needsPollMode } from "./dist/core/schedule-v2.js";
 
 const results = [];
 let passed = 0;
@@ -59,6 +60,29 @@ check("15 * * * * -> HOURLY /st 00:15", mHourly.sc === "HOURLY" && mHourly.start
 
 const daily = convertCronToSchTasks("0 9 * * *");
 check("0 9 * * * -> DAILY /st 09:00", daily.sc === "DAILY" && daily.startTime === "09:00");
+
+// --- QV-10: годовой cron -> нативный schtasks MONTHLY вместо минутного опроса ---
+const yearly = convertCronToSchTasks("0 4 1 1 *");
+check("QV-10: '0 4 1 1 *' -> MONTHLY", yearly.sc === "MONTHLY");
+check(
+  "QV-10: yearly flags /d 1 /m JANUARY /st 04:00",
+  JSON.stringify(buildScheduleFlags(yearly)) ===
+    JSON.stringify(["/sc", "MONTHLY", "/st", "04:00", "/d", "1", "/m", "JANUARY"]),
+);
+check("QV-10: yearly is native (no poll)", isNativeSchtasksExpr("0 4 1 1 *") === true);
+check("QV-10: yearly needsPollMode=false", needsPollMode("0 4 1 1 *") === false);
+const monthly = convertCronToSchTasks("30 12 15 * *");
+check(
+  "QV-10: '30 12 15 * *' -> MONTHLY /d 15 без /m",
+  monthly.sc === "MONTHLY" && JSON.stringify(monthly.extraFlags) === JSON.stringify(["/d", "15"]),
+);
+let badMonth = false;
+try {
+  convertCronToSchTasks("0 4 1 13 *");
+} catch {
+  badMonth = true;
+}
+check("QV-10: невалидный месяц отклоняется", badMonth);
 
 console.log(`\n${passed}/${passed + failed} проверок пройдено`);
 process.exit(failed > 0 ? 1 : 0);

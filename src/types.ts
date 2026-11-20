@@ -201,8 +201,8 @@ export type ListJobsArgs = z.infer<typeof ListJobsArgs>;
  * Результат преобразования cron в флаги schtasks.
  */
 export interface CronConversion {
-  /** Тип расписания schtasks: MINUTE, DAILY или WEEKLY. */
-  sc: "MINUTE" | "HOURLY" | "DAILY" | "WEEKLY";
+  /** Тип расписания schtasks: MINUTE, HOURLY, DAILY, WEEKLY или MONTHLY. */
+  sc: "MINUTE" | "HOURLY" | "DAILY" | "WEEKLY" | "MONTHLY";
   /** Дополнительные флаги командной строки (кроме /sc и /tn /tr /f). */
   extraFlags: string[];
   /** Время начала для /st (HH:MM) или undefined. */

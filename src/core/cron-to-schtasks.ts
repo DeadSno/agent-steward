@@ -14,6 +14,8 @@ const UNSUPPORTED_ERROR =
   "  M * * * *              -> HOURLY, ежечасно в MM минут (/st 00:MM)\n" +
   "  M H * * *              -> DAILY, ежедневно в HH:MM (/st HH:MM)\n" +
   "  M H * * D              -> WEEKLY, по неделям в день D в HH:MM (/d D /st HH:MM)\n" +
+  "  M H D * *              -> MONTHLY, первого числа каждого месяца (/d D /st HH:MM)\n" +
+  "  M H D M *              -> MONTHLY в указанном месяце (/m MONTH), раз в год\n" +
   "\n" +
   "Не поддерживаются: диапазоны (1-5), списки (1,2,3), комбинации месяца и дня недели,\n" +
   "*/N в поле дня месяца или дня недели, а также любые другие сложные выражения.\n" +
@@ -32,6 +34,22 @@ const DAY_OF_WEEK_MAP: Record<string, string> = {
   "5": "FRI",
   "6": "SAT",
   "7": "SUN",
+};
+
+/** Месяцы для schtasks /m (номер месяца cron 1..12). */
+const MONTH_MAP: Record<string, string> = {
+  "1": "JANUARY",
+  "2": "FEBRUARY",
+  "3": "MARCH",
+  "4": "APRIL",
+  "5": "MAY",
+  "6": "JUNE",
+  "7": "JULY",
+  "8": "AUGUST",
+  "9": "SEPTEMBER",
+  "10": "OCTOBER",
+  "11": "NOVEMBER",
+  "12": "DECEMBER",
 };
 
 /**
@@ -185,6 +203,30 @@ export function convertCronToSchTasks(cron: string): CronConversion {
       extraFlags: ["/d", dayName],
       startTime,
       days: dayName,
+    };
+  }
+
+  // --- ПАТТЕРН 5: M H D [*|M] * -> MONTHLY (/d D [/m MONTH] /st HH:MM) ---
+  // QV-10: годовое выражение `0 4 1 1 *` раньше не конвертировалось и уходило
+  // в минутный опрос ОС. Теперь оно выражается нативно: schtasks MONTHLY с /m
+  // фиксирует месяц, а /d — день, поэтому тик один раз в год без пустых опросов.
+  const dom = parseIntInRange(dayOfMonth, 1, 31);
+  if (m !== undefined && h !== undefined && dom !== undefined && isStar(dayOfWeek)) {
+    const startTime = String(h).padStart(2, "0") + ":" + String(m).padStart(2, "0");
+    const extraFlags: string[] = ["/d", String(dom)];
+    if (!isStar(month)) {
+      const monthName = MONTH_MAP[month];
+      if (!monthName) {
+        throw new Error(
+          "Неподдерживаемое поле месяца: " + month + ".\n\n" + UNSUPPORTED_ERROR,
+        );
+      }
+      extraFlags.push("/m", monthName);
+    }
+    return {
+      sc: "MONTHLY",
+      extraFlags,
+      startTime,
     };
   }
 
