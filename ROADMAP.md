@@ -173,6 +173,40 @@ agent-steward — execution engine с опциональной регистра�
 **Задача X-6 — `systemd` в keywords** · P3 · ⏸️
 - [ ] X-6.1 Убрать, бэкенда нет
 
+## Деталь 3.8 — Обратная связь от пользователей (bug reports → GitHub Issues)
+`src/core/feedback.ts`, `src/settings.ts`, `src/index.ts`, `infra/feedback-worker/`
+
+> Канал «чужой пользователь → автор». Сейчас `report_bug` отправляет отчёт в каналы **самого репортищего** (webhook/Telegram/native из его `settings.json`) — автор его не видит. Вариант B: публичный write-only приёмник на Cloudflare Worker, который создаёт issue в `DeadSno/agent-steward`.
+> **Ограничение безопасности:** npm-пакет публичный — в коде не может быть SMTP-пароля, bot token или GitHub PAT. В плагине только URL приёмника; токены живут в секретах Worker.
+> **Fail-open:** при недоступном приёмнике отчёт уходит в локальный outbox, запуск задачи не блокируется.
+
+**Задача F-1 — Клиентская часть: сбор и отправка отчёта** · P2 · ⬜
+- [ ] F-1.1 Контракт payload и `schemaVersion` (pluginVersion, os, node, locale, profile, taskName, description, contactEmail, redactedLogs, metrics)
+- [ ] F-1.2 `src/core/feedback.ts`: POST, timeout 10 с, 2 ретрая с backoff, `User-Agent: agent-steward/<version>`, идемпотентный `reportId`
+- [ ] F-1.3 Настройки `feedback`: `enabled`, `endpoint`, `includeLogs` (default **false**), `contactEmail`; валидация URL
+- [ ] F-1.4 Редакция секретов и приватности: `sk-`, `ghp_`, bot tokens, значения из `manage_secrets`, home → `~`, email в логах
+- [ ] F-1.5 `report_bug`: `destination: author | local | both` (default `author`) и `dryRun` — показать payload без отправки
+- [ ] F-1.6 Офлайн-outbox: таблица `feedback_outbox` + повтор при старте, лимит попыток
+- [ ] F-1.7 Антиспам: hash описания, окно 5 минут, лимит N отчётов в час
+
+**Задача F-2 — Приёмник: Cloudflare Worker → GitHub Issues** · P2 · ⏸️
+- [ ] F-2.1 Worker: `POST /report`, валидация схемы, rate-limit по IP, honeypot-поле
+- [ ] F-2.2 Fine-grained PAT только `issues:write` на `DeadSno/agent-steward` в секретах Worker (wrangler)
+- [ ] F-2.3 Создание issue: `[user-report] <краткое описание>`, тело с метаданными, метки `user-report`, `needs-triage`; дедуп по `reportId`
+- [ ] F-2.4 Ответ `200 {issueUrl}`; 4xx/5xx с понятным телом; логи без PII
+- [ ] F-2.5 Деплой, секреты и короткий README для автора
+
+**Задача F-3 — Прозрачность и локали** · P2 · ⬜
+- [ ] F-3.1 Показ payload пользователю перед отправкой (dryRun + подтверждение)
+- [ ] F-3.2 Документация: что уходит, что нет, как отключить; consent/приватность
+- [ ] F-3.3 i18n ru/en/zh для сообщений инструмента и ошибок
+
+**Задача F-4 — Тесты и документация** · P3 · ⬜
+- [ ] F-4.1 `test-feedback.mjs`: редакция секретов, payload, ретраи, dryRun, outbox
+- [ ] F-4.2 Тест Worker (валидация, дедуп, rate-limit) — unit или `wrangler dev` + fetch
+- [ ] F-4.3 TEST-PLAN: новая деталь D17 + матрица доступа; docs/FEATURES.md
+- [ ] F-4.4 CHANGELOG при реализации; проверить `test-docs` (счётчики tools/RPC не меняются)
+
 ---
 
 # 4. Правила работы (канбан)
