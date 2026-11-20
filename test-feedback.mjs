@@ -209,6 +209,16 @@ check(
 
 /* F-3.2 — GUI/RPC/агент должны пробрасывать секцию feedback (регресс: чекбокс сбрасывался). */
 const { manageSettingsSchema } = await import("./dist/index.js");
+const { SchedulerRpc } = await import("./dist/rpc.js");
+const rpcMethods = SchedulerRpc.methods;
+check(
+  "F-3.2 RPC-схемы: feedback есть в get_settings/save_settings (input и output)",
+  Boolean(rpcMethods.get_settings.output.properties.feedback) &&
+    Boolean(rpcMethods.save_settings.input.properties.feedback) &&
+    Boolean(rpcMethods.save_settings.output.properties.feedback) &&
+    rpcMethods.save_settings.input.additionalProperties === false,
+);
+
 const parsedFeedbackPatch = manageSettingsSchema.parse({
   action: "update",
   feedback: {

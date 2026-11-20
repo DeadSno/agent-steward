@@ -687,6 +687,19 @@ const BudgetSettingsSchema = {
   required: ["enabled", "dailyUsd", "weeklyUsd"],
 } as const;
 
+/** Деталь 3.8: настройки обратной связи с автором. */
+const FeedbackSettingsSchema = {
+  type: "object" as const,
+  properties: {
+    enabled: { type: "boolean" },
+    endpoint: { type: "string" },
+    includeLogs: { type: "boolean" },
+    contactEmail: { type: "string" },
+    maxPerHour: { type: "number" },
+  },
+  required: ["enabled", "endpoint", "includeLogs", "contactEmail", "maxPerHour"],
+} as const;
+
 /** Политика прав фоновых задач (Спринт 32). */
 const PermissionSettingsSchema = {
   type: "object" as const,
@@ -711,6 +724,7 @@ const GetSettingsOutput = {
     audit: AuditSettingsSchema,
     permissions: PermissionSettingsSchema,
     budgets: BudgetSettingsSchema,
+    feedback: FeedbackSettingsSchema,
   },
   required: ["maxConcurrent", "locale", "winterMode", "notifications"],
 } as const;
@@ -728,6 +742,7 @@ const SaveSettingsInput = {
     audit: AuditSettingsSchema,
     permissions: PermissionSettingsSchema,
     budgets: BudgetSettingsSchema,
+    feedback: FeedbackSettingsSchema,
   },
   additionalProperties: false,
 } as const;
@@ -745,6 +760,7 @@ const SaveSettingsOutput = {
     audit: AuditSettingsSchema,
     permissions: PermissionSettingsSchema,
     budgets: BudgetSettingsSchema,
+    feedback: FeedbackSettingsSchema,
   },
   required: ["success", "maxConcurrent", "locale", "winterMode", "notifications"],
 } as const;
