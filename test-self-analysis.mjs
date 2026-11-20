@@ -12,6 +12,7 @@ import {
   generateSelfAnalysisReport,
 } from "./dist/core/self-analysis.js";
 import { buildAnalytics } from "./dist/core/analytics.js";
+import { t } from "./dist/i18n.js";
 
 const results = [];
 let passed = 0;
@@ -371,7 +372,13 @@ console.log("\n=== Self Analysis Report ===");
   const report = generateSelfAnalysisReport(records, { days: 14 });
 
   check("summary: непустой", report.summary.length > 0);
-  check("summary: содержит 'Здоровье системы'", report.summary.includes("Здоровье системы"));
+  // QA-CI-4: сводка локализована, поэтому ожидаемую строку берём из того же
+  // каталога — тест должен проходить и при OPENCODE_SCHEDULER_LOCALE=en/zh.
+  const expectedHealth = t("selfAnalysis.health", {
+    level: t(`selfAnalysis.level.${report.health.level}`),
+    score: report.health.score,
+  });
+  check("summary: содержит локализованное здоровье", report.summary.includes(expectedHealth));
 }
 
 {
