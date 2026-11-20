@@ -67,6 +67,7 @@ import {
 } from "./core/matrix.js";
 import { normalizeWatchPath, validateWatchGlobs } from "./core/watch-paths.js";
 import { createShutdownGate, type ShutdownGateState } from "./core/shutdown.js";
+import { CHILD_RUN_ENV, isChildRunMode } from "./core/run-mode.js";
 import { SchedulerRpc } from "./rpc.js";
 import {
   validatePipelineSpec,
@@ -4890,7 +4891,17 @@ export interface ToolSpec {
  * одинаковые имена, схемы, описания и обработчики. Аудит навешивается здесь
  * один раз, чтобы обе линии вели журнал одинаково.
  */
-export function createToolSpecs(runtime: SchedulerRuntime): ToolSpec[] {
+export function createToolSpecs(
+  runtime: SchedulerRuntime,
+  env: NodeJS.ProcessEnv = process.env,
+): ToolSpec[] {
+  // QV-8: обёртка задач выставляет маркер дочернего прогона перед `opencode run`.
+  // Такой ребёнок не должен получать инструменты планировщика — иначе он видит
+  // весь surface родителя и может рекурсивно создавать задачи.
+  if (isChildRunMode(env)) {
+    console.log(`[qv8] ${CHILD_RUN_ENV}: инструменты планировщика не регистрируются`);
+    return [];
+  }
   const handlers = createToolHandlers(runtime);
   return [
     {
@@ -5209,6 +5220,10 @@ async function startSchedulerDashboard(): Promise<void> {
 const v2Plugin = Plugin.define({
   id: "opencode-windows-scheduler",
   setup: async (ctx) => {
+    if (isChildRunMode()) {
+      console.log(`[qv8] ${CHILD_RUN_ENV}: дочерний прогон, пропускаю регистрацию плагина`);
+      return async () => undefined;
+    }
     const runtime = await createRuntime(ctx);
     const registration = await ctx.tool.transform((editor) => {
       // editor.add регистрирует новые инструменты плагина с codemode: true,
@@ -6667,6 +6682,10 @@ export async function createV1Hooks(
   input: Pick<V1PluginInput, "directory"> = { directory: process.cwd() },
   options: { startDashboard?: boolean } = {},
 ): Promise<V1Hooks> {
+  if (isChildRunMode()) {
+    console.log(`[qv8] ${CHILD_RUN_ENV}: дочерний прогон, пропускаю регистрацию плагина`);
+    return { tool: {}, dispose: async () => undefined };
+  }
   const runtime = await createRuntime({ location: { directory: input.directory } });
   const tools = createV1Tools(runtime);
   if (options.startDashboard !== false) {

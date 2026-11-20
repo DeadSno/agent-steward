@@ -27,7 +27,12 @@ const {
   matchesMcpEventSubscription,
   getTaskLogsSchema,
   createToolHandlers,
+  createToolSpecs,
 } = await import("./dist/index.js");
+const {
+  CHILD_RUN_ENV,
+  isChildRunMode,
+} = await import("./dist/core/run-mode.js");
 const { getTaskLogs } = await import("./dist/core/scheduler/logs.js");
 const { readStructuredLogs } = await import("./dist/core/structured-log.js");
 const { LOG_DIR, sanitizeName } = await import("./dist/types.js");
@@ -293,6 +298,27 @@ check(
         record.postFlightStderr?.includes("remote: diagnostics") &&
         record.runId === 42,
     )
+);
+
+// QV-8: дочерний `opencode run` помечается обёрткой и не получает инструменты.
+check(
+  "QV-8: isChildRunMode распознаёт только явные truthy-значения",
+  isChildRunMode({}) === false &&
+    isChildRunMode({ [CHILD_RUN_ENV]: "1" }) === true &&
+    isChildRunMode({ [CHILD_RUN_ENV]: " TRUE " }) === true &&
+    isChildRunMode({ [CHILD_RUN_ENV]: "off" }) === false
+);
+check(
+  "QV-8: PS и bash обёртки выставляют маркер дочернего прогона",
+  psWrapper.includes(`$env:${CHILD_RUN_ENV} = "1"`) &&
+    psWrapper.includes("Remove-Item Env:\\" + CHILD_RUN_ENV) &&
+    bashWrapper.includes(`export ${CHILD_RUN_ENV}=1`)
+);
+const childSpecs = createToolSpecs({}, { [CHILD_RUN_ENV]: "1" });
+const parentSpecs = createToolSpecs({}, {});
+check(
+  `QV-8: поверхность инструментов ${parentSpecs.length} → ${childSpecs.length} в дочернем прогоне`,
+  parentSpecs.length === 30 && Array.isArray(childSpecs) && childSpecs.length === 0
 );
 
 // 13. Описания инструментов переведены на английский.

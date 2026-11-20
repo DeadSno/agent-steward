@@ -569,6 +569,8 @@ export function buildBashWrapperScript(options: BashWrapperOptions): string {
     "# Ветвление вместо массива: bash 3.2 (macOS) с set -u падает на пустом",
     '# "${ARR[@]}".',
     "run_opencode() {",
+    "  # QV-8: дочерний opencode run не загружает инструменты планировщика.",
+    "  export AGENT_STEWARD_CHILD_RUN=1",
     '  if [ "$SESSION_MODE" = "reuse" ]; then',
     '    if [ -n "$SESSION_FILE" ] && [ -f "$SESSION_FILE" ]; then',
     '      SESSION_ID="$(head -n 1 "$SESSION_FILE" 2>/dev/null | tr -d "\\r")"',

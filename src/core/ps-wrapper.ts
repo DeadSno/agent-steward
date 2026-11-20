@@ -438,6 +438,12 @@ function Invoke-OpenCodeOnce {
         } -ArgumentList $PID, $TimeoutSeconds, $timeoutMarker
     }
 
+    # QV-8: дочерний opencode run не должен загружать инструменты планировщика
+    # (иначе ребёнок видит все 30 инструментов и может рекурсивно создавать задачи).
+    # Маркер живёт только время запуска ИИ и восстанавливается в finally.
+    $previousChildRun = $env:AGENT_STEWARD_CHILD_RUN
+    $env:AGENT_STEWARD_CHILD_RUN = "1"
+
     $script:timedOut = $false
     $script:attemptExitCode = 0
     # Состояние фильтра лога сбрасываем на каждой попытке: иначе незакрытый
@@ -469,6 +475,11 @@ function Invoke-OpenCodeOnce {
             }
         }
     } finally {
+        if ($null -eq $previousChildRun) {
+            Remove-Item Env:\AGENT_STEWARD_CHILD_RUN -ErrorAction SilentlyContinue
+        } else {
+            $env:AGENT_STEWARD_CHILD_RUN = $previousChildRun
+        }
         if ($timeoutMarker -and (Test-Path -LiteralPath $timeoutMarker)) {
             $script:timedOut = $true
         }

@@ -48,6 +48,13 @@ A fresh task `QV1-live-mcp-os-probe` with `mcpEvent:{server:'qv1probe',event:'qv
 was verified in `schtasks` on 20.11.2026 (QV-1) — the `31.12.2099` date is intentional,
 not an artifact of a paused task.
 
+**Child run surface (QV-8).** The task wrapper exports `AGENT_STEWARD_CHILD_RUN=1`
+before `opencode run` (PowerShell restores the previous value in `finally`). When the
+plugin is loaded with that marker it skips V2/V1 registration: no scheduler tools, RPC,
+skill or dashboard in the child process. A controlled check measured the tool registry at
+30 tools in the parent vs 0 in child mode. This prevents a scheduled agent from seeing
+the same 30 tools recursively and racing the parent for the dashboard port.
+
 Do not use a 5-field cron for a one-off reminder. Do not build a pipeline with chained
 prompts inside a single task when `dependsOn` exists: a failed step would be invisible.
 
