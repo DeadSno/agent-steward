@@ -6,6 +6,10 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **QA-3.8.6 — чтение лога больше не падает при гонке с запуском задачи.** `src/core/scheduler/logs.ts`: `readLogWithRetry()` повторяет `fs.readFile` при `EBUSY`/`EPERM`/`EACCES` (6 попыток, растущая задержка); воспроизведено через `schedule_task` (mcp-event) + `emit_event` + немедленный `get_task_logs`.
+
+- **QA-3.8.5 — повторная проверка F-2 суб-агентом заблокирована.** Выделенный суб-агент (ровно 1, как требовалось) запущен, но снова получил `Free usage limit reached`; задача остаётся открытой в ROADMAP до появления доступного провайдера.
+
 - **QA-3.8.4 — справка о `SCHEMA_VERSION` приведена к 12.** `AGENTS.md` и два локальных SKILL.md обновлены с 10 на 12; `test-docs.mjs` получил автопроверку совпадения версии в документации с `src/db/schema.ts`.
 
 - **QA-3.8.3 — `manage_settings` поддерживает `action: "list"`.** Добавлен алиас в Zod-схему и обработчик `manageSettingsExecute` (`src/index.ts`): `list` возвращает те же настройки, что и `get`, что устраняет потерю вызовов агентами.

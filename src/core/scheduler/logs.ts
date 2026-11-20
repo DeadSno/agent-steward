@@ -3,6 +3,35 @@ import path from "node:path";
 import { LOG_DIR, sanitizeName } from "../../types.js";
 import { extractLastRunLog } from "../mission.js";
 
+/** Codes returned by Windows/PowerShell while a log file is still held by the writer. */
+export function isRetriableLogReadError(code: unknown): boolean {
+  return code === "EBUSY" || code === "EPERM" || code === "EACCES";
+}
+
+/** Retry fs.readFile while the writer still holds the log (emit_event / immediate get_task_logs race). */
+export async function readLogWithRetry(
+  logPath: string,
+  attempts = 6,
+  delayMs = 50,
+): Promise<string> {
+  let lastErr: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fs.readFile(logPath, "utf8");
+    } catch (err: unknown) {
+      lastErr = err;
+      if (
+        !isRetriableLogReadError((err as NodeJS.ErrnoException).code) ||
+        i === attempts - 1
+      ) {
+        throw err;
+      }
+      await new Promise((resolve) => setTimeout(resolve, delayMs * (i + 1)));
+    }
+  }
+  throw lastErr;
+}
+
 /**
  * Читает файл лога задачи и возвращает последние 50 строк.
  *
@@ -17,7 +46,7 @@ export async function getTaskLogs(
   try {
     // PowerShell 5.1 пишет UTF-8 с BOM — убираем его, чтобы GUI не показывал мусор.
     // Лог дописывается между запусками: показываем только последний прогон.
-    const content = extractLastRunLog(await fs.readFile(logPath, "utf8"));
+    const content = extractLastRunLog(await readLogWithRetry(logPath));
     const lines = content.split(/\r?\n/).filter((line) => line.trim());
     if (lines.length === 0) {
       return {
