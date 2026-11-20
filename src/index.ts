@@ -3888,15 +3888,15 @@ const cleanupHistoryExecute = wrapExecute<CleanupHistoryArgs>(async (args) => {
 
 /** PL-35: единый обработчик события для агентского инструмента и RPC/GUI. */
 type EmitEventCode = "no_subscribers" | "start_failed" | "ok";
-type EmitEventResult = {
+interface EmitEventResult {
   success: boolean;
   code: EmitEventCode;
   event: string;
   matched: string[];
   triggered: string[];
-  failed: Array<{ name: string; error: string }>;
+  failed: { name: string; error: string }[];
   message: string;
-};
+}
 
 const DEFAULT_EVENT_PRIORITY = 5;
 
@@ -3932,7 +3932,7 @@ export async function emitEventCore(
     );
 
   const triggered: string[] = [];
-  const failed: Array<{ name: string; error: string }> = [];
+  const failed: { name: string; error: string }[] = [];
   for (const def of matched) {
     try {
       await runTaskEntry(def.name);
