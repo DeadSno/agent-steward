@@ -106,10 +106,13 @@ import { buildAnalytics } from "./core/analytics.js";
 import {
   buildBudgetReport,
   evaluateBudgetGate,
+  evaluateTaskTokenBudgetGate,
   formatBudgetSkipMessage,
+  formatTaskTokenBudgetSkipMessage,
   startOfUtcWeek,
   type BudgetGateDecision,
   type BudgetSettings,
+  type TaskTokenBudgetDecision,
 } from "./core/budget.js";
 import { generateSelfAnalysisReport } from "./core/self-analysis.js";
 import {
@@ -5201,6 +5204,19 @@ const v2Plugin = Plugin.define({
           const definition = (await loadTaskDefinitions()).find(
             (def) => def.name.toLowerCase() === name.trim().toLowerCase(),
           );
+          // E-2.2: тот же персональный токен-гейт, что и в runTaskEntry.
+          if (definition?.tokenBudget) {
+            const taskGate = checkTaskTokenBudgetGate(
+              name,
+              definition.tokenBudget,
+            );
+            if (!taskGate.allowed) {
+              return {
+                success: false,
+                message: formatTaskTokenBudgetSkipMessage(taskGate),
+              };
+            }
+          }
           if (definition?.matrix) {
             const matrixResult = await runMatrix(definition);
             const total = definition.matrix.workspaceIds.length;
@@ -7518,6 +7534,21 @@ async function checkBudgetGate(now: Date = new Date()): Promise<BudgetGateDecisi
   return decision;
 }
 
+/**
+ * E-2.2: гейт персонального токен-бюджета задачи.
+ *
+ * Зеркалит общий бюджетный гейт E-1.2, но читает лимит из определения задачи
+ * и фильтрует историю по её имени. Fail-open: без лимита запуск не блокируется.
+ */
+function checkTaskTokenBudgetGate(
+  taskName: string,
+  tokenBudget: number | undefined,
+  now: Date = new Date(),
+): TaskTokenBudgetDecision {
+  const records = getHistoryForBudget(startOfUtcWeek(now).toISOString());
+  return evaluateTaskTokenBudgetGate(records, taskName, tokenBudget, now);
+}
+
 async function runTaskEntry(name: string): Promise<{ alreadyRunning: boolean }> {
   if (shutdownGate.isShuttingDown()) {
     throw new Error(
@@ -7535,6 +7566,17 @@ async function runTaskEntry(name: string): Promise<{ alreadyRunning: boolean }> 
     const definition = (await loadTaskDefinitions()).find(
       (def) => def.name.toLowerCase() === trimmed.toLowerCase(),
     );
+
+    // E-2.2: остановка задачи при превышении её персонального токен-бюджета.
+    // Пропускаем новые запуски, если завершённый прогон за текущий UTC-день
+    // или неделю уже превысил tokenBudget (fail-open, как и E-1.2).
+    if (definition?.tokenBudget) {
+      const taskGate = checkTaskTokenBudgetGate(trimmed, definition.tokenBudget);
+      if (!taskGate.allowed) {
+        throw new Error(formatTaskTokenBudgetSkipMessage(taskGate));
+      }
+    }
+
     if (definition?.matrix) {
       await runMatrix(definition);
       return { alreadyRunning: false };

@@ -45,9 +45,7 @@ agent-steward — execution engine с опциональной регистра�
 ## Деталь 3.3 — Экономика v2
 `src/core/budget*`, `src/analytics*`
 
-**Задача E-2 — Per-task token budgets** · P2 · 🔄
-- [ ] E-2.1 Лимит на задачу (в работе)
-- [ ] E-2.2 Остановка при превышении
+> E-1 (бюджеты день/неделя) и E-2 (per-task token budgets: E-2.1 лимит на задачу, E-2.2 остановка при превышении) закрыты и перенесены в [CHANGELOG.md](./CHANGELOG.md).
 
 **Задача E-3 — Token efficiency score** · P3 · ⬜
 - [ ] E-3.1 Метрика и расчёт

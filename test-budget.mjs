@@ -11,8 +11,10 @@ import {
   buildBudgetReport,
   defaultBudgetSettings,
   evaluateBudgetGate,
+  evaluateTaskTokenBudgetGate,
   formatBudgetAlertMessage,
   formatBudgetSkipMessage,
+  formatTaskTokenBudgetSkipMessage,
   startOfUtcDay,
   startOfUtcWeek,
 } from "./dist/core/budget.js";
@@ -358,6 +360,40 @@ const noBudgetRow = analytics.tasks.find((row) => row.taskName === "no-budget");
 check("analytics: tokenBudgetExceeded выставляется при превышении лимита запуска", overRow?.tokenBudgetExceeded === true && overRow?.tokenBudget === 1000);
 check("analytics: tokenBudgetExceeded=false, если лимит не превышен (даже при сумме > лимита)", underRow?.tokenBudgetExceeded === false);
 check("analytics: без лимита tokenBudgetExceeded=false", noBudgetRow?.tokenBudgetExceeded === false);
+
+// 12. E-2.2: гейт персонального токен-бюджета задачи (остановка при превышении).
+const gateNow = new Date("2026-06-17T12:00:00Z"); // среда
+const gateRecords = [
+  day("2026-06-17T01:00:00Z", { taskName: "limited", tokens: 1200 }),
+  day("2026-06-16T10:00:00Z", { taskName: "limited", tokens: 900 }),
+  day("2026-06-10T10:00:00Z", { taskName: "limited", tokens: 5000 }), // прошлая неделя
+  day("2026-06-17T11:00:00Z", { taskName: "limited", status: "running", tokens: 99999 }), // игнорируется
+  day("2026-06-17T02:00:00Z", { taskName: "other", tokens: 99999 }),
+  day("2026-06-16T09:00:00Z", { taskName: "weekonly", tokens: 1500 }),
+  day("2026-06-17T03:00:00Z", { taskName: "weekonly", tokens: 500 }),
+  day("2026-06-17T04:00:00Z", { taskName: "clean", tokens: 500 }),
+  day("2026-06-17T05:00:00Z", { taskName: "under", tokens: 900 }),
+  day("2026-06-17T05:30:00Z", { taskName: "under", tokens: 900 }),
+];
+const noBudgetGate = evaluateTaskTokenBudgetGate(gateRecords, "limited", undefined, gateNow);
+check("E-2.2: без лимита гейт fail-open (no_budget)", noBudgetGate.allowed && noBudgetGate.reason === "no_budget");
+const withinGate = evaluateTaskTokenBudgetGate(gateRecords, "limited", 2000, gateNow);
+check("E-2.2: в пределах лимита запуск разрешён (история прошлой недели игнорируется)", withinGate.allowed && withinGate.reason === "within_limit");
+const dayGate = evaluateTaskTokenBudgetGate(gateRecords, "limited", 1000, gateNow);
+check("E-2.2: дневное превышение блокирует запуск", !dayGate.allowed && dayGate.reason === "day_exceeded" && dayGate.period === "day");
+check("E-2.2: статус running не учитывается при поиске максимума", dayGate.maxRunTokens === 1200);
+const weekGate = evaluateTaskTokenBudgetGate(gateRecords, "weekonly", 1000, gateNow);
+check("E-2.2: недельное превышение (не сегодня) блокирует запуск", !weekGate.allowed && weekGate.reason === "week_exceeded" && weekGate.period === "week");
+const cleanGate = evaluateTaskTokenBudgetGate(gateRecords, "clean", 1000, gateNow);
+check("E-2.2: чужие расходы не блокируют задачу (изоляция по имени)", cleanGate.allowed);
+const underGate = evaluateTaskTokenBudgetGate(gateRecords, "under", 1000, gateNow);
+check("E-2.2: сумма двух прогонов ниже лимита не блокирует (сравнение по одному прогону)", underGate.allowed);
+check("E-2.2: сообщение о пропуске содержит имя задачи и 'run skipped'", formatTaskTokenBudgetSkipMessage(dayGate).includes("limited") && formatTaskTokenBudgetSkipMessage(dayGate).includes("run skipped"));
+check("E-2.2: для разрешённого запуска сообщение пустое", formatTaskTokenBudgetSkipMessage(withinGate) === "");
+
+// E-2.2: гейт подключён ко всем входам запуска задачи в index.ts.
+const pluginSource = fs.readFileSync(new URL("./src/index.ts", import.meta.url), "utf8");
+check("E-2.2: index.ts подключает гейт в runTaskEntry и run_task", (pluginSource.match(/checkTaskTokenBudgetGate\(/g) ?? []).length >= 3 && pluginSource.includes("evaluateTaskTokenBudgetGate"));
 
 console.log(`\nBudget: ${passed}/${passed + failed} проверок прошли.`);
 assert.equal(failed, 0, `${failed} проверок не прошли`);

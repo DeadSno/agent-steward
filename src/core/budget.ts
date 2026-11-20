@@ -216,3 +216,125 @@ export function formatBudgetAlertMessage(decision: BudgetGateDecision): string {
   const label = decision.period === "week" ? "Weekly" : "Daily";
   return `⚠️ Agent-steward budget alert: ${label} spend $${usage.spentUsd.toFixed(2)} of $${usage.limitUsd.toFixed(2)} — new runs are paused.`;
 }
+
+/**
+ * E-2.2: гейт токен-бюджета одной задачи (per-task token budget).
+ *
+ * Лимит задаётся в определении задачи (`tokenBudget`, токены на один запуск).
+ * Если какой-либо завершённый прогон задачи в текущем UTC-дне/неделе превысил
+ * лимит, новые запуски пропускаются до начала следующего периода — та же
+ * логика, что у глобального бюджетного гейта E-1.2, но в разрезе одной задачи.
+ * Fail-open: лимит 0/undefined отключает проверку, запуски не блокируются.
+ */
+export type TaskTokenBudgetReason =
+  | "no_budget"
+  | "within_limit"
+  | "day_exceeded"
+  | "week_exceeded";
+
+export interface TaskTokenBudgetDecision {
+  allowed: boolean;
+  reason: TaskTokenBudgetReason;
+  taskName: string;
+  tokenBudget: number;
+  /** Максимум токенов за один прогон в сработавшем периоде. */
+  maxRunTokens: number;
+  period?: BudgetPeriod;
+}
+
+function normalizeTokenBudget(value: number | undefined): number {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+}
+
+function maxRunTokensInWindow(
+  records: AnalyticsRecord[],
+  taskKey: string,
+  startMs: number,
+  endMs: number,
+): number {
+  let max = 0;
+  for (const record of records) {
+    if (record.status === "running") continue;
+    if ((record.taskName ?? "").trim().toLowerCase() !== taskKey) continue;
+    // Расход относится к моменту завершения (как и в глобальном бюджете):
+    // запуск, начатый в прошлом периоде, но закончившийся в текущем, учитывается
+    // именно в текущем. Для легаси-записей без finishedAt — по startedAt.
+    const finishedMs = record.finishedAt
+      ? new Date(record.finishedAt).getTime()
+      : NaN;
+    const startedMs = new Date(record.startedAt).getTime();
+    const time = Number.isFinite(finishedMs) ? finishedMs : startedMs;
+    if (!Number.isFinite(time) || time < startMs || time > endMs) continue;
+    const tokens = Number(record.tokens);
+    if (Number.isFinite(tokens) && tokens > max) max = tokens;
+  }
+  return max;
+}
+
+/**
+ * Решение гейта персонального токен-бюджета задачи.
+ *
+ * Источник данных — уже загруженная история (`getHistoryForBudget`). Как и в
+ * аналитике (QA-B.1), превышение считается по одному прогону, а не по сумме за
+ * период; дневное окно проверяется первым (как дневной лимит в E-1.2).
+ */
+export function evaluateTaskTokenBudgetGate(
+  records: AnalyticsRecord[],
+  taskName: string,
+  tokenBudget: number | undefined,
+  now: Date = new Date(),
+): TaskTokenBudgetDecision {
+  const budget = normalizeTokenBudget(tokenBudget);
+  const key = (taskName ?? "").trim().toLowerCase();
+  const base: TaskTokenBudgetDecision = {
+    allowed: true,
+    reason: budget > 0 ? "within_limit" : "no_budget",
+    taskName,
+    tokenBudget: budget,
+    maxRunTokens: 0,
+  };
+  if (!budget || !key) return base;
+
+  const endMs = now.getTime();
+  const dayMax = maxRunTokensInWindow(
+    records,
+    key,
+    startOfUtcDay(now).getTime(),
+    endMs,
+  );
+  if (dayMax > budget) {
+    return {
+      ...base,
+      allowed: false,
+      reason: "day_exceeded",
+      maxRunTokens: dayMax,
+      period: "day",
+    };
+  }
+  const weekMax = maxRunTokensInWindow(
+    records,
+    key,
+    startOfUtcWeek(now).getTime(),
+    endMs,
+  );
+  if (weekMax > budget) {
+    return {
+      ...base,
+      allowed: false,
+      reason: "week_exceeded",
+      maxRunTokens: weekMax,
+      period: "week",
+    };
+  }
+  return { ...base, maxRunTokens: Math.max(dayMax, weekMax) };
+}
+
+/** Человекочитаемая причина пропуска; пустая строка, если запуск разрешён. */
+export function formatTaskTokenBudgetSkipMessage(
+  decision: TaskTokenBudgetDecision,
+): string {
+  if (decision.allowed) return "";
+  const period = decision.period === "week" ? "weekly" : "daily";
+  return `Task token budget exceeded: "${decision.taskName}" used ${decision.maxRunTokens} tokens in one run (${period} limit ${decision.tokenBudget}) — run skipped.`;
+}
