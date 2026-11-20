@@ -243,6 +243,7 @@ agent-steward — execution engine с опциональной регистра�
       фоновой телеметрии нет. Действие: если понадобится, добавить отдельный
       opt-in-гейт (N одинаковых crash/error в час + тот же antispam + явное
       согласие в UI), не включая его по умолчанию.
+- [ ] PL-54 Промпт задачи с двойными кавычками проходит валидацию, но ломает запуск `opencode run`: `schedule_task` + `schtasks /Run`, ошибка `Cannot process argument because the value of argument "name" is not valid` — P1. Действие: экранировать промпт при передаче в `opencode.ps1` либо отклонять двойные кавычки при создании задачи; добавить проверку в `test-agent-tools.mjs`.
 
 ---
 
