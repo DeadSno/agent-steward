@@ -137,11 +137,16 @@ export interface SelfAnalysisReport {
   recommendations: Recommendation[];
   /** Краткое резюме. */
   summary: string;
-  /** Метаданные источников данных. */
+  /** Метаданные источников данных (PL-13/PL-29/PL-31: единицы указаны в комментариях). */
   sources: {
+    /** Записей истории всего (до фильтрации по окну). */
     historyRecords: number;
+    /** Записей истории внутри окна days. */
     recordsInWindow: number;
+    /** Число definition задач (НЕ уникальных имён в истории). */
     tasksAnalyzed: number;
+    /** Явное имя того же счётчика definition — без двусмысленности «analyzed». */
+    taskDefinitions: number;
   };
 }
 
@@ -730,7 +735,10 @@ export function generateSelfAnalysisReport(
     sources: {
       historyRecords: records.length,
       recordsInWindow: analyticsReport.sources.recordsInWindow,
-      tasksAnalyzed: analyticsReport.tasks.length,
+      // PL-13/PL-29/PL-31: options.tasks — это definitions, а analyticsReport.tasks —
+      // задачи, попавшие в историю; последнее число могло быть больше на 15+.
+      tasksAnalyzed: options.tasks?.length ?? analyticsReport.tasks.length,
+      taskDefinitions: options.tasks?.length ?? analyticsReport.tasks.length,
     },
   };
 }

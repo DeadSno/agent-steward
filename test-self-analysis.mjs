@@ -356,6 +356,17 @@ console.log("\n=== Self Analysis Report ===");
 }
 
 {
+  // PL-13/PL-29/PL-31: счётчик задач = definition, а не имена из истории.
+  const records = createRecords(20, { status: "success", taskName: "history-only-task" });
+  const report = generateSelfAnalysisReport(records, {
+    days: 14,
+    tasks: [{ name: "A" }, { name: "B" }, { name: "C" }],
+  });
+  check("sources: tasksAnalyzed = числу definition", report.sources.tasksAnalyzed === 3);
+  check("sources: taskDefinitions = 3", report.sources.taskDefinitions === 3);
+}
+
+{
   const records = createRecords(20, { status: "success" });
   const report = generateSelfAnalysisReport(records, { days: 14 });
 
