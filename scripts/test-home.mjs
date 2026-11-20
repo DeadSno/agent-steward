@@ -18,6 +18,22 @@ import path from "node:path";
 
 const DEFAULT_ATTEMPTS = 6;
 
+// На Windows SQLite/дашборд могут держать файлы до выхода процесса. Вместо
+// предупреждения в чистом прогоне откладываем последнюю попытку на `exit`,
+// когда все дескрипторы уже закрыты (QA-P3.4).
+const deferredCleanups = new Set();
+function scheduleDeferredCleanup(target) {
+  if (deferredCleanups.has(target)) return;
+  deferredCleanups.add(target);
+  process.once("exit", () => {
+    try {
+      fs.rmSync(target, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    } catch {
+      // best effort: временный каталог не должен ломать выход процесса
+    }
+  });
+}
+
 function sleepSync(ms) {
   // Синхронная пауза без внешних зависимостей (для тестов с fs.rmSync).
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
@@ -55,7 +71,11 @@ export function removeTestHomeSync(target, { attempts = DEFAULT_ATTEMPTS, warn =
     } catch (err) {
       if (err?.code === "ENOENT") return true;
       if (attempt === attempts) {
-        if (warn) console.warn(`Не удалось удалить временный каталог ${target}: ${String(err)}`);
+        if (process.platform === "win32") {
+          scheduleDeferredCleanup(target);
+        } else if (warn) {
+          console.warn(`Не удалось удалить временный каталог ${target}: ${String(err)}`);
+        }
         return false;
       }
       sleepSync(100 * attempt);
@@ -73,7 +93,11 @@ export async function removeTestHome(target, { attempts = DEFAULT_ATTEMPTS, warn
     } catch (err) {
       if (err?.code === "ENOENT") return true;
       if (attempt === attempts) {
-        if (warn) console.warn(`Не удалось удалить временный каталог ${target}: ${String(err)}`);
+        if (process.platform === "win32") {
+          scheduleDeferredCleanup(target);
+        } else if (warn) {
+          console.warn(`Не удалось удалить временный каталог ${target}: ${String(err)}`);
+        }
         return false;
       }
       await new Promise((resolve) => setTimeout(resolve, 100 * attempt));

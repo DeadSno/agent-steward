@@ -292,9 +292,12 @@ export function buildAnalytics(
 
     // Топ ошибок: группируем по тексту, чтобы дайджест показывал частые причины.
     if (status !== "success" && status !== "partial") {
+      // QA-P1.5: легаси-записи успешных запусков содержат "-" вместо текста
+      // ошибки. Такой маркер не является сообщением и не должен попадать в топ.
+      const rawError = typeof record.error === "string" ? record.error.trim() : "";
       const message =
-        typeof record.error === "string" && record.error.trim()
-          ? record.error.trim().slice(0, 160)
+        rawError && rawError !== "-"
+          ? rawError.slice(0, 160)
           : "(без текста)";
       const errorRow = byError.get(message) ?? {
         message,

@@ -552,7 +552,12 @@ function Get-UsageFromLog {
     )
     $costPatterns = @(
         ($prefix + '(?i)(?:cost|total\\s+cost)\\s*[:=]?\\s*\\$\\s*([0-9]+(?:[.,][0-9]+)?)'),
-        ($prefix + '(?i)(?:cost|total\\s+cost)\\s*[:=]\\s*([0-9]+(?:[.,][0-9]+)?)\\s*(?:usd|\\$)')
+        ($prefix + '(?i)(?:cost|total\\s+cost)\\s*[:=]\\s*([0-9]+(?:[.,][0-9]+)?)\\s*(?:usd|\\$)'),
+        # QA-F.1: OpenCode печатает costUsd=0.1 / cost_usd=0.75 / cost=0.25 без
+        # валютного знака. Без этих шаблонов PS-обёртка теряла стоимость, тогда
+        # как TS-парсер (src/core/record-history.ts) её уже распознавал.
+        ($prefix + '(?i)(?:costUsd|cost_usd|cost(?:\\s*usd)?)\\s*[:=]\\s*\\$?\\s*([0-9]+(?:[.,][0-9]+)?)'),
+        ($prefix + '(?i)(?:costUsd|cost_usd|cost(?:\\s*usd)?)\\s*[:=]\\s*([0-9]+(?:[.,][0-9]+)?)\\s*(?:usd|\\$)')
     )
 
     # Идём с конца: OpenCode печатает итог последним, а более ранние строки
@@ -711,6 +716,14 @@ try {
     }
 
     if (-not $script:skipMainTask) {
+    # QA-P0.2: граница реального прогона для extractLastRunLog(). Маркер пишется
+    # без префикса времени и только после guard/pre-flight — отменённый запуск
+    # не должен выглядеть как реальный. Лог дописывается, показываем последний сегмент.
+    if ($LogFile) {
+        try {
+            Add-Content -Path $LogFile -Value ("[agent-steward] === Run started " + $startedAtIso + " (" + $TaskName + ") ===") -Encoding utf8
+        } catch {}
+    }
     $prompt = Get-Content -Path $PromptFile -Raw -Encoding UTF8
 
     # W-1: запуск в одноразовом git worktree — сообщаем путь агенту.

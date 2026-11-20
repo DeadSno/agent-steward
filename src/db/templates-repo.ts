@@ -65,9 +65,11 @@ export function saveTemplate(
   return normalized;
 }
 
-/** Удаляет шаблон по id. */
-export function deleteTemplate(id: string): void {
-  getDb().prepare("DELETE FROM templates WHERE id = ?").run(id);
+/** Удаляет шаблон по id или имени (QA-P3.3). */
+export function deleteTemplate(idOrName: string): void {
+  getDb()
+    .prepare("DELETE FROM templates WHERE id = ? OR name = ?")
+    .run(idOrName, idOrName);
 }
 
 /** Количество шаблонов (для миграции и тестов). */

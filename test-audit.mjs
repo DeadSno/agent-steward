@@ -150,6 +150,34 @@ check("allowedTools-событие помечено звёздочкой", allow
 clearAuditLog();
 check("пустая политика не пишет событий", recordTaskToolBlocks("plain", [], []) === 0);
 
+// --- QA-P3.1: валидация ISO-дат в фильтрах аудита -----------------------------
+check(
+  "auditDateFilterError: невалидный since даёт ошибку",
+  (audit.auditDateFilterError("not-a-date", "since") ?? "").includes("since")
+);
+check(
+  "auditDateFilterError: невалидный until даёт ошибку",
+  (audit.auditDateFilterError("25:99", "until") ?? "").includes("until")
+);
+check(
+  "auditDateFilterError: валидная ISO-дата проходит",
+  audit.auditDateFilterError(new Date().toISOString(), "since") === null
+);
+let invalidSinceThrew = false;
+try {
+  readAuditLog({ since: "not-a-date" });
+} catch (err) {
+  invalidSinceThrew = String(err instanceof Error ? err.message : err).includes("since");
+}
+check("readAuditLog: невалидный since бросает ошибку", invalidSinceThrew);
+let invalidUntilThrew = false;
+try {
+  readAuditLog({ until: "not-a-date" });
+} catch (err) {
+  invalidUntilThrew = String(err instanceof Error ? err.message : err).includes("until");
+}
+check("readAuditLog: невалидный until бросает ошибку", invalidUntilThrew);
+
 // --- 8. Итог ------------------------------------------------------------------
 const failures = results.filter((item) => !item.ok);
 console.log(`\nAudit: ${results.length - failures.length}/${results.length} проверок пройдено.`);

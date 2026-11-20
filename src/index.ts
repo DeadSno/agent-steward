@@ -76,7 +76,11 @@ import {
   executePipelineApply,
   type PipelineApplyPlan,
 } from "./core/pipeline-apply.js";
-import { pipelineSpecToTasks, tasksToPipelineSpec } from "./core/pipeline-map.js";
+import {
+  pipelineExportLookupError,
+  pipelineSpecToTasks,
+  tasksToPipelineSpec,
+} from "./core/pipeline-map.js";
 import { stringify as yamlStringify } from "yaml";
 import { latestHistoryByTask, loadHistory, loadMetrics } from "./history.js";
 import { defaultNotifications, loadSettings, saveSettings } from "./settings.js";
@@ -124,6 +128,7 @@ import {
   maybeSendDigest,
   notifyBudgetExceeded,
   notifyStuckMatrix,
+  sendBugReport,
   sendDigestNow,
   sendTestNotification,
 } from "./notifications.js";
@@ -187,6 +192,7 @@ import {
   setSecret,
 } from "./core/secrets.js";
 import {
+  auditDateFilterError,
   cleanupAuditLog,
   readAuditLog,
   recordAudit,
@@ -363,6 +369,85 @@ export const guardsSchema = z.object({
     .describe("Semantic pre-run checks inside the working directory."),
 }).describe("W-3: guard conditions. If a check fails, the run is skipped before opencode starts.");
 
+/**
+ * QA-P2.1: маска glob не может быть пустой или содержать пробелы.
+ * Пробел в `** /*.md` молча сужает совпадение до файлов с пробелом в имени.
+ */
+const globMaskSchema = z.string().min(1).refine((mask) => !/\s/.test(mask), {
+  message: "Glob mask must be non-empty and contain no whitespace.",
+});
+
+/**
+ * QA-P2.1: единая проверка диапазонов для MCP и RPC.
+ * Zod-схемы защищают только MCP-путь; RPC (create_task/update_task) принимает
+ * сырой JSON и вызывает эту функцию явно, до normalizePriority(), который
+ * молча обрезает priority до 0..10.
+ * Возвращает текст ошибки или null.
+ */
+export function validateTaskInputRanges(input: {
+  prompt?: string;
+  timeoutSeconds?: number;
+  priority?: number;
+  retryCount?: number;
+  retryDelay?: number;
+  watchPath?: string;
+  triggerType?: string;
+  watchGlobs?: string[];
+  watchIgnore?: string[];
+  gitPaths?: string[];
+  gitIgnore?: string[];
+}): string | null {
+  if (input.prompt !== undefined && !input.prompt.trim()) {
+    return "prompt must be a non-empty string.";
+  }
+  if (
+    input.timeoutSeconds !== undefined &&
+    (!Number.isInteger(input.timeoutSeconds) || input.timeoutSeconds <= 0)
+  ) {
+    return "timeoutSeconds must be a positive integer.";
+  }
+  if (
+    input.priority !== undefined &&
+    (!Number.isInteger(input.priority) || input.priority < 0 || input.priority > 10)
+  ) {
+    return "priority must be an integer between 0 and 10.";
+  }
+  if (
+    input.retryCount !== undefined &&
+    (!Number.isInteger(input.retryCount) || input.retryCount < 0)
+  ) {
+    return "retryCount must be a non-negative integer.";
+  }
+  if (
+    input.retryDelay !== undefined &&
+    (!Number.isInteger(input.retryDelay) || input.retryDelay < 0)
+  ) {
+    return "retryDelay must be a non-negative integer.";
+  }
+  const globFields: [string, string[] | undefined][] = [
+    ["watchGlobs", input.watchGlobs],
+    ["watchIgnore", input.watchIgnore],
+    ["gitPaths", input.gitPaths],
+    ["gitIgnore", input.gitIgnore],
+  ];
+  for (const [field, masks] of globFields) {
+    if (!Array.isArray(masks)) continue;
+    for (const mask of masks) {
+      if (typeof mask !== "string" || !mask.trim() || /\s/.test(mask)) {
+        return `${field} masks must be non-empty strings without whitespace.`;
+      }
+    }
+  }
+  if (
+    input.triggerType === "file" &&
+    input.watchPath !== undefined &&
+    !input.watchPath.trim()
+  ) {
+    return "watchPath must be a non-empty path when triggerType is file.";
+  }
+  return null;
+}
+
 /** Zod-схема аргументов schedule_task */
 export const scheduleTaskSchema = z.object({
   name: z
@@ -423,9 +508,13 @@ export const scheduleTaskSchema = z.object({
     .describe("Launch window end in HH:MM (24h). May be earlier than notBefore (window crosses midnight)."),
   prompt: z
     .string()
+    .min(1, "prompt must be a non-empty string.")
+    .refine((value) => value.trim().length > 0, "prompt must be a non-empty string.")
     .describe("Prompt passed to the agent on every run."),
   timeoutSeconds: z
     .number()
+    .int()
+    .positive()
     .optional()
     .describe("Run timeout in seconds (default 3600)."),
   model: z
@@ -436,6 +525,9 @@ export const scheduleTaskSchema = z.object({
     ),
   priority: z
     .number()
+    .int()
+    .min(0)
+    .max(10)
     .optional()
     .describe("Task priority 0..10 (10 is the highest). Default 5 (normal)."),
   beforeScript: z
@@ -464,10 +556,14 @@ export const scheduleTaskSchema = z.object({
     ),
   retryCount: z
     .number()
+    .int()
+    .nonnegative()
     .optional()
     .describe("How many times to retry a failed run (default 0)."),
   retryDelay: z
     .number()
+    .int()
+    .nonnegative()
     .optional()
     .describe("Delay between retries in seconds (default 60)."),
   nextTaskOnSuccess: z
@@ -501,13 +597,13 @@ export const scheduleTaskSchema = z.object({
       "File or directory to watch when triggerType is \"file\". Can be set here or later via update_task.",
     ),
   watchGlobs: z
-    .array(z.string())
+    .array(globMaskSchema)
     .optional()
     .describe(
       "Glob masks that limit a file trigger, e.g. [\"**/*.md\", \"src/**\"]. Empty means any change under watchPath.",
     ),
   watchIgnore: z
-    .array(z.string())
+    .array(globMaskSchema)
     .optional()
     .describe(
       "Glob masks excluded from a file trigger, e.g. [\"node_modules/**\", \"*.log\"]. Supports leading ! to re-include.",
@@ -519,13 +615,13 @@ export const scheduleTaskSchema = z.object({
       "Only for triggerType=git: branch name or glob (main, release/*, comma-separated). Empty means any branch.",
     ),
   gitPaths: z
-    .array(z.string())
+    .array(globMaskSchema)
     .optional()
     .describe(
       "Only for triggerType=git: glob masks of changed files that must match to start the task (git diff --name-only).",
     ),
   gitIgnore: z
-    .array(z.string())
+    .array(globMaskSchema)
     .optional()
     .describe("Only for triggerType=git: glob masks of changed files to ignore."),
   gitPollSeconds: z
@@ -641,6 +737,14 @@ export const scheduleTaskSchema = z.object({
       message: t("tool.error.onceFields"),
     });
   }
+  // QA-P2.1: явная пустая строка watchPath при file-триггере бессмысленна.
+  if (trigger === "file" && value.watchPath !== undefined && !value.watchPath.trim()) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["watchPath"],
+      message: "watchPath must be a non-empty path when triggerType is file.",
+    });
+  }
 });
 
 const listTasksSchema = z.object({});
@@ -717,11 +821,11 @@ export const updateTaskSchema = z.object({
       "Windows only: true runs the task without a logged-on user (/ru SYSTEM, session 0 without the user profile, mapped drives or saved credentials; usually requires an elevated shell). false/omitted keeps the task interactive-only.",
     ),
   watchGlobs: z
-    .array(z.string())
+    .array(globMaskSchema)
     .optional()
     .describe("New glob masks for a file trigger. Empty array clears them."),
   watchIgnore: z
-    .array(z.string())
+    .array(globMaskSchema)
     .optional()
     .describe("New ignore masks for a file trigger. Empty array clears them."),
   gitBranch: z
@@ -729,11 +833,11 @@ export const updateTaskSchema = z.object({
     .optional()
     .describe("New git branch filter (glob, comma-separated). Empty string clears it."),
   gitPaths: z
-    .array(z.string())
+    .array(globMaskSchema)
     .optional()
     .describe("New changed-file masks for a git trigger. Empty array clears them."),
   gitIgnore: z
-    .array(z.string())
+    .array(globMaskSchema)
     .optional()
     .describe("New ignored changed-file masks for a git trigger. Empty array clears them."),
   gitPollSeconds: z
@@ -744,14 +848,26 @@ export const updateTaskSchema = z.object({
     .describe("New git polling interval in seconds."),
   prompt: z
     .string()
+    .refine((value) => value.trim().length > 0, "prompt must be a non-empty string.")
     .optional()
     .describe("New prompt. Keeps the current value when omitted."),
-  timeoutSeconds: z.number().optional().describe("New run timeout in seconds."),
+  timeoutSeconds: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe("New run timeout in seconds."),
   model: z
     .string()
     .optional()
     .describe("New model in OpenCode format. Empty string clears it (default model)."),
-  priority: z.number().optional().describe("New priority 0..10."),
+  priority: z
+    .number()
+    .int()
+    .min(0)
+    .max(10)
+    .optional()
+    .describe("New priority 0..10."),
   beforeScript: z
     .string()
     .optional()
@@ -768,8 +884,8 @@ export const updateTaskSchema = z.object({
     .array(z.string())
     .optional()
     .describe("New DAG dependencies. Empty array clears them."),
-  retryCount: z.number().optional().describe("New retry count."),
-  retryDelay: z.number().optional().describe("New retry delay in seconds."),
+  retryCount: z.number().int().nonnegative().optional().describe("New retry count."),
+  retryDelay: z.number().int().nonnegative().optional().describe("New retry delay in seconds."),
   nextTaskOnSuccess: z
     .string()
     .optional()
@@ -859,6 +975,18 @@ export const updateTaskSchema = z.object({
       message: t("tool.error.onceMatrixUpdate"),
     });
   }
+  // QA-P2.1: пустой watchPath допустим только для очистки не-file триггера.
+  if (
+    value.triggerType === "file" &&
+    value.watchPath !== undefined &&
+    !value.watchPath.trim()
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["watchPath"],
+      message: "watchPath must be a non-empty path when triggerType is file.",
+    });
+  }
 });
 
 const pauseTaskSchema = z.object({
@@ -930,10 +1058,23 @@ export const pipelineApplySchema = z.object({
 });
 
 /** pipeline_export — выгрузить задачи конвейера как opencode.pipeline.yaml. */
-export const pipelineExportSchema = z.object({
-  pipeline: z.string().optional().describe("Имя конвейера (pipelineName)."),
-  pipelineName: z.string().optional().describe("Алиас параметра pipeline — имя конвейера."),
-});
+export const pipelineExportSchema = z
+  .object({
+    pipeline: z.string().optional().describe("Имя конвейера (pipelineName)."),
+    pipelineName: z.string().optional().describe("Алиас параметра pipeline — имя конвейера."),
+  })
+  .superRefine((value, ctx) => {
+    // QA-P3.2: разные имена в двух полях — ошибка, а не молчаливый приоритет pipeline.
+    const explicit = value.pipeline?.trim();
+    const alias = value.pipelineName?.trim();
+    if (explicit && alias && explicit.toLowerCase() !== alias.toLowerCase()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["pipelineName"],
+        message: "Конфликт параметров: pipeline и pipelineName задают разные имена конвейера.",
+      });
+    }
+  });
 
 const manageWorkspacesSchema = z.object({
   action: z
@@ -1161,8 +1302,8 @@ export const manageLocalAiSchema = z.object({
 export const manageTemplatesSchema = z.object({
   action: z
     .enum(["list", "save", "delete"])
-    .describe("list — all templates; save — create or update (id omitted = create); delete — remove by id."),
-  id: z.string().optional().describe("Template id for update/delete."),
+    .describe("list — all templates; save — create or update (id omitted = create); delete — remove by id or name."),
+  id: z.string().optional().describe("Template id for update; for delete an id or a template name is accepted."),
   name: z.string().optional().describe("Template name."),
   prompt: z.string().optional().describe("Prompt text stored in the template."),
   schedule: z.string().optional().describe("Cron expression."),
@@ -1215,6 +1356,15 @@ export const sendNotificationSchema = z.object({
     .enum(["all", "webhook", "telegram", "native"])
     .optional()
     .describe("For action=test: which channel to check (default all enabled)."),
+});
+
+/** report_bug — отчёт о баге от пользователя плагина, отправляется разработчику через настроенные каналы уведомлений. */
+export const reportBugSchema = z.object({
+  description: z.string().min(1).describe("Описание бага от пользователя (обязательно)."),
+  taskName: z.string().optional().describe("Имя задачи, к которой относится баг (опционально, для прикрепления логов)."),
+  includeLogs: z.boolean().optional().default(true).describe("Включить логи задачи (если указан taskName)."),
+  includeAnalytics: z.boolean().optional().default(true).describe("Включить метрики и аналитику за последние 7 дней."),
+  channel: z.enum(["all", "webhook", "telegram", "native"]).optional().describe("Канал уведомления (по умолчанию все включённые)."),
 });
 
 /** get_dashboard_info — сведения о панели управления. */
@@ -1280,6 +1430,7 @@ type TemplatesArgs = z.infer<typeof manageTemplatesSchema>;
 type ProfilesArgs = z.infer<typeof manageProfilesSchema>;
 type TransferArgs = z.infer<typeof transferTasksSchema>;
 type NotificationArgs = z.infer<typeof sendNotificationSchema>;
+type ReportBugArgs = z.infer<typeof reportBugSchema>;
 type DashboardInfoArgs = z.infer<typeof getDashboardInfoSchema>;
 type CleanupHistoryArgs = z.infer<typeof cleanupHistorySchema>;
 type EmitEventArgs = z.infer<typeof emitEventSchema>;
@@ -1403,6 +1554,9 @@ function computeTaskNextRun(
 
 /** schedule_task — создаёт задачу в schtasks через общий schedulerCreateTask. */
 const scheduleTaskExecute = wrapExecute<ScheduleArgs>(async (args) => {
+  // QA-P2.1: RPC-путь не проходит Zod — проверяем диапазоны явно.
+  const rangeError = validateTaskInputRanges(args);
+  if (rangeError) throw new Error(rangeError);
   const {
     name,
     schedule,
@@ -1700,6 +1854,8 @@ async function cancelMatrixRun(
         clone.legacyShell,
         clone.worktree,
         clone.guards,
+        // QA-P0.1 (E-2.1): клон матрицы наследует tokenBudget родителя.
+        clone.tokenBudget,
       );
     } catch (err: any) {
       warnings.push(
@@ -2027,6 +2183,12 @@ async function updateTaskFromInput(
     return { success: false, message: t("tool.error.taskNameMissing") };
   }
 
+  // QA-P2.1: RPC не проходит Zod — проверяем диапазоны явно.
+  const rangeError = validateTaskInputRanges(input);
+  if (rangeError) {
+    return { success: false, message: rangeError };
+  }
+
   const previous = getTask(name);
   if (!previous) {
     return { success: false, message: t("tool.error.taskNotFound", { name }) };
@@ -2214,6 +2376,8 @@ async function updateTaskFromInput(
       input.legacyShell ?? previous.legacyShell,
       input.worktree ?? previous.worktree,
       input.guards ?? previous.guards,
+      // QA-P0.1 (E-2.1): budget переживает пересоздание задачи. 0 очищает лимит.
+      input.tokenBudget ?? previous.tokenBudget,
     );
 
     // Матрица отключена при обновлении — убираем клонов и агрегатор.
@@ -2851,7 +3015,18 @@ const pipelineApplyExecute = wrapExecute<PipelineApplyArgs>(async (args) => {
 /** pipeline_export — выгрузить задачи конвейера как opencode.pipeline.yaml. */
 const pipelineExportExecute = wrapExecute<PipelineExportArgs>(async (args) => {
   const allTasks = await listTaskDefinitions();
-  const pipelineName = args.pipeline ?? args.pipelineName;
+  // QA-P3.2: два имени — это ошибка, а не молчаливый выбор первого.
+  const explicit = args.pipeline?.trim();
+  const alias = args.pipelineName?.trim();
+  if (explicit && alias && explicit.toLowerCase() !== alias.toLowerCase()) {
+    return {
+      content: JSON.stringify({
+        success: false,
+        error: "Конфликт параметров: pipeline и pipelineName задают разные имена конвейера.",
+      }),
+    };
+  }
+  const pipelineName = explicit || alias;
   if (!pipelineName) {
     return {
       content: JSON.stringify({
@@ -2861,11 +3036,13 @@ const pipelineExportExecute = wrapExecute<PipelineExportArgs>(async (args) => {
     };
   }
   const result = tasksToPipelineSpec(allTasks, pipelineName);
-  if (!result.spec) {
+  // QA-P3.2: spec всегда создаётся, поэтому «не найден» проверяем по шагам.
+  const lookupError = pipelineExportLookupError(allTasks, pipelineName);
+  if (!result.spec || lookupError) {
     return {
       content: JSON.stringify({
         success: false,
-        error: `Конвейер "${pipelineName}" не найден (не найдены задачи с pipelineName=${pipelineName} и pipelineStepId).`,
+        error: lookupError ?? `Конвейер "${pipelineName}" не найден.`,
         warnings: result.warnings,
       }),
     };
@@ -3323,7 +3500,8 @@ const manageTemplatesExecute = wrapExecute<TemplatesArgs>(async (args) => {
       return { content: JSON.stringify({ success: false, error: t("tool.template.needDeleteId") }) };
     }
     const before = await loadTemplates();
-    const existed = before.some((template) => template.id === id);
+    // QA-P3.3: name является алиасом id при удалении.
+    const existed = before.some((template) => template.id === id || template.name === id);
     await deleteTemplate(id);
     return {
       content: JSON.stringify({
@@ -3491,6 +3669,8 @@ const transferTasksExecute = wrapExecute<TransferArgs>(async (args) => {
         def.legacyShell,
         def.worktree,
         def.guards,
+        // QA-P0.1 (E-2.1): импорт через transfer_tasks сохраняет tokenBudget.
+        def.tokenBudget,
       );
       await saveTaskDefinition(def);
       imported.push(def.name);
@@ -3510,6 +3690,71 @@ const sendNotificationExecute = wrapExecute<NotificationArgs>(async (args) => {
     args.action === "test"
       ? await sendTestNotification(args.channel ?? "all")
       : await sendDigestNow({ updateLastSentAt: false });
+  return { content: JSON.stringify(result) };
+});
+
+/** report_bug — отчёт о баге от пользователя плагина, отправляется разработчику. */
+const reportBugExecute = wrapExecute<ReportBugArgs>(async (args) => {
+  const lines: string[] = [];
+  lines.push("🐛 *Bug report — agent-steward plugin*");
+  lines.push(`Время: ${new Date().toISOString()}`);
+  lines.push(`Описание: ${args.description}`);
+  if (args.taskName) {
+    lines.push(`Задача: ${args.taskName}`);
+    if (args.includeLogs !== false) {
+      try {
+        const logs = await getTaskLogs(args.taskName);
+        if (logs.logs) {
+          lines.push(`\n--- Логи задачи ${args.taskName} ---`);
+          lines.push(String(logs.logs).slice(0, 2000));
+        }
+      } catch (err: any) {
+        lines.push(`\n--- Логи задачи ${args.taskName}: ошибка чтения ---`);
+        lines.push(err instanceof Error ? err.message : String(err));
+      }
+    }
+  }
+  if (args.includeAnalytics !== false) {
+    try {
+      const metrics = await loadMetrics();
+      lines.push("\n--- Метрики ---");
+      lines.push(`Всего запусков: ${metrics.total}`);
+      lines.push(`Успех: ${metrics.success}`);
+      lines.push(`Ошибок: ${metrics.error}`);
+      if (metrics.partial) lines.push(`Частично: ${metrics.partial}`);
+    } catch (err: any) {
+      lines.push(`\n--- Метрики: ошибка чтения: ${err instanceof Error ? err.message : String(err)} ---`);
+    }
+    try {
+      const records = getHistoryForAnalytics(7);
+      const definitions = await loadTaskDefinitions();
+      const report = buildAnalytics(records, {
+        days: 7,
+        topLimit: 10,
+        tasks: definitions.map((definition) => ({
+          name: definition.name,
+          matrixParentId: definition.matrixParentId,
+          tokenBudget: definition.tokenBudget,
+        })),
+      });
+      lines.push("\n--- Аналитика (7 дней) ---");
+      lines.push(`Всего запусков: ${report.totals.total}`);
+      lines.push(`Успех: ${report.totals.success}`);
+      lines.push(`Ошибок: ${report.totals.error}`);
+      if (report.totals.partial) lines.push(`Частично: ${report.totals.partial}`);
+      const errorTasks = report.tasks.filter((t) => t.error > 0).slice(0, 5);
+      if (errorTasks.length > 0) {
+        lines.push(
+          `Задачи с ошибками: ${errorTasks.map((t) => `${t.taskName} (${t.error})`).join(", ")}`,
+        );
+      }
+    } catch (err: any) {
+      lines.push(`\n--- Аналитика: ошибка чтения: ${err instanceof Error ? err.message : String(err)} ---`);
+    }
+  }
+
+  const reportText = lines.join("\n");
+  const result = await sendBugReport(reportText, args.channel);
   return { content: JSON.stringify(result) };
 });
 
@@ -4183,6 +4428,7 @@ export interface ToolHandlers {
   manage_profiles: typeof manageProfilesExecute;
   transfer_tasks: typeof transferTasksExecute;
   send_notification: typeof sendNotificationExecute;
+  report_bug: typeof reportBugExecute;
   get_dashboard_info: typeof getDashboardInfoExecute;
   cleanup_history: typeof cleanupHistoryExecute;
   emit_event: typeof emitEventExecute;
@@ -4223,6 +4469,7 @@ export function createToolHandlers(_runtime: SchedulerRuntime): ToolHandlers {
     manage_profiles: manageProfilesExecute,
     transfer_tasks: transferTasksExecute,
     send_notification: sendNotificationExecute,
+    report_bug: reportBugExecute,
     get_dashboard_info: getDashboardInfoExecute,
     cleanup_history: cleanupHistoryExecute,
     emit_event: emitEventExecute,
@@ -4436,7 +4683,9 @@ export function createToolSpecs(runtime: SchedulerRuntime): ToolSpec[] {
       input: selfAnalysisSchema,
       description:
         "Generates a self-analysis report: system health score, anomaly detection, trend analysis and optimization recommendations. " +
-        "Helps identify performance issues, cost spikes and reliability problems.",
+        "Helps identify performance issues, cost spikes and reliability problems. " +
+        "In health.components, successRate and errorRate are normalized 0..100 scores (higher is better): " +
+        "errorRate = 100 - 100 * error / total, so it is NOT the raw error percentage.",
       execute: handlers.self_analysis as any,
     },
     {
@@ -4510,6 +4759,13 @@ export function createToolSpecs(runtime: SchedulerRuntime): ToolSpec[] {
       description:
         "Sends a test notification through the configured channel or sends the digest immediately.",
       execute: handlers.send_notification as any,
+    },
+    {
+      name: "report_bug",
+      input: reportBugSchema,
+      description:
+        "Sends a bug report from the plugin user to the developer via configured notification channels (Telegram/webhook/native). Includes optional task logs and recent analytics.",
+      execute: handlers.report_bug as any,
     },
     {
       name: "get_dashboard_info",
@@ -4671,6 +4927,23 @@ const v2Plugin = Plugin.define({
       },
       create_task: async (input: unknown) => {
         console.log("[agent-steward] create_task input:", input);
+        // QA-P2.1: RPC обходит MCP/Zod — проверяем диапазоны явно.
+        const rangeError = validateTaskInputRanges(input as {
+          prompt?: string;
+          timeoutSeconds?: number;
+          priority?: number;
+          retryCount?: number;
+          retryDelay?: number;
+          watchPath?: string;
+          triggerType?: string;
+          watchGlobs?: string[];
+          watchIgnore?: string[];
+          gitPaths?: string[];
+          gitIgnore?: string[];
+        });
+        if (rangeError) {
+          return { success: false, message: rangeError };
+        }
         const {
           name,
           schedule,
@@ -4704,6 +4977,7 @@ const v2Plugin = Plugin.define({
           legacyShell,
           worktree,
           guards,
+          tokenBudget,
         } = input as {
           name: string;
           schedule?: string;
@@ -4737,6 +5011,7 @@ const v2Plugin = Plugin.define({
           legacyShell?: boolean;
           worktree?: boolean;
           guards?: TaskGuards;
+          tokenBudget?: number;
         };
         let effectiveRunAt: string | undefined;
         if (triggerType === "once") {
@@ -4802,6 +5077,8 @@ const v2Plugin = Plugin.define({
             legacyShell === true,
             worktree === true,
             guards,
+            // QA-P0.1 (E-2.1): создание через дашборд/RPC сохраняет tokenBudget.
+            tokenBudget,
           );
           const nextRun = computeTaskNextRun({
             schedule: schedule ?? "",
@@ -5189,6 +5466,90 @@ const v2Plugin = Plugin.define({
           return {
             success: false,
             report: null,
+            error: err instanceof Error ? err.message : String(err),
+          };
+        }
+      },
+      report_bug: async (input: unknown) => {
+        const { description, taskName, includeLogs, includeAnalytics, channel } = input as {
+          description?: string;
+          taskName?: string;
+          includeLogs?: boolean;
+          includeAnalytics?: boolean;
+          channel?: "all" | "webhook" | "telegram" | "native";
+        };
+        try {
+          if (!description || !description.trim()) {
+            return { success: false, error: "description is required" };
+          }
+          const lines: string[] = [];
+          lines.push("🐛 *Bug report — agent-steward plugin*");
+          lines.push(`Время: ${new Date().toISOString()}`);
+          lines.push(`Описание: ${description}`);
+          if (taskName) {
+            lines.push(`Задача: ${taskName}`);
+            if (includeLogs !== false) {
+              try {
+                const logs = await getTaskLogs(taskName);
+                if (logs.logs) {
+                  lines.push(`\n--- Логи задачи ${taskName} ---`);
+                  lines.push(String(logs.logs).slice(0, 2000));
+                }
+              } catch (err: any) {
+                lines.push(`\n--- Логи задачи ${taskName}: ошибка чтения ---`);
+                lines.push(err instanceof Error ? err.message : String(err));
+              }
+            }
+          }
+          if (includeAnalytics !== false) {
+            try {
+              const metrics = await loadMetrics();
+              lines.push("\n--- Метрики ---");
+              lines.push(`Всего запусков: ${metrics.total}`);
+              lines.push(`Успех: ${metrics.success}`);
+              lines.push(`Ошибок: ${metrics.error}`);
+              if (metrics.partial) lines.push(`Частично: ${metrics.partial}`);
+            } catch (err: any) {
+              lines.push(`\n--- Метрики: ошибка чтения: ${err instanceof Error ? err.message : String(err)} ---`);
+            }
+            try {
+              const records = getHistoryForAnalytics(7);
+              const definitions = await loadTaskDefinitions();
+              const report = buildAnalytics(records, {
+                days: 7,
+                topLimit: 10,
+                tasks: definitions.map((definition) => ({
+                  name: definition.name,
+                  matrixParentId: definition.matrixParentId,
+                  tokenBudget: definition.tokenBudget,
+                })),
+              });
+              lines.push("\n--- Аналитика (7 дней) ---");
+              lines.push(`Всего запусков: ${report.totals.total}`);
+              lines.push(`Успех: ${report.totals.success}`);
+              lines.push(`Ошибок: ${report.totals.error}`);
+              if (report.totals.partial) lines.push(`Частично: ${report.totals.partial}`);
+              const errorTasks = report.tasks.filter((t) => t.error > 0).slice(0, 5);
+              if (errorTasks.length > 0) {
+                lines.push(
+                  `Задачи с ошибками: ${errorTasks.map((t) => `${t.taskName} (${t.error})`).join(", ")}`,
+                );
+              }
+            } catch (err: any) {
+              lines.push(`\n--- Аналитика: ошибка чтения: ${err instanceof Error ? err.message : String(err)} ---`);
+            }
+          }
+
+          const reportText = lines.join("\n");
+          const result = await sendBugReport(reportText, channel);
+          return {
+            success: result.success,
+            message: result.message,
+            results: result.results,
+          };
+        } catch (err: any) {
+          return {
+            success: false,
             error: err instanceof Error ? err.message : String(err),
           };
         }
@@ -5654,6 +6015,10 @@ const v2Plugin = Plugin.define({
           until?: string;
           limit?: number;
         };
+        const dateError =
+          auditDateFilterError(source.since, "since") ??
+          auditDateFilterError(source.until, "until");
+        if (dateError) return { success: false, message: dateError };
         const result = readAuditLog({
           action: source.action,
           target: source.target,
@@ -5748,6 +6113,12 @@ const v2Plugin = Plugin.define({
           return { success: false, error: t("tool.template.needId") };
         }
         try {
+          // QA-P3.3: принимаем и id, и имя шаблона; отсутствие — явная ошибка.
+          const templates = await loadTemplates();
+          const existed = templates.some((template) => template.id === id || template.name === id);
+          if (!existed) {
+            return { success: false, error: t("tool.template.notFound", { id }) };
+          }
           await deleteTemplate(id);
           return { success: true };
         } catch (err: any) {
@@ -5838,6 +6209,8 @@ const v2Plugin = Plugin.define({
                 def.legacyShell === true,
                 def.worktree === true,
                 def.guards,
+                // QA-P0.1 (E-2.1): импорт через RPC сохраняет tokenBudget.
+                def.tokenBudget,
               );
               await saveTaskDefinition(def);
               imported.push(def.name);
@@ -6865,6 +7238,8 @@ export async function schedulerCreateTask(
         clone.legacyShell,
         clone.worktree,
         clone.guards,
+        // QA-P0.1 (E-2.1): клон матрицы наследует tokenBudget родителя.
+        clone.tokenBudget,
       );
     };
 
@@ -7080,6 +7455,8 @@ async function recreateTaskFromDefinition(definition: TaskDefinition): Promise<v
     definition.legacyShell,
     definition.worktree,
     definition.guards,
+    // QA-P0.1 (E-2.1): откат update не теряет tokenBudget.
+    definition.tokenBudget,
   );
 }
 

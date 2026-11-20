@@ -241,10 +241,16 @@ try {
     listTasks().length === 4 // DeployStop + 2 клона + Ordinary
   );
 
-  // 12. Агрегат удалённой матрицы — empty.
+  // 12. QA-P1.2: определения удалены, но история клонов осталась — агрегат
+  //     показывает её, как и аналитика. Пустым он был бы только без истории.
+  const deletedAggregate = aggregateMatrixResults("Deploy");
   check(
-    "агрегат удалённой матрицы пуст",
-    aggregateMatrixResults("Deploy").status === "empty"
+    "агрегат удалённой матрицы показывает клонов из истории",
+    deletedAggregate.status !== "empty" &&
+      deletedAggregate.totalCount === 3 &&
+      deletedAggregate.clones.every((clone) =>
+        clones.some((original) => original.name === clone.name),
+      )
   );
 } finally {
   closeDb();

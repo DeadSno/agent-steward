@@ -163,10 +163,12 @@ assert(reportMetrics.success === 2 && reportMetrics.error === 1, "метрики
 assert(reportMetrics.tokens === 310, "метрики: токены суммируются (100+10+200)");
 
 const totals = metricsRepo.getTotals();
-assert(totals.total === 6, "общие метрики: 5 из metrics.json + 1 новый запуск");
-assert(totals.success === 3 && totals.error === 3, "хвост metrics.json добран служебной строкой");
-assert(totals.tokens === 1200, "токены: 1000 legacy + 200");
-assert(Math.abs(totals.costUsd - 0.52) < 1e-9, "стоимость: 0.5 legacy + 0.02");
+// QA-P1.1: итоги считаются по истории, а не по таблице metrics (legacy-хвост
+// без истории в общие итоги больше не входит).
+assert(totals.total === 4, "общие метрики: 3 мигрировавших записи + 1 новый запуск");
+assert(totals.success === 2 && totals.error === 2, "общие метрики: success/error по истории");
+assert(totals.tokens === 360, "токены: 100+10+50+200 по истории");
+assert(Math.abs(totals.costUsd - 0.036) < 1e-9, "стоимость: 0.01+0.001+0.005+0.02 по истории");
 
 // Частичный запуск учитывается отдельно и не попадает в error.
 historyRepo.recordRun(
@@ -183,7 +185,7 @@ assert(
 );
 const totalsWithPartial = metricsRepo.getTotals();
 assert(
-  totalsWithPartial.total === 7 && totalsWithPartial.partial === 1 && totalsWithPartial.error === 3,
+  totalsWithPartial.total === 5 && totalsWithPartial.partial === 1 && totalsWithPartial.error === 2,
   "общие метрики: partial увеличивает total, но не error"
 );
 
@@ -207,6 +209,24 @@ assert(
 );
 assert(typeof recovered.durationMs === "number" && recovered.durationMs >= 0, "duration_ms рассчитан");
 assert(recoverInterruptedRuns() === 0, "повторный recovery ничего не меняет");
+
+// QA-P1.1: прерванная запись из history теперь попадает в общие итоги,
+// поэтому get_metrics / get_analytics / self_analysis считают по одной выборке.
+const afterRecoveryTotals = metricsRepo.getTotals();
+assert(
+  afterRecoveryTotals.total === 6 && afterRecoveryTotals.success === 2 &&
+    afterRecoveryTotals.partial === 1 && afterRecoveryTotals.error === 3,
+  "QA-P1.1: crash recovery учтён в getTotals (error +1)"
+);
+const { buildAnalytics } = await import("./dist/core/analytics.js");
+const analyticsTotals = buildAnalytics(await loadHistory(null, 200), { days: 3650 }).totals;
+assert(
+  afterRecoveryTotals.total === analyticsTotals.total &&
+    afterRecoveryTotals.success === analyticsTotals.success &&
+    afterRecoveryTotals.partial === analyticsTotals.partial &&
+    afterRecoveryTotals.error === analyticsTotals.error,
+  "QA-P1.1: getTotals совпадает с buildAnalytics по одной выборке history"
+);
 
 // --- 5. QA-F.3: running — отдельное состояние, не ошибка ------------------
 const qafId = historyRepo.startRun("QA-F3-Test", new Date().toISOString());
@@ -371,6 +391,56 @@ assert(
     .getHistoryForAnalytics(1, new Date("2026-02-10T00:00:00.000Z"))
     .some((r) => r.taskName === "Budget Probe"),
   "getHistoryForAnalytics: запись вне окна исключена"
+);
+
+// QA-P1.5: прочерк — маркер «нет ошибки», а не текст ошибки.
+assert(
+  historyRepo.normalizeErrorText("-") === null &&
+    historyRepo.normalizeErrorText("") === null &&
+    historyRepo.normalizeErrorText("   ") === null,
+  "QA-P1.5: '-' и пустая строка нормализуются в null"
+);
+assert(
+  historyRepo.normalizeErrorText("  Сбой  ") === "Сбой",
+  "QA-P1.5: настоящий текст ошибки сохраняется (trim)"
+);
+historyRepo.recordRun(
+  "QA-P15 Probe",
+  "success",
+  new Date().toISOString(),
+  10,
+  "-",
+  null,
+  undefined,
+  undefined,
+  "test/model"
+);
+assert(
+  historyRepo.getHistory("QA-P15 Probe", 1)[0].error === null,
+  "QA-P1.5: успешный запуск не пишет '-' в error при записи"
+);
+getDb().prepare("UPDATE history SET error = '-' WHERE task_name = ?").run("QA-P15 Probe");
+assert(
+  (await loadHistory("QA-P15 Probe", 10))[0].error === null,
+  "QA-P1.5: легаси-прочерк нормализуется при чтении истории"
+);
+const p15Analytics = buildAnalytics(
+  [
+    {
+      taskName: "QA-P15 Probe",
+      status: "error",
+      startedAt: new Date().toISOString(),
+      durationMs: 10,
+      error: "-",
+      tokens: 0,
+      costUsd: 0,
+    },
+  ],
+  { days: 3650 }
+);
+assert(
+  p15Analytics.errors.length === 1 && p15Analytics.errors[0].message === "(без текста)",
+  "QA-P1.5: '-' не попадает в топ ошибок аналитики"
 );
 
 await closeDashboardServer();

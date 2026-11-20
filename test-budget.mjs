@@ -225,8 +225,9 @@ check(
 );
 
 // 7c. Сквозная проводка tokenBudget из определений задач в аналитику.
+// 6 точек в index.ts: get_analytics/self_analysis (MCP + RPC) и report_bug (MCP + RPC).
 const analyticsCallers = [
-  ["./src/index.ts", "tokenBudget: definition.tokenBudget", 4],
+  ["./src/index.ts", "tokenBudget: definition.tokenBudget", 6],
   ["./src/server.ts", "tokenBudget: task.tokenBudget", 1],
 ];
 for (const [file, needle, expected] of analyticsCallers) {

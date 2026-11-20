@@ -6,9 +6,16 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { startDashboardServer, closeDashboardServer, probeDashboardOn } from "./dist/server.js";
+import { removeTestHomeSync } from "./scripts/test-home.mjs";
 
+// QA-P0.3: изолируем HOME до импорта сервера, чтобы тест не читал/не писал
+// рабочую БД профиля. Статический import инициализировал бы её с live-путём.
 const home = fs.mkdtempSync(path.join(os.tmpdir(), "scheduler-profile-iso-"));
+process.env.APPDATA = home;
+process.env.OPENCODE_SCHEDULER_HOME = home;
+const { startDashboardServer, closeDashboardServer, probeDashboardOn } =
+  await import("./dist/server.js");
+
 const preferred = 4335;
 const fallback = 4336;
 
@@ -63,7 +70,7 @@ const stop = async () => {
   await closeDashboardServer().catch(() => {});
   child.kill();
   await new Promise((r) => setTimeout(r, 300));
-  fs.rmSync(home, { recursive: true, force: true });
+  removeTestHomeSync(home);
 };
 
 try {

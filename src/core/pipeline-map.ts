@@ -152,6 +152,25 @@ export interface PipelineExportResult {
 }
 
 /**
+ * QA-P3.2: проверка, что конвейер действительно существует в наборе задач.
+ * `tasksToPipelineSpec` всегда возвращает spec (в т.ч. с нулём шагов), поэтому
+ * «не найден» должен определяться здесь, а не по `!result.spec`.
+ */
+export function pipelineExportLookupError(
+  tasks: TaskDefinition[],
+  pipelineName: string,
+): string | null {
+  const hasSteps = tasks.some(
+    (task) =>
+      task.pipelineName?.toLowerCase() === pipelineName.toLowerCase() &&
+      Boolean(task.pipelineStepId),
+  );
+  return hasSteps
+    ? null
+    : `Конвейер "${pipelineName}" не найден (не найдены задачи с pipelineName=${pipelineName} и pipelineStepId).`;
+}
+
+/**
  * Обратный маппинг: задачи одного pipeline из БД → `PipelineSpec` для export.
  *
  * Восстанавливает `needs` по `dependsOn`, `matrix.workspaces` по

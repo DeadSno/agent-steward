@@ -1421,3 +1421,63 @@ export async function sendTestNotification(
     };
   }
 }
+
+/**
+ * Отправляет отчёт о баге во все включённые каналы (webhook/telegram/native).
+ * Используется агент-инструментом `report_bug`: пользователь плагина описывает
+ * проблему через агент-чат, а отчёт с логами и аналитикой уходит разработчику
+ * (владельцу настроенного бота/вебхука).
+ */
+export async function sendBugReport(
+  report: string,
+  channel: "all" | NotificationChannel = "all",
+): Promise<{
+  success: boolean;
+  message: string;
+  results: ChannelDeliveryResult[];
+}> {
+  try {
+    const settings = await loadSettings();
+    const config = settings.notifications;
+    if (!config?.enabled) {
+      return {
+        success: false,
+        message: t("notify.error.testDisabled"),
+        results: [],
+      };
+    }
+
+    const enabled: NotificationChannel[] = [];
+    if (config.webhook?.enabled && config.webhook.url.trim()) enabled.push("webhook");
+    if (config.telegram?.enabled) enabled.push("telegram");
+    if (config.native?.enabled) enabled.push("native");
+    if (enabled.length === 0) {
+      return {
+        success: false,
+        message: t("notify.error.testNoChannels"),
+        results: [],
+      };
+    }
+
+    const results = await deliverDetailed(
+      config,
+      report,
+      channel === "all" ? undefined : channel,
+    );
+    const sent = results.filter((item) => item.ok).map((item) => item.channel);
+    const failed = results.filter((item) => !item.ok);
+    return {
+      success: failed.length === 0 && sent.length > 0,
+      message: sent.length > 0
+        ? `Отправлено в каналы: ${sent.join(", ")}`
+        : t("notify.error.testNotSent"),
+      results,
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      message: err instanceof Error ? err.message : String(err),
+      results: [],
+    };
+  }
+}

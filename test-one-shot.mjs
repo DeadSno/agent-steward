@@ -214,6 +214,7 @@ try {
     retryCount: 2,
     dependsOn: ["Earlier Task"],
     workingDirectory: tempRoot,
+    tokenBudget: 1234,
   };
   await saveTaskDefinition(definition);
 
@@ -231,6 +232,7 @@ try {
   check("экспорт сохраняет runAt", exportedTask?.runAt === futureRunAt);
   check("экспорт разрешает пустое расписание для once", exportedTask?.schedule === "");
   check("экспорт сохраняет остальные поля", exportedTask?.timeoutSeconds === 600 && exportedTask?.priority === 7 && exportedTask?.retryCount === 2);
+  check("экспорт сохраняет tokenBudget (QA-P0.1)", exportedTask?.tokenBudget === 1234);
 
   const imported = parseImportJson(exported.data);
   check("round-trip не даёт ошибок", imported.errors.length === 0 && imported.tasks.length === 1);
@@ -238,6 +240,7 @@ try {
   check("round-trip сохраняет triggerType once", importedTask?.triggerType === "once");
   check("round-trip сохраняет runAt", importedTask?.runAt === futureRunAt);
   check("round-trip сохраняет prompt", importedTask?.prompt === definition.prompt);
+  check("round-trip сохраняет tokenBudget (QA-P0.1)", importedTask?.tokenBudget === 1234);
 
   const delayedImport = parseImportJson(JSON.stringify({
     version: 1,

@@ -33,7 +33,7 @@ import {
 import { appendStructuredLog, readStructuredLogs } from "./core/structured-log.js";
 import { PROMETHEUS_CONTENT_TYPE, renderPrometheusMetrics } from "./core/prometheus.js";
 import { buildOtlpExport } from "./core/otel.js";
-import { readAuditLog, recordAudit } from "./core/audit.js";
+import { auditDateFilterError, readAuditLog, recordAudit } from "./core/audit.js";
 import { getLocale, t } from "./i18n.js";
 
 /**
@@ -1126,6 +1126,15 @@ async function handleRequest(
     // Журнал аудита (Спринт 26): GET /api/audit?action=…&actor=…&limit=…
     if (req.method === "GET" && pathname === "/api/audit") {
       try {
+        const sinceRaw = url.searchParams.get("since") ?? undefined;
+        const untilRaw = url.searchParams.get("until") ?? undefined;
+        const dateError =
+          auditDateFilterError(sinceRaw, "since") ??
+          auditDateFilterError(untilRaw, "until");
+        if (dateError) {
+          sendJson(res, 400, { error: dateError });
+          return;
+        }
         const limitRaw = Number(url.searchParams.get("limit"));
         const result = readAuditLog({
           action: url.searchParams.get("action") ?? undefined,

@@ -5,7 +5,13 @@ import { pathToFileURL } from "node:url";
 import { runTaskNow } from "./scheduler/run-now.js";
 import { createSchedulerBackend } from "./scheduler/index.js";
 import { notifyTaskCompletion } from "../notifications.js";
-import { finishRun, getLatestHistoryByTask, recordRun, startRun } from "../db/history-repo.js";
+import {
+  finishRun,
+  getLatestHistoryByTask,
+  normalizeErrorText,
+  recordRun,
+  startRun,
+} from "../db/history-repo.js";
 import { deleteSetting, decrementCounterSetting } from "../db/settings-repo.js";
 import { getTask, listTasks } from "../db/tasks-repo.js";
 import { extractLastRunLog } from "./mission.js";
@@ -464,7 +470,7 @@ async function main() {
       process.exit(1);
     }
     const durationMs = Number(fifth) || 0;
-    const error = sixth !== undefined ? sixth : null;
+    const error = normalizeErrorText(sixth);
     // 12-й аргумент — путь к лог-файлу задачи (добавлен в T-08 / D-08).
     const logFile = twelfth;
     const tokens = parseOptionalNumber(seventh);
@@ -529,7 +535,7 @@ async function main() {
 
   const startedAt = third ?? new Date().toISOString();
   const durationMs = Number(fourth) || 0;
-  const error = fifth !== undefined ? fifth : null;
+  const error = normalizeErrorText(fifth);
 
   // Токены и стоимость приходят из PowerShell-обёртки (ps-wrapper.ts).
   // "-" означает «данных нет» (openCode не печатал usage в лог).

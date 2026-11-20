@@ -24,6 +24,7 @@ const {
 } = await import("./dist/index.js");
 const { getTaskLogs } = await import("./dist/core/scheduler/logs.js");
 const { LOG_DIR, sanitizeName } = await import("./dist/types.js");
+const { loadTemplates, saveTemplate, deleteTemplate } = await import("./dist/templates.js");
 
 const results = [];
 function check(name, cond) {
@@ -280,6 +281,31 @@ const missing = await getTaskLogs("no-such-task-log");
 check(
   "get_task_logs: отсутствующий лог даёт ошибку",
   Boolean(missing.error) && missing.logs === ""
+);
+
+// 17. QA-P3.3: delete_template принимает имя шаблона как алиас id.
+const repoSource = fs.readFileSync("./src/db/templates-repo.ts", "utf8");
+check(
+  "QA-P3.3: репозиторий удаляет по id или имени",
+  repoSource.includes("DELETE FROM templates WHERE id = ? OR name = ?")
+);
+
+const byName = await saveTemplate({ name: "QA-P3.3 Probe", prompt: "probe" });
+await deleteTemplate(byName.name);
+const afterNameDelete = await loadTemplates();
+check(
+  "QA-P3.3: шаблон удалён по имени",
+  !afterNameDelete.some((template) => template.id === byName.id || template.name === byName.name)
+);
+
+// Повторное удаление и удаление по id остаются идемпотентными.
+await deleteTemplate(byName.name);
+const byId = await saveTemplate({ name: "QA-P3.3 Probe 2", prompt: "probe" });
+await deleteTemplate(byId.id);
+const afterIdDelete = await loadTemplates();
+check(
+  "QA-P3.3: повторное удаление и удаление по id работают",
+  !afterIdDelete.some((template) => template.id === byId.id || template.name === byId.name)
 );
 
 const failed = results.filter((r) => !r.ok);

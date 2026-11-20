@@ -83,6 +83,25 @@ const clamped = applyLocalAiPatch(base, { timeoutMs: 999999, confidenceThreshold
 check("timeoutMs зажимается в 120000", clamped.settings.timeoutMs === 120000);
 check("confidenceThreshold зажимается в 0", clamped.settings.confidenceThreshold === 0);
 
+// QA-P2.2: confidenceThreshold дробный (0..1), CLAMP НЕ должен округлять.
+// Базовый порог по умолчанию — 0.6, поэтому для проверки changed берём 0.3.
+const fractionalBase = { ...base, confidenceThreshold: 0.3 };
+for (const value of [0.4, 0.5, 0.6, 0.75, 0.99]) {
+  const patched = applyLocalAiPatch(fractionalBase, { confidenceThreshold: value });
+  check(
+    `QA-P2.2: confidenceThreshold ${value} сохраняется без округления`,
+    patched.settings.confidenceThreshold === value && patched.changed.includes("confidenceThreshold"),
+  );
+}
+const intsKept = applyLocalAiPatch(base, {
+  timeoutMs: 12345.9,
+  shadow: { enabled: true, days: 7.9 },
+});
+check(
+  "QA-P2.2: timeoutMs и shadow.days остаются целыми",
+  Number.isInteger(intsKept.settings.timeoutMs) && Number.isInteger(intsKept.settings.shadow.days),
+);
+
 const noChange = applyLocalAiPatch(base, {
   mode: base.mode,
   model: base.model,

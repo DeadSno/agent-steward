@@ -49,9 +49,13 @@ export interface LocalAiSummary {
   protocol: "openai" | "ollama";
 }
 
+/**
+ * QA-P2.2: clamp НЕ округляет — confidenceThreshold дробный (0..1).
+ * Целочисленные поля (timeoutMs, shadow.days) округляются в местах вызова.
+ */
 function clamp(value: number, min: number, max: number, fallback: number): number {
   if (!Number.isFinite(value)) return fallback;
-  return Math.min(max, Math.max(min, Math.round(value)));
+  return Math.min(max, Math.max(min, value));
 }
 
 function trimUrl(value: string): string {
@@ -95,7 +99,7 @@ export function applyLocalAiPatch(
   }
   if (patch.timeoutMs !== undefined) {
     const timeoutMs = clamp(
-      patch.timeoutMs,
+      Math.round(patch.timeoutMs),
       LOCAL_AI_TIMEOUT_MIN,
       LOCAL_AI_TIMEOUT_MAX,
       current.timeoutMs,
@@ -128,7 +132,7 @@ export function applyLocalAiPatch(
       changed.push("shadow.enabled");
     }
     if (shadowPatch.days !== undefined) {
-      const days = clamp(shadowPatch.days, 1, 365, shadow.days);
+      const days = clamp(Math.round(shadowPatch.days), 1, 365, shadow.days);
       if (days !== shadow.days) {
         shadow.days = days;
         changed.push("shadow.days");

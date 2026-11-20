@@ -422,6 +422,10 @@ export async function buildExportJson(
       ...(definition?.worktree === true ? { worktree: true } : {}),
       // W-3: guard-условия переживают перенос между профилями.
       ...(definition?.guards ? { guards: definition.guards } : {}),
+      // QA-P0.1 (E-2.1): лимит токенов переживает экспорт/импорт.
+      ...(definition?.tokenBudget !== undefined
+        ? { tokenBudget: definition.tokenBudget }
+        : {}),
       ...(Array.isArray(definition?.allowedTools) && definition.allowedTools.length > 0
         ? { allowedTools: definition.allowedTools }
         : {}),
@@ -628,6 +632,25 @@ export function parseImportJson(raw: string): ParsedImport {
       source.timeoutSeconds > 0
         ? Math.floor(source.timeoutSeconds)
         : undefined;
+
+    // QA-P0.1 (E-2.1): tokenBudget 0..10M, как в схемах create/update. 0 — без лимита.
+    let tokenBudget: number | undefined;
+    if (source.tokenBudget !== undefined) {
+      const raw = source.tokenBudget;
+      if (
+        typeof raw === "number" &&
+        Number.isFinite(raw) &&
+        raw >= 0 &&
+        raw <= 10_000_000
+      ) {
+        tokenBudget = Math.floor(raw);
+      } else {
+        errors.push(
+          `Запись ${position}${name ? ` (${name})` : ""}: tokenBudget должен быть целым числом 0..10000000.`,
+        );
+        return;
+      }
+    }
 
     // Новое поле workingDirectory; workdir читаем для обратной совместимости.
     const workingDirectory =
@@ -970,6 +993,8 @@ export function parseImportJson(raw: string): ParsedImport {
       ...(runWhenLoggedOffFlag ? { runWhenLoggedOff: true } : {}),
       ...(worktreeFlag ? { worktree: true } : {}),
       ...(guards ? { guards } : {}),
+      // QA-P0.1 (E-2.1): импорт сохраняет tokenBudget.
+      ...(tokenBudget !== undefined ? { tokenBudget } : {}),
       ...(mcpEvent ? { mcpEvent } : {}),
       ...(allowedTools !== undefined ? { allowedTools } : {}),
       ...(deniedTools !== undefined ? { deniedTools } : {}),

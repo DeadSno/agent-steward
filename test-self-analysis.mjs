@@ -115,6 +115,40 @@ console.log("\n=== Health Score ===");
   );
 }
 
+// QA-P1.4: errorRate — инвертированный балл 0..100, а не доля ошибок.
+{
+  const recent = (count, overrides) =>
+    Array.from({ length: count }, (_, i) =>
+      createRecord({
+        ...overrides,
+        startedAt: new Date(Date.now() - i - 1).toISOString(),
+      }),
+    );
+  const records = [
+    ...recent(322, { status: "success" }),
+    ...recent(250, { status: "error", error: "boom" }),
+    ...recent(1, { status: "partial", error: "part" }),
+  ];
+  const report = buildAnalytics(records, { days: 14 });
+  const health = calculateHealthScore(report);
+  const total = report.totals.total;
+  const rawErrorPercent = (report.totals.error / Math.max(1, total)) * 100;
+
+  check(
+    "QA-P1.4: successRate совпадает с округлённой долей успехов",
+    health.components.successRate === report.totals.successRate &&
+      Math.abs(report.totals.successRate - (report.totals.success / total) * 100) < 0.051,
+  );
+  check(
+    "QA-P1.4: errorRate = 100 - доля ошибок (балл, не процент)",
+    Math.abs(health.components.errorRate - (100 - rawErrorPercent)) < 0.001,
+  );
+  check(
+    "QA-P1.4: errorRate + доля ошибок = 100",
+    Math.abs(health.components.errorRate + rawErrorPercent - 100) < 0.001,
+  );
+}
+
 // --- 2. Anomaly Detection ----------------------------------------------------
 
 console.log("\n=== Anomaly Detection ===");

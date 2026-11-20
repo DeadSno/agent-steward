@@ -301,8 +301,33 @@ export function recordTaskToolBlocks(
   return written;
 }
 
+/**
+ * QA-P3.1: единообразная проверка ISO-дат для фильтров аудита.
+ * Возвращает текст ошибки или null — чтобы все вызывающие (MCP, RPC, HTTP)
+ * отвечали одинаково, а не молча отдавали пустую выборку.
+ */
+export function auditDateFilterError(
+  value: string | null | undefined,
+  name: "since" | "until",
+): string | null {
+  if (value === null || value === undefined) return null;
+  const trimmed = String(value).trim();
+  if (!trimmed) return null;
+  if (Number.isNaN(Date.parse(trimmed))) {
+    return `Некорректный параметр ${name}: ожидается ISO-дата.`;
+  }
+  return null;
+}
+
 /** Читает журнал аудита (новые сверху). */
 export function readAuditLog(filter: ReadAuditFilter = {}): ReadAuditResult {
+  for (const [name, value] of [
+    ["since", filter.since],
+    ["until", filter.until],
+  ] as const) {
+    const dateError = auditDateFilterError(value, name);
+    if (dateError) throw new Error(dateError);
+  }
   const limit = Math.max(1, Math.min(5000, Math.floor(filter.limit ?? 200) || 200));
   const where: string[] = [];
   const params: unknown[] = [];

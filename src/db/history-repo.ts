@@ -14,6 +14,18 @@ import type { TaskStatus } from "../history.js";
 
 export type HistoryStatus = TaskStatus | "running";
 
+/**
+ * QA-P1.5: прочерк и пустая строка — не текст ошибки, а маркер «нет данных».
+ * PowerShell-обёртка исторически передавала "-" для успешных запусков, и он
+ * попадал в history и структурированные логи как сообщение об ошибке.
+ * Нормализуем и при записи, и при чтении (легаси-записи уже есть в БД).
+ */
+export function normalizeErrorText(error: string | null | undefined): string | null {
+  if (error == null) return null;
+  const trimmed = String(error).trim();
+  return !trimmed || trimmed === "-" ? null : trimmed;
+}
+
 export interface StoredHistoryRecord {
   id?: number;
   taskName: string;
@@ -62,7 +74,7 @@ function rowToRecord(row: any): StoredHistoryRecord {
     startedAt: String(row.started_at),
     finishedAt: row.finished_at == null ? null : String(row.finished_at),
     durationMs: row.duration_ms == null ? null : Number(row.duration_ms),
-    error: row.error == null ? null : String(row.error),
+    error: normalizeErrorText(row.error == null ? null : String(row.error)),
     nextTask: row.next_task == null ? null : String(row.next_task),
     tokens: row.tokens == null ? undefined : Number(row.tokens),
     costUsd: row.cost_usd == null ? undefined : Number(row.cost_usd),
@@ -104,7 +116,7 @@ export function insertHistory(record: StoredHistoryRecord): number {
       record.startedAt,
       record.finishedAt ?? null,
       record.durationMs ?? null,
-      record.error ?? null,
+      normalizeErrorText(record.error),
       record.tokens ?? null,
       record.costUsd ?? null,
       record.model ?? null,
@@ -172,6 +184,7 @@ export function finishRun(
 ): boolean {
   const safeDuration = Number.isFinite(durationMs) ? Math.max(0, Math.floor(durationMs)) : 0;
   const finishedAt = new Date().toISOString();
+  const cleanError = normalizeErrorText(error);
   let completed: { taskName: string; startedAt: string } | null = null;
 
   const ok = withTransaction(() => {
@@ -193,7 +206,7 @@ export function finishRun(
         status,
         finishedAt,
         safeDuration,
-        error ?? null,
+        cleanError,
         nextTask ?? null,
         tokens ?? null,
         costUsd ?? null,
@@ -224,7 +237,7 @@ export function finishRun(
       startedAt: done.startedAt,
       finishedAt,
       durationMs: safeDuration,
-      error: error ?? null,
+      error: cleanError,
       nextTask: nextTask ?? null,
       tokens,
       costUsd,
@@ -258,6 +271,7 @@ export function recordRun(
   deniedTools?: string[] | null,
 ): number {
   const safeDuration = Math.max(0, Math.floor(Number(durationMs) || 0));
+  const cleanError = normalizeErrorText(error);
   const id = withTransaction(() => {
     const result = getDb()
       .prepare(INSERT_SQL)
@@ -267,7 +281,7 @@ export function recordRun(
         startedAt,
         finishedAt,
         safeDuration,
-        error ?? null,
+        cleanError,
         tokens ?? null,
         costUsd ?? null,
         model ?? null,
@@ -294,7 +308,7 @@ export function recordRun(
     startedAt,
     finishedAt,
     durationMs: safeDuration,
-    error: error ?? null,
+    error: cleanError,
     nextTask: nextTask ?? null,
     tokens,
     costUsd,

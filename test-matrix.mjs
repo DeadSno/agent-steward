@@ -371,13 +371,16 @@ try {
       afterDelete.status === "success" &&
       afterDelete.clones[0]?.name === orphanClone.name
   );
-  // Пока родитель существует — история клонов видна; после удаления родителя
-  // всё семейство считается удалённым, и агрегат снова empty.
+  // QA-P1.2: история — независимый источник. После удаления родителя
+  // aggregate всё равно показывает клона, если он остался в истории
+  // (ровно так же, как его показывает аналитика).
   deleteTask(orphanParent.name);
   const afterParentDelete = aggregateMatrixResults("OrphanMatrix");
   check(
-    "QA-F.2: после удаления родителя агрегат матрицы снова пуст",
-    afterParentDelete.status === "empty" && afterParentDelete.totalCount === 0
+    "QA-P1.2: после удаления родителя клон из истории остаётся видимым",
+    afterParentDelete.status === "success" &&
+      afterParentDelete.totalCount === 1 &&
+      afterParentDelete.clones[0]?.name === orphanClone.name
   );
 } finally {
   closeDb();

@@ -1,7 +1,49 @@
 // Ручной тест веб-дашборда (Спринт 5): запускает сервер со стабами и проверяет эндпоинты.
-import { startDashboardServer, closeDashboardServer, isDashboardRunning, getDashboardPort } from "./dist/server.js";
-import { startDashboardServer as start2 } from "./dist/server.js";
-import { getSchedulerTitle } from "./dist/core/scheduler/index.js";
+import fs from "node:fs";
+import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import { createTestHomeSync, removeTestHomeSync } from "./scripts/test-home.mjs";
+
+// QA-P0.3: тест НЕ должен писать аудит (actor="http") в рабочую БД профиля.
+// Запоминаем состояние live-аудита до подмены HOME.
+const liveRoot = process.env.APPDATA ?? "";
+const liveDbCandidates = [
+  path.join(liveRoot, "opencode", "agent-steward", "scheduler.db"),
+  path.join(liveRoot, "opencode", "windows-scheduler", "scheduler.db"),
+];
+const AUDIT_TARGETS = ["test-task", "running-task", "задача-тест", "boom"];
+function countLiveAuditHits() {
+  let total = 0;
+  for (const file of liveDbCandidates) {
+    if (!fs.existsSync(file)) continue;
+    const db = new DatabaseSync(file, { readOnly: true });
+    try {
+      const placeholders = AUDIT_TARGETS.map(() => "?").join(", ");
+      const rows = db
+        .prepare(`SELECT target FROM audit_log WHERE target IN (${placeholders})`)
+        .all(...AUDIT_TARGETS);
+      total += rows.length;
+    } catch {
+      // Таблица аудита может ещё не существовать — считаем 0 попаданий.
+    } finally {
+      db.close();
+    }
+  }
+  return total;
+}
+const liveAuditBefore = countLiveAuditHits();
+
+// Изолируем HOME ДО динамических импортов: иначе server.ts/db инициализируются
+// с путём live-профиля и записывают тестовые действия в рабочую БД.
+const { root: tempRoot } = createTestHomeSync("ws-scheduler-dashboard-");
+process.env.APPDATA = tempRoot;
+process.env.OPENCODE_SCHEDULER_HOME = path.join(tempRoot, "opencode", "windows-scheduler");
+
+const { startDashboardServer, closeDashboardServer, isDashboardRunning, getDashboardPort } =
+  await import("./dist/server.js");
+const { startDashboardServer: start2 } = await import("./dist/server.js");
+const { getSchedulerTitle } = await import("./dist/core/scheduler/index.js");
+const { closeDb } = await import("./dist/db/index.js");
 
 const deps = {
   getTasks: async () => [
@@ -112,5 +154,14 @@ assert(closedAgain === false, "повторное closeDashboardServer() -> fals
 const restarted = await startDashboardServer(deps, { preferred: 4310, fallback: 4311 });
 assert(restarted && restarted.port === 4310, "перезапуск после закрытия работает");
 await closeDashboardServer();
+
+// QA-P0.3: тестовые HTTP-вызовы не должны оставить след в live-аудит-логе.
+closeDb();
+const liveAuditAfter = countLiveAuditHits();
+assert(
+  liveAuditAfter === liveAuditBefore,
+  `тест не записал аудит в live-БД (было ${liveAuditBefore}, стало ${liveAuditAfter})`,
+);
+removeTestHomeSync(tempRoot);
 
 console.log(process.exitCode ? "\nЕсть падения теста." : "\nВсе проверки пройдены.");

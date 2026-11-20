@@ -16,8 +16,13 @@ const {
   PIPELINE_VERSION,
 } = await import("./dist/core/pipeline-spec.js");
 const { parsePipelineYaml, loadPipelineFile } = await import("./dist/core/pipeline-io.js");
-const { pipelineSpecToTasks, tasksToPipelineSpec } = await import("./dist/core/pipeline-map.js");
+const {
+  pipelineExportLookupError,
+  pipelineSpecToTasks,
+  tasksToPipelineSpec,
+} = await import("./dist/core/pipeline-map.js");
 const { planPipelineApply, executePipelineApply } = await import("./dist/core/pipeline-apply.js");
+const { pipelineExportSchema } = await import("./dist/index.js");
 
 const results = [];
 function check(name, cond) {
@@ -510,6 +515,32 @@ function hasError(result, pathFragment, textFragment) {
     "guards: export round-trip сохраняет guards",
     exported.spec.steps[0]?.guards?.command === "node ./scripts/check.mjs" &&
       exported.spec.steps[0]?.guards?.semantic?.changedSince === "HEAD~2",
+  );
+}
+
+{
+  const spec = pipeline([step("build")]);
+  const { tasks } = pipelineSpecToTasks(spec);
+  check(
+    "QA-P3.2: существующий конвейер находится",
+    pipelineExportLookupError(tasks, spec.name) === null,
+  );
+  const missing = pipelineExportLookupError(tasks, "no-such-pipeline");
+  check(
+    "QA-P3.2: несуществующий конвейер даёт ошибку «не найден»",
+    typeof missing === "string" && missing.includes("no-such-pipeline") && missing.includes("не найден"),
+  );
+  check(
+    "QA-P3.2: конфликт pipeline/pipelineName отвергается схемой",
+    !pipelineExportSchema.safeParse({ pipeline: "A", pipelineName: "B" }).success,
+  );
+  check(
+    "QA-P3.2: одинаковые pipeline/pipelineName принимаются",
+    pipelineExportSchema.safeParse({ pipeline: "A", pipelineName: "A" }).success,
+  );
+  check(
+    "QA-P3.2: только pipelineName принимается",
+    pipelineExportSchema.safeParse({ pipelineName: "A" }).success,
   );
 }
 

@@ -228,12 +228,16 @@ export interface MatrixAggregate {
 export function aggregateMatrixResults(parentId: string): MatrixAggregate {
   const parent = getTask(parentId);
   const definedClones = listMatrixClones(parentId);
-  // QA-F.2: объединяем определения с клонами, оставшимися только в истории,
-  // чтобы matrix_control показывал тот же набор, что и аналитика. Но только
-  // пока существует сам родитель: если удалено всё семейство (родитель,
-  // клоны и агрегатор), матрица считается удалённой и агрегат остаётся empty
-  // (инвариант lifecycle-теста).
-  const historyClones = parent ? listMatrixClonesFromHistory(parentId) : [];
+  // QA-F.2 / QA-P1.2: объединяем определения с клонами, оставшимися только
+  // в истории, чтобы matrix_control показывал тот же набор, что и аналитика.
+  // История — независимый источник:definition родителя может быть удалён
+  // (например, при чистке сирот), но запуски клонов остаются в истории, и
+  // аналитика по-прежнему их видит. Раньше здесь стоял guard `parent ? … : []`,
+  // из-за которого live-матрица __matrixprobe__ показывала «нет клонов», хотя
+  // история содержала __matrixprobe__-matrix-__mw__. Пустой агрегат остаётся
+  // только когда нет ни определений, ни записей истории с каноническим
+  // префиксом <parent>-matrix-.
+  const historyClones = listMatrixClonesFromHistory(parentId);
   const known = new Set(definedClones.map((clone) => clone.name.toLowerCase()));
   const clones: MatrixCloneSource[] = [
     ...definedClones,

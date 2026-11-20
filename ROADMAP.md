@@ -31,8 +31,28 @@ Legacy: `opencode-windows-scheduler@1.5.8`.
 > Проверено по исходникам и прогоном npm test (все тесты зелёные), node test-docs.mjs (109/109), npm run lint (2 ошибки, 815 предупреждений). Здесь только открытые задачи; закрытые перенесены в CHANGELOG.md. В работу берётся одна подзадача.
 
 **Задача QA-F — Оставшиеся QA-баги из планировщика** · P2 · ✅
-- [x] QA-F.2 `roadmap-qa-04`: `matrix_control` сообщает об отсутствии клонов, хотя в аналитике есть `__matrixprobe__-matrix-__mw__` — исправлено: `aggregateMatrixResults()` подтягивает клоны из истории запусков по префиксу `<parent>-matrix-` (запись в CHANGELOG).
+- [x] QA-F.2 `roadmap-qa-04`: `matrix_control` сообщает об отсутствии клонов, хотя в аналитике есть `__matrixprobe__-matrix-__mw__` — исправлено: `aggregateMatrixResults()` подтягивает клоны из истории запусков по префиксу `<parent>-matrix-` (запись в CHANGELOG). Финально закрыто вместе с QA-P1.2 (20.11.2026): guard по определению родителя убран, history-фолбэк работает и после удаления семейства.
 - [x] QA-F.3 `roadmap-qa-06`: transient `status=error` с пустым `finishedAt` и `durationMs=0` во время запуска, затем `success` → дашборд мигает ошибкой — исправлено: `running` выделено в отдельное состояние дашборда (запись в CHANGELOG).
+
+## Деталь 1.2 — Находки полного прогона (20.11.2026)
+
+> Полный прогон: live MCP-инструменты + `npm test` (exit 1, 2 реальных падения в test-git-trigger.mjs) + проверка дашборда. Ничего не исправлялось — только фиксация. Читать вместе с [CHANGELOG.md](./CHANGELOG.md). В работу берётся одна подзадача.
+
+**Задача QA-P0 — Потеря данных и неработающий функционал** · P1 · ✅
+
+**Задача QA-P1 — Расхождения аналитики и метрик** · P1 · ✅
+
+**Задача QA-P2 — Валидация и конфигурация** · P2 · ✅
+
+
+**Задача QA-P3 — Минорные несогласованности** · P3 · ⬜
+- [ ] QA-P3.5 `get_dashboard_info` после перезапуска сервера вернул `port:null, url:null` (ранее `port:4782`), но дашборд поднялся на **порту 3782** (`http://127.0.0.1:3782`) — HTTP 200, `/api/tasks` возвращает задачи, `/api/metrics` → `{"total":533,"success":323,"error":210,"partial":0,"tokens":0,"costUsd":0}`, `/api/logs` → все `success` записи имеют `error:"-"`. Порт в `get_dashboard_info` не отражает фактический 3782 (несоответствие reported port vs real). Действие: проверить, почему порт 4782 не поднимается/не сообщается, синхронизировать reported port с реальным; добавить health-check в инструмент.
+- [ ] QA-P3.6 `run_task_now({name:'__no_such_task__'})` возвращает сырую ошибку ОС вместо внятной «задача не найдена»: `schtasks error: Command failed: schtasks /run /tn \OpenCode\windows-scheduler\__no_such_task__ | ОШИБКА: Не удается найти указанный файл.` — `src/rpc.ts` (run_task_now). Действие: проверять существование задачи до вызова `schtasks` и возвращать структурированную ошибку.
+- [ ] QA-P3.7 `matrix_control({action:'results', name:'__no_such_matrix__'})` → success:true, status=empty вместо ошибки «задача не является матрицей» (тогда как `cancel` корректно возвращает false). Действие: единообразно проверять тип задачи в `results`.
+- [ ] QA-P3.8 `pause_task`/`resume_task` для несуществующей задачи возвращают противоречивые поля: `success:false, message:"… не найдена"`, но при этом `paused:true` (pause) / `paused:false` (resume) — `src/rpc.ts`. Действие: при ошибке не выставлять `paused` или ставить актуальное состояние задачи.
+
+> Дашборд: во время прогона `get_dashboard_info` давал port 4782 / http://127.0.0.1:4782 / win32 / «agent-steward by DeadSno» / profile default; после перезапуска сервера API на 4782 отдаёт ECONNREFUSED — GUI/HTTP-слой до конца не проверен, проверить отдельно.
+
 ---
 
 # 2. Задачи согласно архитектуре (Execution model)
@@ -51,7 +71,7 @@ agent-steward — execution engine с опциональной регистра�
 `src/core/budget*`, `src/analytics*`
 
 **Задача E-2 — Per-task token budgets** · P2 · 🔄
-- [ ] E-2.1 Лимит на задачу (в работе)
+- [ ] E-2.1 Лимит на задачу (в работе) — разблокировано: QA-P0.1 закрыт, `tokenBudget` сохраняется при create/update/export/import (round-trip проверки в `test-one-shot.mjs`)
 - [ ] E-2.2 Остановка при превышении
 
 **Задача E-3 — Token efficiency score** · P3 · ⬜

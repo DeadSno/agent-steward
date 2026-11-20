@@ -279,6 +279,37 @@ initDb(dbPath);
     "лог: пустой код ошибки заменяется сообщением",
     wrapperSource.includes('"Код возврата $($script:exitCode)"'),
   );
+  // QA-P0.2: обёртки должны оставлять маркер реального прогона, иначе
+  // extractLastRunLog() не может отделить последний запуск от предыдущих.
+  const { buildBashWrapperScript } = await import("./dist/core/wrappers/bash.js");
+  const bashWrapper = buildBashWrapperScript({
+    sanitizedName: "qa-log-probe",
+    taskName: "qa-log-probe",
+    promptFile: "C:/tmp/qa-log-probe.txt",
+    timeoutSeconds: 10,
+    lockFile: "C:/tmp/locks/qa-log-probe.lock",
+  });
+  check(
+    "лог QA-P0.2: bash-обёртка пишет маркер Run started в LOG_FILE",
+    bashWrapper.includes("[agent-steward] === Run started %s (%s) ===") &&
+      bashWrapper.includes('>> "$LOG_FILE" 2>/dev/null || true'),
+  );
+  check(
+    "лог QA-P0.2: PS-обёртка пишет маркер Run started без префикса времени",
+    wrapperSource.includes('"[agent-steward] === Run started " + $startedAtIso + " (" + $TaskName + ") ==="') &&
+      wrapperSource.includes("Add-Content -Path $LogFile -Value (\"[agent-steward] === Run started \""),
+  );
+  const syntheticLog = [
+    "[agent-steward] === Task prepared 2026-11-20T04:00:00.000Z (qa-log-probe) ===\n",
+    "старый вывод\n",
+    "[agent-steward] === Run started 2026-11-20T05:00:00.000Z (qa-log-probe) ===\n",
+    "свежий вывод\n",
+  ].join("");
+  check(
+    "лог QA-P0.2: маркер прогона отсекает подготовку и старый вывод",
+    extractLastRunLog(syntheticLog) ===
+      "[agent-steward] === Run started 2026-11-20T05:00:00.000Z (qa-log-probe) ===\nсвежий вывод\n",
+  );
 }
 
 closeDb();

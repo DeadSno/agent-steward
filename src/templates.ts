@@ -61,7 +61,7 @@ export async function saveTemplate(
   return saveTemplateRow(template);
 }
 
-/** Удаляет шаблон по id. */
-export async function deleteTemplate(id: string): Promise<void> {
-  deleteTemplateRow(id);
+/** Удаляет шаблон по id или имени (QA-P3.3). */
+export async function deleteTemplate(idOrName: string): Promise<void> {
+  deleteTemplateRow(idOrName);
 }

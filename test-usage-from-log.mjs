@@ -3,11 +3,43 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { DatabaseSync } from "node:sqlite";
+import { createTestHomeSync, removeTestHomeSync } from "./scripts/test-home.mjs";
 
-const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "usage-log-test-"));
-// B10: legacy-режим пишет в БД, поэтому база теста изолирована во временной
-// папке. Env выставляется до импорта модулей — путь БД читается при импорте.
-process.env.OPENCODE_SCHEDULER_DB = path.join(tmpDir, "usage.db");
+// QA-P1.3: legacy-режим пишет в БД, поэтому тест обязан использовать
+// изолированный home. OPENCODE_SCHEDULER_DB плагином не читается — раньше
+// тестовые строки «Legacy Usage/Explicit» попадали в рабочую БД профиля и
+// создавали ложное ощущение ненулевого usage в аналитике.
+const liveRoot = process.env.APPDATA ?? "";
+const liveDbCandidates = [
+  path.join(liveRoot, "opencode", "agent-steward", "scheduler.db"),
+  path.join(liveRoot, "opencode", "windows-scheduler", "scheduler.db"),
+];
+const TEST_TASKS = ["Legacy Usage", "Legacy NoLog", "Legacy Explicit"];
+function countLiveUsageRows() {
+  let total = 0;
+  for (const file of liveDbCandidates) {
+    if (!fs.existsSync(file)) continue;
+    const db = new DatabaseSync(file, { readOnly: true });
+    try {
+      const placeholders = TEST_TASKS.map(() => "?").join(", ");
+      const row = db
+        .prepare(`SELECT COUNT(*) AS n FROM history WHERE task_name IN (${placeholders})`)
+        .get(...TEST_TASKS);
+      total += Number(row?.n ?? 0);
+    } catch {
+      // Таблица истории может ещё не существовать — считаем 0 попаданий.
+    } finally {
+      db.close();
+    }
+  }
+  return total;
+}
+const liveUsageBefore = countLiveUsageRows();
+
+const { root: tmpDir } = createTestHomeSync("ws-scheduler-usage-log-");
+process.env.APPDATA = tmpDir;
+process.env.OPENCODE_SCHEDULER_HOME = path.join(tmpDir, "opencode", "windows-scheduler");
 const { parseUsageFromLog } = await import("./dist/core/record-history.js");
 
 let passed = 0;
@@ -147,6 +179,16 @@ check("cost_usd=0.75 распознаётся", () => {
   assert.strictEqual(parseUsageFromLog(writeLog("task-f1d.log", `cost_usd=0.75\n`)).costUsd, 0.75);
 });
 
+// QA-P1.3: PowerShell-обёртка должна распознавать те же формы стоимости,
+// что и TS-парсер. Раньше в Get-UsageFromLog были только старые шаблоны с `$`.
+check("QA-F.1: PS-обёртка распознаёт costUsd/cost_usd без знака валюты", () => {
+  const source = fs.readFileSync(path.resolve("src/core/ps-wrapper.ts"), "utf8");
+  assert.ok(
+    source.includes("costUsd|cost_usd|cost(?:\\\\s*usd)?"),
+    "в Get-UsageFromLog должны быть QA-F.1-шаблоны стоимости",
+  );
+});
+
 // --- B10: legacy-режим (без --start/--finish) читает usage из 11-го аргумента ---
 {
   const recorder = path.resolve("dist/core/record-history.js");
@@ -218,11 +260,23 @@ try {
 } catch {
   // БД могла не открыться — не мешает уборке.
 }
+// QA-P1.3: тест не должен оставлять следов в рабочей БД профиля.
 try {
-  fs.rmSync(tmpDir, { recursive: true, force: true });
+  const liveUsageAfter = countLiveUsageRows();
+  if (liveUsageAfter === liveUsageBefore) {
+    console.log("  ✅ QA-P1.3: тест не записал usage в live-БД");
+    passed++;
+  } else {
+    console.error(
+      `  ❌ QA-P1.3: тест записал usage в live-БД (было ${liveUsageBefore}, стало ${liveUsageAfter})`,
+    );
+    failed++;
+  }
 } catch {
-  // Windows может держать файл БД — тест уже завершён.
+  // Проверка live-БД — best effort; изолированная БД уже проверена выше.
 }
+
+removeTestHomeSync(tmpDir);
 
 console.log(`\nИтого: ${passed} пройдено, ${failed} провалено из ${passed + failed}`);
 process.exit(failed > 0 ? 1 : 0);

@@ -533,6 +533,12 @@ export function buildBashWrapperScript(options: BashWrapperOptions): string {
     "",
     'if [ "$SKIP_MAIN" -eq 0 ]; then',
     "",
+    // QA-P0.2: маркер границы реального прогона. Пишется без префикса времени,
+    // чтобы extractLastRunLog() смог отсечь вывод предыдущих запусков и
+    // подготовительные записи. До этой точки запуск мог быть отменён guard-ом
+    // или pre-flight, поэтому маркер нельзя ставить раньше.
+    'printf \'[agent-steward] === Run started %s (%s) ===\\n\' "$(date -u \'+%Y-%m-%dT%H:%M:%SZ\')" "$TASK_NAME" >> "$LOG_FILE" 2>/dev/null || true',
+    "",
     "# Модель указывается только если задана — иначе OpenCode берёт свою по умолчанию.",
     "# exec важен: в фоновом режиме он заменяет подоболочку процессом opencode,",
     "# поэтому $! — это PID самого opencode, и watchdog убивает именно его.",

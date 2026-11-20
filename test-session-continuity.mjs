@@ -45,6 +45,22 @@ function section(title) {
   console.log(`\n${title}`);
 }
 
+// QA-P3.4: тестовые sessionId не существуют в реальном opencode, поэтому
+// ротация логирует ожидаемый "Session not found". Не засорять вывод прогона.
+async function rotateQuietly(taskName) {
+  const originalWarn = console.warn;
+  console.warn = (...args) => {
+    const text = args.map((arg) => String(arg)).join(" ");
+    if (text.startsWith("[session] Не удалось удалить сессию")) return;
+    originalWarn(...args);
+  };
+  try {
+    await rotateSessionIfNeeded(taskName);
+  } finally {
+    console.warn = originalWarn;
+  }
+}
+
 try {
   initDb();
 
@@ -218,7 +234,7 @@ try {
       sessionRunCount: 1,
     };
     await saveTask(rotateDef);
-    await rotateSessionIfNeeded(rotateDef.name);
+    await rotateQuietly(rotateDef.name);
     const afterFirst = await getTask(rotateDef.name);
     check("после 2-го запуска счётчик сброшен", (afterFirst?.sessionRunCount ?? -1) === 0);
     check(
@@ -240,7 +256,7 @@ try {
       sessionRunCount: 0,
     };
     await saveTask(countDef);
-    await rotateSessionIfNeeded(countDef.name);
+    await rotateQuietly(countDef.name);
     const afterCount = await getTask(countDef.name);
     check("до лимита счётчик инкрементируется", afterCount?.sessionRunCount === 1);
     check("до лимита sessionId сохраняется", typeof afterCount?.sessionId === "string");

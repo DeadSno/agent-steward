@@ -109,18 +109,31 @@ export function getAllMetrics(includeInternal = false): TaskMetricsRow[] {
   return rows.map(rowToMetrics).filter((row) => includeInternal || !isInternal(row.taskName));
 }
 
-/** Суммарные метрики (включая служебные строки). */
+/**
+ * Суммарные метрики по единой выборке истории (QA-P1.1).
+ *
+ * Раньше итоги брались из таблицы metrics. Но crash recovery помечает
+ * незавершённые запуски прямо в history (UPDATE ... status='error') без
+ * инкремента metrics, поэтому get_metrics расходился с analytics и
+ * self_analysis на число прерванных запусков. Теперь все три источника
+ * считают по одной и той же истории: success/partial явные, всё остальное
+ * (error/timeout/skipped) — error, running не участвует.
+ *
+ * Примечание: поточечные метрики	getMetrics()/getAllMetrics() остаются
+ * таблицей metrics — там хранится в том числе legacy-хвост без истории.
+ */
 export function getTotals(): MetricsTotals {
   const row = getDb()
     .prepare(
       `SELECT
-         COALESCE(SUM(total), 0) AS total,
-         COALESCE(SUM(success), 0) AS success,
-         COALESCE(SUM(error), 0) AS error,
-         COALESCE(SUM(partial), 0) AS partial,
-         COALESCE(SUM(total_tokens), 0) AS tokens,
-         COALESCE(SUM(total_cost), 0) AS cost_usd
-       FROM metrics`,
+         COUNT(*) AS total,
+         COALESCE(SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END), 0) AS success,
+         COALESCE(SUM(CASE WHEN status = 'partial' THEN 1 ELSE 0 END), 0) AS partial,
+         COALESCE(SUM(CASE WHEN status NOT IN ('success', 'partial', 'running') THEN 1 ELSE 0 END), 0) AS error,
+         COALESCE(SUM(CASE WHEN tokens > 0 THEN CAST(tokens AS INTEGER) ELSE 0 END), 0) AS tokens,
+         COALESCE(SUM(CASE WHEN cost_usd > 0 THEN cost_usd ELSE 0 END), 0) AS cost_usd
+       FROM history
+       WHERE status <> 'running'`,
     )
     .get();
   return {
