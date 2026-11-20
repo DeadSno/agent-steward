@@ -46,7 +46,7 @@ path, and the OS scheduler is only one of them (CONCEPT §5, §8):
 
 | Entry | Examples | Goes through the OS scheduler? |
 | --- | --- | --- |
-| ad-hoc (no OS registration) | agent tools · GUI · CLI · TUI · RPC (`run_mission`) | No |
+| ad-hoc (no OS registration) | GUI · CLI · TUI · RPC (`run_mission`) | No |
 | internal orchestration (core-driven, no OS) | chains · DAG dependents · retries · matrix continuation · escalation · resume after pause/crash | No |
 | registered triggers | `cron` / `once` | Yes — registered with Task Scheduler / launchd / crontab |
 | registered, in-process | `file` / `git` / `mcp-event` / webhook | No — watched inside the plugin process |
@@ -60,7 +60,7 @@ The OS scheduler is responsible only for firing registered `cron`/`once` ticks.
 │ ENTRIES                                                             │
 │                                                                     │
 │  ad-hoc (no OS registration)                                        │
-│    agent tools · GUI · CLI · TUI · RPC (`run_mission`)               │
+│    GUI · CLI · TUI · RPC (`run_mission`)                             │
 │                                                                     │
 │  internal orchestration (core-driven, no OS)                        │
 │    chains · DAG dependents · retries · matrix continuation ·        │
@@ -163,7 +163,7 @@ review step.
 
 `src/core/mission.ts` turns a one-off request into a `RunContext` without
 registering anything in the OS scheduler. The same entry point is exposed by
-the agent tool / RPC method `run_mission`, the CLI command `agent-steward run`
+the RPC method `run_mission` (not registered as an agent tool), the CLI command `agent-steward run`
 and the GUI panel «Ad-hoc миссия».
 
 - **MissionSpec (AB-8.1)** — `prompt` is required; `cwd`, `taskName`,

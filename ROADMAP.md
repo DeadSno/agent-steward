@@ -135,10 +135,6 @@ Legacy: `opencode-windows-scheduler@1.5.8`.
 
 - [ ] QV-3.1 `src/index.ts:3925` сопоставляет только `def.mcpEvent?.event?.trim().toLowerCase() === event.toLowerCase()`; `emit_event({eventName:'qwenval.probe'})` вернул `no_subscribers` для задачи с `server:'qwenval'` — P2. Действие: учитывать `server` при сопоставлении или убрать поле из контракта `schedule_task`; тест с двумя серверами и одинаковым именем события.
 
-**Задача QV-5 — `run_mission` ошибочно назван инструментом агента** · P2 · ⬜
-
-- [ ] QV-5.1 `docs/ARCHITECTURE.md:166` называет `run_mission` «agent tool / RPC method», хотя его нет в реестре 30 инструментов (только RPC/CLI/GUI); метрика `ROADMAP-STRATEGY.md:164` «Покрытие RPC инструментами агента 100%» поэтому неверна — P2. Действие: исправить формулировку в ARCHITECTURE и переопределить метрику в STRATEGY без ложного 100%.
-
 **Задача QV-6 — ROADMAP §2 скрывает непостроенные части execution model** · P2 · ⬜
 
 - [ ] QV-6.1 В §2 этого файла сказано «Открытых задач нет», хотя `docs/EXECUTION-LOOP.md:16-19` перечисляет непостроенное (ledger/provenance, класс риска, бюджет миссии, flake-aware, отложенные эффекты, context compilation, worktree/sandbox, egress, approvals) — P2. Действие: восстановить открытую очередь в §2, но сначала перепроверить каждый пункт по коду: `src/core/gate-integrity.ts` (SHA-256, fail-closed, подключён в `src/core/ps-wrapper.ts:815-827`) и `src/core/worktree*.ts` уже реализованы — убрать их из списка «не построено» в EXECUTION-LOOP.
