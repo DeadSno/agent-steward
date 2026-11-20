@@ -13,13 +13,13 @@
 
 По правилам подзадачи:
 
-- `ROADMAP.md` **не трогался** — QA-A2.2–A2.7 не отмечены `[x]`, эпик не помечен выполненным;
+- `ROADMAP.md` **не трогался** — QA-A2.2–A2.7 по-прежнему `[ ]`, эпик `⬜` (не помечен выполненным);
 - `.github/workflows/ci.yml` **не трогался** — строка `npm run lint:baseline` **не удалялась**;
 - коммит/push **не выполнялись** (это сделает afterScript);
 - суб-агенты **не спавнились**.
 
 Динамика: `543 (старт) → 355 (финальный замер, −188)`. На всех замерах
-`error = 0`, но `warning > 0` — критерий «ноль предупреждений» не достигнут.
+`error = 0`, но `warning > 0` — критерий «реальный ноль предупреждений» не достигнут.
 
 ## Результаты команд (свежий прогон)
 
@@ -27,24 +27,15 @@
 | --- | --- |
 | `npm run build` | ✅ PASS (`tsc`, без ошибок) |
 | `npm run lint` | ⚠️ 355 warning, 0 error |
-| `npm run test:parallel` | ❌ 111/112 наборов, упал `test-docs.mjs` (exit 1) |
+| `npm run test:parallel` | ✅ PASS — 113/113 наборов за 37.3s |
 | `npm run lint:baseline` | ✅ PASS — «новых предупреждений нет — 355 warning (baseline 543, -188)» |
 | `npx eslint src --format json` | 0 error / **355 warning** / 46 файлов |
 
-### Детали падения `test-docs.mjs`
-
-Мета-гейт `Docs: 108/109 проверок пройдено`. В момент полного прогона
-не проходила проверка
-`package.json: все 117 test-*.mjs на диске упомянуты в скриптах (не упомянуто: 1)`
-— не был упомянут `test-test-plan.mjs`.
-
-В ходе верификации рабочее дерево менялось параллельными подзадачами:
-`package.json` был дополнен (теперь все 117 файлов упомянуты, `unlisted = 0`),
-из-за чего повторный `node test-docs.mjs` падает уже по другой проверке:
-`README: число test suites (112) = число node test-*.mjs в npm test (113)`.
-То есть тестовый набор **не зелёный** в обеих точках замера; причина
-сдвинулась, но факт провала `test-docs.mjs` остаётся. Для закрытия эпика
-требуется привести счётчик в README (112 → 113) и заново прогнать 112/112.
+Тестовый набор зелёный: `test-docs.mjs` в этом прогоне прошёл. Ранее (в первом
+снимке от 12:45) он падал из-за рассинхрона счётчика `test-test-plan.mjs`; сейчас
+`README.md` показывает `113 test suites` и в `npm test` 113 `node test-*.mjs` —
+мета-гейт согласован, repetitive action не требуется. Блокирует закрытие только
+остаток ESLint-warning.
 
 ## Разбивка по правилам ESLint (355 warning, 0 error)
 
@@ -120,15 +111,12 @@ base-to-string, optional chain, redundant union), исправляются бе�
    (1–8), `src/i18n.ts` (3) — убрать явные `any`, `no-base-to-string`,
    `no-floating-promises`, `await-thenable`, неиспользуемые импорты/аргументы.
 3. **QA-A2.6 / GUI/TUI** — проверить покрытие `src/gui.tsx`, `src/tui*.tsx` ESLint и
-   довести их до нуля (в текущем снимке они в ESLint-покрытии не фигурируют).
-4. **Мета-гейт (P1)**: счётчик в README (112) не совпадает с числом `node test-*.mjs`
-   в `npm test` (113) после добавления `test-test-plan.mjs`. Формат находки:
-   `тестовый мета-гейт: test-docs.mjs / README.md (README 112 vs npm test 113) — P1. Действие: обновить счётчик "# 113 test suites" в README.`
-5. **Повторить QA-A2.7** после завершения всех подзадач и стабилизации дерева:
-   `npm run build`, `npm run lint`, `npm run test:parallel` (цель 112/112),
-   `npm run lint:baseline`, `npx eslint src --format json` → ожидается
-   `0 error / 0 warning`. Только после этого отмечать QA-A2.2–A2.7 как `[x]` и
-   удалять строку `lint:baseline` из CI.
+   довести их до нуля (в текущем снимке они в ESLint-покрытии не фигурируют;
+   в `tsconfig.json` исключены).
+4. **Повторить QA-A2.7** после завершения всех подзадач: `npm run build`,
+   `npm run lint`, `npm run test:parallel`, `npm run lint:baseline`,
+   `npx eslint src --format json` → ожидается `0 error / 0 warning`. Только после
+   этого отмечать QA-A2.2–A2.7 как `[x]` и удалять строку `lint:baseline` из CI.
 
 ## Итоговая цифра
 
