@@ -9,7 +9,6 @@ import {
   isShadowActive,
   type TriageSettings,
   type NotificationDedupSettings,
-  type NotificationEmbeddingSettings,
 } from "./settings.js";
 import {
   buildAnalytics,
@@ -34,8 +33,15 @@ import {
 import type { TriageInput } from "./core/triage.js";
 import { t } from "./i18n.js";
 
-/** Статус завершения задачи, который приходит из record-history. */
-export type NotificationStatus = "success" | "error" | "timeout" | string;
+/**
+ * Статус завершения задачи, который приходит из record-history.
+ *
+ * Три известных значения оставлены для автодополнения, `(string & {})`
+ * сохраняет возможность прийти произвольному статусу из внешней истории
+ * (иначе @typescript-eslint/no-redundant-type-constituents считает literals
+ * перекрытыми `string`). Поведение и пейлоады не меняются — это только тип.
+ */
+export type NotificationStatus = "success" | "error" | "timeout" | (string & {});
 
 /** Содержимое уведомления. */
 export interface NotificationPayload {
@@ -250,6 +256,19 @@ function validateWebhookUrl(url: string): URL {
   return parsed;
 }
 
+/**
+ * Type guard для AbortError от fetch (DOMException): проверяем свойство `name`
+ * на границе внешнего API, не расширяя значение до `any`.
+ */
+function isAbortError(err: unknown): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    "name" in err &&
+    err.name === "AbortError"
+  );
+}
+
 /** Одна попытка POST. Бросает WebhookError с признаком retryable. */
 async function postOnce(
   parsed: URL,
@@ -274,8 +293,8 @@ async function postOnce(
         retryable,
       );
     }
-  } catch (err: any) {
-    if (err?.name === "AbortError") {
+  } catch (err: unknown) {
+    if (isAbortError(err)) {
       throw new WebhookError(
         t("notify.error.webhookTimeout", { seconds: timeoutMs / 1000 }),
         true,
@@ -423,7 +442,7 @@ async function deliverDetailed(
       await sendWebhook(webhook.url, message, webhookOptionsFrom(config));
       console.log("[agent-steward] Уведомление отправлено в webhook.");
       results.push({ channel: "webhook", ok: true });
-    } catch (err: any) {
+    } catch (err: unknown) {
       const text = err instanceof Error ? err.message : String(err);
       console.error(`[agent-steward] Webhook: ${text}`);
       results.push({ channel: "webhook", ok: false, error: text });
@@ -449,7 +468,7 @@ async function deliverDetailed(
         });
         console.log("[agent-steward] Уведомление отправлено в Telegram.");
         results.push({ channel: "telegram", ok: true });
-      } catch (err: any) {
+      } catch (err: unknown) {
         const text = err instanceof Error ? err.message : String(err);
         console.error(`[agent-steward] Telegram: ${text}`);
         results.push({ channel: "telegram", ok: false, error: text });
@@ -552,6 +571,21 @@ export interface DedupRecord {
   windowMinutes: number;
 }
 
+/**
+ * Строка таблицы `notification_dedup` в snake_case (как её возвращает
+ * `node:sqlite`). Граница БД: `SqliteStatement.get()` типизирован как `any`
+ * в src/db/index.ts, поэтому сужаем до доменного интерфейса сразу на чтении.
+ */
+interface DedupRow {
+  key: string;
+  task_name: string;
+  status: string;
+  count: number;
+  first_at: string;
+  last_at: string;
+  window_minutes: number | null;
+}
+
 /** Ключ дедупа: комбинация задачи и статуса. */
 function dedupKey(taskName: string, status: string): string {
   return (taskName + "|" + status).toLowerCase();
@@ -571,7 +605,7 @@ function dedupReadOrCreate(
   const now = new Date().toISOString();
   const row = db
     .prepare("SELECT * FROM notification_dedup WHERE key = ?")
-    .get(key);
+    .get(key) as DedupRow | undefined;
 
   if (!row) {
     db.prepare(
@@ -658,15 +692,10 @@ function messageWithDedupCount(message: string, count: number): string {
  * В будущем можно заменить на nomic-embed-text-v2-moe или другую модель.
  */
 
-interface EmbeddingRecord {
+/** Строка `notification_embeddings`, достаточная для поиска похожего вектора. */
+interface EmbeddingRow {
   key: string;
-  task_name: string;
-  status: string;
-  message_text: string;
-  embedding: number[];
-  dimension: number;
-  created_at: string;
-  window_minutes: number;
+  embedding_json: string;
 }
 
 /** Размерность вектора фиксирована: feature hashing, а не словарь сообщения. */
@@ -738,7 +767,7 @@ export function tokenize(text: string): string[] {
  */
 export function textToVector(text: string): number[] {
   const tokens = tokenize(text);
-  const vec: number[] = new Array(EMBEDDING_DIMENSION).fill(0);
+  const vec: number[] = new Array<number>(EMBEDDING_DIMENSION).fill(0);
   if (tokens.length === 0) return vec;
 
   const counts = new Map<string, number>();
@@ -777,6 +806,26 @@ function cosineSimilarity(a: number[], b: number[]): number {
 }
 
 /**
+ * Безопасный разбор JSON-вектора из БД — граница внешних данных.
+ * Возвращает null для битых/нечисловых записей вместо `any` из JSON.parse.
+ */
+function parseNumberArray(json: string): number[] | null {
+  let value: unknown;
+  try {
+    value = JSON.parse(json);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(value)) return null;
+  const result: number[] = [];
+  for (const item of value) {
+    if (typeof item !== "number") return null;
+    result.push(item);
+  }
+  return result;
+}
+
+/**
  * Проверяет, есть ли в БД вектор, достаточно похожий на text.
  * Сравниваются только векторы той же задачи и того же статуса: иначе успех
  * одной задачи «заражал» бы ошибки другой. Берём последние LIMIT векторов окна.
@@ -798,24 +847,18 @@ function embeddingExists(
         "WHERE task_name = ? AND status = ? AND created_at >= ? " +
         "ORDER BY created_at DESC LIMIT 500",
     )
-    .all(taskName, status, since) as {
-    key: string;
-    embedding_json: string;
-  }[];
+    .all(taskName, status, since) as EmbeddingRow[];
   const vec = textToVector(message);
   let bestKey = "";
   let bestSim = 0;
   for (const row of rows) {
-    try {
-      const emb: number[] = JSON.parse(row.embedding_json);
-      if (!Array.isArray(emb) || emb.length !== vec.length) continue;
-      const sim = cosineSimilarity(vec, emb);
-      if (sim > bestSim) {
-        bestSim = sim;
-        bestKey = row.key;
-      }
-    } catch {
-      // пропускаем битую запись
+    const emb = parseNumberArray(row.embedding_json);
+    if (emb === null) continue;
+    if (emb.length !== vec.length) continue;
+    const sim = cosineSimilarity(vec, emb);
+    if (sim > bestSim) {
+      bestSim = sim;
+      bestKey = row.key;
     }
   }
   if (bestSim >= threshold) return { found: true, key: bestKey };
@@ -915,7 +958,7 @@ export async function notifyTaskCompletion(
         );
         // Injected scheduler может быть асинхронным — не оставляем rejection.
         if (job && typeof (job as PromiseLike<unknown>).then === "function") {
-          void Promise.resolve(job).catch((err: any) => {
+          void Promise.resolve(job).catch((err: unknown) => {
             console.error(
               `[agent-steward] Ошибка фонового триажа: ${
                 err instanceof Error ? err.message : String(err)
@@ -923,7 +966,7 @@ export async function notifyTaskCompletion(
             );
           });
         }
-      } catch (err: any) {
+      } catch (err: unknown) {
         console.error(
           `[agent-steward] Не удалось запустить фоновый триаж: ${
             err instanceof Error ? err.message : String(err)
@@ -1030,7 +1073,7 @@ export async function notifyTaskCompletion(
       }
     }
     await deliver(config, finalMessage);
-  } catch (err: any) {
+  } catch (err: unknown) {
     // Уведомление не должно ломать запись истории и саму задачу.
     console.error(
       `[agent-steward] Ошибка подготовки уведомления: ${
@@ -1065,7 +1108,7 @@ export async function notifyMatrixCompletion(
     }
 
     await deliver(config, formatMatrixMessage(info));
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error(
       `[agent-steward] Ошибка уведомления о матрице: ${
         err instanceof Error ? err.message : String(err)
@@ -1140,7 +1183,7 @@ export async function notifyStuckMatrix(stuck: StuckMatrixClone): Promise<boolea
     if (!config.matrix?.enabled) return false;
     if (!isTaskAllowed(stuck.parentName, config.filters)) return false;
     return await deliver(config, formatStuckMatrixMessage(stuck));
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error(
       `[agent-steward] Ошибка уведомления о зависшей матрице: ${
         err instanceof Error ? err.message : String(err)
@@ -1315,7 +1358,7 @@ export async function sendDigestNow(
       });
     }
     return { success: true, message: t("notify.ok.digestSent") };
-  } catch (err: any) {
+  } catch (err: unknown) {
     return {
       success: false,
       message: err instanceof Error ? err.message : String(err),
@@ -1339,7 +1382,7 @@ export async function maybeSendDigest(now: Date = new Date()): Promise<boolean> 
     }
     console.error(`[agent-steward] Дайджест не отправлен: ${result.message}`);
     return false;
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error(
       `[agent-steward] Ошибка дайджеста: ${
         err instanceof Error ? err.message : String(err)
@@ -1414,7 +1457,7 @@ export async function sendTestNotification(
       success: failed.length === 0 && sent.length > 0,
       message: parts.join(" ") || t("notify.error.testNotSent"),
     };
-  } catch (err: any) {
+  } catch (err: unknown) {
     return {
       success: false,
       message: err instanceof Error ? err.message : String(err),
@@ -1473,7 +1516,7 @@ export async function sendBugReport(
         : t("notify.error.testNotSent"),
       results,
     };
-  } catch (err: any) {
+  } catch (err: unknown) {
     return {
       success: false,
       message: err instanceof Error ? err.message : String(err),
