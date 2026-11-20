@@ -137,7 +137,7 @@ Legacy: `opencode-windows-scheduler@1.5.8`.
 
 **Задача QV-2 — shutdown-gate блокирует in-process запуски при работающем ОС-пути** · P1 · ⬜
 
-- [ ] QV-2.1 `emit_event({eventName:'probe'})` → `code:start_failed`, `matched:['QWEN-PROBE - MCP event']`, причина «Плагин выгружается: новые запуски не принимаются»; `run_task_now` той же задачи → `success:false` с той же причиной, хотя ОС-запись продолжала тикать. Код флага присутствует (`src/index.ts:7697` `PLUGIN_SHUTTING_DOWN`, `:7708` `isShuttingDown`) — дефект в застрявшем состоянии и отсутствии диагностики — P1. Действие: воспроизвести в штатном tool-host (наблюдение сделано в Code Mode), выставлять наблюдаемую причину/PID/счётчик активных операций и автосброс при нуле активных; тест «emit_event и run_task_now не отклоняются, пока ОС-путь жив».
+- [ ] QV-2.1 `emit_event({eventName:'probe'})` → `code:start_failed`, `matched:['QWEN-PROBE - MCP event']`, причина «Плагин выгружается: новые запуски не принимаются»; `run_task_now` той же задачи → `success:false` с той же причиной, хотя параллельно ОС-планировщик продолжал тикать (`QWEN-PROBE - OS cron`: Last Run 14:31:01, Last Result 0). Код флага присутствует (`src/index.ts:7697` `PLUGIN_SHUTTING_DOWN`, `:7708` `isShuttingDown`) — дефект в застрявшем состоянии и отсутствии диагностики — P1. Действие: воспроизвести в штатном tool-host (наблюдение сделано в Code Mode), выставлять наблюдаемую причину/PID/счётчик активных операций и автосброс при нуле активных; тест «emit_event и run_task_now не отклоняются, пока ОС-путь жив».
 
 **Задача QV-3 — `emit_event` игнорирует поле `mcpEvent.server`** · P2 · ⬜
 
