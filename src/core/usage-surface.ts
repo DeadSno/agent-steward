@@ -57,14 +57,14 @@ export function measureToolSurface(
     descriptionCount,
     estimatedTokens: options.countTokens
       ? options.countTokens(
-          specs
-            .map((spec) => `${spec.name} ${spec.description ?? ""} ${JSON.stringify(spec.input ?? null)}`)
-            .join("\n"),
-        )
+        specs
+          .map((spec) => `${spec.name} ${spec.description ?? ""} ${JSON.stringify(spec.input ?? null)}`)
+          .join("\n"),
+      )
       : estimateTokens(
-          specs
-            .map((spec) => `${spec.name} ${spec.description ?? ""} ${JSON.stringify(spec.input ?? null)}`)
-            .join("\n"),
-        ),
+        specs
+          .map((spec) => `${spec.name} ${spec.description ?? ""} ${JSON.stringify(spec.input ?? null)}`)
+          .join("\n"),
+      ),
   };
 }

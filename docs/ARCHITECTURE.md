@@ -435,6 +435,20 @@ enforced:
 | Logging | Append-only log per task under `logs/` |
 | History | Calls the recorder with `--start` and `--finish` |
 
+**Gate input and worktree snapshots.** A task with `qualityGate` stores a hash of
+the gate command, prompt and timeout when it is created (`core/gate-integrity.ts`,
+`gate-snapshots/*.json`); before the gate runs, both wrappers verify that hash and
+fail closed on a mismatch (G-1.2). **PL-25:** a parallel agent can edit `src/`
+without committing while a task is running, which used to make the start lint green
+and the post-flight gate fail on somebody else's uncommitted code. The wrappers now
+also capture a worktree snapshot at task start — `HEAD` plus
+`git status --porcelain --untracked-files=no -- src` — into a sibling
+`*.worktree.json` file, and verify it immediately before the gate. Guard paths are
+configurable via `AGENT_STEWARD_GATE_GUARD_PATHS` (separator `|` or `;`). If `HEAD`
+or the guarded working tree changed during the run, the gate is skipped and the run
+is marked as an error with an explicit message; non-git directories are not guarded.
+This prevents a green gate from certifying code that was changed by another task.
+
 **Единый формат lock-токена (B6).** Node (`src/core/lock.ts`), PowerShell
 (`src/core/ps-wrapper.ts`) и bash (`src/core/wrappers/bash.ts`) используют один
 формат записи владельца: `<pid>-<iso>` (Node добавляет `-<uuid>` для

@@ -180,6 +180,11 @@ Rules of thumb:
   re-trigger when it is newer than the newest dependency `finishedAt`. If you need
   exactly one follow-up run, use `nextTaskOnSuccess` (a single-parent chain) instead of
   a multi-parent `dependsOn`.
+- **Worktree snapshot for Quality Gate (PL-25).** When a task has a machine-checkable gate,
+  the wrapper snapshots `HEAD` plus guarded-path status at task start into a sibling
+  `*.worktree.json` and verifies it immediately before the gate. Foreign uncommitted edits
+  in `src/` during the run fail closed: the gate is skipped and the run is marked as an
+  error. Override guarded paths with `AGENT_STEWARD_GATE_GUARD_PATHS` (`|`/`;` separated).
 - Keep chains short and named by intent (`deploy` → `smoke-tests` → `notify-release`).
 - Cycles and self-dependencies are rejected; if a chain grows past 4–5 nodes, consider one
   task with an explicit internal checklist instead.

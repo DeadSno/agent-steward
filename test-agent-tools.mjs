@@ -314,6 +314,13 @@ check(
     psWrapper.includes("Remove-Item Env:\\" + CHILD_RUN_ENV) &&
     bashWrapper.includes(`export ${CHILD_RUN_ENV}=1`)
 );
+check(
+  "PL-25: обе обёртки снимают и проверяют worktree snapshot гейта",
+  psWrapper.includes("worktree-snapshot") &&
+    psWrapper.includes("worktree-verify") &&
+    bashWrapper.includes("worktree-snapshot") &&
+    bashWrapper.includes("worktree-verify")
+);
 const childSpecs = createToolSpecs({}, { [CHILD_RUN_ENV]: "1" });
 const parentSpecs = createToolSpecs({}, {});
 check(

@@ -181,6 +181,12 @@ $script:runId = ""
 # PL-7.2: разделённые потоки последнего хука для структурированного журнала.
 $script:lastHookStdout = ""
 $script:lastHookStderr = ""
+# PL-25: помощник целостности гейта и файл snapshot'а рабочего дерева.
+$gateIntegrityFile = ""
+if ($RecorderFile) {
+    $gateIntegrityFile = Join-Path (Split-Path $RecorderFile -Parent) "gate-integrity.js"
+}
+$worktreeSnapshotFile = ""
 
 # Hotfix 1.5.3.1: блокировка ДО записи в историю. Раньше lock существовал только
 # в in-process пути (LockManager/withLock), а schtasks-запуск обёртки его не
@@ -645,6 +651,14 @@ try {
         Set-Location $Workdir
     }
 
+    # PL-25: фиксируем состояние рабочего дерева до запуска ИИ. Перед гейтом
+    # сверяем его, чтобы чужие незакоммиченные правки src/ не давали ложный зелёный.
+    if ($QualityGate -and $GateSnapshotFile -and $Workdir -and $gateIntegrityFile -and (Test-Path -LiteralPath $gateIntegrityFile)) {
+        $worktreeSnapshotFile = [System.IO.Path]::ChangeExtension($GateSnapshotFile, ".worktree.json")
+        $snapOut = & node $gateIntegrityFile worktree-snapshot --dir "$Workdir" --out "$worktreeSnapshotFile" 2>&1
+        foreach ($line in $snapOut) { Write-Log "[agent-steward] $line" }
+    }
+
     if ($WorkspaceName) {
         $gitBranch = "-"
         $gitRemote = "-"
@@ -857,7 +871,6 @@ try {
         # снятым при создании задачи. При расхождении гейт НЕ выполняется.
         $gateIntegrityOk = $false
         if ($GateSnapshotFile -and (Test-Path -LiteralPath $GateSnapshotFile)) {
-            $gateIntegrityFile = Join-Path (Split-Path $RecorderFile -Parent) "gate-integrity.js"
             if (Test-Path -LiteralPath $gateIntegrityFile) {
                 $verifyOutput = & node $gateIntegrityFile verify --snapshot "$GateSnapshotFile" --gate-file "$QualityGate" --prompt-file "$PromptFile" --timeout $GateTimeoutSeconds 2>&1
                 $verifyCode = $LASTEXITCODE
@@ -878,6 +891,18 @@ try {
             Write-Log "[agent-steward] ОШИБКА: snapshot гейта отсутствует — запуск с гейтом невозможен."
             $script:errorMessage = "Quality Gate: snapshot входов отсутствует"
             $script:exitCode = 1
+        }
+
+        if ($gateIntegrityOk -and $worktreeSnapshotFile -and (Test-Path -LiteralPath $worktreeSnapshotFile)) {
+            $worktreeOut = & node $gateIntegrityFile worktree-verify --dir "$Workdir" --snapshot "$worktreeSnapshotFile" 2>&1
+            $worktreeCode = $LASTEXITCODE
+            foreach ($line in $worktreeOut) { Write-Log "[agent-steward] $line" }
+            if ($worktreeCode -ne 0) {
+                $gateIntegrityOk = $false
+                Write-Log "[agent-steward] ОШИБКА: рабочее дерево изменилось во время прогона — гейт не доверяем."
+                $script:errorMessage = "Quality Gate: рабочее дерево изменилось во время прогона"
+                $script:exitCode = 1
+            }
         }
 
         if ($gateIntegrityOk) {

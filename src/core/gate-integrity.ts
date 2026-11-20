@@ -9,6 +9,7 @@
  * гейта; исходники, которые гейт проверяет, в хэш не входят (агент
  * legitimately меняет их в ходе задачи).
  */
+import { execFileSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -124,13 +125,144 @@ function optionValue(argv: string[], name: string): string | undefined {
 }
 
 /**
+ * PL-25: состояние отслеживаемых исходников на границе прогона.
+ *
+ * Хэш входов гейта (G-1.2) защищает от подмены самой команды, но не от
+ * чужого незакоммиченного кода: параллельная задача может изменить `src/`
+ * между стартом runners и post-flight гейтом, и гейт «позеленеет» на
+ * уже другом дереве. Фиксируем HEAD + `git status --porcelain` для `src/`.
+ */
+export interface WorktreeSnapshot {
+  version: number;
+  head: string;
+  status: string;
+  capturedAt: string;
+}
+
+export const WORKTREE_SNAPSHOT_VERSION = 1;
+
+/** Пути, за которыми следит гейт; по умолчанию только исходники плагина. */
+export function worktreeGuardPaths(env: NodeJS.ProcessEnv = process.env): string[] {
+  const raw = env.AGENT_STEWARD_GATE_GUARD_PATHS?.trim();
+  if (!raw) return ["src"];
+  const parts = raw.split(/[|;]/).map((item) => item.trim()).filter(Boolean);
+  return parts.length ? parts : ["src"];
+}
+
+function gitOutput(dir: string, args: string[]): string | null {
+  try {
+    return execFileSync("git", ["-C", dir, ...args], {
+      encoding: "utf8",
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+  } catch {
+    return null;
+  }
+}
+
+/** Возвращает null, если каталог не git-репозиторий или git недоступен. */
+export function readWorktreeState(
+  dir: string,
+  env: NodeJS.ProcessEnv = process.env,
+): { head: string; status: string } | null {
+  const head = gitOutput(dir, ["rev-parse", "HEAD"]);
+  if (head === null) return null;
+  const status = gitOutput(dir, ["status", "--porcelain", "--untracked-files=no", "--", ...worktreeGuardPaths(env)]);
+  if (status === null) return null;
+  return { head: head.trim(), status };
+}
+
+/** Пишет snapshot дерева; null — не git-репозиторий (гейт не блокируем). */
+export function captureWorktreeSnapshot(
+  dir: string,
+  outFile: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string | null {
+  const state = readWorktreeState(dir, env);
+  if (!state) return null;
+  const snapshot: WorktreeSnapshot = {
+    version: WORKTREE_SNAPSHOT_VERSION,
+    ...state,
+    capturedAt: new Date().toISOString(),
+  };
+  fs.mkdirSync(path.dirname(outFile), { recursive: true });
+  fs.writeFileSync(outFile, `${JSON.stringify(snapshot, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+  return outFile;
+}
+
+export function readWorktreeSnapshot(file: string): WorktreeSnapshot | null {
+  try {
+    const parsed: unknown = JSON.parse(fs.readFileSync(file, "utf8"));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const value = parsed as Partial<WorktreeSnapshot>;
+    if (value.version !== WORKTREE_SNAPSHOT_VERSION) return null;
+    if (typeof value.head !== "string" || typeof value.status !== "string") return null;
+    return {
+      version: WORKTREE_SNAPSHOT_VERSION,
+      head: value.head,
+      status: value.status,
+      capturedAt: typeof value.capturedAt === "string" ? value.capturedAt : "",
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Сверяет дерево со snapshot'ом, снятым на старте задачи. */
+export function verifyWorktreeSnapshot(
+  dir: string,
+  file: string,
+  env: NodeJS.ProcessEnv = process.env,
+): { ok: boolean; reason?: string } {
+  const snapshot = readWorktreeSnapshot(file);
+  if (!snapshot) {
+    return { ok: false, reason: "snapshot рабочего дерева отсутствует или повреждён" };
+  }
+  const actual = readWorktreeState(dir, env);
+  // Не git-репозиторий: нечего сравнивать, гейт работает по старой схеме.
+  if (!actual) return { ok: true };
+  if (actual.head !== snapshot.head) {
+    return { ok: false, reason: "HEAD изменился с момента старта задачи" };
+  }
+  if (actual.status !== snapshot.status) {
+    return { ok: false, reason: "исходники в src/ изменились с момента старта задачи" };
+  }
+  return { ok: true };
+}
+
+/**
  * CLI для обёрток: `node gate-integrity.js verify --snapshot <file>
  * --gate-file <file> | --gate-command <text> --prompt-file <file> --timeout <n>`.
  * exit 0 — входы совпадают, exit 1 — расхождение/отсутствие snapshot'а.
  */
 export async function main(argv = process.argv.slice(2)): Promise<number> {
+  if (argv[0] === "worktree-snapshot") {
+    const dir = optionValue(argv, "--dir");
+    const outFile = optionValue(argv, "--out");
+    if (!dir || !outFile) {
+      console.error("gate-integrity: worktree-snapshot требует --dir и --out");
+      return 2;
+    }
+    captureWorktreeSnapshot(dir, outFile);
+    return 0;
+  }
+  if (argv[0] === "worktree-verify") {
+    const dir = optionValue(argv, "--dir");
+    const file = optionValue(argv, "--snapshot");
+    if (!dir || !file) {
+      console.error("gate-integrity: worktree-verify требует --dir и --snapshot");
+      return 2;
+    }
+    const result = verifyWorktreeSnapshot(dir, file);
+    if (!result.ok) {
+      console.error(`gate-integrity: ${result.reason ?? "рабочее дерево изменилось"}`);
+      return 1;
+    }
+    return 0;
+  }
   if (argv[0] !== "verify") {
-    console.error("gate-integrity: только команда verify поддерживается");
+    console.error("gate-integrity: поддерживаются verify, worktree-snapshot, worktree-verify");
     return 2;
   }
   const snapshotFile = optionValue(argv, "--snapshot");

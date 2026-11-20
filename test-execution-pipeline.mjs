@@ -269,6 +269,50 @@ check("gate-integrity: CLI verify — атака (подмена gate) → 1", c
 const cliBadArgs = spawnSync(process.execPath, [integrityCli, "verify"], { encoding: "utf8", windowsHide: true });
 check("gate-integrity: CLI verify — плохие аргументы → 2", cliBadArgs.status === 2);
 
+// --- PL-25: worktree snapshot защищает гейт от чужих незакоммиченных правок ---
+const guardRepo = path.join(tempRoot, "guard-repo");
+const runGit = (args) => spawnSync("git", ["-C", guardRepo, ...args], { encoding: "utf8", windowsHide: true });
+fs.mkdirSync(path.join(guardRepo, "src"), { recursive: true });
+check("PL-25: temp git repo инициализирован", runGit(["init", "-q"]).status === 0);
+runGit(["config", "user.email", "qa@example.invalid"]);
+runGit(["config", "user.name", "QA"]);
+const guardSrc = path.join(guardRepo, "src", "file.txt");
+fs.writeFileSync(guardSrc, "clean\n", "utf8");
+runGit(["add", "src/file.txt"]);
+check("PL-25: стартовый коммит создан", runGit(["commit", "-q", "-m", "clean"]).status === 0);
+const worktreeSnapshot = path.join(tempRoot, "worktree-snapshot.json");
+check(
+  "PL-25: worktree snapshot создан",
+  gateIntegrity.captureWorktreeSnapshot(guardRepo, worktreeSnapshot) === worktreeSnapshot,
+);
+check(
+  "PL-25: неизменённое дерево верифицируется",
+  gateIntegrity.verifyWorktreeSnapshot(guardRepo, worktreeSnapshot).ok === true,
+);
+fs.writeFileSync(guardSrc, "foreign edit\n", "utf8");
+const worktreeFail = gateIntegrity.verifyWorktreeSnapshot(guardRepo, worktreeSnapshot);
+check(
+  "PL-25: чужая правка src ловится",
+  worktreeFail.ok === false && /src/i.test(worktreeFail.reason ?? ""),
+);
+const cliWtSnapshot = spawnSync(
+  process.execPath,
+  [integrityCli, "worktree-snapshot", "--dir", guardRepo, "--out", path.join(tempRoot, "cli-worktree.json")],
+  { encoding: "utf8", windowsHide: true },
+);
+check("PL-25: CLI worktree-snapshot → 0", cliWtSnapshot.status === 0);
+const cliWtVerify = spawnSync(
+  process.execPath,
+  [integrityCli, "worktree-verify", "--dir", guardRepo, "--snapshot", worktreeSnapshot],
+  { encoding: "utf8", windowsHide: true },
+);
+check("PL-25: CLI worktree-verify на изменённом дереве → 1", cliWtVerify.status === 1);
+const cliWtBadArgs = spawnSync(process.execPath, [integrityCli, "worktree-verify"], {
+  encoding: "utf8",
+  windowsHide: true,
+});
+check("PL-25: CLI worktree-verify — плохие аргументы → 2", cliWtBadArgs.status === 2);
+
 closeDb();
 try {
   fs.rmSync(tempRoot, { recursive: true, force: true });
