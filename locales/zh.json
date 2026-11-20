@@ -782,6 +782,7 @@
   "tool.event.none": "没有任务订阅事件 “{event}”。",
   "tool.event.processed": "事件 “{event}” 已处理。启动的任务数：{count}。",
   "tool.event.triggered": "启动的任务数：{count}。",
+  "tool.event.startFailed": "启动失败的任务数：{count}。",
   "tool.history.cleanFailed": "清理历史失败：{error}",
   "tool.history.cleaned": "已删除 {deleted} 条记录（按年龄：{byAge}，按上限：{byCount}），剩余 {kept} 条。",
   "tool.localAi.unchanged": "设置未更改。",

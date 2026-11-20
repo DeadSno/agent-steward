@@ -3886,45 +3886,90 @@ const cleanupHistoryExecute = wrapExecute<CleanupHistoryArgs>(async (args) => {
   };
 });
 
-/** emit_event — запуск задач, подписанных на MCP-событие. */
-const emitEventExecute = wrapExecute<EmitEventArgs>(async (args) => {
-  const eventName = args.eventName?.trim();
-  if (!eventName) {
-    return { content: JSON.stringify({ success: false, error: t("tool.event.nameRequired") }) };
+/** PL-35: единый обработчик события для агентского инструмента и RPC/GUI. */
+type EmitEventCode = "no_subscribers" | "start_failed" | "ok";
+type EmitEventResult = {
+  success: boolean;
+  code: EmitEventCode;
+  event: string;
+  matched: string[];
+  triggered: string[];
+  failed: Array<{ name: string; error: string }>;
+  message: string;
+};
+
+const DEFAULT_EVENT_PRIORITY = 5;
+
+export async function emitEventCore(
+  rawEventName: string | undefined,
+  payload: unknown,
+): Promise<EmitEventResult> {
+  const event = rawEventName?.trim() ?? "";
+  if (!event) {
+    return {
+      success: false,
+      code: "no_subscribers",
+      event,
+      matched: [],
+      triggered: [],
+      failed: [],
+      message: t("tool.event.nameRequiredShort"),
+    };
   }
-  const payload = args.payload ?? {};
+
   const definitions = await loadTaskDefinitions();
   const matched = definitions
     .filter(
       (def) =>
-        def.triggerType === "mcp-event" &&
-        def.mcpEvent?.event?.toLowerCase() === eventName.toLowerCase() &&
+        (def.triggerType ?? "cron") === "mcp-event" &&
+        def.mcpEvent?.event?.trim().toLowerCase() === event.toLowerCase() &&
         matchesEventFilter(def.mcpEvent?.filter, payload),
     )
     .sort(
       (a, b) =>
-        (normalizePriority(b.priority) ?? 0) - (normalizePriority(a.priority) ?? 0),
+        (normalizePriority(b.priority) ?? DEFAULT_EVENT_PRIORITY) -
+        (normalizePriority(a.priority) ?? DEFAULT_EVENT_PRIORITY),
     );
 
   const triggered: string[] = [];
+  const failed: Array<{ name: string; error: string }> = [];
   for (const def of matched) {
     try {
       await runTaskEntry(def.name);
       triggered.push(def.name);
     } catch (err) {
-      console.error(`[agent-steward] emit_event: не удалось запустить ${def.name}:`, err);
+      const error = err instanceof Error ? err.message : String(err);
+      failed.push({ name: def.name, error });
+      console.error(`[agent-steward] emit_event: не удалось запустить ${def.name}: ${error}`);
     }
   }
+
+  const code: EmitEventCode =
+    matched.length === 0 ? "no_subscribers" : failed.length > 0 ? "start_failed" : "ok";
+  const message =
+    code === "no_subscribers"
+      ? t("tool.event.none", { event })
+      : code === "start_failed"
+        ? t("tool.event.startFailed", { count: failed.length })
+        : t("tool.event.triggered", { count: triggered.length });
   return {
-    content: JSON.stringify({
-      success: true,
-      message:
-        triggered.length > 0
-          ? t("tool.event.triggered", { count: triggered.length })
-          : t("tool.event.none", { event: eventName }),
-      triggered,
-    }),
+    success: true,
+    code,
+    event,
+    matched: matched.map((def) => def.name),
+    triggered,
+    failed,
+    message,
   };
+}
+
+/** emit_event — запуск задач, подписанных на MCP-событие. */
+const emitEventExecute = wrapExecute<EmitEventArgs>(async (args) => {
+  const result = await emitEventCore(args.eventName, args.payload ?? {});
+  if (!result.success) {
+    return { content: JSON.stringify({ ...result, error: result.message }) };
+  }
+  return { content: JSON.stringify(result) };
 });
 
 /** manage_secrets — зашифрованное хранилище секретов. */
@@ -5413,47 +5458,7 @@ const v2Plugin = Plugin.define({
           eventName?: string;
           payload?: unknown;
         };
-        const normalized = eventName?.trim();
-        if (!normalized) {
-          return { success: false, message: t("tool.event.nameRequiredShort"), triggered: [] };
-        }
-
-        // Ищем задачи с MCP-триггером, совпадающим по имени события и фильтру.
-        const definitions = await loadTaskDefinitions();
-        const matched = definitions
-          .filter((def) => (def.triggerType ?? "cron") === "mcp-event")
-          .filter(
-            (def) =>
-              def.mcpEvent?.event?.trim().toLowerCase() === normalized.toLowerCase(),
-          )
-          .filter((def) => matchesEventFilter(def.mcpEvent?.filter, payload))
-          .sort(
-            (a, b) =>
-              (normalizePriority(b.priority) ?? 5) - (normalizePriority(a.priority) ?? 5),
-          );
-
-        const triggered: string[] = [];
-        for (const def of matched) {
-          try {
-            await runTaskEntry(def.name);
-            triggered.push(def.name);
-            console.log(
-              `[agent-steward] Запуск задачи "${def.name}" по MCP-событию "${normalized}".`,
-            );
-          } catch (err) {
-            console.error(
-              `[agent-steward] Не удалось запустить "${def.name}" по событию "${normalized}": ${
-                err instanceof Error ? err.message : String(err)
-              }`,
-            );
-          }
-        }
-
-        return {
-          success: true,
-          triggered,
-          message: t("tool.event.processed", { event: normalized, count: triggered.length }),
-        };
+        return await emitEventCore(eventName, payload);
       },
       pause_task: async (input: unknown) => {
         const { name, until } = input as { name: string; until?: string };

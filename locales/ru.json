@@ -782,6 +782,7 @@
   "tool.event.none": "Нет задач, подписанных на событие \"{event}\".",
   "tool.event.processed": "Событие \"{event}\" обработано. Запущено задач: {count}.",
   "tool.event.triggered": "Запущено задач: {count}.",
+  "tool.event.startFailed": "Не удалось запустить задач: {count}.",
   "tool.history.cleanFailed": "Не удалось очистить историю: {error}",
   "tool.history.cleaned": "Удалено {deleted} записей (по возрасту: {byAge}, по лимиту: {byCount}), осталось {kept}.",
   "tool.localAi.unchanged": "Настройки не изменились.",

@@ -21,6 +21,7 @@ const {
   manageProfilesSchema,
   transferTasksSchema,
   emitEventSchema,
+  emitEventCore,
   getTaskLogsSchema,
   createToolHandlers,
 } = await import("./dist/index.js");
@@ -337,6 +338,27 @@ check(
     logsByName.success === true &&
     logsByAlias.logs.endsWith("line-10") &&
     logsNoName.success === false
+);
+
+// PL-35: emit_event возвращает код, список совпавших и ошибок запуска.
+const noSubscribers = await emitEventCore("qa.pl35.no-such-event", {});
+const emptyEvent = await emitEventCore("   ", {});
+check(
+  "PL-35: emit_event различает no_subscribers и пустое имя",
+  noSubscribers.code === "no_subscribers" &&
+    noSubscribers.success === true &&
+    Array.isArray(noSubscribers.matched) &&
+    Array.isArray(noSubscribers.failed) &&
+    emptyEvent.success === false
+);
+const rpcSource = fs.readFileSync(new URL("./dist/index.js", import.meta.url), "utf8");
+const rpcStart = rpcSource.indexOf("emit_event: async (");
+const rpcHandler = rpcSource.slice(rpcStart, rpcStart + 300);
+check(
+  "PL-35: RPC-хендлер использует общий обработчик emit_event",
+  rpcStart >= 0 &&
+    rpcHandler.includes("emitEventCore") &&
+    !rpcHandler.includes("normalizePriority")
 );
 
 const failed = results.filter((r) => !r.ok);

@@ -782,6 +782,7 @@
   "tool.event.none": "No tasks are subscribed to event \"{event}\".",
   "tool.event.processed": "Event \"{event}\" processed. Tasks started: {count}.",
   "tool.event.triggered": "Tasks started: {count}.",
+  "tool.event.startFailed": "Failed to start tasks: {count}.",
   "tool.history.cleanFailed": "Failed to clean history: {error}",
   "tool.history.cleaned": "Deleted {deleted} records (by age: {byAge}, by limit: {byCount}), {kept} left.",
   "tool.localAi.unchanged": "Settings unchanged.",
