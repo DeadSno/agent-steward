@@ -6,6 +6,8 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ws-scheduler-agent-"));
 process.env.APPDATA = tempRoot;
@@ -26,6 +28,7 @@ const {
   createToolHandlers,
 } = await import("./dist/index.js");
 const { getTaskLogs } = await import("./dist/core/scheduler/logs.js");
+const { readStructuredLogs } = await import("./dist/core/structured-log.js");
 const { LOG_DIR, sanitizeName } = await import("./dist/types.js");
 const { loadTemplates, saveTemplate, deleteTemplate } = await import("./dist/templates.js");
 
@@ -257,6 +260,38 @@ const bashWrapper = fs.readFileSync(
 check(
   "PL-6.1: pre-flight ошибка подсказывает явный exit 0 в PS и bash",
   psWrapper.includes("exit 0") && bashWrapper.includes("exit 0")
+);
+
+// PL-7.2: обе обёртки пишут разделённые stdout/stderr через hook-output.js.
+const hookHelper = fs.readFileSync(new URL("./dist/hook-output.js", import.meta.url), "utf8");
+check(
+  "PL-7.2: обёртки подключают hook-output.js для preFlight/postFlight",
+  psWrapper.includes("hook-output.js") &&
+    psWrapper.includes("Write-HookStructuredOutput") &&
+    bashWrapper.includes("run_hook_captured") &&
+    bashWrapper.includes("hook-output.js") &&
+    hookHelper.includes("appendHookOutputLog")
+);
+const hookOut = path.join(tempRoot, "hook-stdout.txt");
+const hookErr = path.join(tempRoot, "hook-stderr.txt");
+fs.writeFileSync(hookOut, "push ok\n", "utf8");
+fs.writeFileSync(hookErr, "remote: diagnostics\n", "utf8");
+const hookRun = spawnSync(
+  process.execPath,
+  [fileURLToPath(new URL("./dist/hook-output.js", import.meta.url)), "postFlight", "PL7-hook-probe", "3", hookOut, hookErr, "42"],
+  { encoding: "utf8" },
+);
+const hookLogs = readStructuredLogs({ event: "hook.output", task: "PL7-hook-probe", limit: 5 });
+check(
+  "PL-7.2: hook-output.js пишет exit code и разделённые потоки в журнал",
+  hookRun.status === 0 &&
+    hookLogs.records.some(
+      (record) =>
+        record.postFlightExitCode === 3 &&
+        record.postFlightStdout?.includes("push ok") &&
+        record.postFlightStderr?.includes("remote: diagnostics") &&
+        record.runId === 42,
+    )
 );
 
 // 13. Описания инструментов переведены на английский.

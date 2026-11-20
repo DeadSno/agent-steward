@@ -178,6 +178,9 @@ $script:timedOut = $false
 $script:attemptExitCode = 0
 $startedAtIso = $startTime.ToUniversalTime().ToString("o")
 $script:runId = ""
+# PL-7.2: разделённые потоки последнего хука для структурированного журнала.
+$script:lastHookStdout = ""
+$script:lastHookStderr = ""
 
 # Hotfix 1.5.3.1: блокировка ДО записи в историю. Раньше lock существовал только
 # в in-process пути (LockManager/withLock), а schtasks-запуск обёртки его не
@@ -276,6 +279,9 @@ function Invoke-HookScript {
     if (-not $timeout -or $timeout -le 0) {
         $output = & cmd.exe /c $Command 2>&1
         $code = $LASTEXITCODE
+        # Без таймаута потоки.cmd объединены — сохраняем как stdout, stderr пуст.
+        $script:lastHookStdout = (@($output) -join "\`n")
+        $script:lastHookStderr = ""
         foreach ($line in @($output)) {
             Write-Log "[hook] $line"
         }
@@ -321,6 +327,8 @@ function Invoke-HookScript {
         $errText = ""
         if ($outTask.Wait(5000)) { try { $outText = $outTask.Result } catch {} }
         if ($errTask.Wait(5000)) { try { $errText = $errTask.Result } catch {} }
+        $script:lastHookStdout = $outText
+        $script:lastHookStderr = $errText
         foreach ($text in @($outText, $errText)) {
             foreach ($line in @($text -split "\r?\n")) {
                 if ($line -ne "") {
@@ -334,6 +342,26 @@ function Invoke-HookScript {
         return 1
     } finally {
         Remove-Item -LiteralPath $hookFile -Force -ErrorAction SilentlyContinue
+    }
+}
+
+# PL-7.2: пишет отдельное событие hook.output с реальным exit code и
+# разделёнными stdout/stderr. Наблюдаемость не должна ломать задачу.
+function Write-HookStructuredOutput {
+    param([string]$Phase, [int]$ExitCode)
+    if (-not $RecorderFile) { return }
+    $helper = Join-Path (Split-Path $RecorderFile -Parent) "hook-output.js"
+    if (-not (Test-Path -LiteralPath $helper)) { return }
+    $outFile = Join-Path ([System.IO.Path]::GetTempPath()) ("sched-hook-out-" + [guid]::NewGuid().ToString("N") + ".txt")
+    $errFile = Join-Path ([System.IO.Path]::GetTempPath()) ("sched-hook-err-" + [guid]::NewGuid().ToString("N") + ".txt")
+    try {
+        Set-Content -LiteralPath $outFile -Value ([string]$script:lastHookStdout) -Encoding UTF8
+        Set-Content -LiteralPath $errFile -Value ([string]$script:lastHookStderr) -Encoding UTF8
+        & node "$helper" $Phase $TaskName $ExitCode $outFile $errFile "$script:runId" 2>$null | Out-Null
+    } catch {
+    } finally {
+        Remove-Item -LiteralPath $outFile -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $errFile -Force -ErrorAction SilentlyContinue
     }
 }
 
@@ -703,6 +731,7 @@ try {
     if ($BeforeScript) {
         Write-Log "[agent-steward] Pre-flight: $BeforeScript"
         $preCode = Invoke-HookScript -Command $BeforeScript
+        Write-HookStructuredOutput -Phase "preFlight" -ExitCode $preCode
         if ($preCode -ne 0) {
             # PL-6.1: SilentlyContinue не гарантирует код 0 — подсказываем явный exit 0.
             Write-Log "[agent-steward] ОШИБКА: Pre-flight script failed (код $preCode). Завершите хук явным 'exit 0' (например: if (Test-Path -LiteralPath '<path>') { Remove-Item -LiteralPath '<path>' -Force }; exit 0)."
@@ -879,6 +908,7 @@ try {
     if ($AfterScript) {
         Write-Log "[agent-steward] Post-flight: $AfterScript"
         $postCode = Invoke-HookScript -Command $AfterScript
+        Write-HookStructuredOutput -Phase "postFlight" -ExitCode $postCode
         if ($postCode -ne 0) {
             Write-Log "[agent-steward] ОШИБКА: Post-flight script failed (код $postCode)."
             $script:postFlightStatus = "error"
