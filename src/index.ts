@@ -6861,14 +6861,14 @@ export interface TriggerExtras {
  * присылает `emit_event`; оба поля необязательны, но хотя бы одно нужно
  * для triggerType=mcp-event (проверяется после нормализации).
  */
-type McpEventInput = {
+interface McpEventInput {
   server?: string;
   /** Каноническое имя события. Приоритетнее алиаса. */
   event?: string;
   /** Алиас emit_event; используется, только если event пуст. */
   eventName?: string;
   filter?: string;
-};
+}
 
 /**
  * PL-42: приводит mcpEvent к каноническому виду `{ server, event, filter? }`.
