@@ -9,7 +9,7 @@ project: agent-steward
 Репозиторий: плагин OpenCode для шедулинга и оркестрации (V1 ≥1.18.29 + V2). Стек:
 TypeScript strict/ESM, Node ≥22.22 (`node:sqlite`, WAL; chokidar 6), zod 4, yaml, iconv-lite;
 `@opencode/plugin ^2.2.7` + `@opencode/schema` (V2), `@opencode-ai/plugin 1.19.5` (V1-типы);
-GUI — SolidJS + Vite; TUI — OpenTUI; SQLite `scheduler.db`, `SCHEMA_VERSION=10`;
+GUI — SolidJS + Vite; TUI — OpenTUI; SQLite `scheduler.db`, `SCHEMA_VERSION=12`;
 бэкенды ОС — `schtasks` / `crontab` / `launchd`; локали `locales/{ru,en,zh}.json`.
 
 ## Что где лежит

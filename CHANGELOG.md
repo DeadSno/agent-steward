@@ -6,6 +6,8 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **QA-3.8.4 — справка о `SCHEMA_VERSION` приведена к 12.** `AGENTS.md` и два локальных SKILL.md обновлены с 10 на 12; `test-docs.mjs` получил автопроверку совпадения версии в документации с `src/db/schema.ts`.
+
 - **QA-3.8.3 — `manage_settings` поддерживает `action: "list"`.** Добавлен алиас в Zod-схему и обработчик `manageSettingsExecute` (`src/index.ts`): `list` возвращает те же настройки, что и `get`, что устраняет потерю вызовов агентами.
 
 - **QA-3.8.2 — `github-ci-check`: fetch без ECONNRESET-паники.** Добавлен `scripts/github-ci-fetch.ps1`: 4 попытки с backoff, `TimeoutSec 30`, ретрай `/jobs`; задача обновлена через `update_task` (beforeScript: repo-скрипт). Причина 2/2 ошибок — `ECONNRESET` при обращении к api.github.com.

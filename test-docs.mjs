@@ -38,6 +38,11 @@ check(
 );
 const schemaSrc = fs.readFileSync(path.join(root, "src/db/schema.ts"), "utf8");
 const schemaVersion = Number(/export const SCHEMA_VERSION = (\d+)/.exec(schemaSrc)?.[1]);
+const agentsDoc = fs.readFileSync(path.join(root, "AGENTS.md"), "utf8");
+check(
+  `AGENTS.md: SCHEMA_VERSION совпадает с кодом (${schemaVersion})`,
+  agentsDoc.includes(`SCHEMA_VERSION=${schemaVersion}`),
+);
 check(
   `ARCHITECTURE: SCHEMA_VERSION совпадает с кодом (${schemaVersion})`,
   Number.isInteger(schemaVersion) &&
