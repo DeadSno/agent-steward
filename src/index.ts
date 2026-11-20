@@ -3557,7 +3557,8 @@ const manageTemplatesExecute = wrapExecute<TemplatesArgs>(async (args) => {
   }
 
   if (args.action === "delete") {
-    const id = args.id?.trim();
+    // PL-17/PL-28/PL-32: name — такой же алиас id, как и в репозитории.
+    const id = args.id?.trim() || args.name?.trim();
     if (!id) {
       return { content: JSON.stringify({ success: false, error: t("tool.template.needDeleteId") }) };
     }

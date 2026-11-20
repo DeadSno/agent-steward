@@ -21,6 +21,7 @@ const {
   manageProfilesSchema,
   transferTasksSchema,
   emitEventSchema,
+  createToolHandlers,
 } = await import("./dist/index.js");
 const { getTaskLogs } = await import("./dist/core/scheduler/logs.js");
 const { LOG_DIR, sanitizeName } = await import("./dist/types.js");
@@ -306,6 +307,18 @@ const afterIdDelete = await loadTemplates();
 check(
   "QA-P3.3: повторное удаление и удаление по id работают",
   !afterIdDelete.some((template) => template.id === byId.id || template.name === byId.name)
+);
+
+// PL-17/PL-28/PL-32: MCP-обработчик manage_templates принимает name для delete.
+const handlers = createToolHandlers({});
+const mcpProbe = await saveTemplate({ name: "PL-32 MCP Probe", prompt: "probe" });
+const mcpDelete = JSON.parse(
+  (await handlers.manage_templates({ action: "delete", name: mcpProbe.name })).content,
+);
+check(
+  "PL-32: manage_templates delete по имени через MCP-обработчик",
+  mcpDelete.success === true &&
+    !(await loadTemplates()).some((template) => template.name === mcpProbe.name)
 );
 
 const failed = results.filter((r) => !r.ok);
