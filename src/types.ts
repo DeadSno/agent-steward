@@ -233,3 +233,24 @@ export interface ScheduledTaskInfo {
   /** true — задача поставлена на паузу (disabled). */
   paused?: boolean;
 }
+
+/**
+ * Строка history.json, приведённая к колонкам БД миграцией (QA-A2.4).
+ * Все поля уже проверены type guard'ами в src/db/migrate.ts: строки непустые,
+ * числа конечные, а status сужен до значений, которые умеет писать миграция.
+ */
+export interface MigrationHistoryRow {
+  taskName: string;
+  /** skipped/running в legacy JSON не встречаются: миграция пишет только эти четыре. */
+  status: "success" | "partial" | "timeout" | "error";
+  startedAt: string;
+  finishedAt: string | null;
+  durationMs: number | null;
+  error: string | null;
+  tokens: number | null;
+  costUsd: number | null;
+  model: string | null;
+  preFlightStatus: string | null;
+  postFlightStatus: string | null;
+  nextTask: string | null;
+}

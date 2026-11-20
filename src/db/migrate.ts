@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { PLUGIN_DIR } from "../types.js";
+import { PLUGIN_DIR, type MigrationHistoryRow } from "../types.js";
 import { getDb, isDatabaseEmpty, withTransaction } from "./index.js";
 import {
   LEGACY_METRICS_TASK,
@@ -40,6 +40,34 @@ const EMPTY_RESULT: MigrationResult = {
 
 const JSON_FILES = ["tasks.json", "history.json", "metrics.json", "templates.json"] as const;
 
+/**
+ * JSON читается как unknown: доверяем только форме (объект/массив), а не
+ * содержимому. Значения проверяются type guard'ами перед записью в БД (QA-A2.4).
+ */
+type JsonRecord = Record<string, unknown>;
+
+function isRecord(value: unknown): value is JsonRecord {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Встроенный Array.isArray возвращает слабый тип массива; свой guard даёт unknown[] (QA-A2.4). */
+function isUnknownArray(value: unknown): value is unknown[] {
+  return Array.isArray(value);
+}
+
+/**
+ * Граница внешнего API (node:fs, JSON.parse, node:sqlite): выброшенное значение
+ * не гарантированно Error. Извлечение сообщения сохранено как в legacy-коде.
+ */
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/** node:fs сообщает «файл не найден» через свойство code (внешняя граница API). */
+function isErrnoException(err: unknown): err is NodeJS.ErrnoException {
+  return err instanceof Error && "code" in err && typeof err.code === "string";
+}
+
 interface LoadedFile {
   path: string;
   exists: boolean;
@@ -51,24 +79,22 @@ async function loadJsonFile(file: string): Promise<LoadedFile> {
     const raw = await fs.readFile(file, "utf8");
     try {
       return { path: file, exists: true, value: JSON.parse(raw) };
-    } catch (err: any) {
+    } catch (err: unknown) {
       throw new Error(
-        `Некорректный JSON в ${path.basename(file)}: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
+        `Некорректный JSON в ${path.basename(file)}: ${errorText(err)}`,
       );
     }
-  } catch (err: any) {
-    if (err?.code === "ENOENT") return { path: file, exists: false, value: null };
+  } catch (err: unknown) {
+    if (isErrnoException(err) && err.code === "ENOENT") {
+      return { path: file, exists: false, value: null };
+    }
     throw err;
   }
 }
 
-function asArray(value: unknown): any[] {
-  if (Array.isArray(value)) return value;
-  if (value && typeof value === "object" && Array.isArray((value as any).tasks)) {
-    return (value as any).tasks;
-  }
+function asArray(value: unknown): unknown[] {
+  if (isUnknownArray(value)) return value;
+  if (isRecord(value) && isUnknownArray(value.tasks)) return value.tasks;
   return [];
 }
 
@@ -83,8 +109,8 @@ function toStringOrNull(value: unknown): string | null {
 }
 
 /** Приводит старую запись истории к колонкам БД. */
-function normalizeHistoryRow(raw: any): any | null {
-  if (!raw || typeof raw !== "object") return null;
+function normalizeHistoryRow(raw: unknown): MigrationHistoryRow | null {
+  if (!isRecord(raw)) return null;
   const taskName = typeof raw.taskName === "string" ? raw.taskName.trim() : "";
   const startedAt = typeof raw.startedAt === "string" ? raw.startedAt : "";
   if (!taskName || !startedAt) return null;
@@ -130,13 +156,10 @@ export async function migrateJsonToDb(
   const taskItems = asArray(byName.get("tasks.json")?.value);
   const historyItems = asArray(byName.get("history.json")?.value)
     .map(normalizeHistoryRow)
-    .filter((row): row is any => row !== null);
+    .filter((row): row is MigrationHistoryRow => row !== null);
   const templateItems = asArray(byName.get("templates.json")?.value);
-  const legacyMetrics =
-    byName.get("metrics.json")?.value &&
-    typeof byName.get("metrics.json")?.value === "object"
-      ? (byName.get("metrics.json")!.value as any)
-      : null;
+  const metricsValue = byName.get("metrics.json")?.value;
+  const legacyMetrics: JsonRecord | null = isRecord(metricsValue) ? metricsValue : null;
 
   const now = new Date().toISOString();
   let insertedTasks = 0;
@@ -148,24 +171,27 @@ export async function migrateJsonToDb(
     const db = getDb();
 
     // --- tasks ---
+    // Сырой SQL и node:sqlite — граница внешнего API: в БД попадают только
+    // значения, прошедшие проверки выше (name/createdAt — string, остальное — JSON).
     const insertTask = db.prepare(
       "INSERT INTO tasks (name, definition_json, created_at, updated_at) VALUES (?, ?, ?, ?)",
     );
     const seenTasks = new Set<string>();
     for (const item of taskItems) {
-      if (!item || typeof item !== "object") continue;
+      if (!isRecord(item)) continue;
       const name = typeof item.name === "string" ? item.name.trim() : "";
       if (!name || seenTasks.has(name.toLowerCase())) continue;
       seenTasks.add(name.toLowerCase());
 
       // workdir → workingDirectory, как в старом loadTaskDefinitions().
-      const definition: any = { ...item, name };
+      const definition: JsonRecord = { ...item, name };
+      const legacyWorkdir = definition.workdir;
       if (
         definition.workingDirectory === undefined &&
-        typeof definition.workdir === "string" &&
-        definition.workdir.trim()
+        typeof legacyWorkdir === "string" &&
+        legacyWorkdir.trim()
       ) {
-        definition.workingDirectory = definition.workdir.trim();
+        definition.workingDirectory = legacyWorkdir.trim();
       }
       delete definition.workdir;
 
@@ -210,17 +236,18 @@ export async function migrateJsonToDb(
     );
     const seenTemplates = new Set<string>();
     for (const item of templateItems) {
-      if (!item || typeof item !== "object") continue;
+      if (!isRecord(item)) continue;
       if (typeof item.prompt !== "string") continue;
       const name = typeof item.name === "string" ? item.name.trim() : "";
       if (!name) continue;
+      const legacyId = item.id;
       const id =
-        typeof item.id === "string" && item.id.trim() ? item.id.trim() : randomUUID();
+        typeof legacyId === "string" && legacyId.trim() ? legacyId.trim() : randomUUID();
       const key = id.toLowerCase();
       if (seenTemplates.has(key)) continue;
       seenTemplates.add(key);
 
-      const template = { ...item, id, name };
+      const template: JsonRecord = { ...item, id, name };
       insertTemplate.run(id, name, JSON.stringify(template));
       insertedTemplates += 1;
     }
@@ -306,11 +333,9 @@ export async function migrateJsonToDb(
       await fs.rm(backup, { force: true });
       await fs.rename(file.path, backup);
       backups.push(path.basename(backup));
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(
-        `[migrate] Не удалось переименовать ${path.basename(file.path)} в .bak: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
+        `[migrate] Не удалось переименовать ${path.basename(file.path)} в .bak: ${errorText(err)}`,
       );
     }
   }
