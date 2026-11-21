@@ -26,7 +26,7 @@ project: agent-steward
 ### 3. Тесты
 - `npm test` или `npm run test:parallel` — зелёный (~130 `test-*.mjs`).
 - `npm run test:en`, `npm run test:zh`, `npm run test:i18n` — паритет `ru/en/zh`.
-- `node test-docs.mjs` — счётчики tools/RPC, версия схемы (`SCHEMA_VERSION=12`), ключи конфига.
+- `node test-docs.mjs` — счётчики tools/RPC, версия схемы (`SCHEMA_VERSION=13`), ключи конфига.
 - `node test-workflows.mjs` — permissions/guards в `.github/workflows`.
 - `node test-package-exports.mjs` + `npm pack --dry-run` — все цели `exports` есть в тарболе,
   включая `./rpc`.

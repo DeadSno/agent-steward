@@ -22,9 +22,11 @@ const check = (name, ok, detail) => {
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "agent-steward-ac1-"));
 const dbPath = path.join(tempRoot, "ac1.db");
 
-const { initDb, closeDb } = await import("./dist/db/index.js");
+const { initDb, closeDb, getDb } = await import("./dist/db/index.js");
 const repo = await import("./dist/db/runs-repo.js");
 const ac1 = await import("./dist/core/execution.js");
+// record-history имеет isDirectInvocation guard — импорт не запускает main().
+const recorder = await import("./dist/core/record-history.js");
 
 initDb(dbPath);
 
@@ -328,6 +330,261 @@ const cliWtBadArgs = spawnSync(process.execPath, [integrityCli, "worktree-verify
   windowsHide: true,
 });
 check("PL-25: CLI worktree-verify — плохие аргументы → 2", cliWtBadArgs.status === 2);
+
+// --- 8. ARCH-3: flake-aware вердикт гейта в едином пути ---------------------
+const escalation = await import("./dist/core/router/escalation.js");
+const capability = await import("./dist/db/capability-repo.js");
+
+let gateAttempts = 0;
+const flakeOutcome = await escalation.runGateWithRetry((attempt) => {
+  gateAttempts += 1;
+  return attempt === 1
+    ? { passed: false, verdict: "flake", reason: "первый вызов гейта флакнул" }
+    : { passed: true, reason: "второй вызов прошёл" };
+});
+check("ARCH-3.1: гейт повторён на том же артефакте", gateAttempts === 2);
+check(
+  "ARCH-3.1: проход со 2-й попытки → flake, first_pass=false, attempts_to_pass=2",
+  flakeOutcome.verdict === "flake" && flakeOutcome.passed &&
+    flakeOutcome.firstPass === false && flakeOutcome.attemptsToPass === 2,
+);
+
+const flakeRecorded = capability.recordGateVerdict(
+  {
+    outcomeKey: "pipeline-flake-1",
+    taskType: "write_file",
+    gateKey: "npm test",
+    verdict: flakeOutcome.verdict,
+    attemptsToPass: flakeOutcome.attemptsToPass,
+    firstPass: flakeOutcome.firstPass,
+    runId: registeredRun.runId,
+    reason: flakeOutcome.reasons.join("; "),
+  },
+  new Date(),
+);
+check("ARCH-3.1: вердикт записан в ledger", flakeRecorded.ledgerId > 0);
+check("ARCH-3.2: flake не обновляет capability_map", flakeRecorded.capabilityUpdated === false);
+const flakeLedgerRow = repo.listGateOutcomes().find((row) => row.outcomeKey === "pipeline-flake-1");
+check(
+  "ARCH-3.1: ledger-строка хранит verdict/attempts_to_pass/first_pass",
+  flakeLedgerRow?.verdict === "flake" &&
+    flakeLedgerRow?.attemptsToPass === 2 &&
+    flakeLedgerRow?.firstPass === 0,
+);
+check("ARCH-3.1: hash-цепочка ledger цела", repo.verifyGateOutcomeChain().ok);
+
+const infraRecorded = capability.recordGateVerdict(
+  {
+    outcomeKey: "pipeline-infra-1",
+    taskType: "write_file",
+    gateKey: "npm test",
+    verdict: "infra_fail",
+    attemptsToPass: 1,
+    firstPass: false,
+    reason: "инфраструктура недоступна",
+  },
+  new Date(),
+);
+check("ARCH-3.2: infra_fail не трогает capability_map", infraRecorded.capabilityUpdated === false);
+check(
+  "ARCH-3.2: infra_fail даёт предупреждение, отличное от flakes",
+  infraRecorded.warning !== null && /инфраструктур/.test(infraRecorded.warning),
+);
+
+capability.recordGateVerdict(
+  {
+    outcomeKey: "pipeline-flake-2",
+    taskType: "write_file",
+    gateKey: "npm test",
+    verdict: "flake",
+    attemptsToPass: 2,
+    firstPass: false,
+  },
+  new Date(),
+);
+check("ARCH-3.2: карантин стабильно флакующего гейта", capability.isGateQuarantined("npm test"));
+check(
+  "ARCH-3.2: предупреждение о карантине для отчёта",
+  capability.getGateQuarantineWarning("npm test") !== null,
+);
+check(
+  "ARCH-3.2: карантин истекает, а не блокирует навсегда",
+  !capability.isGateQuarantined("npm test", new Date(Date.now() + 25 * 60 * 60 * 1000)),
+);
+
+const stableRecorded = capability.recordGateVerdict(
+  {
+    outcomeKey: "pipeline-stable-1",
+    taskType: "run_tests",
+    gateKey: "npm test",
+    verdict: "pass",
+    attemptsToPass: 1,
+    firstPass: true,
+  },
+  new Date(),
+);
+check("ARCH-3: регрессия — стабильный pass обновляет карту", stableRecorded.capabilityUpdated === true);
+check(
+  "ARCH-3: регрессия — statistics в карте корректны",
+  capability.getCapability("run_tests")?.runsPassed === 1,
+);
+check("ARCH-3: стабильный pass снимает карантин", !capability.isGateQuarantined("npm test"));
+
+// --- 9. ARCH-1.x: общий RunContext, registered мост и tamper-evident ledger ----
+const twinAdhoc = ac1.createAdHocRunContext(registered.prompt, {
+  taskName: registered.taskName,
+  cwd: registered.cwd,
+  policy: registered.safety.policy,
+  profile: { ...registered.profile },
+  safety: {
+    allowedTools: registered.safety.allowedTools,
+    deniedTools: registered.safety.deniedTools,
+  },
+  // Тот же gate, что у зарегистрированной задачи (иначе gateHash законно отличается).
+  metadata: { qualityGate: registered.metadata.qualityGate },
+});
+const contextFields = (c) =>
+  JSON.stringify({
+    taskName: c.taskName,
+    mission: c.mission,
+    prompt: c.prompt,
+    cwd: c.cwd,
+    model: c.profile.model,
+    session: c.profile.session,
+    sessionId: c.profile.sessionId,
+    workspaceId: c.profile.workspaceId,
+    policy: c.safety.policy,
+    allowed: c.safety.allowedTools,
+    denied: c.safety.deniedTools,
+  });
+check(
+  "ARCH-1.1:registered и ad-hoc дают одинаковый RunContext (кроме origin)",
+  contextFields(registered) === contextFields(twinAdhoc) &&
+    registered.origin === "registered" &&
+    twinAdhoc.origin === "ad-hoc",
+);
+const registeredHashes = ac1.contextGateHashes(registered);
+const twinHashes = ac1.contextGateHashes(twinAdhoc);
+check(
+  "ARCH-1.2: gate/policy/prompt-хэши двух входов совпадают",
+  JSON.stringify(registeredHashes) === JSON.stringify(twinHashes) &&
+    /^[0-9a-f]{64}$/.test(registeredHashes.gateHash) &&
+    /^[0-9a-f]{64}$/.test(registeredHashes.policyHash) &&
+    /^[0-9a-f]{64}$/.test(registeredHashes.promptHash),
+);
+check(
+  "ARCH-1.2: trigger_kind различает зарегистрированную задачу и ad-hoc",
+  ac1.triggerKindFor(registered) === "manual" && ac1.triggerKindFor(twinAdhoc) === "adhoc",
+);
+
+const bridgeContext = ac1.createRegisteredRunContext({
+  name: "registered-ledger-task",
+  prompt: "write report",
+  workingDirectory: tempRoot,
+  model: "local/ledger",
+  triggerType: "cron",
+  qualityGate: "npm test",
+});
+ac1.validateRunContext(bridgeContext);
+const evidencePath = path.join(tempRoot, "registered-run.log");
+const begunRunId = recorder.beginRegisteredRun(bridgeContext, 4242, {
+  startedAt: new Date().toISOString(),
+});
+check(
+  "ARCH-1.1:beginRegisteredRun создал durable run через createRun",
+  typeof begunRunId === "string" && repo.getRun(begunRunId)?.status === "running",
+);
+check(
+  "ARCH-1.1:шаг создан running (разрешён переход → passed)",
+  repo.getStep(begunRunId, "registered-ledger-task")?.status === "running",
+);
+check(
+  "ARCH-1.1:metadata связывает durable run с history id",
+  repo.getRun(begunRunId)?.metadata?.registeredHistoryId === 4242,
+);
+const bridge = recorder.recordRegisteredRun(bridgeContext, {
+  historyRunId: 4242,
+  status: "passed",
+  evidencePath,
+});
+check("ARCH-1.1:recordRegisteredRun нашёл run по history id", bridge?.runId === begunRunId);
+check(
+  "ARCH-1.1:run и шаг завершены passed",
+  repo.getRun(begunRunId)?.status === "passed" &&
+    repo.getStep(begunRunId, "registered-ledger-task")?.status === "passed",
+);
+const bridgeOutcome = repo
+  .listGateOutcomes()
+  .find((o) => o.runId === begunRunId && o.verdict === "pass");
+check("ARCH-1.2:registered мост записал gate_outcomes", Boolean(bridgeOutcome));
+check(
+  "ARCH-1.2:verdict/first_pass/attempts",
+  bridgeOutcome?.verdict === "pass" &&
+    bridgeOutcome?.firstPass === 1 &&
+    bridgeOutcome?.attemptsToPass === 1,
+);
+check(
+  "ARCH-1.2:хэши записи — SHA-256 (64 hex)",
+  [bridgeOutcome?.gateHash, bridgeOutcome?.policyHash, bridgeOutcome?.promptHash,
+    bridgeOutcome?.prevHash, bridgeOutcome?.rowHash].every((h) => /^[0-9a-f]{64}$/.test(h ?? "")),
+);
+check(
+  "ARCH-1.2:trigger_kind/executor/gate_type",
+  bridgeOutcome?.triggerKind === "cron" &&
+    bridgeOutcome?.executor === "registered-recorder" &&
+    bridgeOutcome?.gateType === "npm test",
+);
+check("ARCH-1.3:evidence_path записан в ledger", bridgeOutcome?.evidencePath === evidencePath);
+
+const outcomesFor = (runId) => repo.listGateOutcomes().filter((o) => o.runId === runId);
+// ARCH-3 позже добавил в этот же run строку verdict='flake' — фильтруем по pass.
+const registeredPasses = outcomesFor(registeredRun.runId).filter((o) => o.verdict === "pass");
+check(
+  "ARCH-1.2:executeExecutionPlan пишет pass по каждому исполненному шагу",
+  registeredPasses.length === 2 && registeredPasses.every((o) => o.verdict === "pass"),
+);
+check(
+  "ARCH-1.2:fail гейта попал в ledger",
+  outcomesFor(gateRun.runId).some((o) => o.verdict === "fail" && o.stepName === "write file"),
+);
+check("ARCH-1.2:skipped шаг не создаёт gate_outcomes", outcomesFor(reviewRun.runId).length === 0);
+check(
+  "ARCH-1.2:executor и route_source берутся из плана",
+  registeredPasses[0]?.executor === "fake" &&
+    typeof registeredPasses[0]?.routeSource === "string",
+);
+
+const ledger = repo.readGateOutcomeLedger();
+check(
+  "ARCH-1.3:read-путь читает только ledger, цепочка валидна",
+  ledger.chain.ok === true && ledger.rows.length >= 9,
+);
+const firstOutcome = ledger.rows[0];
+const lastOutcome = ledger.rows[ledger.rows.length - 1];
+getDb()
+  .prepare("UPDATE gate_outcomes SET prev_hash = ? WHERE id = ?")
+  .run("f".repeat(64), firstOutcome.id);
+check("ARCH-1.3:подмена prev_hash обнаруживается", repo.verifyGateOutcomeChain().ok === false);
+getDb()
+  .prepare("UPDATE gate_outcomes SET prev_hash = ? WHERE id = ?")
+  .run(firstOutcome.prevHash, firstOutcome.id);
+check("ARCH-1.3:восстановление prev_hash → цепочка валидна", repo.verifyGateOutcomeChain().ok === true);
+
+getDb()
+  .prepare("UPDATE gate_outcomes SET evidence_path = ? WHERE id = ?")
+  .run(path.join(tempRoot, "forged.log"), lastOutcome.id);
+check(
+  "ARCH-1.3:подмена evidence_path в ПОСЛЕДНЕЙ записи обнаруживается",
+  repo.verifyGateOutcomeChain().ok === false,
+);
+getDb()
+  .prepare("UPDATE gate_outcomes SET evidence_path = ? WHERE id = ?")
+  .run(lastOutcome.evidencePath, lastOutcome.id);
+check("ARCH-1.3:восстановление evidence_path → цепочка валидна", repo.verifyGateOutcomeChain().ok === true);
+check(
+  "ARCH-1.3:readGateOutcomeLedger({verify:false}) не проверяет цепочку",
+  repo.readGateOutcomeLedger({ verify: false }).chain.ok === true,
+);
 
 closeDb();
 try {

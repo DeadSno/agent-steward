@@ -14,10 +14,15 @@ import path from "node:path";
 
 import {
   MAX_ESCALATION_STEPS,
+  MAX_GATE_ATTEMPTS,
   escalateAfterGate,
   escalationChain,
+  gateVerdict,
   isEscalationExhausted,
   nextGateTarget,
+  resolveGateOutcome,
+  runGateWithRetry,
+  shouldRetryGate,
 } from "./dist/core/router/escalation.js";
 
 const assert = (cond, msg) => {
@@ -119,6 +124,75 @@ for (let index = 0; index < 1000; index += 1) {
 }
 const elapsed = performance.now() - startedAt;
 assert(elapsed < 100, `1000 решений уложились в ${elapsed.toFixed(1)} мс`);
+
+// 7. ARCH-3.1: вердикты, повтор гейта на том же артефакте и first-pass.
+assert(MAX_GATE_ATTEMPTS === 2, "допускается ровно 2 попытки гейта");
+assert(gateVerdict({ passed: true }) === "pass", "явного вердикта нет — pass из passed");
+assert(gateVerdict({ passed: false }) === "fail", "явного вердикта нет — fail из passed");
+assert(gateVerdict({ passed: true, verdict: "flake" }) === "flake", "явный вердикт имеет приоритет");
+assert(shouldRetryGate("flake") && shouldRetryGate("infra_fail"), "flake/infra_fail повторяются");
+assert(!shouldRetryGate("pass") && !shouldRetryGate("fail"), "стабильные pass/fail не повторяются");
+
+const stablePass = resolveGateOutcome([{ passed: true, reason: "ok" }]);
+assert(
+  stablePass.verdict === "pass" && stablePass.firstPass === true && stablePass.attemptsToPass === 1,
+  "стабильный pass: first_pass=true, attempts_to_pass=1",
+);
+const flakePass = resolveGateOutcome([
+  { passed: false, verdict: "flake", reason: "tmp timeout" },
+  { passed: true, reason: "ok" },
+]);
+assert(
+  flakePass.verdict === "flake" && flakePass.passed === true &&
+    flakePass.firstPass === false && flakePass.attemptsToPass === 2 && flakePass.retried,
+  "флакующий гейт: проход со 2-й попытки, first_pass=false, attempts_to_pass=2",
+);
+const infraOutcome = resolveGateOutcome([
+  { passed: false, verdict: "infra_fail", reason: "sqlite locked" },
+  { passed: false, verdict: "infra_fail", reason: "sqlite locked" },
+]);
+assert(
+  infraOutcome.verdict === "infra_fail" && !infraOutcome.passed && infraOutcome.attemptsToPass === 2,
+  "infra_fail не смешивается с flake и fail",
+);
+const mixedOutcome = resolveGateOutcome([
+  { passed: false, verdict: "flake" },
+  { passed: false, verdict: "infra_fail" },
+]);
+assert(mixedOutcome.verdict === "infra_fail", "infra_fail доминирует над flake");
+const stableFail = resolveGateOutcome([{ passed: false, verdict: "fail" }]);
+assert(stableFail.verdict === "fail" && !stableFail.retried, "стабильный fail не повторяется");
+
+let gateCalls = 0;
+const retried = await runGateWithRetry((attempt) => {
+  gateCalls += 1;
+  return attempt === 1
+    ? { passed: false, verdict: "flake", reason: "first call flaked" }
+    : { passed: true, reason: "second call ok" };
+});
+assert(gateCalls === 2, "runGateWithRetry вызвал гейт ровно 2 раза");
+assert(
+  retried.verdict === "flake" && retried.firstPass === false && retried.attemptsToPass === 2,
+  "runGateWithRetry: проход со 2-й попытки на том же артефакте",
+);
+
+let stableCalls = 0;
+const stable = await runGateWithRetry(() => {
+  stableCalls += 1;
+  return { passed: true };
+});
+assert(stableCalls === 1 && stable.firstPass === true, "стабильный pass не вызывает повтор");
+
+const blockedFlake = escalateAfterGate("local", { passed: false, verdict: "flake" });
+assert(
+  blockedFlake.action === "blocked" && blockedFlake.reason === "flake-detected",
+  "flake не эскалируется (смена исполнителя не лечит шум)",
+);
+const blockedInfra = escalateAfterGate("cloud", { passed: false, verdict: "infra_fail" });
+assert(
+  blockedInfra.action === "blocked" && blockedInfra.reason === "infra-error",
+  "infra_fail не эскалируется (это не вина агента)",
+);
 
 if (process.exitCode === 1) {
   console.error("Escalation: есть падения.");

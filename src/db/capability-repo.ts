@@ -1,5 +1,8 @@
+import type { GateVerdict } from "../core/router/escalation.js";
 import { normalizeTaskType } from "../core/router/rules.js";
 import { getDb, withTransaction } from "./index.js";
+import { getSetting, setSetting } from "./settings-repo.js";
+import { recordGateOutcome } from "./runs-repo.js";
 
 /**
  * Capability Map — слой 2 роутера (Спринт 36.5.b).
@@ -399,4 +402,251 @@ export function isCapabilityMapReady(): boolean {
     .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'capability_map'")
     .all() as { name?: string }[];
   return rows.length > 0;
+}
+
+/* ------------------------------------------------------------------------- *
+ * ARCH-3: flake-aware вердикт гейта
+ * ------------------------------------------------------------------------- */
+
+/** Сколько флаков одного гейта переводят его в карантин. */
+export const FLAKE_QUARANTINE_THRESHOLD = 2;
+
+/** Срок карантина в часах — карантин истекает, а не блокирует навсегда. */
+export const GATE_QUARANTINE_HOURS = 24;
+
+const GATE_QUARANTINE_SETTING_KEY = "gate_quarantine";
+
+const GATE_VERDICT_SET: ReadonlySet<string> = new Set<GateVerdict>([
+  "pass",
+  "fail",
+  "flake",
+  "infra_fail",
+]);
+
+interface GateQuarantineEntry {
+  flakeCount: number;
+  quarantinedUntil: string | null;
+}
+
+type GateQuarantineState = Record<string, GateQuarantineEntry>;
+
+/** Вход записи вердикта гейта (ARCH-3.1 + ARCH-3.2). */
+export interface GateVerdictRecord {
+  /** Идемпотентный ключ строки ledger `gate_outcomes`. */
+  outcomeKey: string;
+  /** Тип задачи, к которому относится гейт. */
+  taskType: string;
+  /** Стабильный ключ самого гейта (команда/хук); по нему считается карантин. */
+  gateKey: string;
+  verdict: GateVerdict;
+  /** На какой попытке гейт прошёл (или сколько попыток всего при провале). */
+  attemptsToPass: number;
+  /** Прошёл ли гейт с первой попытки. */
+  firstPass: boolean;
+  runId?: string;
+  stepId?: string;
+  stepName?: string;
+  missionId?: string;
+  gateType?: string;
+  reason?: string;
+  costUsd?: number;
+  timeMs?: number;
+  model?: string;
+  evidencePath?: string;
+  gateHash?: string;
+}
+
+/** Результат записи вердикта: что попало в ledger, карту и карантин. */
+export interface GateVerdictResult {
+  ledgerId: number;
+  verdict: GateVerdict;
+  /** Стабильные pass/fail обновляют карту; flake/infra_fail — никогда. */
+  capabilityUpdated: boolean;
+  capability: CapabilityRecord | null;
+  quarantined: boolean;
+  quarantineUntil: string | null;
+  /** Предупреждение пользователю/в отчёте (для flake и infra_fail). */
+  warning: string | null;
+}
+
+function requireGateKey(value: string | undefined): string {
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new Error("ARCH-3: нужен непустой gateKey гейта.");
+  }
+  return value.trim();
+}
+
+function readQuarantineState(): GateQuarantineState {
+  const raw = getSetting<unknown>(GATE_QUARANTINE_SETTING_KEY, {});
+  return raw && typeof raw === "object" && !Array.isArray(raw)
+    ? (raw as GateQuarantineState)
+    : {};
+}
+
+/** Не истёкший ли карантин (ISO-строка или null). */
+function activeQuarantine(entry: GateQuarantineEntry | undefined, nowMs: number): string | null {
+  if (!entry?.quarantinedUntil) return null;
+  const until = Date.parse(entry.quarantinedUntil);
+  return Number.isFinite(until) && until > nowMs ? entry.quarantinedUntil : null;
+}
+
+/**
+ * ARCH-3.1/3.2: пишет вердикт в ledger, обновляет карту ТОЛЬКО для стабильных
+ * pass/fail и ведёт карантин флакующих гейтов с предупреждением.
+ *
+ * Ledger — единственный источник истины: строка gate_outcomes создаётся через
+ * {@link recordGateOutcome} с hash-цепочкой. Capability Map — агрегат, поэтому
+ * `flake` (прошёл со 2-й попытки) и `infra_fail` в неё не попадают: шум и
+ * инфраструктура не должны портить статистику исполнителя.
+ */
+export function recordGateVerdict(
+  record: GateVerdictRecord,
+  now: Date = new Date(),
+): GateVerdictResult {
+  if (record === null || typeof record !== "object") {
+    throw new Error("ARCH-3: нужен объект вердикта гейта.");
+  }
+  if (!GATE_VERDICT_SET.has(record.verdict)) {
+    throw new Error(`ARCH-3: неизвестный вердикт гейта: ${String(record.verdict)}.`);
+  }
+  if (typeof record.firstPass !== "boolean") {
+    throw new Error("ARCH-3: firstPass должен быть boolean.");
+  }
+  if (!Number.isInteger(record.attemptsToPass) || record.attemptsToPass < 1) {
+    throw new Error("ARCH-3: attemptsToPass должен быть целым ≥ 1.");
+  }
+  if (typeof record.outcomeKey !== "string" || record.outcomeKey.trim() === "") {
+    throw new Error("ARCH-3: нужен непустой outcomeKey для ledger.");
+  }
+  const taskType = requireTaskType(record.taskType);
+  const gateKey = requireGateKey(record.gateKey ?? record.stepName ?? record.taskType);
+  const nowMs = now.getTime();
+
+  return withTransaction(() => {
+    const ledger = recordGateOutcome({
+      outcomeKey: record.outcomeKey.trim(),
+      missionId: record.missionId ?? null,
+      runId: record.runId ?? null,
+      stepId: record.stepId ?? null,
+      stepName: record.stepName ?? null,
+      taskType,
+      gateType: record.gateType ?? null,
+      verdict: record.verdict,
+      attemptsToPass: record.attemptsToPass,
+      firstPass: record.firstPass,
+      routeReason: record.reason ?? null,
+      evidencePath: record.evidencePath ?? null,
+      gateHash: record.gateHash ?? null,
+      modelVersion: record.model ?? null,
+    });
+
+    let capability: CapabilityRecord | null = null;
+    let capabilityUpdated = false;
+    if (record.verdict === "pass" || record.verdict === "fail") {
+      capability = recordCapabilityOutcome({
+        taskType,
+        passed: record.verdict === "pass",
+        attempts: record.attemptsToPass,
+        firstPass: record.verdict === "pass" && record.firstPass,
+        costUsd: record.costUsd,
+        timeMs: record.timeMs,
+        model: record.model,
+      });
+      capabilityUpdated = true;
+    } else {
+      capability = getCapability(taskType);
+    }
+
+    const state = readQuarantineState();
+    const previous: GateQuarantineEntry =
+      state[gateKey] ?? { flakeCount: 0, quarantinedUntil: null };
+    // Истёкший карантин сбрасываем: он не блокирует гейт навсегда. Счётчик
+    // флаков при этом сохраняется, если карантина ещё не было вовсе.
+    const expired = Boolean(previous.quarantinedUntil) && !activeQuarantine(previous, nowMs);
+    const base: GateQuarantineEntry = expired
+      ? { flakeCount: 0, quarantinedUntil: null }
+      : { ...previous };
+    let entry: GateQuarantineEntry = { ...base };
+    let quarantined = false;
+    let quarantineUntilIso: string | null = base.quarantinedUntil;
+    let warning: string | null = null;
+
+    if (record.verdict === "flake") {
+      entry.flakeCount += 1;
+      if (entry.flakeCount >= FLAKE_QUARANTINE_THRESHOLD && !activeQuarantine(entry, nowMs)) {
+        const until = new Date(nowMs + GATE_QUARANTINE_HOURS * 60 * 60 * 1000);
+        quarantineUntilIso = until.toISOString();
+        entry.quarantinedUntil = quarantineUntilIso;
+      }
+      quarantined = Boolean(activeQuarantine(entry, nowMs));
+      if (quarantined) {
+        warning =
+          `Гейт «${gateKey}» нестабилен (${entry.flakeCount} флаков): ` +
+          `выдан карантин до ${quarantineUntilIso}. Результат гейта нестабилен и не обучает capability_map.`;
+      }
+    } else if (record.verdict === "infra_fail") {
+      quarantined = Boolean(activeQuarantine(entry, nowMs));
+      warning =
+        `Гейт «${gateKey}» завершился инфраструктурной ошибкой: ` +
+        `${record.reason ?? "причина не указана"}. Вердикт infra_fail отделён от flakes и не обучает capability_map.`;
+    } else {
+      // Стабильный pass/fail — признак выздоровления гейта: снимаем карантин.
+      entry = { flakeCount: 0, quarantinedUntil: null };
+      quarantineUntilIso = null;
+      quarantined = false;
+    }
+
+    state[gateKey] = entry;
+    setSetting(GATE_QUARANTINE_SETTING_KEY, state);
+
+    return {
+      ledgerId: ledger.id,
+      verdict: record.verdict,
+      capabilityUpdated,
+      capability,
+      quarantined,
+      quarantineUntil: quarantineUntilIso,
+      warning,
+    };
+  });
+}
+
+/** Находится ли гейт в карантине на момент `now` (истёкший — уже нет). */
+export function isGateQuarantined(gateKey: string, now: Date = new Date()): boolean {
+  const key = requireGateKey(gateKey);
+  const entry = readQuarantineState()[key];
+  return Boolean(activeQuarantine(entry, now.getTime()));
+}
+
+/** Текст предупреждения для пользователя/отчёта, если гейт в карантине. */
+export function getGateQuarantineWarning(
+  gateKey: string,
+  now: Date = new Date(),
+): string | null {
+  const key = requireGateKey(gateKey);
+  const entry = readQuarantineState()[key];
+  const until = activeQuarantine(entry, now.getTime());
+  return until
+    ? `Гейт «${key}» в карантине до ${until}: результаты нестабильны, повторите позже.`
+    : null;
+}
+
+/** Снимок карантинов для отчёта (с пометкой истёкших). */
+export function listGateQuarantines(now: Date = new Date()): Array<{
+  gateKey: string;
+  flakeCount: number;
+  quarantinedUntil: string | null;
+  expired: boolean;
+}> {
+  const state = readQuarantineState();
+  return Object.keys(state).map((gateKey) => {
+    const entry = state[gateKey];
+    const active = activeQuarantine(entry, now.getTime());
+    return {
+      gateKey,
+      flakeCount: entry.flakeCount,
+      quarantinedUntil: entry.quarantinedUntil,
+      expired: !active && Boolean(entry.quarantinedUntil),
+    };
+  });
 }

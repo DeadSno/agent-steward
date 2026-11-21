@@ -348,5 +348,127 @@ assert(migratedCap.firstPassCount === 4, "legacy v9: first_pass_count запол
 assert(migratedCap.firstPassRate === 0.8, "legacy v9: first_pass_rate = 4/5");
 closeDb();
 
+// 16. ARCH-3.1/3.2: flake/infra_fail не обучают карту; карантин с истечением.
+const flakeDbPath = path.join(tempRoot, "flake-aware.db");
+initDb(flakeDbPath);
+const { recordGateOutcome, listGateOutcomes, verifyGateOutcomeChain } = await import(
+  "./dist/db/runs-repo.js"
+);
+const future = new Date(Date.now() + 25 * 60 * 60 * 1000);
+
+const flakeResult = capability.recordGateVerdict(
+  {
+    outcomeKey: "flake-1",
+    taskType: "flake_task",
+    gateKey: "npm test",
+    verdict: "flake",
+    attemptsToPass: 2,
+    firstPass: false,
+    reason: "прошёл со второй попытки",
+  },
+  new Date(),
+);
+assert(flakeResult.verdict === "flake", "flake-вердикт записан");
+assert(flakeResult.capabilityUpdated === false, "flake НЕ обновляет capability_map");
+assert(capability.getCapability("flake_task") === null, "карта пуста после flake");
+const flakeRows = listGateOutcomes();
+assert(
+  flakeRows.some(
+    (row) => row.verdict === "flake" && row.attemptsToPass === 2 && row.firstPass === 0,
+  ),
+  "ledger: verdict=flake, attempts_to_pass=2, first_pass=0",
+);
+assert(verifyGateOutcomeChain().ok, "hash-цепочка ledger не разорвана");
+
+const infraResult = capability.recordGateVerdict(
+  {
+    outcomeKey: "infra-1",
+    taskType: "flake_task",
+    gateKey: "npm test",
+    verdict: "infra_fail",
+    attemptsToPass: 2,
+    firstPass: false,
+    reason: "sqlite database is locked",
+  },
+  new Date(),
+);
+assert(infraResult.verdict === "infra_fail", "infra_fail записан отдельно от flake");
+assert(infraResult.capabilityUpdated === false, "infra_fail НЕ обновляет capability_map");
+assert(capability.getCapability("flake_task") === null, "карта по-прежнему пуста после infra_fail");
+assert(
+  infraResult.warning !== null && /инфраструктур/.test(infraResult.warning),
+  "infra_fail даёт отдельное предупреждение пользователю",
+);
+
+capability.recordGateVerdict(
+  {
+    outcomeKey: "flake-2",
+    taskType: "flake_task",
+    gateKey: "npm test",
+    verdict: "flake",
+    attemptsToPass: 2,
+    firstPass: false,
+  },
+  new Date(),
+);
+assert(capability.isGateQuarantined("npm test"), "стабильно флакующий гейт ушёл в карантин");
+assert(
+  capability.getGateQuarantineWarning("npm test") !== null,
+  "карантин даёт предупреждение для отчёта",
+);
+assert(
+  capability.listGateQuarantines().some(
+    (q) => q.gateKey === "npm test" && q.quarantinedUntil !== null && !q.expired,
+  ),
+  "карантин виден в снимке",
+);
+assert(
+  !capability.isGateQuarantined("npm test", future),
+  "карантин истекает сам (не блокирует навсегда)",
+);
+
+const stablePass = capability.recordGateVerdict(
+  {
+    outcomeKey: "stable-pass-1",
+    taskType: "stable_task",
+    gateKey: "npm test",
+    verdict: "pass",
+    attemptsToPass: 1,
+    firstPass: true,
+    costUsd: 0.05,
+    timeMs: 200,
+  },
+  new Date(),
+);
+assert(stablePass.capabilityUpdated === true, "стабильный pass обновляет capability_map");
+assert(
+  capability.getCapability("stable_task")?.runsPassed === 1 &&
+    capability.getCapability("stable_task")?.firstPassCount === 1,
+  "стабильный pass: first-pass статистика на месте",
+);
+assert(!capability.isGateQuarantined("npm test"), "стабильный pass снимает карантин гейта");
+const stableFail = capability.recordGateVerdict(
+  {
+    outcomeKey: "stable-fail-1",
+    taskType: "stable_task",
+    gateKey: "npm test",
+    verdict: "fail",
+    attemptsToPass: 1,
+    firstPass: false,
+  },
+  new Date(),
+);
+assert(stableFail.capabilityUpdated === true, "стабильный fail обновляет capability_map");
+assert(
+  capability.getCapability("stable_task")?.runsTotal === 2 &&
+    capability.getCapability("stable_task")?.successRate === 0.5,
+  "регрессия: обычные pass/fail считаются как раньше",
+);
+assert(
+  recordGateOutcome !== undefined && listGateOutcomes().length >= 5,
+  "все вердикты попали в общий ledger gate_outcomes",
+);
+closeDb();
+
 console.log(process.exitCode ? "\nЕсть провалы." : "\nВсе проверки Capability Map пройдены.");
 

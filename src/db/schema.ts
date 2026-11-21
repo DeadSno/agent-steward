@@ -5,6 +5,49 @@
  * безопасно выполнять при каждом открытии соединения — это же служит
  * механизмом «мини-миграций» при обновлении плагина.
  */
+
+/**
+ * ARCH-1.2/1.3: DDL ledger-а исходов GATE. Вынесен в константу, чтобы SCHEMA_SQL
+ * и миграция 13 использовали один и тот же текст (CREATE TABLE/INDEX IF NOT EXISTS
+ * идемпотентны, поэтому повтор безопасен).
+ *
+ * prev_hash + row_hash дают tamper-evident цепочку: подмена любой записи
+ * (включая последнюю, у которой нет «following» записи) ломает проверку.
+ * Это «доказуемость» аудита, а НЕ граница безопасности (см. EXECUTION-LOOP §10).
+ */
+const GATE_OUTCOMES_DDL = `
+CREATE TABLE IF NOT EXISTS gate_outcomes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  -- Ключ идемпотентности: повторный вызов с тем же ключом не создаёт строку.
+  outcome_key TEXT NOT NULL UNIQUE,
+  mission_id TEXT,
+  run_id TEXT,
+  step_id TEXT,
+  step_name TEXT,
+  task_type TEXT,
+  trigger_kind TEXT,
+  executor TEXT,
+  route_source TEXT,
+  route_reason TEXT,
+  gate_type TEXT,
+  verdict TEXT NOT NULL,
+  attempts_to_pass INTEGER DEFAULT 1,
+  first_pass INTEGER DEFAULT 0,
+  -- ARCH-1.3: provenance — путь к артефакту-доказательству.
+  evidence_path TEXT,
+  gate_hash TEXT,
+  policy_hash TEXT,
+  prompt_hash TEXT,
+  model_version TEXT,
+  prev_hash TEXT NOT NULL,
+  row_hash TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_gate_outcomes_run ON gate_outcomes(run_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_gate_outcomes_created ON gate_outcomes(created_at);
+`;
+
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS tasks (
   name TEXT PRIMARY KEY,
@@ -262,7 +305,8 @@ CREATE TABLE IF NOT EXISTS capability_map (
 );
 
 CREATE INDEX IF NOT EXISTS idx_capability_success ON capability_map(success_rate DESC);
-`;
+
+${GATE_OUTCOMES_DDL}`;
 
 interface SchemaDb {
   exec(sql: string): void;
@@ -277,7 +321,7 @@ interface SchemaDb {
  * миграций. Увеличивайте при добавлении новой ступени в {@link MIGRATIONS}
  * и добавляйте соответствующую запись в массив.
  */
-export const SCHEMA_VERSION = 12;
+export const SCHEMA_VERSION = 13;
 
 /** Возвращает сохранённую версию схемы (0 у legacy-БД без user_version). */
 export function getSchemaVersion(db: SchemaDb): number {
@@ -591,6 +635,15 @@ const MIGRATIONS: { to: number; migrate: (db: SchemaDb) => void }[] = [
         CREATE INDEX IF NOT EXISTS idx_feedback_spam_at
           ON feedback_spam(at DESC);
       `);
+    },
+  },
+  {
+    // Ступень 13 — ARCH-1.2/1.3: ledger исходов GATE с hash-цепочкой.
+    // DDL тот же, что в SCHEMA_SQL (CREATE TABLE/INDEX IF NOT EXISTS), поэтому
+    // миграция идемпотентна и безопасна и для БД, где таблица уже есть.
+    to: 13,
+    migrate(db) {
+      db.exec(GATE_OUTCOMES_DDL);
     },
   },
 ];

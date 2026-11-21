@@ -4,6 +4,14 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ## [Unreleased]
 
+- **ARCH-2.1 — класс риска миссий.** В `MissionSpec` (`normalizeMissionSpec`) и `RunContext` введён `riskClass` (R0–R3) с детерминированной классификацией `classifyRiskClass()` по фактически доступным инструментам и наличию Quality Gate; без явного класса сохраняются прежние hybrid-политика и исходные списки инструментов. Проверено: `node test-mission-run.mjs` (63/63), `node test-permissions-policy.mjs` (69/69), `npm run build`.
+
+- **ARCH-2.2 — компилятор политики прав.** `compilePermissionPolicy()` детерминированно превращает риск-класс в `PermissionPolicy` с явными allowed/denied tools и лимитами (таблица `RISK_POLICY_BASELINE`), без OPA/Rego/Cedar и новых зависимостей; добавлены таблица соответствия, тест паритета ad-hoc/registered и регрессия текущих политик. Проверено: `node test-permissions-policy.mjs` (69/69), `node test-mission-run.mjs` (63/63), `npm run build`, `node test-docs.mjs`.
+
+- **ARCH-3.1 — flake-aware вердикт гейта.** `src/core/router/escalation.ts`: вердикты `pass|fail|flake|infra_fail`, повтор гейта до N=2 на том же артефакте (`runGateWithRetry`) без перезапуска агента и свёртка попыток (`resolveGateOutcome`) с `attempts_to_pass`/`first_pass`. `src/db/capability-repo.ts`: `recordGateVerdict()` пишет вердикт в tamper-evident ledger `gate_outcomes` через `recordGateOutcome` и сохраняет в нём `attempts_to_pass`/`first_pass`; infra-ошибка отделена от flakes. Проверено: `npm run build`, `node test-escalation.mjs`, `node test-capability-map.mjs`, `node test-execution-pipeline.mjs`, `node test-docs.mjs`.
+
+- **ARCH-3.2 — карантин флакующих гейтов.** `flake`/`infra_fail` не обновляют `capability_map`: карту обучают только стабильные `pass`/`fail`. После 2 флаков гейт уходит в карантин на 24 ч с предупреждением пользователю/в отчёте; карантин истекает сам и снимается стабильным проходом, а `infra_fail` даёт отдельное предупреждение. Проверено: тесты прохода со 2-й попытки (`first_pass=false`, `attempts_to_pass=2`), неизменности карты при flake/infra_fail, карантина с истечением и регрессии обычных pass/fail в `test-capability-map.mjs` и `test-execution-pipeline.mjs`.
+
 ## [0.0.6] - 2026-11-20
 
 ### Added

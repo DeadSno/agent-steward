@@ -56,13 +56,9 @@ agent-steward — execution engine с опциональной регистра�
 ## Деталь 2.1 — Durable ledger и provenance
 `src/db/runs-repo.ts`, `src/db/run-journal.ts`, `src/db/schema.ts`, `src/core/execution.ts`
 
-> Сверка с кодом: таблицы `runs`/`run_steps` создаются только в ad-hoc пути (`runMission` → `execution.ts` → `createRun`/`finishStep`); зарегистрированные задачи идут через `record-history.ts` без durable-run. Таблицы `gate_outcomes`, полей `prev_hash`/`evidence_path` нет.
+> Сверка с кодом: ad-hoc и зарегистрированные задачи идут через единый durable-run путь (`createRun`/`finishStep`, общий `RunContext`), вердикты гейтов пишутся в `gate_outcomes` (`verdict`, `gate_hash`, `policy_hash`, `prompt_hash`, `attempts_to_pass`, `first_pass`, `executor`, `trigger_kind`), provenance хранится в `evidence_path`/`prev_hash`; read-путь читает только ledger. Подробности — в [CHANGELOG.md](./CHANGELOG.md).
 
 **Задача ARCH-1 — Durable ledger для всех входов** · P2 · ⬜
-
-- [ ] ARCH-1.1 Вызвать `createRun`/`finishStep` из `record-history.ts` для зарегистрированных задач, объединив ad-hoc и registered через общий `RunContext`.
-- [ ] ARCH-1.2 Добавить таблицу `gate_outcomes` (`verdict`, `gate_hash`, `policy_hash`, `prompt_hash`, `attempts_to_pass`, `first_pass`, `executor`, `trigger_kind`) и писать её из прохождения гейта.
-- [ ] ARCH-1.3 Provenance: `evidence_path` и `prev_hash` (tamper-evident аудит); отчёт читает только ledger; тест на подделку цепочки.
 
 ## Деталь 2.2 — Класс риска и компиляция политики
 `src/core/permissions.ts`, `src/core/execution.ts`, `src/core/mission.ts`
@@ -71,18 +67,12 @@ agent-steward — execution engine с опциональной регистра�
 
 **Задача ARCH-2 — Класс риска и компиляция политики** · P2 · ⬜
 
-- [ ] ARCH-2.1 Ввести risk class в `MissionSpec`/`RunContext` и классификацию по gate/tool scope.
-- [ ] ARCH-2.2 Компилятор политики: risk class → `PermissionPolicy`, allowed/denied tools и лимиты; тест паритета ad-hoc/registered.
-
 ## Деталь 2.3 — Flake-aware вердикт и отложенные эффекты
 `src/core/router/escalation.ts`, `src/core/gate-integrity.ts`, `src/db/capability-repo.ts`, обёртки
 
 > Сверка с кодом: `escalateAfterGate()` есть; вердиктов `flake`/`infra_fail`, повтора гейта на том же артефакте, `effect_intents` и saga-компенсации нет.
 
 **Задача ARCH-3 — Flake-aware вердикт гейта** · P2 · ⬜
-
-- [ ] ARCH-3.1 Вердикты `pass|fail|flake|infra_fail`, повтор гейта N=2 на том же артефакте, `attempts_to_pass`/`first_pass` в ledger.
-- [ ] ARCH-3.2 `flake`/`infra_fail` не обновляют `capability_map`; карантин стабильно флакующих гейтов и предупреждение пользователю.
 
 **Задача ARCH-4 — Отложенные внешние эффекты** · P2 · ⬜
 

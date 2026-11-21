@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { getDb, withTransaction } from "./index.js";
 
 /**
@@ -583,4 +583,303 @@ export function isRunStateReady(): boolean {
 /** Терминальный ли статус шага (для resume/cleanup в следующих подзадачах). */
 export function isTerminalStepStatus(status: StepStatus): boolean {
   return TERMINAL_STEP_STATUSES.has(status);
+}
+
+/* ------------------------------------------------------------------------- *
+ * ARCH-1.2/1.3: ledger исходов GATE
+ * ------------------------------------------------------------------------- */
+
+/** Хэш «начала цепочки» — у первой записи нет предыдущей. */
+export const GATE_OUTCOME_GENESIS_HASH = "0".repeat(64);
+
+/** Вердикты гейта по docs/EXECUTION-LOOP.md §3. */
+export type GateVerdictValue = "pass" | "fail" | "flake" | "infra_fail";
+
+/**
+ * Каноническое содержимое записи — ровно тот набор полей, который хэшируется.
+ * `firstPass` хранится как 0/1, `prevHash` входит в хэш (связь с предыдущей строкой).
+ */
+export interface GateOutcomeContent {
+  outcomeKey: string;
+  missionId: string | null;
+  runId: string | null;
+  stepId: string | null;
+  stepName: string | null;
+  taskType: string | null;
+  triggerKind: string | null;
+  executor: string | null;
+  routeSource: string | null;
+  routeReason: string | null;
+  gateType: string | null;
+  verdict: GateVerdictValue;
+  attemptsToPass: number;
+  firstPass: number;
+  evidencePath: string | null;
+  gateHash: string | null;
+  policyHash: string | null;
+  promptHash: string | null;
+  modelVersion: string | null;
+  createdAt: string;
+  prevHash: string;
+}
+
+/** Запись ledger-а вместе с её собственным хэшем. */
+export interface GateOutcomeRecord extends GateOutcomeContent {
+  id: number;
+  rowHash: string;
+}
+
+export interface RecordGateOutcomeOptions {
+  /** Идемпотентный ключ: повтор с тем же ключом возвращает существующую запись. */
+  outcomeKey: string;
+  missionId?: string | null;
+  runId?: string | null;
+  stepId?: string | null;
+  stepName?: string | null;
+  taskType?: string | null;
+  triggerKind?: string | null;
+  executor?: string | null;
+  routeSource?: string | null;
+  routeReason?: string | null;
+  gateType?: string | null;
+  verdict: GateVerdictValue;
+  attemptsToPass?: number;
+  firstPass?: boolean;
+  /** ARCH-1.3: путь к артефакту-доказательству. */
+  evidencePath?: string | null;
+  gateHash?: string | null;
+  policyHash?: string | null;
+  promptHash?: string | null;
+  modelVersion?: string | null;
+  createdAt?: string;
+}
+
+export interface GateOutcomeChain {
+  ok: boolean;
+  length: number;
+  /** Индекс первой разорванной записи (0-based). */
+  brokenAt: number | null;
+  reason?: string;
+}
+
+export interface GateOutcomeLedger {
+  rows: GateOutcomeRecord[];
+  chain: GateOutcomeChain;
+}
+
+/**
+ * CA-1.3: хэш строки по фиксированному списку полей в фиксированном порядке.
+ * Порядок задаётся литералом ниже, а не порядком ключей во входном объекте —
+ * это делает хэш каноническим и детерминированным.
+ */
+export function gateOutcomeRowHash(content: GateOutcomeContent): string {
+  const canonical = JSON.stringify({
+    outcomeKey: content.outcomeKey,
+    missionId: content.missionId,
+    runId: content.runId,
+    stepId: content.stepId,
+    stepName: content.stepName,
+    taskType: content.taskType,
+    triggerKind: content.triggerKind,
+    executor: content.executor,
+    routeSource: content.routeSource,
+    routeReason: content.routeReason,
+    gateType: content.gateType,
+    verdict: content.verdict,
+    attemptsToPass: content.attemptsToPass,
+    firstPass: content.firstPass,
+    evidencePath: content.evidencePath,
+    gateHash: content.gateHash,
+    policyHash: content.policyHash,
+    promptHash: content.promptHash,
+    modelVersion: content.modelVersion,
+    createdAt: content.createdAt,
+    prevHash: content.prevHash,
+  });
+  return createHash("sha256").update(canonical).digest("hex");
+}
+
+function gateOutcomeRowToContent(row: SqliteRow): GateOutcomeContent {
+  return {
+    outcomeKey: asText(row.outcome_key),
+    missionId: nullableText(row.mission_id),
+    runId: nullableText(row.run_id),
+    stepId: nullableText(row.step_id),
+    stepName: nullableText(row.step_name),
+    taskType: nullableText(row.task_type),
+    triggerKind: nullableText(row.trigger_kind),
+    executor: nullableText(row.executor),
+    routeSource: nullableText(row.route_source),
+    routeReason: nullableText(row.route_reason),
+    gateType: nullableText(row.gate_type),
+    verdict: asText(row.verdict) as GateVerdictValue,
+    attemptsToPass: Number(row.attempts_to_pass) || 1,
+    firstPass: Number(row.first_pass) ? 1 : 0,
+    evidencePath: nullableText(row.evidence_path),
+    gateHash: nullableText(row.gate_hash),
+    policyHash: nullableText(row.policy_hash),
+    promptHash: nullableText(row.prompt_hash),
+    modelVersion: nullableText(row.model_version),
+    createdAt: asText(row.created_at),
+    prevHash: asText(row.prev_hash),
+  };
+}
+
+function gateOutcomeRowToRecord(row: SqliteRow): GateOutcomeRecord {
+  return {
+    ...gateOutcomeRowToContent(row),
+    id: Number(row.id) || 0,
+    rowHash: asText(row.row_hash),
+  };
+}
+
+const INSERT_GATE_OUTCOME_SQL = `INSERT INTO gate_outcomes (
+  outcome_key, mission_id, run_id, step_id, step_name, task_type, trigger_kind,
+  executor, route_source, route_reason, gate_type, verdict, attempts_to_pass,
+  first_pass, evidence_path, gate_hash, policy_hash, prompt_hash, model_version,
+  prev_hash, row_hash, created_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+
+/**
+ * Пишет один вердикт гейта в ledger. Идемпотентно по outcome_key; цепочка
+ * prev_hash → row_hash замыкается внутри одной транзакции (BEGIN IMMEDIATE),
+ * поэтому параллельные рекордеры не могут разорвать её.
+ */
+export function recordGateOutcome(options: RecordGateOutcomeOptions): GateOutcomeRecord {
+  return withTransaction(() => {
+    const existing = queryRow(
+      "SELECT * FROM gate_outcomes WHERE outcome_key = ?",
+      options.outcomeKey,
+    );
+    if (existing) return gateOutcomeRowToRecord(existing);
+
+    const last = queryRow("SELECT row_hash FROM gate_outcomes ORDER BY id DESC LIMIT 1");
+    const prevHash = last ? asText(last.row_hash) : GATE_OUTCOME_GENESIS_HASH;
+    const content: GateOutcomeContent = {
+      outcomeKey: options.outcomeKey,
+      missionId: options.missionId ?? null,
+      runId: options.runId ?? null,
+      stepId: options.stepId ?? null,
+      stepName: options.stepName ?? null,
+      taskType: options.taskType ?? null,
+      triggerKind: options.triggerKind ?? null,
+      executor: options.executor ?? null,
+      routeSource: options.routeSource ?? null,
+      routeReason: options.routeReason ?? null,
+      gateType: options.gateType ?? null,
+      verdict: options.verdict,
+      attemptsToPass: Math.max(1, Math.floor(options.attemptsToPass ?? 1)),
+      firstPass: options.firstPass ? 1 : 0,
+      evidencePath: options.evidencePath ?? null,
+      gateHash: options.gateHash ?? null,
+      policyHash: options.policyHash ?? null,
+      promptHash: options.promptHash ?? null,
+      modelVersion: options.modelVersion ?? null,
+      createdAt: options.createdAt ?? nowIso(),
+      prevHash,
+    };
+    const rowHash = gateOutcomeRowHash(content);
+    const result = getDb()
+      .prepare(INSERT_GATE_OUTCOME_SQL)
+      .run(
+        content.outcomeKey,
+        content.missionId,
+        content.runId,
+        content.stepId,
+        content.stepName,
+        content.taskType,
+        content.triggerKind,
+        content.executor,
+        content.routeSource,
+        content.routeReason,
+        content.gateType,
+        content.verdict,
+        content.attemptsToPass,
+        content.firstPass,
+        content.evidencePath,
+        content.gateHash,
+        content.policyHash,
+        content.promptHash,
+        content.modelVersion,
+        content.prevHash,
+        rowHash,
+        content.createdAt,
+      );
+    const inserted = queryRow("SELECT * FROM gate_outcomes WHERE id = ?", result.lastInsertRowid);
+    if (!inserted) throw new Error("Запись gate_outcomes не найдена сразу после вставки");
+    return gateOutcomeRowToRecord(inserted);
+  });
+}
+
+/** Все записи ledger-а в порядке вставки (ASC id) — порядок важен для цепочки. */
+export function listGateOutcomes(limit = 1000): GateOutcomeRecord[] {
+  const safeLimit = Math.max(1, Math.min(10000, Math.floor(limit) || 1));
+  return queryRows(
+    "SELECT * FROM gate_outcomes ORDER BY id ASC LIMIT ?",
+    safeLimit,
+  ).map(gateOutcomeRowToRecord);
+}
+
+/**
+ * Проверяет tamper-evident цепочку: prev_hash каждой строки обязан равняться
+ * row_hash предыдущей, а row_hash — хэшу содержимого строки. Вторая проверка
+ * ловит подмену полей (evidence_path и др.), в том числе в ПОСЛЕДНЕЙ записи,
+ * у которой нет следующей строки для сверки prev_hash.
+ */
+export function verifyGateOutcomeChain(rows?: GateOutcomeRecord[]): GateOutcomeChain {
+  const records = rows ?? listGateOutcomes();
+  for (let i = 0; i < records.length; i += 1) {
+    const record = records[i];
+    const expectedPrev = i === 0 ? GATE_OUTCOME_GENESIS_HASH : records[i - 1].rowHash;
+    if (record.prevHash !== expectedPrev) {
+      return {
+        ok: false,
+        length: records.length,
+        brokenAt: i,
+        reason: `prev_hash разорван на записи ${i}: ожидался ${expectedPrev}, найден ${record.prevHash}`,
+      };
+    }
+    if (gateOutcomeRowHash(record) !== record.rowHash) {
+      return {
+        ok: false,
+        length: records.length,
+        brokenAt: i,
+        reason: `row_hash не совпадает на записи ${i}: поля изменены после записи`,
+      };
+    }
+  }
+  return { ok: true, length: records.length, brokenAt: null };
+}
+
+/**
+ * Read-путь отчёта/датасета: читает ТОЛЬКО ledger gate_outcomes.
+ * Никаких запросов к history/capability_map — они агрегаты, а не источник истины.
+ */
+export function readGateOutcomeLedger(
+  options: { limit?: number; verify?: boolean } = {},
+): GateOutcomeLedger {
+  const rows = listGateOutcomes(options.limit ?? 1000);
+  const chain =
+    options.verify === false
+      ? { ok: true, length: rows.length, brokenAt: null }
+      : verifyGateOutcomeChain(rows);
+  return { rows, chain };
+}
+
+/**
+ * Связывает history.id (целочисленный id рекордера) с durable UUID запуска
+ * через metadata. Используется --finish → recordRegisteredRun, когда обёртка
+ * знает только history id.
+ */
+export function findRunByMetadata(key: string, value: unknown): RunRecord | undefined {
+  const rows = queryRows(
+    "SELECT * FROM runs ORDER BY created_at DESC, id DESC LIMIT 1000",
+  );
+  for (const row of rows) {
+    const metadata = parseJson(nullableText(row.metadata_json));
+    if (isRecord(metadata) && Object.is(metadata[key], value)) {
+      return runRowToRecord(row);
+    }
+  }
+  return undefined;
 }
