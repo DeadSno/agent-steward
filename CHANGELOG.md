@@ -18,6 +18,10 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 - **ARCH-3.2 — карантин флакующих гейтов.** `flake`/`infra_fail` не обновляют `capability_map`: карту обучают только стабильные `pass`/`fail`. После 2 флаков гейт уходит в карантин на 24 ч с предупреждением пользователю/в отчёте; карантин истекает сам и снимается стабильным проходом, а `infra_fail` даёт отдельное предупреждение. Проверено: тесты прохода со 2-й попытки (`first_pass=false`, `attempts_to_pass=2`), неизменности карты при flake/infra_fail, карантина с истечением и регрессии обычных pass/fail в `test-capability-map.mjs` и `test-execution-pipeline.mjs`.
 
+- **ARCH-4.1 — отложенные внешние эффекты до вердикта гейта.** `recordEffectIntents()` пишет намерения в ledger `gate_outcomes` (verdict `intent`) и аудит ДО прогона гейта; `applyDeferredEffects()` вызывается в `executeExecutionPlan` только после `pass` и проставляет `effects_applied_at`, при `fail` вызывается `abortDeferredEffects()` (эффекты не применяются), irreversible-эффекты не вызываются до pass. Аддитивная идемпотентная миграция 14 добавляет колонки `effect_intents`/`effects_applied_at`/`effects_status`/`effects_reason`, `SCHEMA_VERSION=14`. Проверено: `npm run build` (exit 0), `node test-execution-hardening.mjs` (47/47, exit 0), `node test-docs.mjs` (129/129, exit 0);
+
+- **ARCH-4.2 — saga-компенсация при частичном применении эффектов.** При падении одного эффекта уже применённые обратимые эффекты откатываются через `compensate()` в обратном порядке; irreversible помечаются как таковые в ledger и не вызываются до pass. Статус и причина пишутся в `gate_outcomes` и `audit_log` (`effects.compensated` / `effects.apply_failed` / `effects.aborted`), результат саги доступен в `ExecutionResult.effects`. Проверено: `node test-execution-hardening.mjs` — тесты частичного apply, компенсации, abort до pass и ledger/аудита (47/47, exit 0), `npm run build` (exit 0), `node test-docs.mjs` (129/129, exit 0);
+
 ## [0.0.6] - 2026-11-20
 
 ### Added

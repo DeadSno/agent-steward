@@ -30,7 +30,7 @@
 
 - `src/index.ts` — `Plugin.define`, ~30 agent tools, регистрация RPC и встроенного скилла.
 - `src/core/*` — scheduler (schtasks/cron/launchd), guard, matrix, worktree, execution, recovery.
-- `src/db/*` — схема и миграции, durable runs, DLQ, journal; `SCHEMA_VERSION=13`, миграции аддитивные и идемпотентные.
+- `src/db/*` — схема и миграции, durable runs, DLQ, journal; `SCHEMA_VERSION=14`, миграции аддитивные и идемпотентные.
 - `src/rpc.ts` — контракт `Rpc.define` между сервером и GUI; `src/gui.tsx` — дашборд.
 - Durable-слой (leases, идемпотентность шагов, recovery, DLQ) — самое хрупкое место: правки требуют `test-run-*`, `test:worktree`, `test:guards`, `test:w4` и nightly chaos.
 - `src/skill.ts` — загрузчик встроенного скилла из `skills/scheduled-job-best-practices`.

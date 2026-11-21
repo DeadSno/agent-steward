@@ -25,6 +25,14 @@ import {
 } from "../db/runs-repo.js";
 import { runStepStatefullyAsync } from "../db/run-journal.js";
 import {
+  abortDeferredEffects,
+  applyDeferredEffects,
+  EffectSagaError,
+  recordEffectIntents,
+  type EffectIntent,
+  type EffectSagaResult,
+} from "./gate-integrity.js";
+import {
   planMission,
   type MissionDecomposer,
   type MissionStep,
@@ -561,6 +569,8 @@ export interface ExecutionResult {
   steps: ExecutedStep[];
   error: string | null;
   plan: ExecutionPlan;
+  /** ARCH-4: результаты саг отложенных эффектов по шагам. */
+  effects?: EffectSagaResult[];
 }
 
 /** Опции исполнения. */
@@ -574,6 +584,14 @@ export interface ExecutePlanOptions {
   metadata?: Record<string, unknown>;
   /** ARCH-1.3: путь к логу/артефакту — provenance для gate_outcomes. */
   evidencePath?: string | null;
+  /**
+   * ARCH-4.1/4.2: отложенные внешние эффекты. Объявляются ДО гейта,
+   * исполняются только после вердикта pass; при отказе одного эффекта
+   * уже применённые обратимые эффекты откатываются (saga).
+   */
+  effects?: readonly EffectIntent[];
+  /** Эффекты конкретных шагов (имеют приоритет над общими `effects`). */
+  effectsByStep?: Readonly<Record<string, readonly EffectIntent[]>>;
 }
 
 function pickExecutor(step: PlannedStep, executors: StepExecutor[]): StepExecutor | undefined {
@@ -619,6 +637,7 @@ export async function executeExecutionPlan(
   startRun(run.id);
 
   const executed: ExecutedStep[] = [];
+  const sagaResults: EffectSagaResult[] = [];
   let firstError: string | null = null;
   const stopOnError = options.stopOnError !== false;
 
@@ -647,6 +666,23 @@ export async function executeExecutionPlan(
       continue;
     }
 
+    // ARCH-4.1: намерения пишутся в ledger gate_outcomes ДО прогона гейта.
+    // Ни один apply() (включая irreversible) здесь ещё не вызывается.
+    const stepEffects = options.effectsByStep?.[step.stepName] ?? options.effects ?? [];
+    let intentKey: string | null = null;
+    if (stepEffects.length > 0) {
+      const stepRecord = getStep(run.id, step.stepName);
+      intentKey = recordEffectIntents({
+        runId: run.id,
+        stepName: step.stepName,
+        stepId: stepRecord?.id ?? null,
+        taskName: plan.context.taskName,
+        attempt: stepRecord?.attempt ?? 1,
+        intents: stepEffects,
+        evidencePath: options.evidencePath ?? null,
+      });
+    }
+
     try {
       const execution = await runStepStatefullyAsync(run.id, step.stepName, async () => {
         const result = await executor.execute({ step, context: plan.context, plan });
@@ -661,6 +697,17 @@ export async function executeExecutionPlan(
         }
         return result.output;
       });
+      // ARCH-4.1: гейт вернул pass — только теперь допустимы внешние эффекты.
+      // ARCH-4.2: при падении одного эффекта сага сама откатит уже применённые
+      // обратимые и бросит EffectSagaError с результатом для ledger/аудита.
+      if (intentKey && stepEffects.length > 0) {
+        try {
+          sagaResults.push(await applyDeferredEffects(intentKey, stepEffects));
+        } catch (error) {
+          if (error instanceof EffectSagaError) sagaResults.push(error.result);
+          throw error;
+        }
+      }
       // ARCH-1.2: успех гейта пишется из того же пути, что и шаг.
       writeGateOutcome({
         context: plan.context,
@@ -690,6 +737,15 @@ export async function executeExecutionPlan(
       });
     } catch (error) {
       const message = errorMessage(error);
+      // ARCH-4.1: гейт не прошёл (или упал эффект) — зафиксировать отказ в
+      // ledger/аудит. abortDeferredEffects не вызывает apply() и не трогает
+      // сагу, которая уже успела примениться/скомпенсироваться.
+      if (intentKey) {
+        const aborted = abortDeferredEffects(intentKey, message);
+        if (aborted && !sagaResults.some((saga) => saga.outcomeKey === aborted.outcomeKey)) {
+          sagaResults.push(aborted);
+        }
+      }
       firstError = firstError ?? message;
       const failedAttempt = getStep(run.id, step.stepName)?.attempt ?? 1;
       writeGateOutcome({
@@ -732,5 +788,6 @@ export async function executeExecutionPlan(
     steps: executed,
     error: firstError,
     plan,
+    ...(sagaResults.length > 0 ? { effects: sagaResults } : {}),
   };
 }

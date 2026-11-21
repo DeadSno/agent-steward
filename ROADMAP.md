@@ -53,16 +53,6 @@ agent-steward — execution engine с опциональной регистра�
 
 > Здесь — только открытая архитектурная очередь 0.2.0, структурированная по правилу «деталь → задача → подзадача». Реализованные части execution model перенесены в [CHANGELOG.md](./CHANGELOG.md); описание целевого кровотока — в [docs/EXECUTION-LOOP.md](./docs/EXECUTION-LOOP.md).
 
-## Деталь 2.3 — Отложенные внешние эффекты
-`src/core/router/escalation.ts`, `src/core/gate-integrity.ts`, `src/db/capability-repo.ts`, обёртки
-
-> Сверка с кодом: вердикты `flake`/`infra_fail`, повтор гейта на том же артефакте и hash-ledger `gate_outcomes` реализованы (ARCH-1..3 перенесены в CHANGELOG). Остались `effect_intents` и saga-компенсация.
-
-**Задача ARCH-4 — Отложенные внешние эффекты** · P2 · ⬜
-
-- [ ] ARCH-4.1 `effect_intents` пишутся до гейта; применение и `effects_applied_at` — только после `pass`.
-- [ ] ARCH-4.2 Saga-компенсация при частичном применении; тест «irreversible не произошёл до pass».
-
 ## Деталь 2.4 — Context compilation
 `src/db/run-context.ts`, `src/core/router/dispatch.ts`
 

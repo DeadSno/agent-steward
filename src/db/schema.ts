@@ -41,7 +41,14 @@ CREATE TABLE IF NOT EXISTS gate_outcomes (
   model_version TEXT,
   prev_hash TEXT NOT NULL,
   row_hash TEXT NOT NULL,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  -- ARCH-4.1/4.2: отложенные внешние эффекты. Намерения пишутся до гейта,
+  -- применяются только после вердикта pass. Новые колонки НЕ входят в
+  -- GateOutcomeContent, поэтому не влияют на hash-цепочку ledger-а.
+  effect_intents TEXT,
+  effects_applied_at TEXT,
+  effects_status TEXT,
+  effects_reason TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_gate_outcomes_run ON gate_outcomes(run_id, created_at);
@@ -321,7 +328,7 @@ interface SchemaDb {
  * миграций. Увеличивайте при добавлении новой ступени в {@link MIGRATIONS}
  * и добавляйте соответствующую запись в массив.
  */
-export const SCHEMA_VERSION = 13;
+export const SCHEMA_VERSION = 14;
 
 /** Возвращает сохранённую версию схемы (0 у legacy-БД без user_version). */
 export function getSchemaVersion(db: SchemaDb): number {
@@ -644,6 +651,28 @@ const MIGRATIONS: { to: number; migrate: (db: SchemaDb) => void }[] = [
     to: 13,
     migrate(db) {
       db.exec(GATE_OUTCOMES_DDL);
+    },
+  },
+  {
+    // Ступень 14 — ARCH-4.1/4.2: отложенные внешние эффекты. CREATE TABLE
+    // IF NOT EXISTS не добавляет колонки в уже существующую таблицу, поэтому
+    // для старых БД делаем аддитивные ALTER'ы под защитой PRAGMA table_info.
+    // Повтор ступени безопасен: каждая колонка добавляется только один раз.
+    to: 14,
+    migrate(db) {
+      const columns = tableColumns(db, "gate_outcomes");
+      if (!columns.includes("effect_intents")) {
+        db.exec("ALTER TABLE gate_outcomes ADD COLUMN effect_intents TEXT");
+      }
+      if (!columns.includes("effects_applied_at")) {
+        db.exec("ALTER TABLE gate_outcomes ADD COLUMN effects_applied_at TEXT");
+      }
+      if (!columns.includes("effects_status")) {
+        db.exec("ALTER TABLE gate_outcomes ADD COLUMN effects_status TEXT");
+      }
+      if (!columns.includes("effects_reason")) {
+        db.exec("ALTER TABLE gate_outcomes ADD COLUMN effects_reason TEXT");
+      }
     },
   },
 ];

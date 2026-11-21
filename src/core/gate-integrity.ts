@@ -14,6 +14,9 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { getDb } from "../db/index.js";
+import { recordGateOutcome, type GateVerdictValue } from "../db/runs-repo.js";
+import { recordAudit } from "./audit.js";
 import { PLUGIN_DIR, sanitizeName } from "../types.js";
 
 export const GATE_SNAPSHOT_VERSION = 1;
@@ -261,6 +264,422 @@ export function verifyWorktreeSnapshot(
     return { ok: false, reason: `защищённые пути (${paths}) изменились с момента старта задачи` };
   }
   return { ok: true };
+}
+
+/* ------------------------------------------------------------------------- *
+ * ARCH-4.1/4.2: отложенные внешние эффекты (deferred effects + saga).
+ *
+ * Идея: эффект объявляется ДО прогона гейта — recordEffectIntents()
+ * пишет намерение в ledger gate_outcomes (verdict = "intent"). Ни один
+ * apply() не вызывается на этом пути. Реальные побочные действия запускает
+ * только applyDeferredEffects() после того, как гейт вернул pass; при падении
+ * одного эффекта уже применённые обратимые эффекты откатываются compensate()
+ * в обратном порядке (saga). Необратимые эффекты помечаются как таковые
+ * и никогда не вызываются до pass и при abort.
+ * ------------------------------------------------------------------------- */
+
+/** Обратимость эффекта: reversible требует compensate(), irreversible — нет. */
+export type EffectReversibility = "reversible" | "irreversible";
+
+export interface EffectIntent {
+  /** Стабильный id для идемпотентности и отчётности. */
+  readonly id: string;
+  readonly description?: string;
+  readonly reversibility: EffectReversibility;
+  /** Вызывается ТОЛЬКО после вердикта pass гейта. */
+  apply(): void | Promise<void>;
+  /** Вызывается только при откате уже применённого обратимого эффекта. */
+  compensate?(): void | Promise<void>;
+}
+
+export type RecordedEffectStatus =
+  | "pending"
+  | "applied"
+  | "compensated"
+  | "compensate_failed"
+  | "failed"
+  | "aborted";
+
+export interface RecordedEffectIntent {
+  id: string;
+  description: string;
+  reversibility: EffectReversibility;
+  status: RecordedEffectStatus;
+  appliedAt: string | null;
+  compensatedAt: string | null;
+  error: string | null;
+}
+
+export type EffectSagaStatus = "intent" | "applied" | "compensated" | "aborted" | "failed";
+
+export interface EffectSagaResult {
+  outcomeKey: string;
+  status: EffectSagaStatus;
+  appliedIds: string[];
+  compensatedIds: string[];
+  irreversibleAppliedIds: string[];
+  failedId: string | null;
+  reason: string | null;
+  effectsAppliedAt: string | null;
+  intents: RecordedEffectIntent[];
+}
+
+export interface EffectIntentLedger {
+  outcomeKey: string;
+  runId: string | null;
+  stepName: string | null;
+  status: EffectSagaStatus;
+  intents: RecordedEffectIntent[];
+  effectsAppliedAt: string | null;
+  reason: string | null;
+}
+
+/** Ошибка применения эффектов; результат саги (включая компенсацию) внутри. */
+export class EffectSagaError extends Error {
+  readonly result: EffectSagaResult;
+  constructor(result: EffectSagaResult) {
+    super(result.reason ?? "применение отложенных эффектов завершилось ошибкой");
+    this.name = "EffectSagaError";
+    this.result = result;
+  }
+}
+
+export interface RecordEffectIntentsOptions {
+  runId: string;
+  stepName: string;
+  stepId?: string | null;
+  taskName?: string | null;
+  attempt?: number;
+  intents: readonly EffectIntent[];
+  evidencePath?: string | null;
+}
+
+function effectErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function nowIso(): string {
+  return new Date().toISOString();
+}
+
+/** Проверяет контракт саги до любой записи в БД и доبية вызовов apply. */
+function validatedIntents(intents: readonly EffectIntent[]): EffectIntent[] {
+  const seen = new Set<string>();
+  const result: EffectIntent[] = [];
+  for (const intent of intents) {
+    if (!intent || typeof intent.id !== "string" || intent.id.trim() === "") {
+      throw new Error("ARCH-4: у эффекта должен быть непустой id.");
+    }
+    if (seen.has(intent.id)) {
+      throw new Error(`ARCH-4: дублирующийся id эффекта: ${intent.id}.`);
+    }
+    seen.add(intent.id);
+    if (typeof intent.apply !== "function") {
+      throw new Error(`ARCH-4: у эффекта ${intent.id} нет функции apply().`);
+    }
+    if (intent.reversibility !== "reversible" && intent.reversibility !== "irreversible") {
+      throw new Error(`ARCH-4: неверная reversibility у эффекта ${intent.id}.`);
+    }
+    if (intent.reversibility === "reversible" && typeof intent.compensate !== "function") {
+      throw new Error(`ARCH-4: обратимый эффект ${intent.id} обязан иметь compensate().`);
+    }
+    result.push(intent);
+  }
+  return result;
+}
+
+function snapshotIntent(intent: EffectIntent): RecordedEffectIntent {
+  return {
+    id: intent.id,
+    description: intent.description ?? intent.id,
+    reversibility: intent.reversibility,
+    status: "pending",
+    appliedAt: null,
+    compensatedAt: null,
+    error: null,
+  };
+}
+
+/** Идемпотентный ключ намерения: отдельная строка от вердиктов pass/fail. */
+export function effectIntentKey(runId: string, stepName: string, attempt = 1): string {
+  return `${runId}:${stepName}:intent:${Math.max(1, Math.floor(attempt))}`;
+}
+
+/** Читает записанное намерение и текущий статус саги (null, если строки нет). */
+export function readEffectIntentLedger(outcomeKey: string): EffectIntentLedger | null {
+  const row = getDb()
+    .prepare(
+      `SELECT outcome_key, run_id, step_name, effect_intents, effects_applied_at,
+              effects_status, effects_reason
+         FROM gate_outcomes WHERE outcome_key = ?`,
+    )
+    .get(outcomeKey) as
+    | {
+        outcome_key: string;
+        run_id: string | null;
+        step_name: string | null;
+        effect_intents: string | null;
+        effects_applied_at: string | null;
+        effects_status: string | null;
+        effects_reason: string | null;
+      }
+    | undefined;
+  if (!row?.effect_intents) return null;
+  let intents: RecordedEffectIntent[];
+  try {
+    const parsed: unknown = JSON.parse(row.effect_intents);
+    if (!Array.isArray(parsed)) return null;
+    intents = parsed as RecordedEffectIntent[];
+  } catch {
+    return null;
+  }
+  return {
+    outcomeKey: row.outcome_key,
+    runId: row.run_id,
+    stepName: row.step_name,
+    status: (row.effects_status as EffectSagaStatus | null) ?? "intent",
+    intents,
+    effectsAppliedAt: row.effects_applied_at ?? null,
+    reason: row.effects_reason ?? null,
+  };
+}
+
+/** Все намерения в ledger (опционально — только для запуска). */
+export function listEffectIntents(runId?: string): EffectIntentLedger[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT outcome_key FROM gate_outcomes
+        WHERE effect_intents IS NOT NULL ${runId ? "AND run_id = ?" : ""}
+        ORDER BY id`,
+    )
+    .all(...(runId ? [runId] : [])) as { outcome_key: string }[];
+  return rows
+    .map((row) => readEffectIntentLedger(row.outcome_key))
+    .filter((ledger): ledger is EffectIntentLedger => ledger !== null);
+}
+
+function writeSagaLedger(
+  outcomeKey: string,
+  intents: RecordedEffectIntent[],
+  status: EffectSagaStatus,
+  appliedAt: string | null,
+  reason: string | null,
+): void {
+  getDb()
+    .prepare(
+      `UPDATE gate_outcomes
+          SET effect_intents = ?, effects_applied_at = ?, effects_status = ?, effects_reason = ?
+        WHERE outcome_key = ?`,
+    )
+    .run(JSON.stringify(intents), appliedAt, status, reason, outcomeKey);
+}
+
+function resultFromLedger(ledger: EffectIntentLedger): EffectSagaResult {
+  return {
+    outcomeKey: ledger.outcomeKey,
+    status: ledger.status,
+    appliedIds: ledger.intents.filter((intent) => intent.status === "applied").map((intent) => intent.id),
+    compensatedIds: ledger.intents
+      .filter((intent) => intent.status === "compensated")
+      .map((intent) => intent.id),
+    irreversibleAppliedIds: ledger.intents
+      .filter(
+        (intent) =>
+          intent.reversibility === "irreversible" && intent.status === "applied",
+      )
+      .map((intent) => intent.id),
+    failedId: ledger.intents.find((intent) => intent.status === "failed")?.id ?? null,
+    reason: ledger.reason,
+    effectsAppliedAt: ledger.effectsAppliedAt,
+    intents: ledger.intents,
+  };
+}
+
+/**
+ * ARCH-4.1: фиксирует намерения ДО прогона гейта. Ни один apply() не вызывается.
+ * Повторный вызов с тем же ключом идемпотентен и не перезаписывает более
+ * поздний статус (applied/aborted/compensated).
+ */
+export function recordEffectIntents(options: RecordEffectIntentsOptions): string {
+  const intents = validatedIntents(options.intents);
+  const attempt = Math.max(1, Math.floor(options.attempt ?? 1));
+  const outcomeKey = effectIntentKey(options.runId, options.stepName, attempt);
+  if (readEffectIntentLedger(outcomeKey)) return outcomeKey;
+
+  recordGateOutcome({
+    outcomeKey,
+    missionId: options.taskName ?? null,
+    runId: options.runId,
+    stepId: options.stepId ?? null,
+    stepName: options.stepName,
+    taskType: null,
+    triggerKind: "effect-intent",
+    // Ledger хранит произвольный текст; 'intent' не входит в набор вердиктов
+    // гейта, но участвует в hash-цепочке наравне с любым другим verdict.
+    verdict: "intent" as unknown as GateVerdictValue,
+    attemptsToPass: attempt,
+    firstPass: false,
+    evidencePath: options.evidencePath ?? null,
+  });
+  writeSagaLedger(outcomeKey, intents.map(snapshotIntent), "intent", null, null);
+  recordAudit({
+    action: "effect_intents.recorded",
+    targetType: "gate_outcome",
+    target: outcomeKey,
+    actor: "saga",
+    source: "execution",
+    details: {
+      runId: options.runId,
+      stepName: options.stepName,
+      intents: intents.map((intent) => ({
+        id: intent.id,
+        reversibility: intent.reversibility,
+        description: intent.description ?? intent.id,
+      })),
+    },
+  });
+  return outcomeKey;
+}
+
+/**
+ * ARCH-4.1/4.2: применяет эффекты ТОЛЬКО после вердикта pass гейта.
+ * При падении одного эффекта откатывает уже применённые обратимые эффекты
+ * в обратном порядке и бросает {@link EffectSagaError} с результатом.
+ */
+export async function applyDeferredEffects(
+  outcomeKey: string,
+  intents: readonly EffectIntent[],
+): Promise<EffectSagaResult> {
+  const ledger = readEffectIntentLedger(outcomeKey);
+  if (!ledger) {
+    throw new Error(`ARCH-4: нет записанных намерений для ${outcomeKey}.`);
+  }
+  if (ledger.status === "applied") return resultFromLedger(ledger);
+  if (ledger.status !== "intent") {
+    throw new Error(`ARCH-4: эффекты ${outcomeKey} уже в статусе ${ledger.status}.`);
+  }
+
+  const declared = validatedIntents(intents);
+  const recordedIds = ledger.intents.map((intent) => intent.id).join("\u0000");
+  const declaredIds = declared.map((intent) => intent.id).join("\u0000");
+  if (recordedIds !== declaredIds) {
+    throw new Error("ARCH-4: набор эффектов отличается от записанного намерения.");
+  }
+
+  const state = ledger.intents.map((intent) => ({ ...intent }));
+  let failureReason: string | null = null;
+  let failedId: string | null = null;
+  for (const intent of declared) {
+    try {
+      await intent.apply();
+    } catch (error) {
+      failedId = intent.id;
+      failureReason = `${intent.id}: ${effectErrorMessage(error)}`;
+      const entry = state.find((item) => item.id === intent.id);
+      if (entry) {
+        entry.status = "failed";
+        entry.error = failureReason;
+      }
+      break;
+    }
+    const entry = state.find((item) => item.id === intent.id);
+    if (entry) {
+      entry.status = "applied";
+      entry.appliedAt = nowIso();
+    }
+  }
+
+  if (!failedId) {
+    const appliedAt = nowIso();
+    writeSagaLedger(outcomeKey, state, "applied", appliedAt, null);
+    recordAudit({
+      action: "effects.applied",
+      targetType: "gate_outcome",
+      target: outcomeKey,
+      actor: "saga",
+      source: "execution",
+      details: {
+        effectsAppliedAt: appliedAt,
+        appliedIds: state.map((intent) => intent.id),
+        irreversibleAppliedIds: state
+          .filter((intent) => intent.reversibility === "irreversible")
+          .map((intent) => intent.id),
+      },
+    });
+    return resultFromLedger(readEffectIntentLedger(outcomeKey)!);
+  }
+
+  // Saga-компенсация: только обратимые и только уже успешно применённые.
+  const compensatedIds: string[] = [];
+  const compensationErrors: string[] = [];
+  for (const intent of [...declared].reverse()) {
+    if (intent.id === failedId) continue;
+    const entry = state.find((item) => item.id === intent.id);
+    if (entry?.status !== "applied") continue;
+    if (intent.reversibility !== "reversible") continue;
+    try {
+      await intent.compensate?.();
+      entry.status = "compensated";
+      entry.compensatedAt = nowIso();
+      compensatedIds.push(intent.id);
+    } catch (error) {
+      entry.status = "compensate_failed";
+      entry.error = effectErrorMessage(error);
+      compensationErrors.push(`${intent.id}: ${effectErrorMessage(error)}`);
+    }
+  }
+
+  const irreversibleRemaining = state
+    .filter((intent) => intent.reversibility === "irreversible" && intent.status === "applied")
+    .map((intent) => intent.id);
+  const status: EffectSagaStatus =
+    compensationErrors.length > 0 || irreversibleRemaining.length > 0 ? "failed" : "compensated";
+  const reasonParts = [failureReason ?? "применение эффекта прервано"];
+  if (compensatedIds.length > 0) reasonParts.push(`откачены: ${compensatedIds.join(", ")}`);
+  if (irreversibleRemaining.length > 0) {
+    reasonParts.push(
+      `необратимые эффекты остались применены: ${irreversibleRemaining.join(", ")}`,
+    );
+  }
+  if (compensationErrors.length > 0) {
+    reasonParts.push(`ошибки компенсации: ${compensationErrors.join("; ")}`);
+  }
+  const reason = reasonParts.join("; ");
+  writeSagaLedger(outcomeKey, state, status, null, reason);
+  recordAudit({
+    action: status === "compensated" ? "effects.compensated" : "effects.apply_failed",
+    targetType: "gate_outcome",
+    target: outcomeKey,
+    actor: "saga",
+    source: "execution",
+    details: { status, failedId, compensatedIds, irreversibleRemaining, reason },
+  });
+  throw new EffectSagaError(resultFromLedger(readEffectIntentLedger(outcomeKey)!));
+}
+
+/**
+ * ARCH-4.1: гейт не прошёл — эффекты НЕ применяются вообще. Статус и причина
+ * пишутся в ledger/аудит, все намерения переводятся в 'aborted'.
+ */
+export function abortDeferredEffects(outcomeKey: string, reason: string): EffectSagaResult | null {
+  const ledger = readEffectIntentLedger(outcomeKey);
+  if (!ledger) return null;
+  if (ledger.status !== "intent") return resultFromLedger(ledger);
+  const state = ledger.intents.map((intent) => ({
+    ...intent,
+    status: "aborted" as const,
+    error: reason,
+  }));
+  writeSagaLedger(outcomeKey, state, "aborted", null, reason);
+  recordAudit({
+    action: "effects.aborted",
+    targetType: "gate_outcome",
+    target: outcomeKey,
+    actor: "saga",
+    source: "execution",
+    details: { status: "aborted", reason },
+  });
+  return resultFromLedger(readEffectIntentLedger(outcomeKey)!);
 }
 
 /**

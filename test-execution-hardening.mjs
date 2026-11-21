@@ -75,6 +75,14 @@ const { getSetting, deleteSetting } = await import("./dist/db/settings-repo.js")
 const { writeWrapperCmd, writePromptFile, lockFilePath, ensureWrapper } = await import(
   "./dist/core/ps-wrapper.js"
 );
+// ARCH-4: отложенные эффекты и saga-компенсация.
+const { createAdHocRunContext, buildExecutionPlan, executeExecutionPlan } = await import(
+  "./dist/core/execution.js"
+);
+const { listEffectIntents, readEffectIntentLedger } = await import(
+  "./dist/core/gate-integrity.js"
+);
+const { readAuditLog } = await import("./dist/core/audit.js");
 
 initDb();
 await ensureWrapper();
@@ -419,6 +427,187 @@ try {
 } catch (err) {
   console.log("[diag] G-1.2 attack THREW:", err instanceof Error ? err.stack : String(err));
   check("G-1.2: тест-атака не выбросила исключение", false, "section threw");
+}
+
+// --- ARCH-4.1/4.2: отложенные внешние эффекты + saga-компенсация ---
+try {
+  const makePlan = async (suffix) => {
+    const context = createAdHocRunContext(`ARCH-4 ${suffix} миссия`, {
+      taskName: `arch4-${suffix}-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      taskType: "mission",
+    });
+    return buildExecutionPlan(context);
+  };
+  const localExecutor = {
+    id: "arch4-test",
+    supports: () => true,
+    execute: async () => ({ output: "ok" }),
+  };
+
+  // ARCH-4.1: намерения до гейта; fail → эффекты не применены; irreversible не вызван.
+  {
+    const plan = await makePlan("fail");
+    const calls = [];
+    const intentsAtGate = [];
+    const intents = [
+      {
+        id: "rev-before-gate",
+        description: "обратимый эффект",
+        reversibility: "reversible",
+        apply: () => calls.push("apply:rev"),
+        compensate: () => calls.push("comp:rev"),
+      },
+      {
+        id: "irr-before-gate",
+        description: "необратимый эффект",
+        reversibility: "irreversible",
+        apply: () => calls.push("apply:irr"),
+      },
+    ];
+    const gate = () => {
+      intentsAtGate.push(
+        ...listEffectIntents().filter((row) => row.stepName === plan.steps[0].stepName)
+      );
+      return { ok: false, reason: "ARCH-4 gate rejected" };
+    };
+    const result = await executeExecutionPlan(plan, {
+      executors: [localExecutor],
+      gate,
+      effects: intents,
+    });
+    check(
+      "ARCH-4.1: намерения записаны в ledger до прогона гейта",
+      intentsAtGate.length === 1 &&
+        intentsAtGate[0].status === "intent" &&
+        intentsAtGate[0].intents.length === 2,
+      JSON.stringify(intentsAtGate)
+    );
+    check(
+      "ARCH-4.1: irreversible не вызван до вердикта pass",
+      !calls.includes("apply:irr"),
+      calls.join(",")
+    );
+    check(
+      "ARCH-4.1: fail → ни один эффект не применён",
+      result.status === "failed" && calls.length === 0,
+      `status=${result.status}, calls=${calls.join(",")}`
+    );
+    const outcomeKey = result.effects?.[0]?.outcomeKey;
+    const ledger = outcomeKey ? readEffectIntentLedger(outcomeKey) : null;
+    check(
+      "ARCH-4.1: отказ записан в ledger как aborted с причиной",
+      ledger?.status === "aborted" && /ARCH-4 gate rejected/.test(ledger.reason ?? ""),
+      JSON.stringify(ledger)
+    );
+  }
+
+  // ARCH-4.1: вердикт pass → эффекты применяются, effects_applied_at проставлен.
+  {
+    const plan = await makePlan("pass");
+    const calls = [];
+    let callsAtGate = [];
+    const intents = [
+      {
+        id: "rev-pass",
+        reversibility: "reversible",
+        apply: () => calls.push("apply:rev-pass"),
+        compensate: () => calls.push("comp:rev-pass"),
+      },
+      {
+        id: "irr-pass",
+        reversibility: "irreversible",
+        apply: () => calls.push("apply:irr-pass"),
+      },
+    ];
+    const gate = () => {
+      callsAtGate = [...calls];
+      return { ok: true };
+    };
+    const result = await executeExecutionPlan(plan, {
+      executors: [localExecutor],
+      gate,
+      effects: intents,
+    });
+    check(
+      "ARCH-4.1: pass → эффекты применены в объявленном порядке",
+      result.status === "passed" && calls.join(",") === "apply:rev-pass,apply:irr-pass",
+      `status=${result.status}, calls=${calls.join(",")}`
+    );
+    check(
+      "ARCH-4.1: irreversible не вызван до вердикта pass",
+      callsAtGate.length === 0 && !callsAtGate.includes("apply:irr-pass"),
+      callsAtGate.join(",")
+    );
+    const outcomeKey = result.effects?.[0]?.outcomeKey;
+    const ledger = outcomeKey ? readEffectIntentLedger(outcomeKey) : null;
+    check(
+      "ARCH-4.1: effects_applied_at проставлен только после pass",
+      Boolean(ledger?.effectsAppliedAt) &&
+        ledger?.status === "applied" &&
+        ledger.intents.every((intent) => Boolean(intent.appliedAt)),
+      JSON.stringify(ledger)
+    );
+  }
+
+  // ARCH-4.2: частичный apply → откат обратимых, статус и причина в ledger/аудит.
+  {
+    const plan = await makePlan("saga");
+    const calls = [];
+    const intents = [
+      {
+        id: "saga-a",
+        reversibility: "reversible",
+        apply: () => calls.push("apply:a"),
+        compensate: () => calls.push("comp:a"),
+      },
+      {
+        id: "saga-b",
+        reversibility: "reversible",
+        apply: () => {
+          calls.push("apply:b");
+          throw new Error("saga boom");
+        },
+        compensate: () => calls.push("comp:b"),
+      },
+      {
+        id: "saga-c",
+        reversibility: "reversible",
+        apply: () => calls.push("apply:c"),
+        compensate: () => calls.push("comp:c"),
+      },
+    ];
+    const result = await executeExecutionPlan(plan, {
+      executors: [localExecutor],
+      gate: () => ({ ok: true }),
+      effects: intents,
+    });
+    check(
+      "ARCH-4.2: частичный apply → компенсация в обратном порядке",
+      calls.join(",") === "apply:a,apply:b,comp:a",
+      calls.join(",")
+    );
+    const saga = result.effects?.[0];
+    check(
+      "ARCH-4.2: статус compensated и причина в результате саги",
+      saga?.status === "compensated" &&
+        /saga boom/.test(saga.reason ?? "") &&
+        saga.compensatedIds.join(",") === "saga-a",
+      JSON.stringify(saga)
+    );
+    const ledger = saga ? readEffectIntentLedger(saga.outcomeKey) : null;
+    check(
+      "ARCH-4.2: ledger и аудит фиксируют статус/причину",
+      ledger?.status === "compensated" &&
+        ledger.intents.map((intent) => `${intent.id}:${intent.status}`).join(",") ===
+          "saga-a:compensated,saga-b:failed,saga-c:pending" &&
+        readAuditLog({ action: "effects.compensated", target: saga.outcomeKey }).total > 0,
+      JSON.stringify(ledger)
+    );
+    check("ARCH-4.2: провал эффекта не оставляет шаг passed", result.status === "failed");
+  }
+} catch (err) {
+  console.log("[diag] ARCH-4 section THREW:", err instanceof Error ? err.stack : String(err));
+  check("ARCH-4: секция не выбросила исключение", false, "section threw");
 }
 
 const failed = results.filter((r) => !r.ok);

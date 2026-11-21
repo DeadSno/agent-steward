@@ -208,7 +208,7 @@ profile gets the first free port from 3783 upward when it is created, recorded i
 dashboard response carries `x-plugin-profile`, so a second profile neither reuses
 another profile's server nor treats it as a zombie.
 
-`SCHEMA_VERSION` is currently **13**; migrations are additive and idempotent,
+`SCHEMA_VERSION` is currently **14**; migrations are additive and idempotent,
 applied through `PRAGMA user_version` on open. Step 11 adds functional indexes
 `idx_history_task_lower` / `idx_history_status_lower` for `getHistory()` filters.
 
@@ -321,7 +321,7 @@ avg_cost / avg_time / last_10_runs`. Обучается на исходах ге
 токенов на само решение.
 
 Реализация (Спринт 36.5.b, B13): `src/db/capability-repo.ts`, таблица
-`capability_map` (`SCHEMA_VERSION = 13`). `recordCapabilityOutcome` обновляет
+`capability_map` (`SCHEMA_VERSION = 14`). `recordCapabilityOutcome` обновляет
 счётчики (`runs_total`, `runs_passed`, `first_pass_count`), кумулятивный
 `success_rate` и скользящие средние стоимости/времени, хранит `last_10_runs`
 (JSON, новые справа). `decideCapabilityRoute` решает по правилам:
@@ -612,7 +612,7 @@ the whole plugin directory (database, logs, locks, wrappers, prompts) with
 
 Schema evolution is additive: `applySchema` runs `CREATE TABLE IF NOT EXISTS` on every
 connection and adds missing columns after `PRAGMA table_info`, so upgrading the plugin
-never requires a manual migration. `SCHEMA_VERSION` (currently `13`) is stored in
+never requires a manual migration. `SCHEMA_VERSION` (currently `14`) is stored in
 `PRAGMA user_version`; incremental steps live in `MIGRATIONS`.
 
 ### Durable run state (Sprint 36.1)
@@ -1012,7 +1012,7 @@ after the agent with the user's privileges and are not filtered by tool policy.
 |---|---|---|
 | Миссия | цель + scope + gate-спека + safety + бюджет | `runs` metadata (AB-8); шаблон `missions` — план 38 |
 | Задача | миссия-шаблон + триггер | `tasks` (есть) |
-| Запуск | durable-исполнение: шаги, попытки, вердикты | `runs` / `run_steps` (есть, SCHEMA_VERSION 13) |
+| Запуск | durable-исполнение: шаги, попытки, вердикты | `runs` / `run_steps` (есть, SCHEMA_VERSION 14) |
 | Исход гейта | вердикт + provenance + экономика | `gate_outcomes` (план 40) |
 
 ### Путь исполнения (целевой)
