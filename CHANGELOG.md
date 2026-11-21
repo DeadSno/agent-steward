@@ -4,6 +4,12 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ## [Unreleased]
 
+- **ARCH-1.1 — единый durable-run путь для всех входов.** `record-history.ts` вызывает `beginRegisteredRun`/`recordRegisteredRun` (`createRun`/`finishStep`) — зарегистрированные задачи пишут `runs`/`run_steps`; registered и ad-hoc проходят через общий `RunContext` (`createRegisteredRunContext`/`createAdHocRunContext`, `validateRunContext`) и дают одинаковый execution plan и хэши; legacy/CLI-путь (@start/@finish/@skip) и dual V1/V2 сохранены. Проверено: `npm run build` (exit 0), `node test-execution-pipeline.mjs` (exit 0);
+
+- **ARCH-1.2 — ledger вердиктов гейтов.** Новая аддитивная идемпотентная миграция создаёт `gate_outcomes` (`verdict`, `gate_hash`, `policy_hash`, `prompt_hash`, `attempts_to_pass`, `first_pass`, `executor`, `trigger_kind`, `route_source`), `SCHEMA_VERSION` повышена до 13; вердикты пишутся из единого пути (`writeGateOutcome` в `executeExecutionPlan` и в регистрирующем рекордере), `outcome_key` защищает от дублей. Проверено: `npm run build` (exit 0), `node test-execution-pipeline.mjs` (exit 0), `node test-docs.mjs` (129/129, exit 0);
+
+- **ARCH-1.3 — tamper-evident provenance.** `evidence_path` и `prev_hash`/`row_hash` образуют hash-цепочку; `readGateOutcomeLedger()` — read-путь только по ledger; `verifyGateOutcomeChain()` ловит подмену `prev_hash` и `evidence_path`, включая последнюю строку (это аудит, не граница безопасности). Проверено: `npm run build` (exit 0), `node test-execution-pipeline.mjs` (exit 0; тесты подмены и восстановления цепочки);
+
 - **ARCH-2.1 — класс риска миссий.** В `MissionSpec` (`normalizeMissionSpec`) и `RunContext` введён `riskClass` (R0–R3) с детерминированной классификацией `classifyRiskClass()` по фактически доступным инструментам и наличию Quality Gate; без явного класса сохраняются прежние hybrid-политика и исходные списки инструментов. Проверено: `node test-mission-run.mjs` (63/63), `node test-permissions-policy.mjs` (69/69), `npm run build`.
 
 - **ARCH-2.2 — компилятор политики прав.** `compilePermissionPolicy()` детерминированно превращает риск-класс в `PermissionPolicy` с явными allowed/denied tools и лимитами (таблица `RISK_POLICY_BASELINE`), без OPA/Rego/Cedar и новых зависимостей; добавлены таблица соответствия, тест паритета ad-hoc/registered и регрессия текущих политик. Проверено: `node test-permissions-policy.mjs` (69/69), `node test-mission-run.mjs` (63/63), `npm run build`, `node test-docs.mjs`.

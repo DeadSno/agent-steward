@@ -25,7 +25,13 @@ import {
   type RunPermissionPolicy,
   type StepExecutor,
 } from "./execution.js";
-import { buildOpencodeConfig } from "./permissions.js";
+import {
+  buildOpencodeConfig,
+  compilePermissionPolicy,
+  isRiskClass,
+  type PolicyLimits,
+  type RiskClass,
+} from "./permissions.js";
 import {
   ensureWrapper,
   lockFilePath,
@@ -110,6 +116,8 @@ export interface MissionSpec {
   gateTimeoutSeconds?: number;
   /** Политика прав: hybrid (по умолчанию), secure, legacy. */
   policy?: RunPermissionPolicy;
+  /** ARCH-2.1: класс риска R0..R3; без него сохраняется текущее поведение. */
+  riskClass?: RiskClass;
   /** Allowlist инструментов; непустой список блокирует остальные. */
   allowedTools?: string[];
   /** Denylist инструментов; выигрывает у allowlist. */
@@ -209,17 +217,40 @@ export function normalizeMissionSpec(input: MissionSpec): MissionSpec {
   if (session === "reuse" && input.sessionId !== undefined && !/^ses_[A-Za-z0-9]{10,64}$/.test(input.sessionId)) {
     throw new Error('Поле "sessionId" должно иметь формат ses_<id>.');
   }
-  const policy = input.policy ?? "hybrid";
-  if (policy !== "hybrid" && policy !== "secure" && policy !== "legacy") {
+  const rawPolicy = input.policy ?? "hybrid";
+  if (rawPolicy !== "hybrid" && rawPolicy !== "secure" && rawPolicy !== "legacy") {
     throw new Error('Поле "policy" должно быть hybrid, secure или legacy.');
   }
-  const allowedTools = normalizeTools(input.allowedTools, "allowedTools");
-  const deniedTools = normalizeTools(input.deniedTools, "deniedTools");
+  if (input.riskClass !== undefined && !isRiskClass(input.riskClass)) {
+    throw new Error('Поле "riskClass" должно быть R0, R1, R2 или R3.');
+  }
+  const riskClass = input.riskClass;
+  let policy = rawPolicy;
+  let allowedTools = normalizeTools(input.allowedTools, "allowedTools");
+  let deniedTools = normalizeTools(input.deniedTools, "deniedTools");
   const denied = new Set((deniedTools ?? []).map((tool) => tool.toLowerCase()));
   const conflict = (allowedTools ?? []).find((tool) => denied.has(tool.toLowerCase()));
   if (conflict) {
     throw new Error(`Инструмент "${conflict}" одновременно разрешён и запрещён.`);
   }
+
+  // ARCH-2.2: явно заданный класс риска компилируется в конкретную политику
+  // с явными списками инструментов и лимитами. Без явно заданного riskClass
+  // поведение (hybrid + исходные списки) остаётся прежним.
+  let riskLimits: PolicyLimits | undefined;
+  if (riskClass) {
+    const compiled = compilePermissionPolicy({
+      riskClass,
+      policy: input.policy,
+      allowedTools,
+      deniedTools,
+    });
+    policy = compiled.policy;
+    allowedTools = compiled.allowedTools.length > 0 ? compiled.allowedTools : undefined;
+    deniedTools = compiled.deniedTools.length > 0 ? compiled.deniedTools : undefined;
+    riskLimits = compiled.limits;
+  }
+
   return {
     prompt,
     cwd,
@@ -236,11 +267,12 @@ export function normalizeMissionSpec(input: MissionSpec): MissionSpec {
     gate: input.gate?.trim() || undefined,
     gateTimeoutSeconds:
       input.gateTimeoutSeconds === undefined
-        ? undefined
+        ? riskLimits?.gateTimeoutSeconds
         : positiveInt(input.gateTimeoutSeconds, "gateTimeoutSeconds", 300),
     policy,
     allowedTools,
     deniedTools,
+    riskClass,
     dryRun: input.dryRun === true,
   };
 }
@@ -251,6 +283,7 @@ export function createMissionContext(spec: MissionSpec): RunContext {
     cwd: spec.cwd,
     taskName: spec.taskName,
     taskType: spec.taskType ?? "mission",
+    riskClass: spec.riskClass,
     policy: spec.policy ?? "hybrid",
     profile: {
       model: spec.model,

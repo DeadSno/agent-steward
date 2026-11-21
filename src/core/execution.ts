@@ -12,12 +12,16 @@
  * OpenCode на любой другой транспорт.
  */
 
+import { createHash } from "node:crypto";
 import {
   createRun,
   finishRun,
   finishStep,
   getStep,
+  recordGateOutcome,
   startRun,
+  type GateOutcomeRecord,
+  type GateVerdictValue,
 } from "../db/runs-repo.js";
 import { runStepStatefullyAsync } from "../db/run-journal.js";
 import {
@@ -28,6 +32,13 @@ import {
 } from "./router/planner.js";
 import { routeStep, type StepRoute } from "./router/dispatch.js";
 import type { CapabilityThresholds } from "../db/capability-repo.js";
+import {
+  classifyRiskClass,
+  compilePermissionPolicy,
+  isRiskClass,
+  type CompiledPermissionPolicy,
+  type RiskClass,
+} from "./permissions.js";
 
 /** Откуда пришёл запуск. Оба источника идут одним путём. */
 export type RunOrigin = "registered" | "ad-hoc";
@@ -70,6 +81,10 @@ export interface RunContext {
   taskType?: string;
   profile: RunProfile;
   safety: RunSafety;
+  /** ARCH-2.1: класс риска (R0..R3), вычисленный по gate/tool scope. */
+  riskClass: RiskClass;
+  /** ARCH-2.2: детерминированная компиляция политики для этого класса. */
+  compiledPolicy: CompiledPermissionPolicy;
   /** Свободные метаданные: родительский запуск, матрица, источник. */
   metadata?: Record<string, unknown>;
 }
@@ -102,9 +117,39 @@ export interface RunContextOverrides {
   taskType?: string;
   trigger?: RunTrigger;
   policy?: RunPermissionPolicy;
+  /** ARCH-2.1: явно заданный класс риска; иначе выводится из scope. */
+  riskClass?: RiskClass;
   profile?: Partial<RunProfile>;
   safety?: Partial<RunSafety>;
   metadata?: Record<string, unknown>;
+}
+
+/**
+ * ARCH-2.1/2.2: вычисляет класс риска и компилирует политику для обоих
+ * входов. Явная политика/списки переопределяют базу класса, но политика
+ * по умолчанию (hybrid) базу не перекрывает — поэтому один класс даёт одну
+ * политику и в ad-hoc, и в registered пути.
+ */
+function resolveRiskPolicy(
+  safety: RunSafety,
+  overrides: RunContextOverrides,
+  gate: unknown,
+): { riskClass: RiskClass; compiledPolicy: CompiledPermissionPolicy } {
+  const scope = {
+    gate: typeof gate === "string" && gate.trim() ? gate : null,
+    allowedTools: safety.allowedTools,
+    deniedTools: safety.deniedTools,
+    policy: safety.policy,
+  };
+  const riskClass = overrides.riskClass ?? classifyRiskClass(scope);
+  const policyExplicit = overrides.policy !== undefined || overrides.safety?.policy !== undefined;
+  const compiledPolicy = compilePermissionPolicy({
+    riskClass,
+    policy: policyExplicit ? safety.policy : undefined,
+    allowedTools: safety.allowedTools,
+    deniedTools: safety.deniedTools,
+  });
+  return { riskClass, compiledPolicy };
 }
 
 function normalizeList(values?: readonly string[]): string[] | undefined {
@@ -146,6 +191,11 @@ export function createRegisteredRunContext(
     allowedTools: normalizeList(overrides.safety?.allowedTools ?? definition.allowedTools),
     deniedTools: normalizeList(overrides.safety?.deniedTools ?? definition.deniedTools),
   };
+  const { riskClass, compiledPolicy } = resolveRiskPolicy(
+    safety,
+    overrides,
+    definition.qualityGate,
+  );
   return {
     origin: "registered",
     trigger: overrides.trigger ?? definition.triggerType ?? "manual",
@@ -163,6 +213,8 @@ export function createRegisteredRunContext(
       workspaceId: overrides.profile?.workspaceId ?? definition.workspaceId ?? null,
     },
     safety,
+    riskClass,
+    compiledPolicy,
     metadata: {
       ...(overrides.metadata ?? {}),
       schedule: definition.schedule ?? null,
@@ -182,6 +234,16 @@ export function createAdHocRunContext(
   const text = assertNonEmpty(mission, "миссия");
   const taskName = assertNonEmpty(overrides.taskName ?? "ad-hoc", "имя запуска");
   const cwd = overrides.cwd?.trim() || process.cwd();
+  const safety = {
+    policy: normalizePolicy(overrides.safety?.policy ?? overrides.policy),
+    allowedTools: normalizeList(overrides.safety?.allowedTools),
+    deniedTools: normalizeList(overrides.safety?.deniedTools),
+  };
+  const { riskClass, compiledPolicy } = resolveRiskPolicy(
+    safety,
+    overrides,
+    overrides.metadata?.gate,
+  );
   return {
     origin: "ad-hoc",
     trigger: overrides.trigger ?? "manual",
@@ -196,11 +258,9 @@ export function createAdHocRunContext(
       sessionId: overrides.profile?.sessionId ?? null,
       workspaceId: overrides.profile?.workspaceId ?? null,
     },
-    safety: {
-      policy: normalizePolicy(overrides.safety?.policy ?? overrides.policy),
-      allowedTools: normalizeList(overrides.safety?.allowedTools),
-      deniedTools: normalizeList(overrides.safety?.deniedTools),
-    },
+    safety,
+    riskClass,
+    compiledPolicy,
     metadata: overrides.metadata,
   };
 }
@@ -210,6 +270,11 @@ export function validateRunContext(context: RunContext): void {
   assertNonEmpty(context.taskName, "имя запуска");
   assertNonEmpty(context.prompt, "промпт запуска");
   assertNonEmpty(context.cwd, "рабочая директория");
+  // Контексты, собранные вручную старым кодом, могут не иметь riskClass —
+  // не ломаем их, но явно некорректное значение отклоняем.
+  if (context.riskClass !== undefined && !isRiskClass(context.riskClass)) {
+    throw new Error(`Неизвестный класс риска: ${String(context.riskClass)}`);
+  }
   if (!["hybrid", "secure", "legacy"].includes(context.safety.policy)) {
     throw new Error(`Неизвестная политика безопасности: ${String(context.safety.policy)}`);
   }
@@ -219,6 +284,99 @@ export function validateRunContext(context: RunContext): void {
   if (conflict) {
     throw new Error(`Инструмент "${conflict}" одновременно разрешён и запрещён`);
   }
+}
+
+/* ------------------------------------------------------------------------- *
+ * ARCH-1.2/1.3: provenance гейта (gate/policy/prompt hash) и ledger-запись
+ * ------------------------------------------------------------------------- */
+
+/** SHA-256 строки или канонического JSON значения. */
+function sha256(value: unknown): string {
+  const text = typeof value === "string" ? value : JSON.stringify(value ?? null);
+  return createHash("sha256").update(text).digest("hex");
+}
+
+/**
+ * Три хэша входов гейта из единого RunContext: самого гейта, политики доступа
+ * и промпта. `gate` можно переопределить явно; иначе берём qualityGate из
+ * метаданных задачи или имя задачи. Значения хэшируются детерминированно,
+ * поэтому один и тот же вход у registered и ad-hoc даёт одинаковый хэш.
+ */
+export function contextGateHashes(
+  context: RunContext,
+  gate?: unknown,
+): { gateHash: string; policyHash: string; promptHash: string } {
+  const gateValue = gate ?? context.metadata?.qualityGate ?? context.taskName;
+  const policyValue = {
+    policy: context.safety.policy,
+    allowedTools: context.safety.allowedTools ?? [],
+    deniedTools: context.safety.deniedTools ?? [],
+  };
+  return {
+    gateHash: sha256(gateValue),
+    policyHash: sha256(policyValue),
+    promptHash: sha256(context.prompt),
+  };
+}
+
+/**
+ * Приводит RunTrigger к trigger_kind из docs/EXECUTION-LOOP.md §3.
+ * ad-hoc миссия ≠ зарегистрированная задача даже при том же prompt.
+ */
+export function triggerKindFor(context: RunContext): string {
+  if (context.origin === "ad-hoc") return "adhoc";
+  if (context.trigger === "mcp-event") return "mcp";
+  return context.trigger;
+}
+
+export interface WriteGateOutcomeOptions {
+  context: RunContext;
+  runId: string;
+  stepId?: string | null;
+  stepName: string;
+  taskType?: string | null;
+  executor?: string | null;
+  routeSource?: string | null;
+  routeReason?: string | null;
+  gateType?: string | null;
+  verdict: GateVerdictValue;
+  attempt?: number;
+  firstPass?: boolean;
+  evidencePath?: string | null;
+  missionId?: string | null;
+  /** Явное значение gate вместо metadata.qualityGate / taskName. */
+  gate?: unknown;
+}
+
+/**
+ * Единая точка записи вердикта гейта в ledger. Используется и ядром исполнения,
+ * и рекордером зарегистрированных задач — оба входа пишут одинаковый набор
+ * хэшей и trigger_kind. Ключ идемпотентности уникален на (run, step, verdict, attempt).
+ */
+export function writeGateOutcome(options: WriteGateOutcomeOptions): GateOutcomeRecord {
+  const hashes = contextGateHashes(options.context, options.gate);
+  const attempt = Math.max(1, Math.floor(options.attempt ?? 1));
+  return recordGateOutcome({
+    outcomeKey: `${options.runId}:${options.stepName}:${options.verdict}:${attempt}`,
+    missionId: options.missionId ?? null,
+    runId: options.runId,
+    stepId: options.stepId ?? null,
+    stepName: options.stepName,
+    taskType: options.taskType ?? options.context.taskType ?? null,
+    triggerKind: triggerKindFor(options.context),
+    executor: options.executor ?? null,
+    routeSource: options.routeSource ?? null,
+    routeReason: options.routeReason ?? null,
+    gateType: options.gateType ?? null,
+    verdict: options.verdict,
+    attemptsToPass: attempt,
+    firstPass: options.firstPass ?? options.verdict === "pass",
+    evidencePath: options.evidencePath ?? null,
+    gateHash: hashes.gateHash,
+    policyHash: hashes.policyHash,
+    promptHash: hashes.promptHash,
+    modelVersion: options.context.profile.model ?? null,
+  });
 }
 
 /** Один шаг плана с готовым маршрутом (AC-1.3: трассировка). */
@@ -414,6 +572,8 @@ export interface ExecutePlanOptions {
   stopOnError?: boolean;
   /** Дополнительные метаданные запуска. */
   metadata?: Record<string, unknown>;
+  /** ARCH-1.3: путь к логу/артефакту — provenance для gate_outcomes. */
+  evidencePath?: string | null;
 }
 
 function pickExecutor(step: PlannedStep, executors: StepExecutor[]): StepExecutor | undefined {
@@ -501,6 +661,25 @@ export async function executeExecutionPlan(
         }
         return result.output;
       });
+      // ARCH-1.2: успех гейта пишется из того же пути, что и шаг.
+      writeGateOutcome({
+        context: plan.context,
+        runId: run.id,
+        stepId: getStep(run.id, step.stepName)?.id ?? null,
+        stepName: step.stepName,
+        taskType: step.route.taskType,
+        executor: executor.id,
+        routeSource: step.route.source,
+        routeReason: step.route.reason,
+        gateType:
+          typeof plan.context.metadata?.qualityGate === "string"
+            ? plan.context.metadata.qualityGate
+            : null,
+        verdict: "pass",
+        attempt: execution.attempt,
+        firstPass: execution.attempt === 1,
+        evidencePath: options.evidencePath ?? null,
+      });
       executed.push({
         stepName: step.stepName,
         taskType: step.route.taskType,
@@ -512,12 +691,31 @@ export async function executeExecutionPlan(
     } catch (error) {
       const message = errorMessage(error);
       firstError = firstError ?? message;
+      const failedAttempt = getStep(run.id, step.stepName)?.attempt ?? 1;
+      writeGateOutcome({
+        context: plan.context,
+        runId: run.id,
+        stepId: getStep(run.id, step.stepName)?.id ?? null,
+        stepName: step.stepName,
+        taskType: step.route.taskType,
+        executor: executor.id,
+        routeSource: step.route.source,
+        routeReason: step.route.reason,
+        gateType:
+          typeof plan.context.metadata?.qualityGate === "string"
+            ? plan.context.metadata.qualityGate
+            : null,
+        verdict: "fail",
+        attempt: failedAttempt,
+        firstPass: false,
+        evidencePath: options.evidencePath ?? null,
+      });
       executed.push({
         stepName: step.stepName,
         taskType: step.route.taskType,
         target: step.route.target,
         status: "failed",
-        attempt: getStep(run.id, step.stepName)?.attempt ?? 1,
+        attempt: failedAttempt,
         error: message,
       });
       if (stopOnError) break;

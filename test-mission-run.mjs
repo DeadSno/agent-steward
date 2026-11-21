@@ -10,6 +10,8 @@ process.env.OPENCODE_SCHEDULER_DB = dbPath;
 const { initDb, closeDb } = await import("./dist/db/index.js");
 const { listRuns, listRunSteps } = await import("./dist/db/runs-repo.js");
 const { runMission, normalizeMissionSpec, formatLogRunMarker, extractLastRunLog } = await import("./dist/core/mission.js");
+const { createRegisteredRunContext, createAdHocRunContext } = await import("./dist/core/execution.js");
+const { compilePermissionPolicy, RISK_CLASSES } = await import("./dist/core/permissions.js");
 
 let passed = 0;
 let failed = 0;
@@ -309,6 +311,70 @@ initDb(dbPath);
     "лог QA-P0.2: маркер прогона отсекает подготовку и старый вывод",
     extractLastRunLog(syntheticLog) ===
       "[agent-steward] === Run started 2026-11-20T05:00:00.000Z (qa-log-probe) ===\nсвежий вывод\n",
+  );
+}
+
+// 8. ARCH-2.1/2.2: риск-класс в MissionSpec/RunContext и паритет входов.
+{
+  const defaults = normalizeMissionSpec({ prompt: "x", cwd: root });
+  check(
+    "риск: без riskClass сохранено текущее поведение (hybrid, без списков)",
+    defaults.riskClass === undefined &&
+      defaults.policy === "hybrid" &&
+      defaults.allowedTools === undefined &&
+      defaults.deniedTools === undefined &&
+      defaults.gateTimeoutSeconds === undefined,
+  );
+
+  const r0 = normalizeMissionSpec({ prompt: "x", cwd: root, riskClass: "R0" });
+  check("риск: R0 компилируется в secure", r0.riskClass === "R0" && r0.policy === "secure");
+  check("риск: R0 получает явные списки инструментов", Array.isArray(r0.allowedTools) && r0.allowedTools.length > 0 && Array.isArray(r0.deniedTools));
+  check("риск: R0 получает лимит гейта из таблицы", r0.gateTimeoutSeconds === 120, String(r0.gateTimeoutSeconds));
+  await assert.rejects(() => runMission({ prompt: "x", riskClass: "R9" }), /riskClass/i);
+  check("риск: неизвестный класс отклоняется", true);
+
+  const planned = await runMission(
+    { prompt: "рискованный промпт", taskName: "ad-hoc-risk", cwd: root, riskClass: "R1", dryRun: true },
+    { executor: { id: "fake", supports: () => true, execute: async () => ({ output: "no" }) } },
+  );
+  check(
+    "риск: контекст миссии несёт класс и скомпилированную политику",
+    planned.plan.context.riskClass === "R1" && planned.plan.context.compiledPolicy.policy === "secure",
+  );
+
+  for (const klass of RISK_CLASSES) {
+    const adHoc = createAdHocRunContext("одинаковый промпт", { riskClass: klass, taskName: "parity" });
+    const registered = createRegisteredRunContext(
+      { name: "parity", prompt: "одинаковый промпт" },
+      { riskClass: klass },
+    );
+    const expected = compilePermissionPolicy({ riskClass: klass });
+    check(
+      `${klass}: паритет ad-hoc и registered`,
+      adHoc.riskClass === klass &&
+        registered.riskClass === klass &&
+        JSON.stringify(adHoc.compiledPolicy) === JSON.stringify(registered.compiledPolicy),
+    );
+    check(
+      `${klass}: контекст совпадает с компилятором`,
+      JSON.stringify(adHoc.compiledPolicy) === JSON.stringify(expected),
+    );
+  }
+
+  const adHocScope = createAdHocRunContext("p", {
+    taskName: "scope",
+    policy: "secure",
+    metadata: { gate: "npm test" },
+  });
+  const registeredScope = createRegisteredRunContext(
+    { name: "scope", prompt: "p", qualityGate: "npm test" },
+    { policy: "secure" },
+  );
+  check(
+    "риск: классификация по gate scope одинакова для обоих входов",
+    adHocScope.riskClass === "R1" &&
+      registeredScope.riskClass === "R1" &&
+      JSON.stringify(adHocScope.compiledPolicy) === JSON.stringify(registeredScope.compiledPolicy),
   );
 }
 
