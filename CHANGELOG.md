@@ -26,6 +26,10 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 - **ARCH-5.2 — пересборка контекста при эскалации и бюджет токенов.** Таблица окон моделей (`MODEL_CONTEXT_WINDOWS`) и бюджет по умолчанию (75% окна) привязаны к модели исполнителя; при смене модели/окна `recompileContextOnEscalation`/`recompileContextForRouteEscalation` заново читают ledger, а не передают старый контекст. Усечение под `tokenBudget` сохраняет критичные файлы и примеры, отбрасывая остальные и фиксируя `droppedFiles`/`truncated`. Тесты проверяют возврат ранее отброшенного файла после эскалации и соблюдение бюджета. Проверено: `npm run build`, `node test-run-context.mjs`, `node test-router-dispatch.mjs`, `node test-docs.mjs`.
 
+- **ARCH-6.1 — egress-политика в scoped-конфиге.** Whitelist разрешённых хостов/API (`allowedHosts`, `allowedApis`, `.suffix` для поддоменов) нормализуется и попадает в скомпилированную политику и `OPENCODE_CONFIG_CONTENT`; `checkEgress` применяет её в execute-пути через `runEgressGuarded`, а `recordEgressAttempt` пишет в аудит КАЖДУЮ попытку (`egress.allowed` / `egress.blocked`) с причиной, хостом и whitelist. Политика не задана → fail-open: конфиг байт-в-байт прежний, выход не ограничивается. Проверено: `npm run build` (exit 0), `node test-permissions-policy.mjs` (86/86, exit 0), `node test-audit.mjs` (53/53, exit 0), `node test-docs.mjs` (129/129, exit 0).
+
+- **ARCH-6.2 — деградация без тихого успеха при закрытой сети.** Попытка выхода к неразрешённому хосту блокируется: действие не вызывается, guard возвращает `ok=false` и `status="degraded"`, отказ фиксируется в аудите; `summarizeEgressRun` сводит попытки к `success=false` / `status="degraded"` и отчёту с причиной и хостом (без слова «успех»). При отсутствии отказов status остаётся `ok`. Проверено: `node test-audit.mjs` (53/53, exit 0; тесты блокировки, аудита отказа и деградации отчёта), `node test-permissions-policy.mjs` (86/86, exit 0), `npm run build`, `node test-docs.mjs`.
+
 ## [0.0.6] - 2026-11-20
 
 ### Added

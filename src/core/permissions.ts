@@ -172,11 +172,15 @@ export interface CompilePermissionInput {
   policy?: unknown;
   allowedTools?: readonly string[] | null;
   deniedTools?: readonly string[] | null;
+  /** ARCH-6.1: whitelist хостов/API в scoped-конфиге; отсутствие = fail-open. */
+  egress?: unknown;
 }
 
 /** Результат компиляции: то, что уходит в RunContext и обёртку. */
 export interface CompiledPermissionPolicy extends RiskBaseline {
   riskClass: RiskClass;
+  /** ARCH-6.1: нормализованная egress-политика или null (старое поведение). */
+  egress: EgressPolicy | null;
 }
 
 /**
@@ -203,7 +207,270 @@ export function compilePermissionPolicy(
     (tool) => !deniedSet.has(tool),
   );
 
-  return { riskClass, policy, allowedTools, deniedTools, limits: { ...baseline.limits } };
+  return {
+    riskClass,
+    policy,
+    allowedTools,
+    deniedTools,
+    limits: { ...baseline.limits },
+    egress: normalizeEgressPolicy(input.egress),
+  };
+}
+
+/* ─── ARCH-6.1: egress-политика (whitelist хостов/API) ────────────────────── */
+
+/**
+ * Egress-политика scoped-конфига шага. Разрешено ровно то, что перечислено;
+ * политика не задана (`null`) — подсистема необязательна и работает fail-open
+ * (поведение 1.5.x/1.6 без ограничений).
+ */
+export interface EgressPolicy {
+  /**
+   * Разрешённые хосты. Точное имя (`api.github.com`), запись с ведущей точкой
+   * (`.github.com` — сам домен и все поддомены) или с префиксом `*.`.
+   */
+  allowedHosts: string[];
+  /** Разрешённые URL-префиксы API, например `https://api.github.com/repos/`. */
+  allowedApis: string[];
+}
+
+/** Причина решения egress-политики — пишется в аудит и отчёт. */
+export type EgressDecisionReason =
+  | "no-policy"
+  | "allowed-host"
+  | "allowed-api"
+  | "blocked-host"
+  | "invalid-destination";
+
+/** Решение по одному исходящему обращению. */
+export interface EgressDecision {
+  allowed: boolean;
+  host: string | null;
+  reason: EgressDecisionReason;
+  /** Человекочитаемая причина для лога/аудита/отчёта. */
+  detail: string;
+  /** true, только если политика заблокировала выход или адрес недоступен. */
+  degraded: boolean;
+  /** false = fail-open (политика не задана, старое поведение). */
+  policyConfigured: boolean;
+}
+
+/** Результат выполнения действия под egress-guard в execute-пути. */
+export interface EgressGuardedResult<T> {
+  /** true, только если исходящее действие действительно выполнено. */
+  ok: boolean;
+  /** Раннер-статус: «ok» либо «degraded» (тихого успеха при блоке нет). */
+  status: "ok" | "degraded";
+  degraded: boolean;
+  decision: EgressDecision;
+  reason: string;
+  value?: T;
+}
+
+function normalizeHostEntry(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  let host = value.trim().toLowerCase();
+  if (!host) return null;
+  // Хост может быть записан как URL — тогда берём только hostname.
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(host)) host = extractEgressHost(host) ?? "";
+  // Убираем порт и путь, если они остались в «голой» записи; IPv6 в [] не трогаем.
+  if (host.startsWith("[")) {
+    const end = host.indexOf("]");
+    host = end > 0 ? host.slice(1, end) : "";
+  } else {
+    host = host.split(/[:/?#]/, 1)[0] ?? "";
+  }
+  host = host.replace(/\.$/, "").trim();
+  if (host.startsWith("*.")) host = `.${host.slice(2)}`;
+  if (!host || host === ".") return null;
+  return host;
+}
+
+/** Нормализует whitelist хостов (trim, lower-case, дедуп, без пустых). */
+export function normalizeEgressHosts(value: readonly unknown[] | null | undefined): string[] {
+  return Array.from(
+    new Set(
+      (value ?? [])
+        .map(normalizeHostEntry)
+        .filter((host): host is string => host != null && host.length > 0),
+    ),
+  );
+}
+
+function normalizeApiEntry(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const api = value.trim().toLowerCase();
+  return api || null;
+}
+
+function normalizeApiList(value: unknown): string[] {
+  const raw = Array.isArray(value)
+    ? value
+    : typeof value === "string" && value.trim()
+      ? value.split(",")
+      : [];
+  return Array.from(
+    new Set(
+      raw
+        .map(normalizeApiEntry)
+        .filter((api): api is string => api != null && api.length > 0),
+    ),
+  );
+}
+
+/**
+ * Приводит scoped-конфиг egress к нормализованному whitelist.
+ * `null`/отсутствие/пустые списки — политика НЕ задана (fail-open).
+ * Поддерживаются: объект `{ allowedHosts, allowedApis }` (алиасы hosts/apis,
+ * whitelist/allowlist), массив хостов и строка хостов через запятую.
+ */
+export function normalizeEgressPolicy(value: unknown): EgressPolicy | null {
+  if (value == null) return null;
+  let hostSource: unknown = value;
+  let apiSource: unknown = null;
+  if (typeof value === "string") {
+    hostSource = value.split(",");
+  } else if (typeof value === "object" && !Array.isArray(value)) {
+    const obj = value as Record<string, unknown>;
+    hostSource = obj.allowedHosts ?? obj.hosts ?? obj.whitelist ?? obj.allowlist;
+    apiSource = obj.allowedApis ?? obj.apis;
+  }
+  const allowedHosts = normalizeEgressHosts(
+    Array.isArray(hostSource)
+      ? hostSource
+      : typeof hostSource === "string" && hostSource.trim()
+        ? [hostSource]
+        : [],
+  );
+  const allowedApis = normalizeApiList(apiSource);
+  if (allowedHosts.length === 0 && allowedApis.length === 0) return null;
+  return { allowedHosts, allowedApis };
+}
+
+/** Извлекает hostname из URL, `host:port` или «голого» хоста. */
+export function extractEgressHost(destination: string): string | null {
+  if (typeof destination !== "string") return null;
+  const trimmed = destination.trim();
+  if (!trimmed || /\s/.test(trimmed)) return null;
+  try {
+    const withScheme = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(trimmed)
+      ? trimmed
+      : `http://${trimmed}`;
+    const host = new URL(withScheme).hostname.toLowerCase().replace(/\.$/, "");
+    return host || null;
+  } catch {
+    const match = /^([a-zA-Z0-9._-]+)/.exec(trimmed);
+    return match ? match[1].toLowerCase().replace(/\.$/, "") : null;
+  }
+}
+
+function hostMatches(host: string, allowed: string): boolean {
+  if (host === allowed) return true;
+  if (allowed.startsWith(".")) {
+    return host === allowed.slice(1) || host.endsWith(allowed);
+  }
+  return false;
+}
+
+/**
+ * ARCH-6.1: решение по одному выходу. Политика не задана → fail-open;
+ * задана → всё, чего нет в whitelist, блокируется (fail-closed) с причиной.
+ */
+export function checkEgress(policy: unknown, destination: string): EgressDecision {
+  const normalized = normalizeEgressPolicy(policy);
+  const host = extractEgressHost(destination);
+  if (!normalized) {
+    return {
+      allowed: true,
+      host,
+      reason: "no-policy",
+      detail: "egress-политика не задана: fail-open, прежнее поведение без ограничений",
+      degraded: false,
+      policyConfigured: false,
+    };
+  }
+  if (!host) {
+    return {
+      allowed: false,
+      host: null,
+      reason: "invalid-destination",
+      detail: "не удалось разобрать адрес назначения egress-политикой",
+      degraded: true,
+      policyConfigured: true,
+    };
+  }
+  const target = destination.trim().toLowerCase();
+  for (const api of normalized.allowedApis) {
+    if (target === api || target.startsWith(api)) {
+      return {
+        allowed: true,
+        host,
+        reason: "allowed-api",
+        detail: `API-префикс ${api} разрешён egress-политикой`,
+        degraded: false,
+        policyConfigured: true,
+      };
+    }
+  }
+  for (const allowed of normalized.allowedHosts) {
+    if (hostMatches(host, allowed)) {
+      return {
+        allowed: true,
+        host,
+        reason: "allowed-host",
+        detail: `хост ${host} разрешён whitelist egress-политики`,
+        degraded: false,
+        policyConfigured: true,
+      };
+    }
+  }
+  return {
+    allowed: false,
+    host,
+    reason: "blocked-host",
+    detail: `хост ${host} отсутствует в whitelist egress-политики`,
+    degraded: true,
+    policyConfigured: true,
+  };
+}
+
+/**
+ * Execute-path choke point: действие выполняется ТОЛЬКО при разрешённом
+ * выходе. При блоке действие не вызывается, `ok=false`, `status="degraded"` —
+ * раннер не может сообщить об успехе «тихо».
+ */
+export async function runWithEgressDecision<T>(
+  decision: EgressDecision,
+  destination: string,
+  action: (destination: string) => T | Promise<T>,
+): Promise<EgressGuardedResult<T>> {
+  if (!decision.allowed) {
+    return {
+      ok: false,
+      status: "degraded",
+      degraded: true,
+      decision,
+      reason: decision.detail,
+    };
+  }
+  const value = await action(destination);
+  return {
+    ok: true,
+    status: "ok",
+    degraded: false,
+    decision,
+    reason: decision.detail,
+    value,
+  };
+}
+
+/** Удобная обёртка: checkEgress + execute-path guard в одном вызове. */
+export async function runEgressGuarded<T>(
+  policy: unknown,
+  destination: string,
+  action: (destination: string) => T | Promise<T>,
+): Promise<EgressGuardedResult<T>> {
+  return runWithEgressDecision(checkEgress(policy, destination), destination, action);
 }
 
 /** Базовые политики: какие действия разрешены без учёта списков задачи. */
@@ -226,6 +493,8 @@ export interface PermissionInput {
   allowedTools?: readonly string[] | null;
   /** Явный denylist задачи. */
   deniedTools?: readonly string[] | null;
+  /** ARCH-6.1: egress-политика scoped-конфига; отсутствие = fail-open. */
+  egress?: unknown;
 }
 
 export interface EffectivePermission {
@@ -243,6 +512,8 @@ export interface EffectivePermissions {
   policy: PermissionPolicy;
   legacyShell: boolean;
   permissions: EffectivePermission[];
+  /** ARCH-6.1: whitelist хостов/API или null (политика не задана). */
+  egress: EgressPolicy | null;
   /**
    * Действия, запрещённые именно политикой по умолчанию (а не списками
    * задачи). Используется для аудита и подсказок в логе.
@@ -334,20 +605,20 @@ export function resolvePermissions(input: PermissionInput = {}): EffectivePermis
     });
   }
 
-  return { policy, legacyShell, permissions, deniedByPolicy };
+  return { policy, legacyShell, permissions, deniedByPolicy, egress: normalizeEgressPolicy(input.egress) };
 }
 
 /** Готовый OPENCODE_CONFIG_CONTENT для обёрток. */
 export function buildOpencodeConfig(input: PermissionInput = {}): string {
   const effective = resolvePermissions(input);
-  return JSON.stringify(
-    {
-      $schema: "https://opencode.ai/config.json",
-      permissions: effective.permissions,
-    },
-    null,
-    2,
-  );
+  // ARCH-6.1: egress добавляется в scoped-конфиг только когда политика задана.
+  // Без неё вывод байт-в-байт прежний — fail-open для необязательной подсистемы.
+  const config: Record<string, unknown> = {
+    $schema: "https://opencode.ai/config.json",
+    permissions: effective.permissions,
+  };
+  if (effective.egress) config.egress = effective.egress;
+  return JSON.stringify(config, null, 2);
 }
 
 /** Краткое описание политики для лога задачи. */

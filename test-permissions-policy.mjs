@@ -9,6 +9,10 @@ import {
   compilePermissionPolicy,
   classifyRiskClass,
   normalizeRiskClass,
+  normalizeEgressPolicy,
+  extractEgressHost,
+  checkEgress,
+  runEgressGuarded,
 } from "./dist/core/permissions.js";
 
 let passed = 0;
@@ -131,6 +135,131 @@ check(
 check(
   "compiler: явная политика заменяет политику класса",
   compilePermissionPolicy({ riskClass: "R0", policy: "legacy" }).policy === "legacy",
+);
+
+// ── ARCH-6.1: egress-политика в scoped-конфиге ───────────────────────────────
+check(
+  "egress: без конфига политика не задана (fail-open)",
+  normalizeEgressPolicy(null) === null &&
+    normalizeEgressPolicy(undefined) === null &&
+    normalizeEgressPolicy([]) === null &&
+    normalizeEgressPolicy({ allowedHosts: [] }) === null,
+);
+const normalizedEgress = normalizeEgressPolicy({
+  allowedHosts: ["API.Example.COM.", "*.GitHub.com"],
+  allowedApis: ["https://API.Example.COM/v1/"],
+});
+check(
+  "egress: нормализация whitelist (trim/lower/дедуп)",
+  normalizedEgress !== null &&
+    normalizedEgress.allowedHosts.join(",") === "api.example.com,.github.com" &&
+    normalizedEgress.allowedApis.join(",") === "https://api.example.com/v1/",
+);
+check(
+  "egress: строка хостов через запятую",
+  JSON.stringify(normalizeEgressPolicy("API.Example.COM, *.GitHub.com")) ===
+    JSON.stringify({ allowedHosts: ["api.example.com", ".github.com"], allowedApis: [] }),
+);
+check(
+  "egress: extractEgressHost URL/port/bare/невалидный",
+  extractEgressHost("https://api.github.com:443/repos") === "api.github.com" &&
+    extractEgressHost("evil.example:8080/x") === "evil.example" &&
+    extractEgressHost("not a url") === null &&
+    extractEgressHost("") === null,
+);
+
+const noPolicy = checkEgress(null, "https://evil.example/x");
+check(
+  "egress: fail-open без политики (старое поведение)",
+  noPolicy.allowed === true &&
+    noPolicy.reason === "no-policy" &&
+    noPolicy.degraded === false &&
+    noPolicy.policyConfigured === false,
+);
+const egressPolicy = { allowedHosts: ["api.github.com"], allowedApis: [] };
+const allowedHost = checkEgress(egressPolicy, "https://api.github.com/repos");
+check(
+  "egress: разрешённый хост проходит",
+  allowedHost.allowed === true &&
+    allowedHost.reason === "allowed-host" &&
+    allowedHost.host === "api.github.com" &&
+    allowedHost.degraded === false,
+);
+const blockedHost = checkEgress(egressPolicy, "https://evil.example/x");
+check(
+  "egress: запрещённый хост блокируется и имеет причину",
+  blockedHost.allowed === false &&
+    blockedHost.reason === "blocked-host" &&
+    blockedHost.degraded === true &&
+    blockedHost.detail.includes("evil.example"),
+);
+const suffixPolicy = { allowedHosts: [".github.com"], allowedApis: [] };
+const subOk = checkEgress(suffixPolicy, "https://sub.github.com/x");
+const subBad = checkEgress(suffixPolicy, "https://github.com.evil.test/x");
+check(
+  "egress: .suffix пускает поддомен, но не подмену домена",
+  subOk.allowed === true && subBad.allowed === false,
+);
+const apiOk = checkEgress(
+  { allowedHosts: [], allowedApis: ["https://api.github.com/repos/"] },
+  "https://api.github.com/repos/o/r",
+);
+check("egress: разрешённый API-префикс проходит", apiOk.allowed === true && apiOk.reason === "allowed-api");
+const invalidDest = checkEgress(egressPolicy, "not a url");
+check(
+  "egress: невалидный адрес — отказ с причиной",
+  invalidDest.allowed === false &&
+    invalidDest.reason === "invalid-destination" &&
+    invalidDest.degraded === true,
+);
+
+const compiledWithEgress = compilePermissionPolicy({ riskClass: "R2", egress: ["api.github.com"] });
+check(
+  "egress: компилятор переносит whitelist в scoped-конфиг",
+  compiledWithEgress.egress !== null &&
+    compiledWithEgress.egress.allowedHosts.join(",") === "api.github.com",
+);
+check(
+  "egress: компилятор без whitelist оставляет fail-open",
+  compilePermissionPolicy({ riskClass: "R2" }).egress === null,
+);
+const scoped = JSON.parse(
+  buildOpencodeConfig({ policy: "hybrid", egress: { allowedHosts: ["api.github.com"] } }),
+);
+check(
+  "egress: scoped-конфиг содержит whitelist и 10 правил",
+  scoped.egress.allowedHosts.join(",") === "api.github.com" && scoped.permissions.length === 10,
+);
+const legacyConfig = JSON.parse(buildOpencodeConfig({ policy: "hybrid" }));
+check(
+  "egress: без политики конфиг байт-в-байт прежний (fail-open)",
+  legacyConfig.egress === undefined &&
+    JSON.stringify(legacyConfig.permissions) === JSON.stringify(parsed.permissions),
+);
+
+// Execute-path: действие вызывается только при разрешённом выходе.
+let calls = 0;
+const action = () => {
+  calls++;
+  return "downloaded";
+};
+const okRun = await runEgressGuarded(egressPolicy, "https://api.github.com/repos", action);
+check(
+  "egress: execute-path разрешённый хост выполняет действие",
+  okRun.ok === true && okRun.status === "ok" && okRun.value === "downloaded" && calls === 1,
+);
+const blockedRun = await runEgressGuarded(egressPolicy, "https://evil.example/x", action);
+check(
+  "egress: execute-path заблокированный хост НЕ выполняет действие и деградирует",
+  blockedRun.ok === false &&
+    blockedRun.status === "degraded" &&
+    blockedRun.degraded === true &&
+    calls === 1,
+);
+const noPolicyRun = await runEgressGuarded(null, "https://evil.example/x", action);
+check(
+  "egress: execute-path без политики сохраняет старое поведение",
+  noPolicyRun.ok === true && noPolicyRun.status === "ok" && calls === 2,
 );
 
 console.log(`\nPermissions policy: все ${passed} проверок пройдены.`);

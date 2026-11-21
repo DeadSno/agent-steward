@@ -2,6 +2,12 @@ import { getDb } from "../db/index.js";
 import { redactSecretsInText } from "./secrets.js";
 import {
   resolvePermissions,
+  checkEgress,
+  normalizeEgressPolicy,
+  runWithEgressDecision,
+  type EgressDecision,
+  type EgressPolicy,
+  type EgressGuardedResult,
   type PermissionPolicy,
 } from "./permissions.js";
 
@@ -299,6 +305,112 @@ export function recordTaskToolBlocks(
     }
   }
   return written;
+}
+
+/* ─── ARCH-6.1 / ARCH-6.2: аудит egress-попыток и деградация раннера ──────── */
+
+export const EGRESS_ALLOWED_ACTION = "egress.allowed";
+export const EGRESS_BLOCKED_ACTION = "egress.blocked";
+
+export interface EgressAttemptInput {
+  /** Задача, от имени которой происходит выход. */
+  task: string;
+  /** URL, `host:port` или «голый» хост назначения. */
+  destination: string;
+  /** Whitelist из scoped-конфига; null/undefined = fail-open (старое поведение). */
+  policy?: EgressPolicy | readonly string[] | string | null;
+  actor?: AuditActor;
+  source?: string | null;
+}
+
+/** Решение egress-политики плюс id аудитной записи. */
+export interface EgressAttemptResult extends EgressDecision {
+  auditId: number | null;
+}
+
+/**
+ * ARCH-6.1: аудит КАЖДОЙ попытки выхода — разрешённой и заблокированной —
+ * с указанием причины. Запись идемпотентна по решению: один вызов = одна
+ * запись `egress.allowed` или `egress.blocked`. Ошибка журнала проглатывается
+ * `recordAudit`, поэтому аудит не ломает сам выход.
+ */
+export function recordEgressAttempt(input: EgressAttemptInput): EgressAttemptResult {
+  const decision = checkEgress(input.policy ?? null, input.destination);
+  const normalized = normalizeEgressPolicy(input.policy ?? null);
+  const auditId = recordAudit({
+    action: decision.allowed ? EGRESS_ALLOWED_ACTION : EGRESS_BLOCKED_ACTION,
+    targetType: "task",
+    target: input.task,
+    actor: input.actor ?? "system",
+    source: input.source ?? "egress",
+    details: {
+      destination: input.destination,
+      host: decision.host,
+      reason: decision.reason,
+      detail: decision.detail,
+      allowed: decision.allowed,
+      degraded: decision.degraded,
+      policyConfigured: decision.policyConfigured,
+      allowedHosts: normalized?.allowedHosts ?? null,
+      allowedApis: normalized?.allowedApis ?? null,
+    },
+  });
+  return { ...decision, auditId };
+}
+
+/**
+ * Execute-path guard с аудитом: попытка фиксируется ДО действия, действие
+ * выполняется только при разрешённом выходе. При блоке `ok=false`,
+ * `status="degraded"` — раннер не может сообщить об успехе тихо.
+ */
+export async function runEgressGuardedWithAudit<T>(
+  input: EgressAttemptInput,
+  action: (destination: string) => T | Promise<T>,
+): Promise<EgressGuardedResult<T> & { auditId: number | null }> {
+  const attempt = recordEgressAttempt(input);
+  const result = await runWithEgressDecision(attempt, input.destination, action);
+  return { ...result, decision: attempt, auditId: attempt.auditId };
+}
+
+export type EgressRunStatus = "ok" | "degraded";
+
+/** ARCH-6.2: честный свод статуса/отчёта раннера по egress-попыткам шага. */
+export interface EgressRunSummary {
+  /** false, если была хотя бы одна заблокированная попытка. */
+  success: boolean;
+  status: EgressRunStatus;
+  degraded: boolean;
+  attempts: number;
+  allowed: number;
+  blocked: number;
+  reason: string;
+  report: string;
+}
+
+/**
+ * ARCH-6.2: «сеть закрыта → деградация без тихого успеха». Любой отказ
+ * превращается в `status="degraded"`, `success=false` и строку отчёта с
+ * причиной; при отсутствии отказов сохраняется обычный успешный исход.
+ */
+export function summarizeEgressRun(attempts: readonly EgressAttemptResult[]): EgressRunSummary {
+  const blocked = attempts.filter((attempt) => !attempt.allowed);
+  const degraded = blocked.length > 0;
+  const reasons = blocked.map(
+    (attempt) => `${attempt.host ?? "?"}: ${attempt.reason} — ${attempt.detail}`,
+  );
+  const report = degraded
+    ? `деградация: egress заблокирован (${blocked.length}/${attempts.length}); ${reasons.join("; ")}`
+    : `egress-попыток ${attempts.length}, все разрешены`;
+  return {
+    success: !degraded,
+    status: degraded ? "degraded" : "ok",
+    degraded,
+    attempts: attempts.length,
+    allowed: attempts.length - blocked.length,
+    blocked: blocked.length,
+    reason: degraded ? reasons.join("; ") : "no-policy-or-all-allowed",
+    report,
+  };
 }
 
 /**

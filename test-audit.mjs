@@ -14,7 +14,7 @@ process.env.OPENCODE_SCHEDULER_HOME = path.join(tempRoot, "opencode", "windows-s
 const audit = await import("./dist/core/audit.js");
 const dbModule = await import("./dist/db/index.js");
 
-const { recordAudit, readAuditLog, cleanupAuditLog, clearAuditLog, resetAuditCleanupThrottle, recordToolBlocked, recordTaskToolBlocks } = audit;
+const { recordAudit, readAuditLog, cleanupAuditLog, clearAuditLog, resetAuditCleanupThrottle, recordToolBlocked, recordTaskToolBlocks, recordEgressAttempt, runEgressGuardedWithAudit, summarizeEgressRun, EGRESS_ALLOWED_ACTION, EGRESS_BLOCKED_ACTION } = audit;
 
 const results = [];
 function check(name, cond) {
@@ -177,6 +177,152 @@ try {
   invalidUntilThrew = String(err instanceof Error ? err.message : err).includes("until");
 }
 check("readAuditLog: невалидный until бросает ошибку", invalidUntilThrew);
+
+// --- 7b. ARCH-6.1 / ARCH-6.2: аудит egress-попыток и деградация ----------------
+resetAuditCleanupThrottle();
+clearAuditLog();
+const egressPolicy = { allowedHosts: ["api.github.com"], allowedApis: [] };
+
+const egressAllowed = recordEgressAttempt({
+  task: "scraper",
+  destination: "https://api.github.com/repos",
+  policy: egressPolicy,
+  actor: "mcp",
+  source: "execute-path",
+});
+check(
+  "egress: разрешённая попытка возвращает решение и аудируется",
+  egressAllowed.allowed === true &&
+    egressAllowed.reason === "allowed-host" &&
+    egressAllowed.degraded === false &&
+    typeof egressAllowed.auditId === "number" &&
+    egressAllowed.auditId > 0,
+);
+
+const egressBlocked = recordEgressAttempt({
+  task: "scraper",
+  destination: "https://evil.example/exfiltrate",
+  policy: egressPolicy,
+  actor: "mcp",
+  source: "execute-path",
+});
+check(
+  "egress: заблокированная попытка возвращает отказ с причиной",
+  egressBlocked.allowed === false &&
+    egressBlocked.reason === "blocked-host" &&
+    egressBlocked.degraded === true &&
+    egressBlocked.detail.includes("evil.example"),
+);
+
+const egressRecords = readAuditLog({}).records;
+check(
+  "egress: КАЖДАЯ попытка попала в аудит (разрешённая и заблокированная)",
+  egressRecords.length === 2,
+);
+const allowedRec = egressRecords.find((r) => r.id === egressAllowed.auditId);
+const blockedRec = egressRecords.find((r) => r.id === egressBlocked.auditId);
+check(
+  "egress: egress.allowed хранит причину",
+  allowedRec?.action === EGRESS_ALLOWED_ACTION &&
+    allowedRec.details.allowed === true &&
+    allowedRec.details.reason === "allowed-host" &&
+    allowedRec.details.degraded === false &&
+    allowedRec.details.policyConfigured === true,
+);
+check(
+  "egress: egress.blocked хранит причину",
+  blockedRec?.action === EGRESS_BLOCKED_ACTION &&
+    blockedRec.details.allowed === false &&
+    blockedRec.details.reason === "blocked-host" &&
+    blockedRec.details.degraded === true,
+);
+check(
+  "egress: аудит хранит адрес, хост и whitelist",
+  blockedRec?.details.destination === "https://evil.example/exfiltrate" &&
+    blockedRec.details.host === "evil.example" &&
+    Array.isArray(blockedRec.details.allowedHosts) &&
+    blockedRec.details.allowedHosts.join(",") === "api.github.com",
+);
+check(
+  "egress: аудит привязан к задаче",
+  egressRecords.every((r) => r.targetType === "task" && r.target === "scraper"),
+);
+
+clearAuditLog();
+const noPolicyAttempt = recordEgressAttempt({ task: "plain", destination: "https://evil.example/x" });
+check(
+  "egress: без политики fail-open, но попытка всё равно аудируется",
+  noPolicyAttempt.allowed === true &&
+    noPolicyAttempt.reason === "no-policy" &&
+    noPolicyAttempt.degraded === false &&
+    noPolicyAttempt.policyConfigured === false,
+);
+const noPolicyRec = readAuditLog({}).records[0];
+check(
+  "egress: запись no-policy помечена как fail-open",
+  noPolicyRec?.action === EGRESS_ALLOWED_ACTION &&
+    noPolicyRec.details.reason === "no-policy" &&
+    noPolicyRec.details.policyConfigured === false,
+);
+
+// Execute-path guard с аудитом.
+clearAuditLog();
+let networkCalls = 0;
+const network = () => {
+  networkCalls++;
+  return "payload";
+};
+const okGuarded = await runEgressGuardedWithAudit(
+  { task: "guarded", destination: "https://api.github.com/x", policy: egressPolicy },
+  network,
+);
+check(
+  "egress: guard с аудитом разрешает и выполняет действие",
+  okGuarded.ok === true &&
+    okGuarded.status === "ok" &&
+    okGuarded.value === "payload" &&
+    networkCalls === 1 &&
+    typeof okGuarded.auditId === "number",
+);
+const blockedGuarded = await runEgressGuardedWithAudit(
+  { task: "guarded", destination: "https://evil.example/x", policy: egressPolicy },
+  network,
+);
+check(
+  "egress: guard с аудитом блокирует без вызова действия",
+  blockedGuarded.ok === false &&
+    blockedGuarded.status === "degraded" &&
+    blockedGuarded.degraded === true &&
+    networkCalls === 1,
+);
+check("egress: guard auditing — 2 записи на 2 попытки", readAuditLog({}).records.length === 2);
+
+// ARCH-6.2: сеть закрыта → деградация без тихого успеха.
+const degraded = summarizeEgressRun([egressAllowed, egressBlocked]);
+check(
+  "egress: ARCH-6.2 success=false, status=degraded при блоке",
+  degraded.success === false &&
+    degraded.status === "degraded" &&
+    degraded.degraded === true &&
+    degraded.blocked === 1 &&
+    degraded.allowed === 1 &&
+    degraded.attempts === 2,
+);
+check(
+  "egress: ARCH-6.2 отчёт отражает деградацию, а не тихий успех",
+  degraded.report.includes("деградация") &&
+    degraded.report.includes("evil.example") &&
+    !/успех|success/i.test(degraded.report),
+);
+const healthy = summarizeEgressRun([egressAllowed]);
+check(
+  "egress: ARCH-6.2 без отказов — обычный успех",
+  healthy.success === true &&
+    healthy.status === "ok" &&
+    healthy.degraded === false &&
+    healthy.blocked === 0 &&
+    healthy.report.includes("разрешены"),
+);
 
 // --- 8. Итог ------------------------------------------------------------------
 const failures = results.filter((item) => !item.ok);
