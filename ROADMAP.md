@@ -60,9 +60,6 @@ agent-steward — execution engine с опциональной регистра�
 
 **Задача ARCH-5 — Context compilation** · P3 · ⬜
 
-- [ ] ARCH-5.1 Repo-map + отбор файлов по типу задачи, дедуп/лимит/scrub секретов и gate-passed примеры.
-- [ ] ARCH-5.2 Пересборка контекста при эскалации (другая модель → другое окно) и тест с бюджетом токенов.
-
 ## Деталь 2.5 — Egress-контроль и approvals
 `src/core/permissions.ts`, `src/core/audit.ts`
 

@@ -300,6 +300,151 @@ assert(context.listRunInjections(runI.id).length === 1, "вставка суще
 repo.deleteRun(runI.id);
 assert(context.listRunInjections(runI.id).length === 0, "удаление запуска убирает вставки");
 
+// --- 10. ARCH-5.1: карта репозитория и отбор файлов по типу задачи ------------
+const repoMap = context.buildRepoMap();
+assert(repoMap.length > 0, "карта репозитория не пуста");
+assert(
+  new Set(repoMap.map((item) => item.path)).size === repoMap.length,
+  "пути в карте уникальны",
+);
+assert(
+  repoMap.some((item) => item.path === "src/db/run-context.ts"),
+  "карта описывает компилятор контекста",
+);
+const selected = context.selectRepoFiles("Run Tests");
+assert(
+  selected.some((item) => item.path === "src/core/router/rules.ts"),
+  "для run_tests отобран rules.ts",
+);
+assert(
+  !selected.some((item) => item.path === "src/core/permissions.ts"),
+  "для run_tests не отобран нерелевантный permissions.ts",
+);
+assert(
+  selected.some((item) => item.critical),
+  "в отборе есть критичные файлы",
+);
+
+// Gate-passed пример читается из ledger; проваленный вердикт игнорируется.
+const evidenceFile = path.join(tempRoot, "gate-pass-example.txt");
+fs.writeFileSync(evidenceFile, "gate example token=secretvalue run_tests");
+repo.recordGateOutcome({
+  outcomeKey: "arch5-example-pass",
+  taskType: "run_tests",
+  verdict: "pass",
+  evidencePath: evidenceFile,
+  createdAt: "2026-01-01T00:00:00.000Z",
+});
+repo.recordGateOutcome({
+  outcomeKey: "arch5-example-fail",
+  taskType: "run_tests",
+  verdict: "fail",
+  evidencePath: evidenceFile,
+  createdAt: "2026-01-01T00:01:00.000Z",
+});
+
+const compileFiles = {
+  "src/core/router/rules.ts": "export const RULES = 1; API_KEY=abc123",
+  "src/core/router/dispatch.ts": "export function route() {}",
+  "src/db/runs-repo.ts": "export const ledger = 1;",
+  // Два файла с одинаковым содержимым — проверка дедупликации.
+  "src/db/capability-repo.ts": "duplicate payload",
+  "src/core/execution.ts": "duplicate payload",
+  [evidenceFile]: "gate example token=secretvalue run_tests",
+};
+const compileOptions = {
+  taskType: "run_tests",
+  model: "local-7b",
+  files: compileFiles,
+  maxFiles: 12,
+  tokenBudget: 4000,
+};
+
+// --- 11. Дедуп / лимит / scrub ----------------------------------------------
+const compiled = context.compileRunContext(compileOptions);
+assert(compiled.compiledFrom === "ledger", "источник контекста — ledger");
+assert(compiled.model === "local-7b", "модель зафиксирована в контексте");
+assert(compiled.contextWindow === 8192, "окно local-7b — 8192 токенов");
+assert(compiled.tokenBudget === 4000, "явный бюджет уважается");
+assert(
+  compiled.repoMap.length === context.REPO_MAP.length,
+  "в контекст включена полная карта репозитория",
+);
+assert(
+  compiled.files[0].path === "src/core/router/rules.ts",
+  "файлы идут в порядке карты (детерминированно)",
+);
+assert(
+  compiled.deduplicated.includes("src/core/execution.ts"),
+  "дуб по содержимому устранён",
+);
+assert(
+  compiled.files.length <= compileOptions.maxFiles,
+  "соблюдён лимит количества файлов",
+);
+assert(
+  !JSON.stringify(compiled).includes("abc123") &&
+    !JSON.stringify(compiled).includes("secretvalue"),
+  "секреты вырезаны из файлов и примеров",
+);
+assert(
+  JSON.stringify(compiled).includes("API_KEY=***"),
+  "присваивание секрета замаскировано",
+);
+assert(
+  compiled.examples.length >= 1 &&
+    compiled.examples[0].outcomeKey === "arch5-example-pass",
+  "пример взят из gate-passed строки ledger",
+);
+assert(
+  !compiled.examples.some((item) => item.outcomeKey === "arch5-example-fail"),
+  "проваленный гейт в примеры не попал",
+);
+
+// Воспроизводимость: тот же ledger и параметры дают тот же хэш.
+const compiledAgain = context.compileRunContext(compileOptions);
+assert(
+  compiledAgain.contextHash === compiled.contextHash,
+  "повторная сборка даёт тот же contextHash",
+);
+assert(
+  JSON.stringify(compiledAgain) === JSON.stringify(compiled),
+  "контекст воспроизводим побайтово",
+);
+
+const limited = context.compileRunContext({
+  ...compileOptions,
+  maxFiles: 2,
+  maxFileBytes: 20,
+});
+assert(limited.files.length <= 2, "лимит maxFiles=2 соблюдён");
+assert(limited.truncated, "превышение лимита отмечено как усечение");
+assert(limited.droppedFiles.length > 0, "отброшенные файлы перечислены");
+assert(
+  limited.files.every((item) => item.bytes <= 20),
+  "лимит размера файла соблюдён",
+);
+
+// --- 12. ARCH-5.2: бюджет токенов без потери критичных файлов ---------------
+const tight = context.compileRunContext({
+  ...compileOptions,
+  model: "local-3b",
+  tokenBudget: 380,
+});
+assert(
+  tight.estimatedTokens <= tight.tokenBudget,
+  `бюджет 380 токенов соблюдён (${tight.estimatedTokens})`,
+);
+assert(tight.truncated, "малый бюджет вызвал усечение");
+assert(
+  tight.files.some((item) => item.critical),
+  "критичные файлы сохранены при усечении бюджета",
+);
+assert(
+  tight.files.every((item) => !item.critical || item.content.length > 0),
+  "критичный файл не утерян полностью",
+);
+
 closeDb();
 fs.rmSync(tempRoot, { recursive: true, force: true });
 console.log("Пауза с контекстом: проверки завершены");

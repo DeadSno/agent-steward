@@ -22,6 +22,10 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 - **ARCH-4.2 — saga-компенсация при частичном применении эффектов.** При падении одного эффекта уже применённые обратимые эффекты откатываются через `compensate()` в обратном порядке; irreversible помечаются как таковые в ledger и не вызываются до pass. Статус и причина пишутся в `gate_outcomes` и `audit_log` (`effects.compensated` / `effects.apply_failed` / `effects.aborted`), результат саги доступен в `ExecutionResult.effects`. Проверено: `node test-execution-hardening.mjs` — тесты частичного apply, компенсации, abort до pass и ledger/аудита (47/47, exit 0), `npm run build` (exit 0), `node test-docs.mjs` (129/129, exit 0);
 
+- **ARCH-5.1 — компилятор контекста из ledger.** В `src/db/run-context.ts` добавлены статическая карта репозитория (`REPO_MAP`/`buildRepoMap`), отбор файлов по нормализованному типу задачи (`selectRepoFiles`), дедупликация по пути и содержимому, лимиты количества/размера, маскировка секретов через `redactSecretsInText` и few-shot примеры только из gate-passed строк `readGateOutcomeLedger()`. Сборка детерминированна: стабильный порядок, `contextHash` (SHA-256 канонического представления) и `compiledFrom: "ledger"`. В `src/core/router/dispatch.ts` контекст собирается после роутинга (`compileContextForRoute`) с моделью и окном исполнителя. Проверено: `npm run build`, `node test-run-context.mjs`, `node test-router-dispatch.mjs`, `node test-docs.mjs`.
+
+- **ARCH-5.2 — пересборка контекста при эскалации и бюджет токенов.** Таблица окон моделей (`MODEL_CONTEXT_WINDOWS`) и бюджет по умолчанию (75% окна) привязаны к модели исполнителя; при смене модели/окна `recompileContextOnEscalation`/`recompileContextForRouteEscalation` заново читают ledger, а не передают старый контекст. Усечение под `tokenBudget` сохраняет критичные файлы и примеры, отбрасывая остальные и фиксируя `droppedFiles`/`truncated`. Тесты проверяют возврат ранее отброшенного файла после эскалации и соблюдение бюджета. Проверено: `npm run build`, `node test-run-context.mjs`, `node test-router-dispatch.mjs`, `node test-docs.mjs`.
+
 ## [0.0.6] - 2026-11-20
 
 ### Added

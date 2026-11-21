@@ -13,12 +13,19 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { routeStep } from "./dist/core/router/dispatch.js";
+import {
+  routeStep,
+  compileContextForRoute,
+  recompileContextForRouteEscalation,
+  contextWindowForModel,
+  EXECUTOR_MODEL,
+} from "./dist/core/router/dispatch.js";
 import { initDb, closeDb } from "./dist/db/index.js";
 import {
   listCapabilities,
   recordCapabilityOutcome,
 } from "./dist/db/capability-repo.js";
+import { recordGateOutcome } from "./dist/db/runs-repo.js";
 
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "sched-dispatch-"));
 process.env.APPDATA = tempRoot;
@@ -132,6 +139,82 @@ for (let index = 0; index < 1000; index += 1) {
 }
 const elapsed = performance.now() - startedAt;
 assert(elapsed < 100, `1000 статических маршрутов за ${elapsed.toFixed(1)} мс`);
+
+// 10. ARCH-5.1: контекст собирается после роутинга из ledger.
+assert(
+  EXECUTOR_MODEL.local === "local-7b" && EXECUTOR_MODEL.cloud === "cloud-large",
+  "исполнитель маршрута определяет модель",
+);
+assert(contextWindowForModel("local-7b") === 8192, "окно local-7b = 8192");
+assert(contextWindowForModel("cloud-large") === 128000, "окно cloud-large = 128000");
+
+const dispatchEvidence = path.join(tempRoot, "dispatch-pass.txt");
+fs.writeFileSync(dispatchEvidence, "pass-example API_KEY=abc123");
+recordGateOutcome({
+  outcomeKey: "arch5-dispatch-pass",
+  taskType: "run_tests",
+  verdict: "pass",
+  evidencePath: dispatchEvidence,
+  createdAt: "2026-02-01T00:00:00.000Z",
+});
+
+const routeFiles = {
+  "src/core/router/rules.ts": "rules content",
+  "src/core/router/dispatch.ts": "dispatch content",
+  "src/db/capability-repo.ts": "capability payload " + "x".repeat(300),
+  [dispatchEvidence]: "pass-example API_KEY=abc123",
+};
+const routeCtx = compileContextForRoute(staticRoute, {
+  files: routeFiles,
+  tokenBudget: 4000,
+});
+assert(routeCtx.taskType === "run_tests", "контекст собран для типа маршрута");
+assert(routeCtx.model === "local-7b", "модель взята из исполнителя маршрута");
+assert(routeCtx.contextWindow === 8192, "окно взято из модели маршрута");
+assert(
+  routeCtx.examples.some((item) => item.outcomeKey === "arch5-dispatch-pass"),
+  "gate-passed пример попал в контекст маршрута",
+);
+assert(
+  !JSON.stringify(routeCtx).includes("abc123"),
+  "секрет в контексте маршрута замаскирован",
+);
+
+// 11. ARCH-5.2: эскалация → пересборка, а не передача старого контекста.
+const smallCtx = compileContextForRoute(staticRoute, {
+  model: "local-3b",
+  files: routeFiles,
+  tokenBudget: 380,
+});
+assert(smallCtx.model === "local-3b", "малое окно: модель local-3b");
+assert(
+  smallCtx.droppedFiles.includes("src/db/capability-repo.ts"),
+  "в малом окне некритичный файл отброшен",
+);
+assert(
+  smallCtx.files.some((item) => item.critical),
+  "критичные файлы сохранены в малом окне",
+);
+
+const escalated = recompileContextForRouteEscalation(smallCtx, {
+  model: "cloud-large",
+  files: routeFiles,
+  tokenBudget: 4000,
+});
+assert(escalated.rebuilt, "эскалация пересобрала контекст");
+assert(escalated.reason === "model-changed", "причина — смена модели");
+assert(escalated.previousModel === "local-3b", "зафиксирована прежняя модель");
+assert(escalated.context.model === "cloud-large", "новая модель в контексте");
+assert(escalated.context.contextWindow === 128000, "новое окно контекста");
+assert(escalated.context !== smallCtx, "возвращён новый объект, не старый");
+assert(
+  !escalated.context.droppedFiles.includes("src/db/capability-repo.ts"),
+  "после эскалации файл вернулся — контекст пересобран, а не продлён",
+);
+assert(
+  escalated.context.estimatedTokens <= escalated.context.tokenBudget,
+  `бюджет после эскалации соблюдён (${escalated.context.estimatedTokens})`,
+);
 
 closeDb();
 
