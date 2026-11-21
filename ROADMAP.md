@@ -53,26 +53,10 @@ agent-steward — execution engine с опциональной регистра�
 
 > Здесь — только открытая архитектурная очередь 0.2.0, структурированная по правилу «деталь → задача → подзадача». Реализованные части execution model перенесены в [CHANGELOG.md](./CHANGELOG.md); описание целевого кровотока — в [docs/EXECUTION-LOOP.md](./docs/EXECUTION-LOOP.md).
 
-## Деталь 2.1 — Durable ledger и provenance
-`src/db/runs-repo.ts`, `src/db/run-journal.ts`, `src/db/schema.ts`, `src/core/execution.ts`
-
-> Сверка с кодом: ad-hoc и зарегистрированные задачи идут через единый durable-run путь (`createRun`/`finishStep`, общий `RunContext`), вердикты гейтов пишутся в `gate_outcomes` (`verdict`, `gate_hash`, `policy_hash`, `prompt_hash`, `attempts_to_pass`, `first_pass`, `executor`, `trigger_kind`), provenance хранится в `evidence_path`/`prev_hash`; read-путь читает только ledger. Подробности — в [CHANGELOG.md](./CHANGELOG.md).
-
-**Задача ARCH-1 — Durable ledger для всех входов** · P2 · ⬜
-
-## Деталь 2.2 — Класс риска и компиляция политики
-`src/core/permissions.ts`, `src/core/execution.ts`, `src/core/mission.ts`
-
-> Сверка с кодом: есть `PermissionPolicy` (`hybrid`/`secure`/`legacy`) и scoped-конфиг прав; класса риска и компилятора политики нет. OPA/Rego/Cedar отклонены в [docs/EXECUTION-LOOP.md](./docs/EXECUTION-LOOP.md) §10 — внешние зависимости не добавлять.
-
-**Задача ARCH-2 — Класс риска и компиляция политики** · P2 · ⬜
-
-## Деталь 2.3 — Flake-aware вердикт и отложенные эффекты
+## Деталь 2.3 — Отложенные внешние эффекты
 `src/core/router/escalation.ts`, `src/core/gate-integrity.ts`, `src/db/capability-repo.ts`, обёртки
 
-> Сверка с кодом: `escalateAfterGate()` есть; вердиктов `flake`/`infra_fail`, повтора гейта на том же артефакте, `effect_intents` и saga-компенсации нет.
-
-**Задача ARCH-3 — Flake-aware вердикт гейта** · P2 · ⬜
+> Сверка с кодом: вердикты `flake`/`infra_fail`, повтор гейта на том же артефакте и hash-ledger `gate_outcomes` реализованы (ARCH-1..3 перенесены в CHANGELOG). Остались `effect_intents` и saga-компенсация.
 
 **Задача ARCH-4 — Отложенные внешние эффекты** · P2 · ⬜
 

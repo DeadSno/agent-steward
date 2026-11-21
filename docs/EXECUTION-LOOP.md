@@ -85,7 +85,7 @@ Lock/no-overlap для ad-hoc — по run/mission id и по workspace (не п
 CREATE TABLE gate_outcomes (
   id INTEGER PRIMARY KEY,
   mission_id TEXT, run_id TEXT, step_id TEXT, task_type TEXT,
-  trigger_kind TEXT,              -- adhoc | chain | dag | retry | escalation | cron | once | file | git | mcp | webhook
+  trigger_kind TEXT,              -- adhoc | manual | chain | dag | retry | escalation | cron | once | file | git | mcp | webhook
   executor TEXT,                  -- local / cloud / model-id
   route_source TEXT,              -- static | capability | explore
   route_reason TEXT,
@@ -108,8 +108,11 @@ CREATE TABLE gate_outcomes (
 );
 ```
 
+- Реализация (ARCH-1.2/1.3) добавляет `outcome_key` (идемпотентность входа) и
+  `row_hash` (self-hash строки): `verifyGateOutcomeChain()` сверяет и связь
+  `prev_hash`, и self-hash, поэтому подмена последней записи цепочки тоже видна.
 - `capability_map` — агрегат по ledger, не отдельная правда.
-- Отчёт (43) и датасет (48) читают **только** ledger.
+- Отчёт (43) и датасет (48) читают **только** ledger (`readGateOutcomeLedger()`).
 - Нет ledger-строки — нет запуска.
 - `prev_hash` даёт **tamper-evident** аудит: подделка заметна. Это **не граница
   безопасности** — у кого есть запись в файл, тот перепишет цепочку. Граница —
