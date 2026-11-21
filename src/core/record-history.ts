@@ -14,6 +14,20 @@ import {
 } from "../db/history-repo.js";
 import { deleteSetting, decrementCounterSetting } from "../db/settings-repo.js";
 import { getTask, listTasks } from "../db/tasks-repo.js";
+import {
+  createRun,
+  finishRun as finishDurableRun,
+  finishStep,
+  findRunByMetadata,
+  getStep,
+} from "../db/runs-repo.js";
+import {
+  createRegisteredRunContext,
+  triggerKindFor,
+  validateRunContext,
+  writeGateOutcome,
+  type RunContext,
+} from "./execution.js";
 import { extractLastRunLog } from "./mission.js";
 import { rotateSessionIfNeeded } from "./session.js";
 import type { TaskDefinition } from "../task-transfer.js";
@@ -53,6 +67,160 @@ function logRecorderEvent(
     reason: details.reason,
     nextTask: details.nextTask,
   });
+}
+
+/* ------------------------------------------------------------------------- *
+ * ARCH-1.1/1.2/1.3: мост «зарегистрированная задача → durable-run путь».
+ *
+ * Рекордер раньше писал только history-таблицу. Теперь он строит RunContext из
+ * определения задачи и проходит через createRun → finishStep → gate_outcomes —
+ * тот же путь, что и ad-hoc миссия в core/execution.ts. Все вызовы защищены
+ * try/catch: отказ durable-слоя не должен ломать историю/цепочки/уведомления.
+ * ------------------------------------------------------------------------- */
+
+export interface RegisteredRunBridge {
+  runId: string;
+  stepId: string | null;
+  verdict: "pass" | "fail" | null;
+}
+
+export interface RecordRegisteredRunOptions {
+  /** Id history-записи из --start; связывается с durable UUID через metadata. */
+  historyRunId?: number | null;
+  status: "passed" | "failed" | "skipped";
+  error?: string | null;
+  /** ARCH-1.3: путь к лог-файлу задачи — provenance записи гейта. */
+  evidencePath?: string | null;
+  gateType?: string | null;
+  executor?: string | null;
+}
+
+/** Строит общий RunContext из определения зарегистрированной задачи. */
+export function buildRegisteredContext(taskName: string): RunContext | null {
+  try {
+    const definition = getTask(taskName);
+    if (!definition) return null;
+    const context = createRegisteredRunContext(definition);
+    validateRunContext(context);
+    return context;
+  } catch (err) {
+    logRecorderEvent("durable.context_failed", taskName, {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  }
+}
+
+/**
+ * ARCH-1.1: создаёт durable run через тот же createRun, что и ad-hoc путь.
+ * Шаг создаётся сразу в `running`: STEP_TRANSITIONS разрешает running → passed,
+ * но не pending → passed (иначе finishStep упал бы с InvalidTransitionError).
+ */
+export function beginRegisteredRun(
+  context: RunContext,
+  historyRunId?: number | null,
+  options: { startedAt?: string } = {},
+): string | null {
+  try {
+    validateRunContext(context);
+    const stepName = context.taskName;
+    const run = createRun({
+      taskName: context.taskName,
+      status: "running",
+      ...(options.startedAt ? { startedAt: options.startedAt } : {}),
+      workspaceId: context.profile.workspaceId ?? null,
+      steps: [{ stepName, status: "running" }],
+      metadata: {
+        origin: "registered",
+        trigger: context.trigger,
+        triggerKind: triggerKindFor(context),
+        registeredHistoryId: historyRunId ?? null,
+        ...(context.metadata ?? {}),
+      },
+    });
+    logRecorderEvent("durable.run_started", context.taskName, {
+      runId: historyRunId ?? undefined,
+      reason: `durableRunId=${run.id}`,
+    });
+    return run.id;
+  } catch (err) {
+    logRecorderEvent("durable.run_start_failed", context.taskName, {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  }
+}
+
+/**
+ * Завершает durable run, начатый в --start (или создаёт новый для legacy-пути),
+ * и пишет вердикт гейта в единый ledger. Возвращает bridge с UUID и verdict.
+ */
+export function recordRegisteredRun(
+  context: RunContext,
+  options: RecordRegisteredRunOptions,
+): RegisteredRunBridge | null {
+  try {
+    validateRunContext(context);
+    const taskName = context.taskName;
+    const existing =
+      options.historyRunId != null
+        ? findRunByMetadata("registeredHistoryId", options.historyRunId)
+        : undefined;
+    const runId =
+      existing?.id ?? beginRegisteredRun(context, options.historyRunId ?? null);
+    if (!runId) return null;
+
+    const stepName = taskName;
+    const step = getStep(runId, stepName);
+    let verdict: "pass" | "fail" | null = null;
+    if (step && options.status !== "skipped") {
+      finishStep(
+        step.id,
+        options.status === "failed" ? "failed" : "passed",
+        options.error ? { error: options.error } : {},
+      );
+      verdict = options.status === "failed" ? "fail" : "pass";
+      writeGateOutcome({
+        context,
+        runId,
+        stepId: step.id,
+        stepName,
+        taskType: context.taskType ?? null,
+        executor: options.executor ?? "registered-recorder",
+        gateType:
+          options.gateType ??
+          (typeof context.metadata?.qualityGate === "string"
+            ? context.metadata.qualityGate
+            : null),
+        verdict,
+        attempt: step.attempt,
+        firstPass: step.attempt === 1 && verdict === "pass",
+        evidencePath: options.evidencePath ?? null,
+      });
+    } else if (step) {
+      finishStep(step.id, "skipped", options.error ? { error: options.error } : {});
+    }
+
+    const runStatus =
+      options.status === "failed"
+        ? "failed"
+        : options.status === "skipped"
+          ? "cancelled"
+          : "passed";
+    finishDurableRun(runId, runStatus, options.error ? { error: options.error } : {});
+    logRecorderEvent("durable.run_finished", taskName, {
+      runId: options.historyRunId ?? undefined,
+      reason: `durableRunId=${runId}`,
+      status: options.status,
+      error: options.error ?? undefined,
+    });
+    return { runId, stepId: step?.id ?? null, verdict };
+  } catch (err) {
+    logRecorderEvent("durable.run_finish_failed", context.taskName, {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  }
 }
 
 /** Префикс ключа настроек со счётчиком повторов конкретной задачи. */
@@ -447,6 +615,14 @@ async function main() {
       definition?.allowedTools ?? null,
       definition?.deniedTools ?? null,
     );
+    const skipContext = buildRegisteredContext(taskName);
+    if (skipContext) {
+      recordRegisteredRun(skipContext, {
+        status: "skipped",
+        error: reason,
+        evidencePath: fourth,
+      });
+    }
     await handleCompletion(taskName, "skipped", null, reason, durationMs);
     return;
   }
@@ -490,6 +666,10 @@ async function main() {
       definition?.deniedTools ?? null,
       owner,
     );
+    // ARCH-1.1: та же задача идёт через durable createRun. stdout не трогаем —
+    // обёртка читает оттуда ТОЛЬКО history id.
+    const startContext = buildRegisteredContext(taskName);
+    if (startContext) beginRegisteredRun(startContext, runId, { startedAt });
     console.log(String(runId));
     return;
   }
@@ -570,6 +750,18 @@ async function main() {
       return;
     }
 
+    // ARCH-1.1/1.2/1.3: связываем history id с durable UUID, закрываем шаг и
+    // пишем вердикт гейта с provenance (путь к логу) в общий ledger.
+    const finishContext = buildRegisteredContext(taskName);
+    if (finishContext) {
+      recordRegisteredRun(finishContext, {
+        historyRunId: runId,
+        status: st === "success" ? "passed" : st === "skipped" ? "skipped" : "failed",
+        error,
+        evidencePath: logFile,
+      });
+    }
+
     await handleCompletion(taskName, st, chainTarget, error, durationMs, tokensResolved, costResolved);
     return;
   }
@@ -647,6 +839,16 @@ async function main() {
     definition?.allowedTools ?? null,
     definition?.deniedTools ?? null,
   );
+
+  // Обратная совместимость: legacy-вызов без --start тоже идёт через durable путь.
+  const legacyContext = buildRegisteredContext(taskName);
+  if (legacyContext) {
+    recordRegisteredRun(legacyContext, {
+      status: st === "success" ? "passed" : st === "skipped" ? "skipped" : "failed",
+      error,
+      evidencePath: logFile,
+    });
+  }
 
   await handleCompletion(taskName, st, chainTarget, error, durationMs, tokensResolved, costResolved);
 }
