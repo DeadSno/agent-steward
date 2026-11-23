@@ -39,17 +39,48 @@ export interface ScopeCheck {
   missing: string[];
 }
 
-export function validateScopePaths(paths: string[], root: string): ScopeCheck {
+/**
+ * PL-119: опции pre-flight проверки SCOPE.
+ *
+ * `filesCreate` — файлы, которые задача создаст в ходе выполнения. Такие пути
+ * не считаются missing: требовать их существования на этапе планирования
+ * бессмысленно, но после запуска `git add` их уже нужно добавлять в SCOPE.
+ * Для обратной совместимости вместо объекта можно передать сразу массив —
+ * он трактуется как `filesCreate`.
+ */
+export interface ScopeCheckOptions {
+  filesCreate?: string[];
+}
+
+/** PL-119: один и тот же ключ для SCOPE-пути и создаваемого файла. */
+function scopePathKey(item: string, root: string): string {
+  const resolved = path.isAbsolute(item) ? item : path.resolve(root || process.cwd(), item);
+  return path.normalize(resolved).split(path.sep).join("/");
+}
+
+export function validateScopePaths(
+  paths: string[],
+  root: string,
+  opts?: ScopeCheckOptions | string[],
+): ScopeCheck {
+  const filesCreate = Array.isArray(opts) ? opts : opts?.filesCreate;
+  const created = new Set((filesCreate ?? []).map((item) => scopePathKey(item, root)));
   const missing = paths.filter((item) => {
+    // PL-119: create-intent — файл ещё не существует, но это ожидаемо.
+    if (created.has(scopePathKey(item, root))) return false;
     const resolved = path.isAbsolute(item) ? item : path.resolve(root || process.cwd(), item);
     return !fsSync.existsSync(resolved);
   });
   return { ok: missing.length === 0, paths, missing };
 }
 
-/** PL-79 / PL-82: pre-flight проверка SCOPE из промпта задачи. */
-export function preflightScope(prompt: string, root: string): ScopeCheck {
-  return validateScopePaths(extractScopePaths(prompt), root);
+/** PL-79 / PL-82 / PL-119: pre-flight проверка SCOPE из промпта задачи. */
+export function preflightScope(
+  prompt: string,
+  root: string,
+  opts?: ScopeCheckOptions | string[],
+): ScopeCheck {
+  return validateScopePaths(extractScopePaths(prompt), root, opts);
 }
 
 /** PL-77: решение о параллельном запуске и изоляции worktree. */

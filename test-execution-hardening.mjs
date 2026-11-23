@@ -1159,6 +1159,58 @@ try {
       JSON.stringify(["src/core/scheduler"]),
   );
 
+  // PL-119: create-intent — SCOPE-пути создаваемых файлов не считаются missing.
+  // Берём заведомо несуществующие маркеры, чтобы проверка не зависела от диска.
+  const createIntentPaths = [
+    "test-pl119-create-intent-a.zzz",
+    "test-pl119-create-intent-b.zzz",
+  ];
+  const createIntentCheck = validateScopePaths(createIntentPaths, process.cwd(), {
+    filesCreate: createIntentPaths,
+  });
+  check(
+    "PL-119: create-intent проходит pre-flight для SCOPE-путей создаваемых файлов",
+    createIntentCheck.ok === true && createIntentCheck.missing.length === 0,
+    JSON.stringify(createIntentCheck),
+  );
+  const createIntentViaPreflight = preflightScope(
+    `SCOPE: ${createIntentPaths.join(", ")}`,
+    process.cwd(),
+    { filesCreate: createIntentPaths },
+  );
+  check(
+    "PL-119: preflightScope читает create-intent из opts.filesCreate",
+    createIntentViaPreflight.ok === true &&
+      createIntentViaPreflight.missing.length === 0,
+    JSON.stringify(createIntentViaPreflight),
+  );
+  const unconfirmedCheck = validateScopePaths(
+    ["test-not-exists-marker.zzz"],
+    process.cwd(),
+    { filesCreate: ["src/index.ts", "package.json"] },
+  );
+  check(
+    "PL-119: неподтверждённый missing путь по-прежнему отклоняется",
+    unconfirmedCheck.ok === false &&
+      unconfirmedCheck.missing.includes("test-not-exists-marker.zzz"),
+    JSON.stringify(unconfirmedCheck),
+  );
+  const emptyCreateCheck = validateScopePaths(
+    ["test-not-exists-marker.zzz"],
+    process.cwd(),
+    { filesCreate: [] },
+  );
+  const emptyCreateOkCheck = validateScopePaths(["src/index.ts"], process.cwd(), {
+    filesCreate: [],
+  });
+  check(
+    "PL-119: пустой filesCreate не ломает проверку (back-compat)",
+    emptyCreateCheck.ok === false &&
+      emptyCreateCheck.missing.includes("test-not-exists-marker.zzz") &&
+      emptyCreateOkCheck.ok === true,
+    JSON.stringify({ emptyCreateCheck, emptyCreateOkCheck }),
+  );
+
   // PL-77: параллельные агенты не делят worktree, maxConcurrent не нарушается.
   const sequential = planParallelExecution({ maxConcurrent: 1, taskName: "Agent One" });
   check(

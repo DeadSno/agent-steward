@@ -545,6 +545,17 @@ export const scheduleTaskSchema = z.object({
     .min(1, "prompt must be a non-empty string.")
     .refine((value) => value.trim().length > 0, "prompt must be a non-empty string.")
     .describe("Prompt passed to the agent on every run."),
+  /**
+   * PL-119: файлы, которые задача создаст при выполнении (например,
+   * `src/core/environment.ts`, `locales/tr.json`). Их SCOPE-пути освобождаются
+   * от pre-flight проверки существования. Без параметра поведение прежнее.
+   */
+  filesCreate: z
+    .array(z.string())
+    .optional()
+    .describe(
+      "Files the task will create during the run (e.g. src/core/environment.ts, locales/tr.json). These SCOPE paths skip the pre-flight existence check; omit to require all SCOPE paths to exist.",
+    ),
   timeoutSeconds: z
     .number()
     .int()
@@ -1112,6 +1123,7 @@ const CORE_FIELD_DESCRIPTIONS: Record<string, string> = {
   notBefore: "Launch window start HH:MM; outside runs are postponed.",
   notAfter: "Launch window end HH:MM; may cross midnight.",
   prompt: "Prompt passed to the agent on every run.",
+  filesCreate: "Files the task will create; these SCOPE paths skip the existence check.",
   timeoutSeconds: "Run timeout in seconds (default 3600).",
   model: "provider/model, e.g. opencode/hy4-flash-free. Empty = OpenCode default.",
   priority: "0..10 (10 highest). Default 5.",
@@ -1798,6 +1810,7 @@ const scheduleTaskExecute = wrapExecute<ScheduleArgs>(async (args) => {
     runAt,
     delaySeconds,
     prompt,
+    filesCreate,
     timeoutSeconds,
     model,
     priority,
@@ -1906,6 +1919,8 @@ const scheduleTaskExecute = wrapExecute<ScheduleArgs>(async (args) => {
       worktree === true,
       guards,
       tokenBudget,
+      undefined, // avoidCatchUp — только при пересоздании cron-задачи
+      filesCreate,
     );
   } catch (err) {
     return {
@@ -7251,6 +7266,8 @@ export async function schedulerCreateTask(
   tokenBudget?: number,
   /** PL-75: при пересоздании cron-задачи добавить будущую /sd (без catch-up). */
   avoidCatchUp?: boolean,
+  /** PL-119: создаваемые задачей файлы — их SCOPE-пути не требуют существования. */
+  filesCreate?: string[],
 ): Promise<void> {
   // Спринт 27.5 (hotfix 1.5.1): проверяем имя до создания wrapper/prompt и записи
   // в БД. Недопустимые символы отклоняются с понятным сообщением, а не ошибкой
@@ -7642,10 +7659,11 @@ export async function schedulerCreateTask(
   const effectiveWorkingDirectory =
     workspace?.path || workingDirectory?.trim() || projectDirectory || process.cwd();
 
-  // PL-79 / PL-82: pre-flight проверяем ВЕСЬ список SCOPE-путей до записи
+  // PL-79 / PL-82 / PL-119: pre-flight проверяем ВЕСЬ список SCOPE-путей до записи
   // обёртки и регистрации в ОС. Иначе post-flight `git add` падает уже после
   // зелёного quality gate из-за пути, которого никогда не было на диске.
-  const scopeCheck = preflightScope(prompt, effectiveWorkingDirectory);
+  // PL-119: пути из filesCreate — ожидаемые создаваемые файлы, их пропускаем.
+  const scopeCheck = preflightScope(prompt, effectiveWorkingDirectory, { filesCreate });
   if (!scopeCheck.ok) {
     throw new Error(
       `PL-79/PL-82: SCOPE задачи "${normalizedName}" содержит несуществующие пути: ` +
