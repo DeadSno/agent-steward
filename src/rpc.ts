@@ -1285,6 +1285,10 @@ const DecideApprovalOutput = {
     success: { type: "boolean" },
     approval: ApprovalPanelRecordSchema,
     error: { type: "string" },
+    /** PL-103: auto | manual | failed | skipped. */
+    restart: { type: "string" },
+    restartRunId: { type: ["string", "null"] },
+    restartError: { type: "string" },
   },
   required: ["success"],
   additionalProperties: false,

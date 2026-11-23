@@ -1168,10 +1168,19 @@ export default Plugin.define({
           decidedBy: "gui",
         })
         if (result?.success) {
+          // PL-103: показываем, что одобрение перезапустило задачу, либо что нужен ручной старт.
+          const restartNote =
+            result.restart === "auto"
+              ? result.restartRunId
+                ? ` · ${result.restartRunId}`
+                : ""
+              : result.restart === "manual" || result.restart === "failed"
+                ? ` · ${result.restartError ?? gt("gui.approvalsHint")}`
+                : ""
           ctx.toast.show({
             title: gt(decision === "approve" ? "gui.approvalsApproved" : "gui.approvalsRejected"),
-            variant: "success",
-            description: gt("gui.approvalsDecisionDescription", { task: record.taskName }),
+            variant: result.restart === "failed" ? "error" : "success",
+            description: gt("gui.approvalsDecisionDescription", { task: record.taskName }) + restartNote,
           })
         } else {
           ctx.toast.show({

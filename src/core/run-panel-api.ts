@@ -35,6 +35,7 @@ import {
 } from "../db/run-resume.js";
 import {
   createOpenCodeExecutor,
+  executeExecutionPlan,
   writeGateOutcome,
   type DurableExecutionDescriptor,
   type ExecutionPlan,
@@ -42,6 +43,11 @@ import {
   type StepExecutor,
   type StepExecutorDescriptor,
 } from "./execution.js";
+import {
+  hasApprovalExecutionStarted,
+  markApprovalExecutionStarted,
+  type ApprovalPendingExecution,
+} from "./audit.js";
 import { createMissionWrapperExecutor } from "./mission.js";
 import { runOpencode } from "./opencode-cli.js";
 import { buildSessionArgs, type SessionMode } from "./session.js";
@@ -473,6 +479,85 @@ export async function resumeDurableRunExecution(
       skipped: resumed.skipped,
       injected: resumed.injected,
       failedStep: resumed.failedStep,
+    };
+  } catch (err) {
+    return { success: false, error: errorText(err) };
+  }
+}
+
+/**
+ * PL-103: исполняем план, отложенный гейтом одобрения.
+ *
+ * План и дескриптор сохранены в аудите ещё до createRun (см. execution.ts),
+ * поэтому после approve можно создать run и доиграть шаги. Защита от повторного
+ * запуска — отдельная аудит-запись `approval.execution_started`.
+ */
+export interface ApprovedExecutionResult extends ResumeExecutionResult {
+  runId?: string | null;
+}
+
+function isExecutionPlan(value: unknown): value is ExecutionPlan {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<ExecutionPlan>;
+  return Boolean(candidate.context && Array.isArray(candidate.steps));
+}
+
+function isStepExecutorDescriptor(value: unknown): value is StepExecutorDescriptor {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as { kind?: unknown };
+  if (candidate.kind === "opencode") return true;
+  return (
+    candidate.kind === "mission-wrapper" &&
+    typeof (candidate as { wrapperPath?: unknown }).wrapperPath === "string" &&
+    typeof (candidate as { cwd?: unknown }).cwd === "string" &&
+    typeof (candidate as { timeoutSeconds?: unknown }).timeoutSeconds === "number"
+  );
+}
+
+export async function executeApprovedPlan(
+  requestId: string,
+  pending: ApprovalPendingExecution,
+  options: ResumeDurableExecutionOptions = {},
+): Promise<ApprovedExecutionResult> {
+  try {
+    if (!isExecutionPlan(pending.plan)) {
+      return { success: false, error: "Отложенный план одобрения повреждён" };
+    }
+    if (!isStepExecutorDescriptor(pending.executor)) {
+      return { success: false, error: "Неизвестный исполнитель отложенного плана" };
+    }
+    if (hasApprovalExecutionStarted(requestId)) {
+      return { success: false, error: `Отложенный план уже запускался: ${requestId}` };
+    }
+
+    const executor = executorForDescriptor(pending.executor, options);
+    const executors = options.executors?.length ? options.executors : [executor];
+    // Помечаем старт ДО запуска: даже при ошибке повторное одобрение не должно
+    // породить второй run с тем же ключом одобрения.
+    markApprovalExecutionStarted(requestId, null);
+
+    const result = await executeExecutionPlan(pending.plan, {
+      executors,
+      evidencePath: pending.evidencePath,
+      ...(pending.escalation ? { escalation: pending.escalation } : {}),
+      approval: {
+        approvalKey: requestId,
+        runRef: pending.approval.runRef ?? undefined,
+        reason: pending.approval.reason ?? undefined,
+        actor: pending.approval.actor ?? "system",
+      },
+      metadata: {
+        approvedBy: "approval-panel",
+        approvedRequestId: requestId,
+      },
+    });
+    return {
+      success: result.status === "passed",
+      ...(result.status === "passed"
+        ? {}
+        : { error: result.error ?? `План завершился: ${result.status}` }),
+      run: result.runId ? toPanelRun(getRun(result.runId)!) : undefined,
+      executed: result.steps.map((step) => step.stepName),
     };
   } catch (err) {
     return { success: false, error: errorText(err) };

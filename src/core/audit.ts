@@ -572,6 +572,27 @@ export const APPROVAL_APPROVED_ACTION = "approval.approved";
 export const APPROVAL_REJECTED_ACTION = "approval.rejected";
 export const RUN_AWAITING_APPROVAL_ACTION = "run.awaiting_approval";
 export const RUN_APPROVAL_REJECTED_ACTION = "run.approval_rejected";
+/**
+ * PL-103: отложенный план исполнения, сохранённый на время ожидания одобрения.
+ * Отдельной таблицы по-прежнему нет — дескриптор лежит в details аудита.
+ */
+export const APPROVAL_PENDING_EXECUTION_ACTION = "approval.execution_pending";
+export const APPROVAL_EXECUTION_STARTED_ACTION = "approval.execution_started";
+
+/** PL-103: Self-contained описание плана, который нужно запустить после approve. */
+export interface ApprovalPendingExecution {
+  schema: 1;
+  plan: unknown;
+  executor: unknown;
+  evidencePath: string | null;
+  approval: {
+    approvalKey?: string;
+    runRef?: string | null;
+    reason?: string | null;
+    actor?: string;
+  };
+  escalation?: { enabled?: boolean; maxEscalations?: number };
+}
 
 export type ApprovalDecision = "approve" | "reject";
 export type ApprovalStatus = "pending" | "approved" | "rejected";
@@ -800,6 +821,72 @@ export function recordApprovalGateBlock(input: ApprovalGateBlockInput): number |
       decision: rejected ? "reject" : null,
     },
   });
+}
+
+/**
+ * PL-103: сохраняем план и дескриптор исполнителя до createRun.
+ * Функции не сериализуются, поэтому в details попадает только JSON-описание.
+ */
+export function recordApprovalPendingExecution(
+  requestId: string,
+  execution: ApprovalPendingExecution,
+): number | null {
+  return recordAudit({
+    action: APPROVAL_PENDING_EXECUTION_ACTION,
+    targetType: "approval",
+    target: requestId,
+    actor: "system",
+    source: "execution-loop",
+    details: execution,
+  });
+}
+
+/** PL-103: читаем отложенный план; некорректные/старые записи игнорируем. */
+export function readApprovalPendingExecution(requestId: string): ApprovalPendingExecution | null {
+  const { records } = readAuditLog({
+    action: APPROVAL_PENDING_EXECUTION_ACTION,
+    target: requestId,
+    limit: 20,
+  });
+  for (const record of records) {
+    const details = record.details;
+    if (!details || typeof details !== "object") continue;
+    const candidate = details as Partial<ApprovalPendingExecution>;
+    if (
+      candidate.schema !== 1 ||
+      !candidate.plan ||
+      typeof candidate.plan !== "object" ||
+      !candidate.executor ||
+      typeof candidate.executor !== "object" ||
+      !candidate.approval ||
+      typeof candidate.approval !== "object"
+    ) {
+      continue;
+    }
+    return candidate as ApprovalPendingExecution;
+  }
+  return null;
+}
+
+/** PL-103: факт старта отложенного плана (защита от повторного запуска). */
+export function markApprovalExecutionStarted(requestId: string, runId: string | null): number | null {
+  return recordAudit({
+    action: APPROVAL_EXECUTION_STARTED_ACTION,
+    targetType: "approval",
+    target: requestId,
+    actor: "system",
+    source: "approval-panel",
+    details: { requestId, runId },
+  });
+}
+
+/** PL-103: был ли уже запущен отложенный план по этому запросу. */
+export function hasApprovalExecutionStarted(requestId: string): boolean {
+  return readAuditLog({
+    action: APPROVAL_EXECUTION_STARTED_ACTION,
+    target: requestId,
+    limit: 1,
+  }).total > 0;
 }
 
 /**

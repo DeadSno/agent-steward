@@ -71,6 +71,7 @@ import {
 } from "./permissions.js";
 import {
   recordApprovalGateBlock,
+  recordApprovalPendingExecution,
   requestApproval,
   type ApprovalRecord,
 } from "./audit.js";
@@ -1365,6 +1366,10 @@ export async function executeExecutionPlan(
   // создаётся, эффекты не объявляются и не применяются, а статус/аудит
   // показывают ожидание (или отказ).
   let approval: ApprovalRecord | null = null;
+  // PL-92/PL-103: дескриптор нужен и здесь (отложенный план одобрения), и ниже
+  // при создании run. Функции исполнителя не сериализуются, поэтому сохраняем
+  // только описание транспорта.
+  const durableDescriptor = durableExecutorDescriptor(options.executors);
   if (options.approval && requiresApproval(plan.context.riskClass)) {
     const requestId = approvalKeyFor(plan.context, options);
     const runRef = options.approval?.runRef ?? requestId;
@@ -1378,6 +1383,29 @@ export async function executeExecutionPlan(
       source: "execution-loop",
     });
     if (approval.status !== "approved") {
+      // PL-103: сохраняем план, чтобы approve через RPC/GUI мог доиграть его.
+      // Эффекты не сериализуются — для таких планов остаётся ручной перезапуск
+      // исходным вызывающим кодом (факт сообщается ответом decide_approval).
+      if (
+        approval.status === "pending" &&
+        durableDescriptor &&
+        !(options.effects?.length) &&
+        !(options.effectsByStep && Object.keys(options.effectsByStep).length)
+      ) {
+        recordApprovalPendingExecution(requestId, {
+          schema: 1,
+          plan,
+          executor: durableDescriptor,
+          evidencePath: options.evidencePath ?? null,
+          approval: {
+            approvalKey: options.approval?.approvalKey,
+            runRef,
+            reason: options.approval?.reason,
+            actor: options.approval?.actor,
+          },
+          ...(options.escalation ? { escalation: options.escalation } : {}),
+        });
+      }
       const status = approval.status === "rejected" ? "rejected" : "awaiting_approval";
       const message =
         approval.status === "rejected"
@@ -1405,9 +1433,7 @@ export async function executeExecutionPlan(
     }
   }
 
-  // PL-92: сохраняем план и способ воссоздания исполнителя в ledger. Функции
-  // (`supports`/`execute`/`gate`) не сериализуются, поэтому храним дескриптор.
-  const durableDescriptor = durableExecutorDescriptor(options.executors);
+  // PL-92: дескриптор уже вычислен до гейта и сохраняется в metadata run.
 
   const run = createRun({
     taskName: plan.context.taskName,

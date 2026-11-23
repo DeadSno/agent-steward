@@ -333,27 +333,129 @@ assert(
 assert(approvals.listApprovalPanel({ limit: 0 }).approvals.length >= 1, "PL-95: лимит ограничен снизу");
 assert(approvals.listApprovalPanel({ limit: 99999 }).approvals.length <= 500, "PL-95: лимит ограничен сверху");
 assert(
-  !approvals.decideApprovalPanel("", "approve").success,
+  !(await approvals.decideApprovalPanel("", "approve")).success,
   "PL-95: пустой requestId отклонён",
 );
 assert(
-  !approvals.decideApprovalPanel(approvalRequestId, "maybe").success,
+  !(await approvals.decideApprovalPanel(approvalRequestId, "maybe")).success,
   "PL-95: неизвестное решение отклонено",
 );
-const decided = approvals.decideApprovalPanel(approvalRequestId, "approve", "gui");
+const decided = await approvals.decideApprovalPanel(approvalRequestId, "approve", "gui");
 assert(decided.success && decided.approval?.status === "approved", "PL-95: решение approve сохранено");
 assert(
   approvals.listApprovalPanel().approvals.find((item) => item.requestId === approvalRequestId)?.decidedBy === "gui",
   "PL-95: автор решения виден в списке",
 );
-const duplicate = approvals.decideApprovalPanel(approvalRequestId, "reject", "gui");
+const duplicate = await approvals.decideApprovalPanel(approvalRequestId, "reject", "gui");
 assert(
   duplicate.success && duplicate.approval?.status === "approved",
   "PL-95: первое решение не перезаписывается",
 );
 assert(
-  !approvals.decideApprovalPanel("pl95-unknown", "approve").success,
+  !(await approvals.decideApprovalPanel("pl95-unknown", "approve")).success,
   "PL-95: неизвестный запрос отклонён",
+);
+
+// PL-103: approve через фасад доигрывает отложенный план без эффектов.
+const pl103Calls = [];
+const pl103Executor = {
+  id: "opencode",
+  descriptor: { kind: "opencode" },
+  supports: () => true,
+  execute: async ({ step }) => {
+    pl103Calls.push(step.stepName);
+    return { output: "pl103-ok" };
+  },
+};
+const makePl103Plan = (taskName) =>
+  execution.buildExecutionPlan(
+    execution.createAdHocRunContext("run tests; write file", {
+      taskName,
+      cwd: tempRoot,
+      riskClass: "R2",
+    }),
+  );
+const pl103Key = "pl103-auto-key";
+const pl103Pending = await execution.executeExecutionPlan(await makePl103Plan("pl103-auto"), {
+  executors: [pl103Executor],
+  approval: { approvalKey: pl103Key, runRef: "pl103-auto-ref", reason: "PL-103", actor: "gui" },
+});
+assert(
+  pl103Pending.status === "awaiting_approval" && pl103Pending.runId === null,
+  "PL-103: до approve run не создан",
+);
+assert(
+  audit.readAuditLog({ action: audit.APPROVAL_PENDING_EXECUTION_ACTION, target: pl103Key }).total === 1,
+  "PL-103: отложенный план сохранён в аудите",
+);
+const pl103Decided = await approvals.decideApprovalPanel(pl103Key, "approve", "gui", {
+  executors: [pl103Executor],
+});
+assert(
+  pl103Decided.success && pl103Decided.restart === "auto" && typeof pl103Decided.restartRunId === "string",
+  "PL-103: approve запустил отложенный план",
+);
+const pl103ExpectedCalls = pl103Pending.plan.steps.filter((step) => step.route.executor !== null).length;
+assert(
+  pl103Calls.length === pl103ExpectedCalls,
+  "PL-103: исполнитель вызван по разу на каждый шаг плана",
+);
+assert(
+  repo.getRun(pl103Decided.restartRunId)?.status === "passed",
+  "PL-103: созданный run завершён passed",
+);
+assert(
+  audit.readAuditLog({ action: audit.APPROVAL_EXECUTION_STARTED_ACTION, target: pl103Key }).total === 1,
+  "PL-103: факт старта зафиксирован в аудите",
+);
+const pl103Duplicate = await approvals.decideApprovalPanel(pl103Key, "approve", "gui", {
+  executors: [pl103Executor],
+});
+assert(
+  pl103Duplicate.success &&
+    pl103Duplicate.restart === "skipped" &&
+    pl103Calls.length === pl103ExpectedCalls,
+  "PL-103: повторное одобрение не дублирует запуск",
+);
+
+const pl103RejectKey = "pl103-reject-key";
+await execution.executeExecutionPlan(await makePl103Plan("pl103-reject"), {
+  executors: [pl103Executor],
+  approval: { approvalKey: pl103RejectKey },
+});
+const pl103Rejected = await approvals.decideApprovalPanel(pl103RejectKey, "reject", "gui");
+assert(
+  pl103Rejected.success && pl103Rejected.restart === "skipped" && repo.listRuns("pl103-reject", 50).length === 0,
+  "PL-103: reject не запускает план",
+);
+
+const pl103ManualKey = "pl103-manual-key";
+const pl103ManualPending = await execution.executeExecutionPlan(await makePl103Plan("pl103-manual"), {
+  executors: [pl103Executor],
+  effects: [
+    {
+      id: "pl103-manual-effect",
+      reversibility: "reversible",
+      apply: () => {},
+      compensate: () => {},
+    },
+  ],
+  approval: { approvalKey: pl103ManualKey },
+});
+assert(pl103ManualPending.status === "awaiting_approval", "PL-103: план с эффектами тоже ждёт одобрения");
+const pl103Manual = await approvals.decideApprovalPanel(pl103ManualKey, "approve", "gui", {
+  executors: [pl103Executor],
+});
+assert(
+  pl103Manual.success &&
+    pl103Manual.restart === "manual" &&
+    String(pl103Manual.restartError).includes("вручную") &&
+    repo.listRuns("pl103-manual", 50).length === 0,
+  "PL-103: план с эффектами честно требует ручного перезапуска",
+);
+assert(
+  audit.readAuditLog({ action: audit.APPROVAL_PENDING_EXECUTION_ACTION, target: pl103ManualKey }).total === 0,
+  "PL-103: план с эффектами не сохраняется для авто-старта",
 );
 
 // QA-B.4: бюджеты доступны и в дашборде, а не только через RPC.
