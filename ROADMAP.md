@@ -46,6 +46,7 @@ Legacy: `opencode-windows-scheduler@1.5.8`.
 - [ ] PL-126 задача с `worktree: true`, запущенная через `run_task_now`, зависает на стадии `prepared`: воркер не создаёт процесс и не создаёт worktree, лог содержит только «Task prepared» — `src/core/ps-wrapper.ts`, `src/core/worktree-run.ts`, `src/core/scheduler/run-now.ts` — P1. Действие: проверять результат `worktree-run.js create` до запуска агента, при ошибке падать с понятной причиной и чистить отдельный worktree; вручную `node dist/core/worktree-run.js --repo ... --task ...` работает. Обнаружено 23.11.2026 на зонде QA-STEW-PROBE-WT.
 - [ ] PL-127 `scripts/pl-commit.ps1` не делает rebase при non-fast-forward push: при параллельном пуше в ту же ветку три попытки (`push`, `push#2`, `push#3`) получают reject, после чего helper пишет `FAIL push`, хотя коммит и quality gate зелёные; в `scripts/steward-commit.ps1` такой путь есть (PL-104) — `scripts/pl-commit.ps1` — P2. Действие: fetch + `rebase --autostash origin/dev` перед повторным push, как в steward-commit.ps1. Воспроизведено 23.11.2026 на QA-PL118-CLIXML когда параллельный агент запушил S3-D36.
 - [ ] PL-128 дочерний процесс убит watchdog по таймауту (exit 124), но quality gate пройден: история получает статус `timeout`, post-flight помечается `error`, хотя PL-81 считает задачу успешной по вердикту гейта — `src/core/record-history.ts`, `src/core/ps-wrapper.ts` — P2. Действие: при gate=pass и exit=124 финализировать запись как success с причиной таймаута, не invalidating post-flight. Воспроизведено 23.11.2026 на QA-PL118-CLIXML.
+- [ ] PL-129 `schedule_task` в core-профиле плагина не пробрасывает поля `mcpEvent` и `nextTaskOnSuccess` (а также остальные 18 «толстых» ключей `ADVANCED_SCHEMA_KEYS`): попытка создать MCP-event-зонд через `schedule_task` падает с «Для MCP-триггера нужно указать имя события», хотя `mcpEvent:{server,event}` передан; цепочки `nextTaskOnSuccess` из `.opencode/skills/roadmap-plugin-workflow/SKILL.md` в core-профиле невозможны — `src/core/tool-profile.ts`, `src/index.ts` — P2. Действие: либо документировать обязательный `schedule_advanced`/профиль `all` для event/chain, либо пробрасывать минимальные поля в core-схему; проверить в `test-agent-tools.mjs`. Обнаружено 23.11.2026 при проверке зондов Детали 3.13.
 
 ## Деталь 3.9 — Портабельность: OpenCode → MCP / dsh / ACP (0.2.x+)
 `src/core/`, `src/adapters/`, `src/invokers/`, `src/cli.ts`
@@ -105,14 +106,6 @@ Legacy: `opencode-windows-scheduler@1.5.8`.
 > Аудит 23.11.2026: каркас документов корректен, но после быстрых итераций
 > накопился дрейф — устаревшие счётчики, висячие ссылки на закрытые задачи
 > и одна содержательная ошибка в sequence 4.1.
-
-**Задача DS-3 — Счётчики, локали и висячие ссылки** · P2 · ⬜
-- [ ] DS-3.1 `docs/ARCHITECTURE.md`: «30-tool registry» → 32, RPC «57 methods» → 59, добавить локаль `tr` в Localization и settings
-
-**Задача DS-4 — Описать функционал 3.10/3.11 в ARCHITECTURE.md** · P2 · ⬜
-- [ ] DS-4.1 Профили инструментов `core`/`admin`/`all` + `AGENT_STEWARD_TOOL_PROFILE`, split `schedule_advanced`/`update_advanced`, offline-fallback `estimateRunUsage` + событие `usage.offline_estimate`, `compact` в `get_history`, KPI `tokenEfficiency` в metrics, preflight skip-risk и `recommendModelForTask` в `dry_run`
-- [ ] DS-4.2 Дополнить таблицу модулей: `execution.ts`, `mission.ts`, `budget.ts`, `savings.ts`, `tool-profile.ts`, `usage-surface.ts`, `opencode-usage.ts`, `approval-api.ts`, `runner*.ts`, `agents.ts`, `environment.ts` и др.
-- [ ] DS-4.3 Обновить «Known limitations (execution)»: owner_pid v8 и `recoverStaleRunningOnRecorderStart` уже есть; добавить PL-124 (история висит `running` до таймаута)
 
 **Задача DS-5 — Структура и устойчивость документов** · P3 · ⬜
 - [ ] DS-5.1 ROADMAP: пояснить отсутствие разделов 1–2 (нумерация начинается с 3) или перенумеровать; привести заголовок Детали 3.8 в соответствие с содержимым (только QA-находки)

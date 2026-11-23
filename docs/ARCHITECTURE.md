@@ -11,6 +11,7 @@ model, the modules, the data model and the extension points.
 - [Scheduling backends](#scheduling-backends)
 - [Run wrapper](#run-wrapper)
 - [History, metrics and recovery](#history-metrics-and-recovery)
+- [Cost controls and tool surface](#cost-controls-and-tool-surface)
 - [Chains, retries and DAG](#chains-retries-and-dag)
 - [Matrix builds](#matrix-builds)
 - [Workspaces](#workspaces)
@@ -227,12 +228,20 @@ applied through `PRAGMA user_version` on open. Step 11 adds functional indexes
 
 ### Known limitations (execution)
 
-- Startup recovery (`recoverInterrupted*`) marks unfinished rows as `error`; it
-  does not yet check whether the wrapper process is still alive, so a plugin
-  restart during a live run finalizes that run early (tracked: Trust hotfix).
-- Durable steps currently execute through the same wrapper machinery; the
-  agent-executor abstraction (run missions without an OpenCode-specific
-  transport) is Stage 2 of the strategy (sprints 32/38).
+- Startup recovery (`recoverInterrupted*`) marks unfinished rows as `error` without
+  a liveness check, so a plugin restart during a live run may finalize it early.
+  v8 added `owner_pid` / `owner_host` / `owner_started_at` and
+  `recoverStaleRunningOnRecorderStart` closes stale rows at recorder start, but a
+  crashed wrapper can still leave history `running` until the task timeout
+  (**PL-124**).
+- Durable steps currently execute through the same wrapper machinery. The
+  agent-executor abstraction (`src/core/agents.ts` / `agents-advanced.ts`) and the
+  runner abstraction (`runner.ts` / `runner-docker.ts` / `runner-ssh.ts`, fail-open
+  to local) exist, but are not wired into the production mission path.
+- `checkBudgetGate` is called at tool/RPC/manual entry points; registered tasks
+  started by the OS scheduler do not pass a budget gate (PL-125).
+- Approval A-1 is closed and runs through `approval-api.ts`, but mission plans with
+  deferred effects still need a manual restart after approval.
 
 ## Data flow
 
@@ -363,7 +372,8 @@ avg_cost / avg_time / last_10_runs`. Обучается на исходах ге
 
 | Path | Role |
 | --- | --- |
-| `src/index.ts` | Plugin lifecycle, 32 agent tools, RPC handlers, task CRUD, view assembly |
+| `src/index.ts` | Plugin lifecycle, 32 agent tools (filtered by tool profile), 59 RPC handlers, task CRUD, view assembly; `dry_run`, `compact` history and short core-tool schemas |
+| `src/core/tool-profile.ts` | Tool profiles `core` (8 read/control tools), `admin` (+8 advanced/manage tools), `all` (full 32); `AGENT_STEWARD_TOOL_PROFILE` selects the surface |
 | `src/rpc.ts` | JSON-schema contracts for every RPC method |
 | `src/gui.tsx` | OpenCode sidebar panel (SolidJS, built to `gui-experimental.cjs`) |
 | `src/server.ts` | Local web dashboard HTTP server and HTML rendering |
@@ -372,8 +382,8 @@ avg_cost / avg_time / last_10_runs`. Обучается на исходах ге
 | `src/profiles.ts` | Profile directory resolution: per-profile plugin dir (base for `default`, `<base>/profiles/<name>` for named profiles); profile name, marker, port, create/delete/switch |
 | `src/workspaces.ts` | Workspace registry and path validation; env pairs and `.env` file resolution with secret masking |
 | `src/templates.ts` | Reusable task templates |
-| `src/settings.ts` | Plugin settings: notifications, history retention, audit, interface locale (`auto`/`ru`/`en`/`zh`) and last known UI locale, local AI/triage |
-| `src/i18n.ts` | Interface locale mode (`auto` default, follows OpenCode; `ru`/`en`/`zh` explicit), BCP 47 mapping, JSON catalogs in `locales/`, ICU subset (`{param}`, `plural`) via built-in `Intl`, fallback catalog `ru` |
+| `src/settings.ts` | Plugin settings: notifications, history retention, audit, interface locale (`auto`/`ru`/`en`/`zh`/`tr`) and last known UI locale, local AI/triage |
+| `src/i18n.ts` | Interface locale mode (`auto` default, follows OpenCode; `ru`/`en`/`zh`/`tr` explicit), BCP 47 mapping, four JSON catalogs in `locales/`, ICU subset (`{param}`, `plural`) via built-in `Intl`, fallback catalog `ru` |
 | `src/notifications.ts` | Multi-channel delivery (webhook, Telegram, native OS) with retries/backoff, templates, task filters, quiet hours, matrix and stuck-clone notifications, daily/weekly digest |
 | `src/core/telegram.ts` | Telegram Bot API `sendMessage`: parse-mode escaping, dashboard link, token validation and masking |
 | `src/core/native-notify.ts` | Native OS notifications: Windows Toast (PowerShell/WinRT), macOS `osascript`, Linux `notify-send`; no external dependency |
@@ -383,12 +393,22 @@ avg_cost / avg_time / last_10_runs`. Обучается на исходах ге
 | `src/version.ts` | Runtime plugin version (reads package.json) |
 | `src/core/retention.ts` | Daily history prune and incremental vacuum |
 | `src/core/analytics.ts` | Pure 14-day analytics and CSV export |
+| `src/core/savings.ts` | Counterfactual savings report (`net_savings_usd`) for analytics/CSV |
+| `src/core/execution.ts` | Execution plan, step executor, quality gate, ledger writes and escalation |
+| `src/core/mission.ts` | Ad-hoc mission → `RunContext`, approval and budget gates before `createRun` |
 | `src/core/scheduler/` | Platform backends, registry, logs |
 | `src/core/ps-wrapper.ts` | PowerShell wrapper template and `.cmd` generation |
 | `src/core/wrappers/bash.ts` | POSIX wrapper template |
-| `src/core/record-history.ts` | Recorder: history, retries, chains, DAG, matrix continuation |
+| `src/core/record-history.ts` | Recorder: history, retries, chains, DAG, matrix continuation, usage fallback to OpenCode DB and offline estimate |
+| `src/core/opencode-usage.ts` | Read-only OpenCode DB usage lookup (±2 s window around the run) |
+| `src/core/usage-surface.ts` | Deterministic offline token/cost estimate when provider usage is absent (`estimateRunUsage`) |
+| `src/core/budget.ts` | Daily/weekly budget report and `checkBudgetGate`, 14-day `tokenEfficiencyScore` for `get_metrics` |
+| `src/core/approval-api.ts` | Approval queue facade (`list_approvals` / `decide_approval`) and auto-restart of approved plans |
+| `src/core/agents.ts`, `src/core/agents-advanced.ts` | Agent executor abstraction and advanced routing/execution paths |
+| `src/core/runner.ts`, `src/core/runner-docker.ts`, `src/core/runner-ssh.ts` | Runner abstraction and Docker/SSH implementations (`resolveRunner`, fail-open to local; not wired into the production path yet) |
+| `src/core/environment.ts` | Environment resolver for runner/executor selection |
 | `src/core/matrix.ts` | Fan-out, aggregation, sync, cancel, orphan cleanup |
-| `src/core/dry-run.ts` | Pipeline simulation (no execution) |
+| `src/core/dry-run.ts` | Pipeline simulation (topological order, commands, cwd, roles and estimates from recent runs; no execution) |
 | `src/core/lock.ts` | Single-instance lock manager |
 | `src/core/file-watcher.ts` | chokidar-based file triggers |
 | `src/core/local-ai.ts` | Local AI triage: LLM classifier with rules fallback, shadow mode, fail-open, manage_local_ai backing |
@@ -495,8 +515,11 @@ inside a ±2 s window around the run, optionally restricted to the task's workin
 directory. `record-history.ts` fills only fields that are still missing and emits a
 `usage.from_opencode_db` structured event; a missing or locked database is ignored.
 Offline tool-surface measurement lives in `core/usage-surface.ts`: it accepts an
-injected tokenizer (the test uses `gpt-tokenizer`) so the reported size of the 30-tool
-registry is a real token count, not a character heuristic.
+injected tokenizer (the test uses `gpt-tokenizer`) so the reported size of the 32-tool
+registry is a real token count, not a character heuristic. When none of the sources
+above reports usage, `resolveUsageWithOfflineFallback` runs
+`estimateRunUsage` (prompt + log tail, ~4 characters per token) and records the
+result with a `usage.offline_estimate` event; real values are never overwritten.
 
 If the host or the machine dies mid-run, the row stays in `running`. On the next
 plugin activation, `db/recovery.ts` marks stale `running` rows as `error`, so the UI
@@ -510,6 +533,43 @@ Aggregates in `metrics` are never pruned. Period analytics (per-day buckets, suc
 rate, tokens, cost, matrix/model breakdowns) are computed by `core/analytics.ts` and
 exposed as `get_analytics` / `GET /api/analytics`; the dashboard renders a 14-day
 block and `GET /api/history/export` serves CSV/JSON.
+
+## Cost controls and tool surface
+
+The 3.10/3.11 work reduced the agent's token bill without changing the execution
+semantics:
+
+- **Tool profiles** (`src/core/tool-profile.ts`): `core` exposes 8 tools
+  (`schedule_task`, `update_task`, `list_tasks`, `run_task_now`, `get_history`,
+  `get_task_logs`, `dry_run`, `get_dashboard_info`), `admin` adds 8 advanced/manage
+  tools and `all` exposes all 32. `AGENT_STEWARD_TOOL_PROFILE` selects the profile and
+  `filterToolSpecsByProfile` applies it at registration time. The 18 "thick" schema
+  keys (`matrix`, `guards`, `dependsOn`, `retry*`, `nextTaskOn*`, `mcpEvent`,
+  `watch*`, `git*`, `activeDays`, `windowPolicy`, `runWhenLoggedOff`,
+  `sessionMaxRuns`, `workspaceId`) are declared only on `schedule_advanced` /
+  `update_advanced`, saving about 4.5k tokens per core-profile request.
+- **Compact history**: `get_history` with `compact: true` truncates `error` to 300
+  characters with an explicit `…[truncated]` marker. The SQLite row is untouched;
+  `get_task_logs` still returns the full error and log.
+- **Usage fallback**: log parsing → read-only OpenCode DB lookup → deterministic
+  `estimateRunUsage` (prompt + log tail, ~4 characters per token). The offline
+  estimate is recorded as `usage.offline_estimate` only when no other source
+  provided tokens and cost; existing values are never overwritten.
+- **Token-efficiency KPI**: `tokenEfficiencyScore` in `src/core/budget.ts` computes
+  a 14-day score `(totalTokens − wastedTokens) / totalTokens × 100`, where `wasted`
+  are `error`/`aborted` runs, plus `scoreByModel`. It is exposed by `get_metrics`
+  (MCP and RPC) and shown in the dashboard.
+- **Preflight and budgets**: `dry_run` simulates a pipeline (topological order,
+  commands, cwd, roles, estimates from recent runs), reports
+  `preflightSkipRiskWarnings` and `recommendModelForTask` and executes nothing;
+  `preflightScope` validates SCOPE paths before `schedule_task`. `checkBudgetGate`
+  blocks over-limit daily/weekly spend at tool/RPC/manual entry points. The
+  OS-scheduler wrapper path still has no budget gate (**PL-125**).
+
+Per-run `tokenBudget` is implemented (`evaluateTaskTokenBudgetGate`), but cost
+forecasting, Grafana export and automatic enforcement of the efficiency score
+remain design items; the ledger schema (`SCHEMA_VERSION=14`)
+stores `tokens`/`cost` in `history`, not economic columns in `gate_outcomes`.
 
 ## Chains, retries and DAG
 
@@ -843,14 +903,15 @@ resume preparation, rejection of a repeated resume, end-to-end comment delivery 
 | --- | --- | --- |
 | Agent tools | AI agent | 32 tools registered via `ctx.tool.transform` |
 | Agent skill | AI agent | `skills/scheduled-job-best-practices` |
-| RPC | Sidebar GUI | `src/rpc.ts` contracts, 57 methods |
+| RPC | Sidebar GUI | `src/rpc.ts` contracts, 59 methods |
 | Sidebar GUI | Human | `gui-experimental.cjs` |
 | Web dashboard | Human | `startDashboardServer` (localhost, random/fixed port) |
 
 ## Localization
 
 User-visible text lives in flat JSON catalogs: `locales/ru.json` (fallback),
-`locales/en.json` and `locales/zh.json`. Keys are dot-separated and grouped by surface —
+`locales/en.json`, `locales/zh.json` and `locales/tr.json` (A-5.1). All four catalogs
+carry the same 916 keys. Keys are dot-separated and grouped by surface —
 `gui.*`, `notify.*`, `tool.*`, `dryRun.*`, `matrix.*`, `schedule.*` — and all catalogs
 must have the same key set with non-empty values.
 
@@ -858,7 +919,7 @@ must have the same key set with non-empty values.
 `setLocale(locale)`, `messageIn(locale, key)` and `hasKey(key, locale)`. Lookup order is
 active locale → `en` → `ru` → the key itself, so a missing translation never renders as
 an empty string. The `locale` setting (`auto` default, follows the OpenCode interface
-language; `ru`/`en`/`zh` are explicit choices) is applied immediately, without restarting
+language; `ru`/`en`/`zh`/`tr` are explicit choices) is applied immediately, without restarting
 OpenCode.
 `auto` is resolved in the GUI through `ctx.locale.locale()` with BCP 47 prefix mapping
 (`zh-CN` → `zh`, `en-GB` → `en`); the resolved value is sent to the server as `uiLocale`,
@@ -870,8 +931,8 @@ The template subset is deliberately small and dependency-free:
 
 - `{name}` — interpolation; the caller formats the value (duration, money, date).
 - `{count, plural, one {…} few {…} many {…} other {…}}` — plural forms through
-  `Intl.PluralRules` for the active locale (`ru` uses one/few/many, `en` one/other,
-  `zh` only `other`).
+  `Intl.PluralRules` for the active locale (`ru` uses one/few/many, `en` and `tr`
+  one/other, `zh` only `other`).
 
 Rules:
 
@@ -881,8 +942,8 @@ Rules:
 - agent tool descriptions, schemas and API payloads stay English; `console.*`
   diagnostics stay Russian;
 - add every new key to all catalogs. `test-docs.mjs` enforces parity and non-empty
-  values; `npm run test:en` and `npm run test:zh` replay all suites under `en`/`zh` and
-  CI runs them. `OPENCODE_SCHEDULER_LOCALE` only overrides the initial locale for tests
+  values; `npm run test:en`, `npm run test:zh` and `npm run test:tr` replay all suites
+  under `en`/`zh`/`tr` and CI runs them. `OPENCODE_SCHEDULER_LOCALE` only overrides the initial locale for tests
   and services — it is not a user-facing setting.
 
 ## Security model
