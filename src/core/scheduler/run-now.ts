@@ -122,9 +122,9 @@ export function planRuntimeIsolation(input: {
     isolated,
     reason: allowed
       ? null
-      : 'PL-106: уже запущена другая задача без worktree в этом чек-ауте. ' +
-        'Дождитесь её завершения или создайте задачу с worktree: true (' +
-        input.taskName + ').',
+      : "PL-106: уже запущена другая задача без worktree в этом чек-ауте. " +
+        "Дождитесь её завершения или создайте задачу с worktree: true (" +
+        input.taskName + ").",
   };
 }
 

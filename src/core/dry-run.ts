@@ -14,6 +14,7 @@ import { getWorkspace } from "../workspaces.js";
 import { expandMatrixTask } from "./matrix.js";
 import { nextRun, activeWindowState, assessCronWindowFeasibility, needsPollMode, windowFeasibilityReasonText } from "./schedule-v2.js";
 import { checkGitTrigger } from "./git-trigger.js";
+import { catalogPricePerMillion } from "./opencode-models.js";
 import { t } from "../i18n.js";
 import type { TaskDefinition } from "../task-transfer.js";
 
@@ -155,6 +156,18 @@ export interface DryRunTaskItem {
   };
   /** Детали триггера и причина возможного пропуска (Спринт 27). */
   triggerDetails?: DryRunTriggerDetails;
+  /** T-7.2: необязательная рекомендация модели по сложности задачи. */
+  modelRecommendation?: ModelRecommendation;
+}
+
+/** T-7.2: рекомендация модели — подсказка, а не автоматическая подмена choice пользователя. */
+export interface ModelRecommendation {
+  tier: "routine" | "complex";
+  model: string;
+  reason: string;
+  currentModel: string | null;
+  /** false, если пользователь уже задал модель явно. */
+  recommended: boolean;
 }
 
 export interface DryRunTotals {
@@ -176,6 +189,70 @@ const ESTIMATE_SAMPLE = 10;
 
 /** Средняя цена за 1K токенов (должна совпадать с dashboards/server.ts). */
 export const ESTIMATED_COST_PER_1K_TOKENS_USD = 0.003;
+
+/**
+ * T-7.2: дешёвая/free-модель для рутины, дорогая — только для сложных задач.
+ *
+ * Функция чистая и намеренно не меняет definition задачи: рекомендация
+ * попадает в отчёт dry-run, а финальное решение остаётся за пользователем.
+ * Порог сложности эвристический и детерминированный — никаких вызовов модели
+ * и случайности.
+ */
+const COMPLEX_TASK_PATTERN =
+  /(?:refactor|architect|migration|debug|postmortem|audit|security|сложн|архитектур|рефактор|миграц|отлад|аудит|безопасност)/i;
+const ROUTINE_MODEL = "opencode/hy4-flash-free";
+const COMPLEX_MODEL = "anthropic/claude-3-5-sonnet";
+
+export function recommendModelForTask(prompt: string, currentModel?: string | null): ModelRecommendation {
+  const text = typeof prompt === "string" ? prompt : "";
+  const complex = COMPLEX_TASK_PATTERN.test(text) || text.length > 1200;
+  const model = complex ? COMPLEX_MODEL : ROUTINE_MODEL;
+  const price = catalogPricePerMillion(model);
+  const priceText = price === null ? "цена неизвестна" : `${price} USD/1M`;
+  const explicit = typeof currentModel === "string" && currentModel.trim().length > 0;
+  return {
+    tier: complex ? "complex" : "routine",
+    model,
+    reason: complex
+      ? `Сложная задача (ключевые слова или длинный промпт): ${model}, ${priceText}.`
+      : `Рутинная задача: free-модель ${model}, ${priceText}.`,
+    currentModel: explicit ? currentModel.trim() : null,
+    recommended: !explicit,
+  };
+}
+
+/**
+ * T-7.1: preflight-риски пропусков до реального запуска.
+ *
+ * Параллельные запуски в одном чек-ауте упираются в PL-106 guard:
+ * второй неизолированный запуск получает lock-skip. dry-run видит все
+ * определения заранее и предупреждает о всех парах с общим cwd.
+ */
+export function preflightSkipRiskWarnings(defs: readonly TaskDefinition[]): string[] {
+  const groups = new Map<string, { names: string[]; schedules: Set<string>; worktrees: number }>();
+  for (const def of defs) {
+    if (!def || def.worktree === true || (def as { disabled?: boolean }).disabled === true) continue;
+    const cwd = String(def.workingDirectory || def.workdir || "").replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+    if (!cwd) continue; // cwd по умолчанию уже предупреждается отдельно.
+    const key = `${def.workspaceId ?? ""}|${cwd}`;
+    const group = groups.get(key) ?? { names: [], schedules: new Set<string>(), worktrees: 0 };
+    group.names.push(def.name);
+    if (def.schedule) group.schedules.add(def.schedule.trim());
+    groups.set(key, group);
+  }
+  const warnings: string[] = [];
+  for (const group of groups.values()) {
+    if (group.names.length < 2) continue;
+    const shared = group.schedules.size > 0 && group.schedules.size < group.names.length;
+    warnings.push(
+      `T-7.1: ${group.names.length} задач используют один checkout без worktree ` +
+        `(${group.names.join(", ")})${shared ? `, в том числе совпадает расписание (${[...group.schedules].join("; ")})` : ""}. ` +
+        "При maxConcurrent=1 второй запуск будет пропущен guard-ом PL-106. " +
+        "Разнесите расписание, включите worktree или повысьте лимит параллелизма.",
+    );
+  }
+  return warnings;
+}
 
 /**
  * PL-64: кириллица и CJK в одном промпте — типичный артефакт машинного
@@ -1052,6 +1129,7 @@ export async function simulatePipeline(taskName: string): Promise<DryRunReport> 
       ...(matrixParent ? { matrixParent } : {}),
       ...(scheduleDetails ? { scheduleDetails } : {}),
       ...(triggerDetails ? { triggerDetails } : {}),
+      modelRecommendation: recommendModelForTask(def.prompt ?? "", def.model ?? null),
     });
 
     if (taskWarnings.length > 0) {
@@ -1077,6 +1155,9 @@ export async function simulatePipeline(taskName: string): Promise<DryRunReport> 
   for (const group of parallelGroups.values()) {
     if (totalDuration != null) totalDuration = totalDuration + group.maxDuration;
   }
+
+  // T-7.1: риски lock-skip видны до запуска, а не после 320 пропущенных прогонов.
+  warnings.push(...preflightSkipRiskWarnings(units.map((unit) => unit.def)));
 
   const hasAnyEstimate = tasks.some(
     (t) => t.estimatedDurationSec != null || t.estimatedCostUsd != null || t.estimatedTokens != null,
