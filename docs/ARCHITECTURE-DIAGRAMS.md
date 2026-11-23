@@ -2,7 +2,7 @@
 
 > **Статус:** Актуально на schema v14
 > **Дата:** 2026-11-23
-> **Проверено:** главный агент OpenCode (`opencode/hy4-flash-free`) + сверка по исходникам `src/`; попытка суб-агента завершилась по лимиту Free-модели (см. PL-90 в [ROADMAP.md](../ROADMAP.md))
+> **Проверено:** главный агент OpenCode (`opencode/hy4-flash-free`) + сверка по исходникам `src/`; попытка суб-агента завершилась по лимиту Free-модели (ограничение тарифа, а не репозитория)
 >
 > Все имена файлов и функций в этом документе получены из реального дерева `src/` и подтверждены `Select-String`/`grep`. Там, где однозначного подтверждения нет, стоит пометка `[TODO: проверить]`.
 
@@ -15,12 +15,16 @@
 Вывод команды `find src/core src/db -type f -name "*.ts" | sort` (на Windows выполнен эквивалент `Get-ChildItem -Recurse -Filter *.ts | Sort-Object`, пути приведены к POSIX-виду):
 
 ```text
+src/core/agents-advanced.ts
+src/core/agents.ts
 src/core/analytics.ts
+src/core/approval-api.ts
 src/core/audit.ts
 src/core/budget.ts
 src/core/cron-to-schtasks.ts
 src/core/dlq-api.ts
 src/core/dry-run.ts
+src/core/environment.ts
 src/core/execution.ts
 src/core/feedback.ts
 src/core/file-watcher.ts
@@ -54,6 +58,9 @@ src/core/router/planner.ts
 src/core/router/rules.ts
 src/core/run-mode.ts
 src/core/run-panel-api.ts
+src/core/runner-docker.ts
+src/core/runner-ssh.ts
+src/core/runner.ts
 src/core/savings.ts
 src/core/schedule-gate.ts
 src/core/schedule-v2.ts
@@ -75,6 +82,7 @@ src/core/structured-log.ts
 src/core/summary.ts
 src/core/task-name.ts
 src/core/telegram.ts
+src/core/tool-profile.ts
 src/core/triage-chain.ts
 src/core/triage-compare.ts
 src/core/triage-rules.ts
@@ -105,7 +113,7 @@ src/db/tasks-repo.ts
 src/db/templates-repo.ts
 ```
 
-**Что видно:** 71 модуль в `src/core/` (из них 4 — `router/`, 10 — `scheduler/`, 1 — `wrappers/`) и 17 модулей в `src/db/`. Durable-слой вынесен в `src/db/`, оркестрация — в `src/core/`.
+**Что видно:** 79 модулей в `src/core/` (из них 4 — `router/`, 10 — `scheduler/`, 1 — `wrappers/`) и 17 модулей в `src/db/`. Durable-слой вынесен в `src/db/`, оркестрация — в `src/core/`. Счётчик сверен с `src/core/**/*.ts` 23.11.2026 (71 → 79 после D-1/D-3, M-1…M-4, A-2, T-1 и S3-D36).
 
 **Ключевые выводы:** Принцип «ядро не зависит от транспорта» реализован через [`execution.ts`](src/core/execution.ts): исполнитель (`StepExecutor`) передаётся в `executeExecutionPlan` снаружи. Отдельного `gate-repo.ts` не существует — операции с `gate_outcomes` распределены между [`execution.ts`](src/core/execution.ts), [`runs-repo.ts`](src/db/runs-repo.ts) и [`capability-repo.ts`](src/db/capability-repo.ts).
 
@@ -223,44 +231,44 @@ flowchart TB
 
 **Что видно:** интерфейсы (MCP/RPC/CLI/HTTP/GUI) не содержат бизнес-логики — они тонкие адаптеры над ядром. Durable-слой отделён от ядра и от исполнителей.
 
-**Ключевые выводы:** замена транспорта (OpenCode → shell → локальная модель) не требует правок `execution.ts`: интерфейс `StepExecutor` объявлен в [execution.ts](src/core/execution.ts:580), а конкретная реализация `createOpenCodeExecutor` — там же (:633). GUI общается с ядром только через [rpc.ts](src/rpc.ts).
+**Ключевые выводы:** замена транспорта (OpenCode → shell → локальная модель) не требует правок `execution.ts`: интерфейс `StepExecutor` и реализация `createOpenCodeExecutor` объявлены в [execution.ts](src/core/execution.ts). Якоря в диаграммах даны по именам функций, а не по номерам строк — номера дрейфуют при каждом коммите (DS-5.2). GUI общается с ядром только через [rpc.ts](src/rpc.ts).
 
 ### 3. Компоненты ядра
 
 ```mermaid
 flowchart TB
     subgraph entry["Вход"]
-        CR["createRegisteredRunContext — execution.ts:213"]
-        CAH["createAdHocRunContext — execution.ts:265"]
-        VRC["validateRunContext — execution.ts:304"]
+        CR["createRegisteredRunContext — execution.ts"]
+        CAH["createAdHocRunContext — execution.ts"]
+        VRC["validateRunContext — execution.ts"]
     end
 
     subgraph plan["Планирование"]
         PLAN["planMission — router/planner.ts"]
-        BP["buildExecutionPlan — execution.ts:492<br/>isGateQuarantined — capability-repo.ts:616"]
-        ROUTE["routeStep — router/dispatch.ts:51"]
-        DECIDE["decideCapabilityRoute — capability-repo.ts:329"]
-        COMPILE["compileContextForRoute — router/dispatch.ts:133<br/>compileRunContext — run-context.ts:593"]
+        BP["buildExecutionPlan — execution.ts<br/>isGateQuarantined — capability-repo.ts"]
+        ROUTE["routeStep — router/dispatch.ts"]
+        DECIDE["decideCapabilityRoute — capability-repo.ts"]
+        COMPILE["compileContextForRoute — router/dispatch.ts<br/>compileRunContext — run-context.ts"]
     end
 
     subgraph run["Исполнение"]
-        EXEC["executeExecutionPlan — execution.ts:1338"]
-        JOUR["runStepStatefullyAsync — run-journal.ts:181"]
-        WG["writeGateOutcome — execution.ts:412"]
-        GATE["runGateWithRetry / escalateAfterGate — router/escalation.ts:184 / :220"]
-        EFFECT["recordEffectIntents / applyDeferredEffects — gate-integrity.ts:503 / :549"]
+        EXEC["executeExecutionPlan — execution.ts"]
+        JOUR["runStepStatefullyAsync — run-journal.ts"]
+        WG["writeGateOutcome — execution.ts"]
+        GATE["runGateWithRetry / escalateAfterGate — router/escalation.ts"]
+        EFFECT["recordEffectIntents / applyDeferredEffects — gate-integrity.ts"]
     end
 
     subgraph persist["Durable + обучение"]
-        RUNS["createRun / finishStep — runs-repo.ts:257 / :496"]
-        LEDGER["recordGateOutcome / readGateOutcomeLedger / verifyGateOutcomeChain — runs-repo.ts:748 / :858 / :829"]
-        CAP["recordCapabilityOutcome — capability-repo.ts:241<br/>recordGateVerdict — capability-repo.ts:503"]
-        RESUME["findResumeStep — run-resume.ts:76<br/>resumeDurableRunExecution — run-panel-api.ts"]
-        DLQ["enqueueDeadLetter / retryDeadLetter — run-dlq.ts:128 / :238<br/>retryDlqExecution — dlq-api.ts"]
-        APPR["listApprovalPanel / decideApprovalPanel — approval-api.ts<br/>requestApproval / decideApproval — audit.ts:679 / :722"]
+        RUNS["createRun / finishStep — runs-repo.ts"]
+        LEDGER["recordGateOutcome / readGateOutcomeLedger / verifyGateOutcomeChain — runs-repo.ts"]
+        CAP["recordCapabilityOutcome / recordGateVerdict — capability-repo.ts"]
+        RESUME["findResumeStep — run-resume.ts<br/>resumeDurableRunExecution — run-panel-api.ts"]
+        DLQ["enqueueDeadLetter / retryDeadLetter — run-dlq.ts<br/>retryDlqExecution — dlq-api.ts"]
+        APPR["listApprovalPanel / decideApprovalPanel — approval-api.ts<br/>requestApproval / decideApproval — audit.ts"]
         APREX["executeApprovedPlan — run-panel-api.ts<br/>approve → сохранённый план из аудита → executeExecutionPlan"]
         AUD["verifyGateLedgerIntegrity — audit.ts<br/>createRuntime / self_analysis — index.ts"]
-        BUDGET["evaluateBudgetGate — budget.ts:180<br/>вызов: checkBudgetGate index.ts:7948"]
+        BUDGET["evaluateBudgetGate — budget.ts<br/>вызов: checkBudgetGate — index.ts"]
     end
 
     CR --> VRC
@@ -467,10 +475,10 @@ sequenceDiagram
 1. **`src/db/gate-repo.ts` отсутствует.** Ledger и обучение карты разнесены по трём модулям (`execution.ts`, `runs-repo.ts`, `capability-repo.ts`). Это не баг, но диаграммы, предполагающие наличие `gate-repo.ts`, будут неверны. Зафиксировано в таблице проверки выше.
 2. **Webhook-триггер закрыт (PL-91).** `RunTrigger` в [execution.ts](src/core/execution.ts:65) теперь включает `webhook`, а `triggerKindFor` (:382) явно возвращает `webhook`. Ветка `POST /api/hooks/:task` из `server.ts` попадает в ledger как отдельный `trigger_kind` и в отчётах не смешивается с manual/cron. Для старых строк миграция не нужна. Строка PL-91 удалена из `ROADMAP.md`, регрессия — в `test-execution-pipeline.mjs`.
 3. **Approval UI/RPC и автоперезапуск закрыты (PL-95, PL-103).** Фасад [approval-api.ts](src/core/approval-api.ts) открывает очередь через RPC `list_approvals`/`decide_approval` и карточку GUI. PL-103 добавил сохранение отложенного исполнения в аудит и автоматический старт после approve через `executeApprovedPlan` ([run-panel-api.ts](src/core/run-panel-api.ts)); повторное решение не создаёт второй run. Open-задача A-1 §3 тем самым закрыта полностью и удалена из `ROADMAP.md`.
-4. **Docker/SSH runner отсутствует** — открытые задачи D-1/D-2/D-3 (§3 ROADMAP). Исполнители сейчас: OpenCode CLI, shell, локальная модель.
-5. **Экономика v2 частична** — `budget.ts` считает day/week/per-task гейты, но E-3 (token efficiency), E-4 (прогноз/Grafana), E-5 (local vs cloud) открыты.
-6. **Покрытие Quality Gate неполное** — по PL-65/PL-66 в ROADMAP: часть ARCH-задач не включала затронутые сюиты и `lint`. Обёртка не всегда проверяет SCOPE-пути на существование (PL-79/PL-82).
-7. **Суб-агент как механизм выполнения ненадёжен на Free-модели** — при автопроверке документа суб-агент упал с «Free usage limit reached» (аналог PL-72/PL-76). Добавлено как PL-90.
+4. **Docker/SSH runner есть в коде, но не подключён к execution-пути.** Реализованы `runner.ts` (`resolveRunner` с fail-open на `createLocalRunner`), `runner-docker.ts` и `runner-ssh.ts`; вызовов из `src/index.ts`/`execution.ts` нет — исполнители по-прежнему OpenCode CLI, shell, локальная модель. Ссылки на задачи D-1…D-3 из ROADMAP удалены.
+5. **Экономика v2 реализована, enforce — частично.** `budget.ts` (day/week/per-task гейты), `savings.ts`/`usage-surface.ts`/`opencode-usage.ts` (token efficiency, KPI `tokenEfficiency`, offline-оценка `usage.offline_estimate`) на месте; B-1 (бюджетный гейт на cron/once-пути) остаётся открытой задачей. Задачи E-3/E-4/E-5 из ROADMAP удалены.
+6. **Покрытие Quality Gate и SCOPE — текущие открытые находки.** PL-120 (парсер SCOPE проглатывает прозу), PL-121 (параллельные задачи в одном чек-ауте), PL-122/PL-123 (ложные предупреждения и `null`-оценки в `dry_run`) — все в §3 ROADMAP. Старые PL-65/PL-66/PL-79/PL-82 закрыты и оттуда удалены.
+7. **Суб-агент как механизм выполнения ограничен тарифом.** При автопроверке документа суб-агент падал с «Free usage limit reached» — это окружение Free-тарифа (PL-108), а не дефект репозитория; рабочие проверки делает основной агент.
 8. **PL-95 закрыт: очередь одобрений доступна через RPC и GUI.** `requestApproval`/`decideApproval`/`listPendingApprovals` в [audit.ts](src/core/audit.ts:679)/:722/:776 остаются источником данных (журнал аудита, без новой таблицы и без смены `SCHEMA_VERSION=14`); фасад [approval-api.ts](src/core/approval-api.ts) добавляет валидацию и ограничение лимита. В [rpc.ts](src/rpc.ts) появились `list_approvals`/`decide_approval` (счётчик 57 → 59), в [index.ts](src/index.ts) — обработчики, в `src/gui.tsx` — карточка «Одобрения» с ключами `gui.approvals*` в трёх локалях. Прежний `[TODO: проверить]` снят: методы существуют и покрыты регрессией в `test-pause-gui.mjs`. PL-103 закрыл последний нюанс: `decide_approval` при approve теперь возвращает `restart: "auto"` и `restartRunId`, а планы с эффектами — честный `restart: "manual"` без запуска.
 
 9. **PL-97 закрыт: DLQ-retry тоже доигрывает шаг.** PL-92 закрыт: `executeExecutionPlan` пишет `metadata.durableExecution`, а `resumeDurableRunExecution` ([run-panel-api.ts](src/core/run-panel-api.ts)) восстанавливает `StepExecutor`, вызывает `resumeRun` и фиксирует вердикт через `writeGateOutcome`. PL-97 добавил `retryDlqExecution` ([dlq-api.ts](src/core/dlq-api.ts)): перед мутациями проверяется дескриптор (`hasDurableExecution`), затем `retryDeadLetter` ([run-dlq.ts](src/db/run-dlq.ts:238)) в режиме `deferStepStart` закрывает запись и переоткрывает run, оставляя шаг `failed` ровно до `beginStepAttempt` — так `attempt` увеличивается один раз за повтор. RPC `retry_dlq` и кнопка GUI идут через исполняющий путь; легаси `retryDlq` остался как подготовительный. Если дескриптора нет, запись остаётся открытой и возвращается диагностика. Транспорт `opencode` по умолчанию теперь поднимается через `invokeOpenCodeCli` (реальный CLI с сохранёнными cwd/моделью/сессией). Регрессия в `test-dlq-gui.mjs`: «DLQ → retry → finishStep», один вызов исполнителя, `attempt 3 → 4`, вердикт в ledger и отказ без дескриптора. Диаграмма 4.3 описывает рабочий поток resume, разделяемый с DLQ.

@@ -108,7 +108,6 @@ Legacy: `opencode-windows-scheduler@1.5.8`.
 
 **Задача DS-3 — Счётчики, локали и висячие ссылки** · P2 · ⬜
 - [ ] DS-3.1 `docs/ARCHITECTURE.md`: «30-tool registry» → 32, RPC «57 methods» → 59, добавить локаль `tr` в Localization и settings
-- [ ] DS-3.2 `docs/ARCHITECTURE-DIAGRAMS.md`: список файлов core дополнить `agents.ts`, `approval-api.ts`, `environment.ts`, `runner.ts`, `runner-docker.ts`, `runner-ssh.ts`, `tool-profile.ts` (71 → 78 модулей); убрать висячие ссылки на PL-90/65/66/79/82, D-1…D-3, E-3…E-5 (закрыты/удалены); обновить gap-analysis (runner'ы уже в коде)
 - [ ] DS-3.3 `ROADMAP-STRATEGY.md`: метрики 30/57 → 32/59, локали {ru,en,zh} → 4 каталога с tr, убрать ссылку на закрытую Деталь 3.10 и «телеметрия нулевая», обновить статусы Этапа 2 (approvals закрыты)
 - [ ] DS-3.4 `docs/CONCEPT.md` §12: hash-chain реализован (`verifyGateOutcomeChain`) — обновить статус 🔄; `docs/EXECUTION-LOOP.md`: §1 отметить закрытие durable-run (ARCH-1.1), §3 DDL пометить как целевую схему (economy-колонок в `gate_outcomes` пока нет)
 
@@ -119,7 +118,6 @@ Legacy: `opencode-windows-scheduler@1.5.8`.
 
 **Задача DS-5 — Структура и устойчивость документов** · P3 · ⬜
 - [ ] DS-5.1 ROADMAP: пояснить отсутствие разделов 1–2 (нумерация начинается с 3) или перенумеровать; привести заголовок Детали 3.8 в соответствие с содержимым (только QA-находки)
-- [ ] DS-5.2 Компонентная диаграмма 3: заменить якоря по номерам строк (`execution.ts:213` и т.п.) на якоря по именам функций — номера дрейфуют при каждом коммите
 - [ ] DS-5.3 Расширить `test-docs.mjs`: проверять счётчики инструментов/RPC и список модулей в ARCHITECTURE.md и диаграммах, чтобы дрейф ловился CI
 
 ---
