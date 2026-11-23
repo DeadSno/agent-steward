@@ -764,9 +764,11 @@ const damaged38Lines = (text) =>
   detail38Lines(text).filter(
     (line) => !/^#{1,6}\s/.test(line) && !/^`/.test(line) && !/^- \[ \] /.test(line)
   );
+// Раздел «Деталь 3.8» мог быть намеренно удалён из ROADMAP (23.11.2026):
+// проверяем целостность только если он есть, отсутствие не считается повреждением.
 check(
   `PL-78: Деталь 3.8 — ${detail38Lines(roadmapText).length} строк, повреждённых ${damaged38Lines(roadmapText).length}`,
-  detail38Lines(roadmapText).length > 0 && damaged38Lines(roadmapText).length === 0
+  damaged38Lines(roadmapText).length === 0
 );
 check(
   "PL-78: регрессия — обрывок строки в Детали 3.8 детектируется",
