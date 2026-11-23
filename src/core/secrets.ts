@@ -75,7 +75,12 @@ function withSecretsLock<T>(fn: () => T): T {
       secretsLockDepth = 1;
       break;
     } catch (err: unknown) {
-      if ((err as NodeJS.ErrnoException | undefined)?.code !== "EEXIST") throw err;
+      // PL-85: на Windows под параллельной нагрузкой/антивирусом создание лока
+      // может вернуть transient EPERM вместо EEXIST. Раньше он перебрасывался
+      // наружу и флейково ронял test-secrets.mjs в test:parallel; теперь
+      // обрабатывается как обычная конкуренция с повтором до deadline.
+      const code = (err as NodeJS.ErrnoException | undefined)?.code;
+      if (code !== "EEXIST" && code !== "EPERM") throw err;
       try {
         const stat = fs.statSync(SECRETS_LOCK_FILE);
         const rawOwner = fs.readFileSync(SECRETS_LOCK_FILE, "utf8").trim();
