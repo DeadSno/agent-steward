@@ -741,6 +741,55 @@ check(
     coreSurface.estimatedTokens < surface.estimatedTokens / 3
 );
 
+// --- Деталь 3.11: диета core-схем без потери возможностей ---
+{
+  const {
+    coreScheduleTaskSchema,
+    scheduleTaskSchema,
+    compactHistoryRecords,
+  } = await import("./dist/index.js");
+  const coreKeys = Object.keys(coreScheduleTaskSchema.shape);
+  const fullKeys = Object.keys(scheduleTaskSchema.shape);
+  check(
+    "3.11: core сохраняет все базовые поля (возможности не потеряны)",
+    ["name", "schedule", "prompt", "model", "timeoutSeconds", "qualityGate",
+      "workingDirectory", "worktree", "tokenBudget", "allowedTools", "deniedTools",
+      "triggerType"].every((key) => coreKeys.includes(key))
+  );
+  check(
+    "3.11: advanced-поля по-прежнему вынесены из core",
+    !coreKeys.includes("matrix") && !coreKeys.includes("dependsOn") &&
+      fullKeys.includes("matrix") && fullKeys.includes("dependsOn")
+  );
+  check(
+    "3.11: описания core короче полных, а advanced сохраняет подробности",
+    coreScheduleTaskSchema.shape.schedule.description.length <
+      scheduleTaskSchema.shape.schedule.description.length &&
+      scheduleTaskSchema.shape.schedule.description.includes("5 fields")
+  );
+  // Реальная экономия — в тексте описаний, который уходит провайдеру.
+  // JSON.stringify(zod) считает внутренние обёртки, поэтому сравниваем
+  // именно суммарную длину описаний одних и тех же полей.
+  const descLen = (schema, keys) =>
+    keys.reduce((sum, key) => sum + (schema.shape[key]?.description?.length ?? 0), 0);
+  const coreDescChars = descLen(coreScheduleTaskSchema, coreKeys);
+  const fullDescChars = descLen(scheduleTaskSchema, coreKeys);
+  check(
+    `3.11: описания core легче полных (${coreDescChars} < ${fullDescChars} символов)`,
+    coreDescChars < fullDescChars && fullDescChars - coreDescChars > 500
+  );
+  const longError = "x".repeat(1000);
+  const original = [{ taskName: "a", error: longError }, { taskName: "b", error: "short" }];
+  const compacted = compactHistoryRecords(original);
+  check(
+    "3.11: compactHistoryRecords урезает длинный error и не мутирует исходник",
+    compacted[0].error.length < longError.length &&
+      compacted[0].error.endsWith("…[truncated]") &&
+      compacted[1].error === "short" &&
+      original[0].error === longError
+  );
+}
+
 // PL-54: промпт с двойными кавычками доходит до opencode через cmd.exe
 // без обрезки. Реальный вызов runOpencode с подменённым opencode.cmd в PATH:
 // shim форвардит %* в node-скрипт, который печатает полученный argv как JSON.

@@ -1096,12 +1096,48 @@ const ADVANCED_SCHEMA_KEYS = [
   "workspaceId",
 ] as const;
 
+/**
+ * Деталь 3.11: краткие описания полей для дефолтного `core`-профиля.
+ * Возможности и валидация не меняются — полные подсказки остаются в
+ * `schedule_advanced`/`update_advanced`. Цель — снизить цену схемы на каждый
+ * запрос главного агента, не теряя качество управления задачами.
+ */
+const CORE_FIELD_DESCRIPTIONS: Record<string, string> = {
+  name: "Task name (unique). Letters/digits/space/./_/- only; no em dash or ().",
+  schedule: "5-field cron. Required for triggerType=cron.",
+  runAt: "One-shot ISO-8601 start time (triggerType=once).",
+  delaySeconds: "One-shot delay in seconds from now (triggerType=once).",
+  session: "new | reuse | last (default new).",
+  timezone: "IANA zone, e.g. Europe/Moscow. Default: system.",
+  notBefore: "Launch window start HH:MM; outside runs are postponed.",
+  notAfter: "Launch window end HH:MM; may cross midnight.",
+  prompt: "Prompt passed to the agent on every run.",
+  timeoutSeconds: "Run timeout in seconds (default 3600).",
+  model: "provider/model, e.g. opencode/hy4-flash-free. Empty = OpenCode default.",
+  priority: "0..10 (10 highest). Default 5.",
+  beforeScript: "Shell command before the run; non-zero exit cancels it.",
+  afterScript: "Shell command after the run; runs even on failure.",
+  qualityGate: "Shell command after success; non-zero exit = gate failure.",
+  workingDirectory: "Task working directory.",
+  workdir: "Alias of workingDirectory.",
+  worktree: "Run in an isolated git worktree.",
+  tokenBudget: "Maximum tokens per run.",
+  allowedTools: "Tools the agent may use.",
+  deniedTools: "Tools the agent must not use.",
+  triggerType: "cron | once | file | mcp-event | git (default cron).",
+  watchPath: "Path to watch for triggerType=file.",
+  gitBranch: "Branch to watch for triggerType=git.",
+};
+
 function slimTaskSchema<T extends z.ZodRawShape>(schema: z.ZodObject<T>): z.ZodTypeAny {
   const shape: Record<string, z.ZodTypeAny> = {
     ...(schema.shape as unknown as Record<string, z.ZodTypeAny>),
   };
   for (const key of ADVANCED_SCHEMA_KEYS) {
     delete shape[key];
+  }
+  for (const [key, description] of Object.entries(CORE_FIELD_DESCRIPTIONS)) {
+    if (shape[key]) shape[key] = shape[key].describe(description);
   }
   const slim = z.object(shape);
   const checks = (schema.def as { checks?: Parameters<typeof slim.check> }).checks;
@@ -1138,6 +1174,10 @@ const getHistorySchema = z.object({
     .number()
     .optional()
     .describe("Maximum number of records to return (default 20, max 200)."),
+  compact: z
+    .boolean()
+    .optional()
+    .describe("Trim long error texts to save tokens (default false; full text kept otherwise)."),
 });
 
 export const getTaskLogsSchema = z.object({
@@ -2949,18 +2989,36 @@ async function checkStuckMatrices(): Promise<void> {
 }
 
 /** get_history — история запусков с фильтрами по задаче и статусу. */
+/**
+ * Деталь 3.11: компактный режим истории — длинные `error`-тексты урезаются,
+ * чтобы не раздувать контекст главного агента. Полные данные остаются
+ * доступны без флага `compact` и через `get_task_logs`. Ничего не удаляется
+ * из БД — только представление в ответе инструмента.
+ */
+export function compactHistoryRecords<T extends { error?: unknown }>(
+  records: readonly T[],
+  maxErrorChars = 300,
+): T[] {
+  return records.map((record) => {
+    const error = record?.error;
+    if (typeof error !== "string" || error.length <= maxErrorChars) return record;
+    return { ...record, error: `${error.slice(0, maxErrorChars)}…[truncated]` };
+  });
+}
+
 const getHistoryExecute = wrapExecute<HistoryArgs>(async (args) => {
   const limit = Math.max(1, Math.min(args.limit ?? 20, 200));
   // PL-46: зависшие записи (schtasks /End) должны закрываться не только при
   // setup, но и при наблюдении истории — иначе остаются running навсегда.
   recoverInterruptedRuns();
   const records = await loadHistory(args.taskName, limit, args.status);
+  const output = args.compact ? compactHistoryRecords(records) : records;
 
   return {
     content: JSON.stringify({
       success: true,
-      count: records.length,
-      records,
+      count: output.length,
+      records: output,
     }),
   };
 });
