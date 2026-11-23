@@ -284,7 +284,7 @@ flowchart TB
     RESUME -->|writeGateOutcome| WG
 ```
 
-**Условные обозначения:** сплошная стрелка — реальный вызов в `src/`; пунктирная — модуль существует и покрыт тестами, но в production execution loop не подключён (PL-93, PL-94, PL-96).
+**Условные обозначения:** сплошная стрелка — реальный вызов в `src/`; пунктирная — модуль существует и покрыт тестами, но в production execution loop не подключён (PL-93, PL-94).
 
 **Что видно:** ядро реально замыкает «исполнение → ledger» и после PL-92 ещё и «metadata.durableExecution → resume → тот же journal/ledger». Полного цикла «исполнение → ledger → обучение карты → роутинг» в текущем коде нет: `recordGateVerdict` вызывается отдельно от `writeGateOutcome` и в движок не встроен.
 
@@ -435,7 +435,7 @@ erDiagram
 
 11. **Компиляция контекста по ledger не работает в прогоне (PL-94).** `buildExecutionPlan` ([execution.ts](src/core/execution.ts:468)) вызывает `routeStep`, но не `compileContextForRoute` ([dispatch.ts](src/core/router/dispatch.ts:133)); `recompileContextOnEscalation` ([run-context.ts](src/db/run-context.ts:814)) не вызывается вовсе. Исполнителю передаётся сырой `RunContext` без `contextHash`.
 
-12. **Ledger проверяется лишь первые 1000 строк (PL-96).** `verifyGateOutcomeChain()` ([runs-repo.ts](src/db/runs-repo.ts:829)) без аргументов использует `listGateOutcomes()` с дефолтным лимитом 1000; автопроверки цепочки на старте нет.
+12. **PL-96 закрыт: цепочка проверяется полностью, автопроверки на старте всё ещё нет (PL-98).** `verifyGateOutcomeChain()` ([runs-repo.ts](src/db/runs-repo.ts:837)) теперь без аргументов читает все строки через `listAllGateOutcomes()` (:827); `readGateOutcomeLedger()` (:869) тоже проверяет полную цепочку при `verify !== false`, хотя возвращает `rows` с заданным `limit`. Регрессия в `test-capability-map.mjs` на 1005 записях ловит подмену `evidence_path` после 1000-й строки. Осталось: автоматическая проверка при старте/в аудит — PL-98.
 
 > **Важно для читателя:** пункты 9–12 означают, что часть подсистем реализована как проверенная библиотека, но не встроена в production execution loop (для resume — только в части DLQ). Диаграммы 3 и 4.1 показывают фактические вызовы сплошной линией, а неподключённые связи — пунктиром.
 

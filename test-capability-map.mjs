@@ -470,5 +470,32 @@ assert(
 );
 closeDb();
 
+// 17. PL-96: цепочка проверяется полностью, а не только первые 1000 строк.
+const pl96DbPath = path.join(tempRoot, "pl96-chain.db");
+initDb(pl96DbPath);
+const { readGateOutcomeLedger } = await import("./dist/db/runs-repo.js");
+for (let i = 0; i < 1005; i += 1) {
+  recordGateOutcome({
+    outcomeKey: `pl96-${i}`,
+    verdict: "pass",
+    createdAt: new Date(Date.UTC(2026, 0, 1, 0, 0, i)).toISOString(),
+  });
+}
+const fullChain = verifyGateOutcomeChain();
+assert(fullChain.ok, "PL-96: цепочка из 1005 записей валидна");
+assert(fullChain.length === 1005, "PL-96: проверены все 1005 записей, а не 1000");
+const tailRow = listGateOutcomes(10000)[1004];
+getDb()
+  .prepare("UPDATE gate_outcomes SET evidence_path = ? WHERE id = ?")
+  .run("forged-after-1000", tailRow.id);
+const brokenChain = verifyGateOutcomeChain();
+assert(!brokenChain.ok, "PL-96: подмена после 1000-й записи обнаруживается");
+assert(brokenChain.brokenAt === 1004, "PL-96: разрыв найден в записи 1005");
+assert(
+  !readGateOutcomeLedger({ limit: 5 }).chain.ok,
+  "PL-96: read-путь с limit=5 проверяет всю цепочку",
+);
+closeDb();
+
 console.log(process.exitCode ? "\nЕсть провалы." : "\nВсе проверки Capability Map пройдены.");
 

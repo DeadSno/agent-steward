@@ -821,13 +821,21 @@ export function listGateOutcomes(limit = 1000): GateOutcomeRecord[] {
 }
 
 /**
+ * PL-96: все записи ledger-а без лимита. Только для проверки цепочки —
+ * read-путь отчётов должен оставаться ограниченным `listGateOutcomes(limit)`.
+ */
+export function listAllGateOutcomes(): GateOutcomeRecord[] {
+  return queryRows("SELECT * FROM gate_outcomes ORDER BY id ASC").map(gateOutcomeRowToRecord);
+}
+
+/**
  * Проверяет tamper-evident цепочку: prev_hash каждой строки обязан равняться
  * row_hash предыдущей, а row_hash — хэшу содержимого строки. Вторая проверка
  * ловит подмену полей (evidence_path и др.), в том числе в ПОСЛЕДНЕЙ записи,
  * у которой нет следующей строки для сверки prev_hash.
  */
 export function verifyGateOutcomeChain(rows?: GateOutcomeRecord[]): GateOutcomeChain {
-  const records = rows ?? listGateOutcomes();
+  const records = rows ?? listAllGateOutcomes();
   for (let i = 0; i < records.length; i += 1) {
     const record = records[i];
     const expectedPrev = i === 0 ? GATE_OUTCOME_GENESIS_HASH : records[i - 1].rowHash;
@@ -862,7 +870,9 @@ export function readGateOutcomeLedger(
   const chain =
     options.verify === false
       ? { ok: true, length: rows.length, brokenAt: null }
-      : verifyGateOutcomeChain(rows);
+      : // PL-96: отчёт ограничен, но цепочка проверяется по ВСЕМ записям —
+        // иначе подмена за пределами `limit` останется незамеченной.
+        verifyGateOutcomeChain();
   return { rows, chain };
 }
 
