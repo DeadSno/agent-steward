@@ -289,6 +289,70 @@ check("QA-F.1: PS-обёртка распознаёт costUsd/cost_usd без з
   }
 }
 
+// --- T-6.2: офлайн-оценка, когда free-провайдер не пишет usage ---
+{
+  const { estimateRunUsage } = await import("./dist/core/usage-surface.js");
+  check("T-6.2: estimateRunUsage считает вход+выход и цену за 1M", () => {
+    const estimate = estimateRunUsage({
+      prompt: "a".repeat(400),
+      logText: "b".repeat(800),
+      pricePerMillion: 3,
+    });
+    assert.strictEqual(estimate.tokens, 300);
+    assert.strictEqual(estimate.inputTokens, 100);
+    assert.strictEqual(estimate.outputTokens, 200);
+    assert.strictEqual(estimate.costUsd, 0.0009);
+    assert.strictEqual(estimate.source, "offline");
+  });
+  check("T-6.2: неизвестная цена не выдумывает стоимость", () => {
+    const estimate = estimateRunUsage({ prompt: "abcd", logText: "efgh" });
+    assert.strictEqual(estimate.tokens, 2);
+    assert.strictEqual(estimate.costUsd, undefined);
+  });
+
+  const recorder = path.resolve("dist/core/record-history.js");
+  const runRecorder = (taskName, logFile, extraEnv = {}) =>
+    spawnSync(
+      process.execPath,
+      [
+        recorder,
+        taskName,
+        "success",
+        new Date().toISOString(),
+        "1000",
+        "-",
+        "-",
+        "-",
+        "-",
+        "-",
+        "-",
+        logFile,
+      ],
+      { encoding: "utf8", env: { ...process.env, ...extraEnv }, timeout: 30000 },
+    );
+
+  const { saveTask } = await import("./dist/db/tasks-repo.js");
+  saveTask({
+    name: "Offline Usage Task",
+    schedule: "0 0 1 * *",
+    prompt: "a".repeat(400),
+    model: "opencode/hy4-flash-free",
+  });
+  const offlineLog = writeLog("offline-usage.log", "b".repeat(800));
+  const res = runRecorder("Offline Usage Task", offlineLog, {
+    OPENCODE_USAGE_DB: path.join(tmpDir, "no-opencode-for-offline.db"),
+  });
+  assert.strictEqual(res.status, 0, `recorder exit ${res.status}: ${res.stderr}`);
+  const { getDb } = await import("./dist/db/index.js");
+  const row = getDb()
+    .prepare("SELECT tokens, cost_usd FROM history WHERE task_name = ? ORDER BY id DESC LIMIT 1")
+    .get("Offline Usage Task");
+  check("T-6.2: legacy-рекордер пишет офлайн-оценку в историю", () => {
+    assert.strictEqual(Number(row.tokens), 300);
+    assert.strictEqual(Number(row.cost_usd), 0);
+  });
+}
+
 // --- PL-38 / QV-11.2: чтение usage из собственной БД OpenCode ---
 check("QV-11.2: findOpenCodeDb уважает OPENCODE_USAGE_DB", () => {
   const custom = path.join(tmpDir, "custom-opencode.db");

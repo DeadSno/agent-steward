@@ -23,6 +23,41 @@ export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
+/**
+ * T-6.2: офлайн-оценка расхода запуска, когда free-провайдер не пишет usage
+ * ни в лог, ни в собственную БД OpenCode. Оценка грубая, но детерминированная
+ * и воспроизводимая: промпт задачи = вход, хвост лога = выход.
+ */
+export interface RunUsageEstimateOptions {
+  prompt?: string;
+  logText?: string;
+  /** Цена за 1M токенов; 0 для локальных/free, null/undefined — цена неизвестна. */
+  pricePerMillion?: number | null;
+  /** Реальный офлайн-токенайзер; по умолчанию ~4 символа на токен. */
+  countTokens?: (text: string) => number;
+}
+
+export interface RunUsageEstimate {
+  tokens: number;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd?: number;
+  source: "offline";
+}
+
+export function estimateRunUsage(options: RunUsageEstimateOptions = {}): RunUsageEstimate {
+  const count = options.countTokens ?? estimateTokens;
+  const inputTokens = count((options.prompt ?? "").trim());
+  const outputTokens = count((options.logText ?? "").trim());
+  const tokens = inputTokens + outputTokens;
+  const price = options.pricePerMillion;
+  let costUsd: number | undefined;
+  if (tokens > 0 && typeof price === "number" && Number.isFinite(price) && price >= 0) {
+    costUsd = Math.round((tokens / 1_000_000) * price * 1_000_000) / 1_000_000;
+  }
+  return { tokens, inputTokens, outputTokens, costUsd, source: "offline" };
+}
+
 export interface MeasureToolSurfaceOptions {
   /** Реальный офлайн-токенайзер (например, encode из gpt-tokenizer). */
   countTokens?: (text: string) => number;

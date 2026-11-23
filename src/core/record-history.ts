@@ -41,6 +41,8 @@ import {
 } from "./matrix.js";
 import { appendStructuredLog } from "./structured-log.js";
 import { collectOpenCodeUsage } from "./opencode-usage.js";
+import { catalogPricePerMillion } from "./opencode-models.js";
+import { estimateRunUsage } from "./usage-surface.js";
 
 type Status = "success" | "error" | "timeout" | "skipped";
 
@@ -373,6 +375,17 @@ function readLogTail(filePath: string, maxLines: number): string[] {
   }
 }
 
+/** T-6.2: текст последнего прогона для офлайн-оценки расхода (срез, чтобы не читать гигабайты). */
+function readLogTextForEstimate(filePath: string | undefined): string {
+  if (!filePath) return "";
+  try {
+    const content = extractLastRunLog(fs.readFileSync(filePath, "utf8"));
+    return content.length > 256_000 ? content.slice(-256_000) : content;
+  } catch {
+    return "";
+  }
+}
+
 export interface UsageInfo {
   tokens?: number;
   costUsd?: number;
@@ -481,6 +494,40 @@ function resolveUsageFromOpenCodeDb(
     reason: `tokens=${usage.tokens} cost=${usage.costUsd} messages=${usage.messages}`,
   });
   return resolved;
+}
+
+/**
+ * T-6.2: если ни обёртка, ни лог, ни OpenCode DB не дали ненулевого usage
+ * (типично для free-тиров), подставляем детерминированную офлайн-оценку.
+ * Уже найденные значения не перезаписываются; цена берётся из каталога моделей.
+ */
+function resolveUsageWithOfflineFallback(
+  taskName: string,
+  startedAtIso: string,
+  durationMs: number,
+  fallback: UsageInfo,
+  logFile: string | undefined,
+  model: string | undefined,
+): UsageInfo {
+  const resolved = resolveUsageFromOpenCodeDb(taskName, startedAtIso, durationMs, fallback);
+  if (resolved.tokens !== undefined && resolved.costUsd !== undefined) return resolved;
+
+  const definition = getTask(taskName);
+  const estimate = estimateRunUsage({
+    prompt: definition?.prompt,
+    logText: readLogTextForEstimate(logFile),
+    pricePerMillion: catalogPricePerMillion(model ?? definition?.model),
+  });
+  if (estimate.tokens <= 0) return resolved;
+
+  const result: UsageInfo = {
+    tokens: resolved.tokens ?? estimate.tokens,
+    costUsd: resolved.costUsd ?? estimate.costUsd,
+  };
+  logRecorderEvent("usage.offline_estimate", taskName, {
+    reason: `tokens=${estimate.tokens} input=${estimate.inputTokens} output=${estimate.outputTokens} cost=${estimate.costUsd ?? "unknown"}`,
+  });
+  return result;
 }
 
 /**
@@ -835,19 +882,21 @@ async function main() {
         costResolved = usage.costUsd;
       }
     }
+    const model = ninth && ninth !== "-" ? ninth.trim() || undefined : undefined;
     // --finish не получает startedAt: восстанавливаем окно из длительности.
     if (tokensResolved === undefined || costResolved === undefined) {
       const approximatedStart = new Date(Date.now() - Math.max(0, durationMs)).toISOString();
-      const dbUsage = resolveUsageFromOpenCodeDb(
+      const usage = resolveUsageWithOfflineFallback(
         taskName,
         approximatedStart,
         durationMs,
         { tokens: tokensResolved, costUsd: costResolved },
+        logFile,
+        model,
       );
-      tokensResolved = dbUsage.tokens;
-      costResolved = dbUsage.costUsd;
+      tokensResolved = usage.tokens;
+      costResolved = usage.costUsd;
     }
-    const model = ninth && ninth !== "-" ? ninth.trim() || undefined : undefined;
     const preFlightStatus = parseHookStatus(tenth);
     const postFlightStatus = parseHookStatus(eleventh);
     const st: Status =
@@ -928,16 +977,16 @@ async function main() {
       costResolved = usage.costUsd;
     }
   }
-  if (tokensResolved === undefined || costResolved === undefined) {
-    const dbUsage = resolveUsageFromOpenCodeDb(taskName, startedAt, durationMs, {
-      tokens: tokensResolved,
-      costUsd: costResolved,
-    });
-    tokensResolved = dbUsage.tokens;
-    costResolved = dbUsage.costUsd;
-  }
   // Восьмой аргумент — модель; "-" означает, что модель не задана.
   const model = eighth && eighth !== "-" ? eighth.trim() || undefined : undefined;
+  if (tokensResolved === undefined || costResolved === undefined) {
+    const usage = resolveUsageWithOfflineFallback(taskName, startedAt, durationMs, {
+      tokens: tokensResolved,
+      costUsd: costResolved,
+    }, logFile, model);
+    tokensResolved = usage.tokens;
+    costResolved = usage.costUsd;
+  }
   // Девятый и десятый — итоги pre/post-flight хуков.
   const preFlightStatus = parseHookStatus(ninth);
   const postFlightStatus = parseHookStatus(tenth);
