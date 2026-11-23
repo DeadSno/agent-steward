@@ -174,6 +174,35 @@ architecture-diagram authoring failed with this exact `Free usage limit reached`
 error (PL-90, a repeat of PL-72); the document was finished by the main agent and the
 reason was kept in the report. This is an environment limit, not a repository bug.
 
+### 4.2 Worktree environment setup (PL-109)
+
+A fresh one-off git worktree contains tracked files only — no `node_modules/` and no `dist/`.
+An agent that starts there and immediately runs `npm run build` or `node test-*.mjs` fails with
+`tsc not found` / `Cannot find module`: dependencies and build output are not committed.
+Prepare the environment before the first build — pick one of two Windows options.
+
+**(a) Junction from the main checkout (fast, no install).** Build in the main checkout once,
+then create directory junctions in the fresh worktree from `cmd`:
+
+```cmd
+cmd /c mklink /J "C:\path\to\worktree\node_modules" "C:\path\to\main-checkout\node_modules"
+cmd /c mklink /J "C:\path\to\worktree\dist"       "C:\path\to\main-checkout\dist"
+```
+
+The link names must not already exist in the worktree; `dist/` must exist in the main checkout
+first. Junctions are shared — a build inside the worktree rewrites the main checkout's `dist/`,
+so do not build through the same junction from two runs concurrently.
+
+**(b) `npm ci` inside the worktree (isolated, when junction is unavailable).**
+
+```cmd
+cd /d C:\path\to\worktree && npm ci && npm run build
+```
+
+This re-downloads dependencies but keeps the worktree self-contained. Without either option,
+`npm run build` and `node test-*.mjs` in a fresh worktree fail — treat environment setup as
+the first step of any task that runs in a worktree (the W-1 class of tasks).
+
 ## 5. Matrix builds (multi-repository)
 
 Use a matrix when the same prompt must run in several workspaces:
