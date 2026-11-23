@@ -8,7 +8,13 @@ import {
   SAVINGS_METHODOLOGY_URL,
   computeSavings,
 } from "./dist/core/savings.js";
-import { buildAnalytics } from "./dist/core/analytics.js";
+import {
+  buildAnalytics,
+  GRAFANA_METRIC_NAMES,
+  buildGrafanaDashboard,
+  splitLocalCloud,
+} from "./dist/core/analytics.js";
+import { tokenEfficiencyScore, forecastSpend } from "./dist/core/budget.js";
 
 const results = [];
 let passed = 0;
@@ -104,6 +110,58 @@ const windowed = buildAnalytics(withOld, { days: 7, now });
 check(
   "analytics: записи вне окна не попадают в экономию",
   windowed.savings.savedUsd === 0.035 && windowed.savings.runs === 3
+);
+
+// --- 6. Экономика v2: E-3.1, E-4.1, E-4.2, E-5.1 ---------------------------
+const eff = tokenEfficiencyScore(records);
+check(
+  "E-3.1: токены error идут в wasted, success — в useful",
+  eff.runs === 5 &&
+    eff.usefulRuns === 4 &&
+    eff.totalTokens === 103500 &&
+    eff.wastedTokens === 2000 &&
+    eff.score === 98.07
+);
+check(
+  "E-3.1: пустая история и детерминизм (fail-open)",
+  tokenEfficiencyScore([]).score === 0 &&
+    JSON.stringify(tokenEfficiencyScore(records)) ===
+      JSON.stringify(tokenEfficiencyScore(records))
+);
+
+const fc = forecastSpend(records, 7, now);
+check(
+  "E-4.1: прогноз по окну без NaN/Infinity",
+  fc.basedOnRuns === 5 &&
+    Number.isFinite(fc.projectedUsd) &&
+    Number.isFinite(fc.dailyRateUsd) &&
+    fc.projectedUsd >= 0 &&
+    forecastSpend([], 7, now).projectedUsd === 0 &&
+    forecastSpend([], 7, now).confidence === "low"
+);
+
+const dash = buildGrafanaDashboard({ windowDays: 7 });
+check(
+  "E-4.2: детерминированный JSON с refs на три метрики",
+  dash.panels.length === 3 &&
+    [GRAFANA_METRIC_NAMES.spendUsd, GRAFANA_METRIC_NAMES.tokens, GRAFANA_METRIC_NAMES.efficiency].every(
+      (metric) => JSON.stringify(dash).includes(metric)
+    ) &&
+    JSON.stringify(dash) === JSON.stringify(buildGrafanaDashboard({ windowDays: 7 }))
+);
+
+const split = splitLocalCloud(records);
+check(
+  "E-5.1: локальные модели отделены от облачных, running не учитывается",
+  split.local.runs === 2 &&
+    split.cloud.runs === 3 &&
+    split.local.tokens === 3000 &&
+    split.cloud.tokens === 100500 &&
+    splitLocalCloud([]).local.runs === 0
+);
+check(
+  "E-5.1: детерминизм разбивки",
+  JSON.stringify(splitLocalCloud(records)) === JSON.stringify(splitLocalCloud(records))
 );
 
 console.log(`\n${passed}/${results.length} проверок счётчика экономии пройдены.`);

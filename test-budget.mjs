@@ -17,8 +17,17 @@ import {
   formatTaskTokenBudgetSkipMessage,
   startOfUtcDay,
   startOfUtcWeek,
+  tokenEfficiencyScore,
+  forecastSpend,
 } from "./dist/core/budget.js";
-import { buildAnalytics, recordCost, ESTIMATED_COST_PER_1K_TOKENS_USD } from "./dist/core/analytics.js";
+import {
+  buildAnalytics,
+  recordCost,
+  ESTIMATED_COST_PER_1K_TOKENS_USD,
+  GRAFANA_METRIC_NAMES,
+  buildGrafanaDashboard,
+  splitLocalCloud,
+} from "./dist/core/analytics.js";
 
 let passed = 0;
 let failed = 0;
@@ -396,6 +405,185 @@ check("E-2.2: для разрешённого запуска сообщение 
 // E-2.2: гейт подключён ко всем входам запуска задачи в index.ts.
 const pluginSource = fs.readFileSync(new URL("./src/index.ts", import.meta.url), "utf8");
 check("E-2.2: index.ts подключает гейт в runTaskEntry и run_task", (pluginSource.match(/checkTaskTokenBudgetGate\(/g) ?? []).length >= 3 && pluginSource.includes("evaluateTaskTokenBudgetGate"));
+
+// --- 13. E-3.1: token efficiency score -------------------------------------
+const efficiencyRecords = [
+  day("2026-06-17T01:00:00Z", { tokens: 800, model: "gpt-4o" }),
+  day("2026-06-17T02:00:00Z", { status: "error", tokens: 200, model: "gpt-4o" }),
+  day("2026-06-17T03:00:00Z", { tokens: 1000, model: "qwen3:4b" }),
+  day("2026-06-17T04:00:00Z", { status: "aborted", tokens: 500, model: "qwen3:4b" }),
+  day("2026-06-17T05:00:00Z", { status: "running", tokens: 99999, model: "gpt-4o" }),
+];
+const efficiency = tokenEfficiencyScore(efficiencyRecords);
+check(
+  "E-3.1: итоговая эффективность 72% (2500 токенов, 700 впустую)",
+  efficiency.runs === 4 &&
+    efficiency.usefulRuns === 2 &&
+    efficiency.totalTokens === 2500 &&
+    efficiency.wastedTokens === 700 &&
+    efficiency.score === 72
+);
+check(
+  "E-3.1: разбивка по моделям и детерминированный порядок ключей",
+  Object.keys(efficiency.scoreByModel).join(",") === "gpt-4o,qwen3:4b" &&
+    efficiency.scoreByModel["gpt-4o"].score === 80 &&
+    efficiency.scoreByModel["qwen3:4b"].score === 66.67
+);
+check(
+  "E-3.1: fail-open на пустой истории",
+  JSON.stringify(tokenEfficiencyScore([])) ===
+    JSON.stringify({
+      score: 0,
+      runs: 0,
+      usefulRuns: 0,
+      totalTokens: 0,
+      wastedTokens: 0,
+      scoreByModel: {},
+    })
+);
+check(
+  "E-3.1: только running/без токенов — нули, без NaN",
+  (() => {
+    const r = tokenEfficiencyScore([
+      day("2026-06-17T01:00:00Z", { status: "running", tokens: 100 }),
+      day("2026-06-17T02:00:00Z", { tokens: undefined }),
+    ]);
+    return r.score === 0 && r.runs === 1 && Number.isFinite(r.score);
+  })()
+);
+check(
+  "E-3.1: границы — все success = 100%, все error = 0%",
+  tokenEfficiencyScore([day("2026-06-17T01:00:00Z", { tokens: 10 })]).score === 100 &&
+    tokenEfficiencyScore([day("2026-06-17T01:00:00Z", { status: "error", tokens: 10 })]).score === 0
+);
+check(
+  "E-3.1: детерминизм",
+  JSON.stringify(tokenEfficiencyScore(efficiencyRecords)) ===
+    JSON.stringify(tokenEfficiencyScore(efficiencyRecords))
+);
+
+// --- 14. E-4.1: forecast spend ---------------------------------------------
+const forecastNow = new Date("2026-06-17T12:00:00Z");
+const forecastRecords = [
+  day("2026-06-17T01:00:00Z", { costUsd: 3 }),
+  day("2026-06-16T10:00:00Z", { costUsd: 4 }),
+  day("2026-06-10T11:00:00Z", { costUsd: 4 }), // до начала окна (12:00)
+  day("2026-06-05T10:00:00Z", { costUsd: 1000 }), // вне окна
+  day("2026-06-17T09:00:00Z", { status: "running", costUsd: 999 }),
+  day("2026-06-18T00:00:00Z", { costUsd: 50 }), // будущее
+];
+const forecast = forecastSpend(forecastRecords, 7, forecastNow);
+check(
+  "E-4.1: окно 7 дней, только завершённые запуски",
+  forecast.basedOnRuns === 2 &&
+    forecast.dailyRateUsd === 1 &&
+    forecast.projectedUsd === 7 &&
+    forecast.confidence === "low"
+);
+check(
+  "E-4.1: пустая история — нули и low, без NaN/Infinity",
+  (() => {
+    const f = forecastSpend([], 7, forecastNow);
+    return (
+      f.projectedUsd === 0 &&
+      f.dailyRateUsd === 0 &&
+      f.basedOnRuns === 0 &&
+      f.confidence === "low" &&
+      [f.projectedUsd, f.dailyRateUsd].every(Number.isFinite)
+    );
+  })()
+);
+check(
+  "E-4.1: все running — fail-open",
+  forecastSpend([day("2026-06-17T01:00:00Z", { status: "running", costUsd: 999 })], 7, forecastNow)
+    .projectedUsd === 0
+);
+check(
+  "E-4.1: days=0/NaN не дают деления на ноль",
+  forecastSpend(forecastRecords, 0, forecastNow).dailyRateUsd === 1 &&
+    forecastSpend(forecastRecords, NaN, forecastNow).dailyRateUsd === 1
+);
+check(
+  "E-4.1: детерминизм при одинаковом now",
+  JSON.stringify(forecastSpend(forecastRecords, 7, forecastNow)) ===
+    JSON.stringify(forecastSpend(forecastRecords, 7, forecastNow))
+);
+check(
+  "E-4.1: больше данных повышает уверенность",
+  forecastSpend(
+    Array.from({ length: 14 }, (_, i) =>
+      day(`2026-06-${String(10 + (i % 7)).padStart(2, "0")}T13:00:00Z`, { costUsd: 0.5 })
+    ),
+    7,
+    forecastNow
+  ).confidence === "high"
+);
+
+// --- 15. E-4.2: Grafana dashboard JSON -------------------------------------
+const dashboard = buildGrafanaDashboard({ windowDays: 14, generatedAt: "ignored" });
+check(
+  "E-4.2: три панели с target'ами на метрики расхода/токенов/эффективности",
+  dashboard.panels.length === 3 &&
+    dashboard.panels[0].targets[0].expr === GRAFANA_METRIC_NAMES.spendUsd &&
+    dashboard.panels[1].targets[0].expr === GRAFANA_METRIC_NAMES.tokens &&
+    dashboard.panels[2].targets[0].expr === GRAFANA_METRIC_NAMES.efficiency &&
+    dashboard.panels.every((p) => p.targets[0].refId === "A")
+);
+check(
+  "E-4.2: детерминизм (generatedAt не влияет на JSON)",
+  JSON.stringify(dashboard) ===
+    JSON.stringify(buildGrafanaDashboard({ windowDays: 14, generatedAt: "other" })) &&
+    JSON.stringify(buildGrafanaDashboard()) === JSON.stringify(buildGrafanaDashboard())
+);
+check(
+  "E-4.2: JSON.stringify round-trip без потерь",
+  JSON.stringify(JSON.parse(JSON.stringify(dashboard))) === JSON.stringify(dashboard)
+);
+check(
+  "E-4.2: windowDays задаёт окно, невалидное значение — fail-open на 14",
+  dashboard.time.from === "now-14d" &&
+    buildGrafanaDashboard({ windowDays: Number.NaN }).time.from === "now-14d" &&
+    buildGrafanaDashboard({ title: "Custom" }).title === "Custom"
+);
+
+// --- 16. E-5.1: local vs cloud ---------------------------------------------
+const splitRecords = [
+  day("2026-06-17T01:00:00Z", { tokens: 1000, costUsd: 1, model: "gpt-4o" }),
+  day("2026-06-17T02:00:00Z", { status: "error", tokens: 2000, costUsd: 2, model: "qwen3:4b" }),
+  day("2026-06-17T03:00:00Z", { tokens: 500, model: "ollama/llama3" }), // оценка 0.0015
+  day("2026-06-17T04:00:00Z", { tokens: 100, costUsd: 0.5, model: "" }), // неизвестная модель → cloud
+  day("2026-06-17T05:00:00Z", { status: "running", tokens: 9999, costUsd: 99, model: "gpt-4o" }),
+];
+const split = splitLocalCloud(splitRecords);
+check(
+  "E-5.1: эвристика по префиксу модели, running игнорируется",
+  split.local.runs === 2 &&
+    split.local.tokens === 2500 &&
+    split.local.spentUsd === 2.0015 &&
+    split.cloud.runs === 2 &&
+    split.cloud.tokens === 1100 &&
+    split.cloud.spentUsd === 1.5
+);
+check(
+  "E-5.1: явное поле записи имеет приоритет над моделью",
+  (() => {
+    const s = splitLocalCloud([
+      day("2026-06-17T01:00:00Z", { tokens: 10, costUsd: 0.1, model: "gpt-4o", executionPlace: "local" }),
+    ]);
+    return s.local.runs === 1 && s.cloud.runs === 0;
+  })()
+);
+check(
+  "E-5.1: пустая история и детерминизм",
+  (() => {
+    const emptySplit = splitLocalCloud([]);
+    return (
+      emptySplit.local.runs === 0 &&
+      emptySplit.cloud.spentUsd === 0 &&
+      JSON.stringify(splitLocalCloud(splitRecords)) === JSON.stringify(splitLocalCloud(splitRecords))
+    );
+  })()
+);
 
 console.log(`\nBudget: ${passed}/${passed + failed} проверок прошли.`);
 assert.equal(failed, 0, `${failed} проверок не прошли`);

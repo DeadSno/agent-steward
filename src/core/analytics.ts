@@ -446,3 +446,209 @@ export function historyToCsv(records: AnalyticsRecord[]): string {
   // BOM, чтобы Excel корректно открыл UTF-8 с кириллицей.
   return `\uFEFF${rows.join("\r\n")}`;
 }
+
+// ---------------------------------------------------------------------------
+// Экономика v2, Деталь 3.3: E-4.2 (Grafana JSON) и E-5.1 (local vs cloud).
+// Обе функции чистые и детерминированные: без БД, HTTP, ОС и внешних пакетов.
+// ---------------------------------------------------------------------------
+
+/** E-4.2: канонические имена метрик, на которые ссылаются панели Grafana. */
+export const GRAFANA_METRIC_NAMES = {
+  spendUsd: "agent_steward_spend_usd_total",
+  tokens: "agent_steward_tokens_total",
+  efficiency: "agent_steward_token_efficiency_score",
+} as const;
+
+/**
+ * Входные данные для дашборда. Поля необязательны: сюда можно передать и
+ * результат `buildAnalytics()` (у него есть `windowDays`/`generatedAt`).
+ * `generatedAt` намеренно НЕ попадает в JSON — функция детерминирована.
+ */
+export interface GrafanaDashboardInput {
+  title?: string;
+  windowDays?: number;
+  generatedAt?: string;
+}
+
+export interface GrafanaTarget {
+  refId: string;
+  expr: string;
+  legendFormat: string;
+}
+
+export interface GrafanaPanel {
+  id: number;
+  title: string;
+  type: string;
+  gridPos: { h: number; w: number; x: number; y: number };
+  targets: GrafanaTarget[];
+}
+
+/** E-4.2: объект, пригодный для `JSON.stringify` без дополнительных реплайсеров. */
+export interface GrafanaDashboard {
+  uid: string;
+  title: string;
+  tags: string[];
+  schemaVersion: number;
+  editable: boolean;
+  time: { from: string; to: string };
+  templating: { list: unknown[] };
+  panels: GrafanaPanel[];
+}
+
+/**
+ * E-4.2: собирает детерминированный JSON дашборда Grafana с панелями расхода,
+ * токенов и токен-эффективности. Три панели ссылаются на метрики через
+ * `targets[].expr` (см. `GRAFANA_METRIC_NAMES`); порядок панелей и refId
+ * фиксированы. Никаких внешних зависимостей и обращений к часам/сети.
+ */
+export function buildGrafanaDashboard(
+  output: GrafanaDashboardInput = {},
+): GrafanaDashboard {
+  const source = output ?? {};
+  const title =
+    typeof source.title === "string" && source.title.trim()
+      ? source.title.trim()
+      : "Agent-steward — Экономика v2";
+  const windowDays = Math.max(1, Math.floor(Number(source.windowDays) || 14));
+
+  const panels: GrafanaPanel[] = [
+    {
+      id: 1,
+      title: "Расход (USD)",
+      type: "timeseries",
+      gridPos: { h: 8, w: 8, x: 0, y: 0 },
+      targets: [
+        {
+          refId: "A",
+          expr: GRAFANA_METRIC_NAMES.spendUsd,
+          legendFormat: "spend USD",
+        },
+      ],
+    },
+    {
+      id: 2,
+      title: "Токены",
+      type: "timeseries",
+      gridPos: { h: 8, w: 8, x: 8, y: 0 },
+      targets: [
+        {
+          refId: "A",
+          expr: GRAFANA_METRIC_NAMES.tokens,
+          legendFormat: "tokens",
+        },
+      ],
+    },
+    {
+      id: 3,
+      title: "Token efficiency",
+      type: "gauge",
+      gridPos: { h: 8, w: 8, x: 16, y: 0 },
+      targets: [
+        {
+          refId: "A",
+          expr: GRAFANA_METRIC_NAMES.efficiency,
+          legendFormat: "efficiency %",
+        },
+      ],
+    },
+  ];
+
+  return {
+    uid: "agent-steward-economics-v2",
+    title,
+    tags: ["agent-steward", "economics-v2", `window-${windowDays}d`],
+    schemaVersion: 39,
+    editable: true,
+    time: { from: `now-${windowDays}d`, to: "now" },
+    templating: { list: [] },
+    panels,
+  };
+}
+
+/** E-5.1: итоги по одному месту исполнения. */
+export interface ExecutionPlaceTotals {
+  runs: number;
+  spentUsd: number;
+  tokens: number;
+}
+
+/** E-5.1: разбивка запусков, стоимости и токенов по local/cloud. */
+export interface LocalCloudSplit {
+  local: ExecutionPlaceTotals;
+  cloud: ExecutionPlaceTotals;
+}
+
+/**
+ * Эвристика определения места исполнения (E-5.1), по порядку:
+ *  1. Явное поле записи — `executionPlace`, `place`, `executor`, `target`
+ *     или `runner` (первое непустое). Значения local/ollama/on-prem/lmstudio
+ *     → local; cloud/remote/hosted/openai/anthropic/google/azure → cloud.
+ *  2. Префикс модели: ollama/ local/ lmstudio/ localai/ и модели семейств
+ *     llama/qwen/phi/gemma/mistral/deepseek/codellama → local; префиксы
+ *     gpt-/o1-/o3-/claude-/gemini-/openai/ anthropic/ google/ azure/ bedrock/
+ *     groq/ mistralai/ → cloud. Оллама-тег вида `qwen3:4b` → local.
+ *  3. Неизвестная/пустая модель считается cloud (консервативно: цена есть).
+ */
+const CLOUD_MODEL_RE =
+  /^(gpt-|o[134]-|claude-|gemini-|openai\/|anthropic\/|google\/|azure\/|bedrock\/|groq\/|mistralai\/|together\/)/;
+const LOCAL_MODEL_RE =
+  /^(ollama\/|local\/|lmstudio\/|localai\/|llama|qwen|phi|gemma|mistral|deepseek|codellama|falcon|vicuna)/;
+
+function readExecutionPlace(record: AnalyticsRecord): string {
+  const source = record as AnalyticsRecord & {
+    executionPlace?: unknown;
+    place?: unknown;
+    executor?: unknown;
+    target?: unknown;
+    runner?: unknown;
+  };
+  for (const value of [
+    source.executionPlace,
+    source.place,
+    source.executor,
+    source.target,
+    source.runner,
+  ]) {
+    if (typeof value === "string" && value.trim()) return value.trim().toLowerCase();
+  }
+  return "";
+}
+
+function classifyExecutionPlace(record: AnalyticsRecord): "local" | "cloud" {
+  const explicit = readExecutionPlace(record);
+  if (explicit) {
+    if (/\b(local|ollama|on[-_ ]?prem|self[-_ ]?hosted|lmstudio)\b/.test(explicit))
+      return "local";
+    if (/\b(cloud|remote|hosted|openai|anthropic|google|azure|bedrock)\b/.test(explicit))
+      return "cloud";
+  }
+  const model = String(record.model ?? "").trim().toLowerCase();
+  if (!model) return "cloud";
+  if (CLOUD_MODEL_RE.test(model)) return "cloud";
+  if (LOCAL_MODEL_RE.test(model)) return "local";
+  if (model.includes(":")) return "local"; // Ollama-тег вида qwen3:4b
+  return "cloud";
+}
+
+/**
+ * E-5.1: разбивка завершённых запусков по месту исполнения. Запуски `running`
+ * игнорируются; стоимость берётся через `recordCost` (явная цена либо оценка
+ * по токенам, как в бюджете). Возвращаемые суммы округлены до 6 знаков.
+ */
+export function splitLocalCloud(records: AnalyticsRecord[]): LocalCloudSplit {
+  const result: LocalCloudSplit = {
+    local: { runs: 0, spentUsd: 0, tokens: 0 },
+    cloud: { runs: 0, spentUsd: 0, tokens: 0 },
+  };
+  for (const record of Array.isArray(records) ? records : []) {
+    if (!record || record.status === "running") continue;
+    const bucket = result[classifyExecutionPlace(record)];
+    bucket.runs += 1;
+    bucket.tokens += toNumber(record.tokens);
+    bucket.spentUsd += recordCost(record);
+  }
+  result.local.spentUsd = Math.round(result.local.spentUsd * 1e6) / 1e6;
+  result.cloud.spentUsd = Math.round(result.cloud.spentUsd * 1e6) / 1e6;
+  return result;
+}

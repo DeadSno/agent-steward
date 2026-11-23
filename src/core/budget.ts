@@ -338,3 +338,187 @@ export function formatTaskTokenBudgetSkipMessage(
   const period = decision.period === "week" ? "weekly" : "daily";
   return `Task token budget exceeded: "${decision.taskName}" used ${decision.maxRunTokens} tokens in one run (${period} limit ${decision.tokenBudget}) — run skipped.`;
 }
+
+// ---------------------------------------------------------------------------
+// Экономика v2, Деталь 3.3: E-3.1 (token efficiency) и E-4.1 (forecast).
+// Обе функции чистые: только уже загруженная история, без БД/HTTP/ОС.
+// ---------------------------------------------------------------------------
+
+/** Статусы завершённых запусков, токены которых потрачены впустую. */
+const WASTED_TOKEN_STATUSES = new Set(["error", "aborted"]);
+
+function nonNegativeTokens(value: unknown): number {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+}
+
+function roundScore(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+/** Доля токенов, не потраченных впустую, в процентах (0..100). */
+function tokensEfficiency(totalTokens: number, wastedTokens: number): number {
+  if (totalTokens <= 0) return 0;
+  return roundScore(((totalTokens - wastedTokens) / totalTokens) * 100);
+}
+
+/** Эффективность одной модели (E-3.1). */
+export interface ModelEfficiencyRow {
+  model: string;
+  runs: number;
+  usefulRuns: number;
+  totalTokens: number;
+  wastedTokens: number;
+  /** Процент токенов, не потраченных впустую (0..100). */
+  score: number;
+}
+
+/** E-3.1: метрика токен-эффективности по всей истории и в разрезе моделей. */
+export interface TokenEfficiencyScore {
+  /** Процент «полезных» токенов (0..100); 0, если данных нет (fail-open). */
+  score: number;
+  /** Все завершённые запуски. */
+  runs: number;
+  /** Запуски со статусом success. */
+  usefulRuns: number;
+  /** Сумма токенов завершённых запусков. */
+  totalTokens: number;
+  /** Токены запусков со статусом error/aborted. */
+  wastedTokens: number;
+  /** Разбивка по моделям; ключи отсортированы для детерминизма. */
+  scoreByModel: Record<string, ModelEfficiencyRow>;
+}
+
+/**
+ * E-3.1: оценка токен-эффективности по уже загруженным записям.
+ *
+ * Методика (детерминированная, без округления «на глаз»):
+ *  - учитываются только завершённые записи (не `running`);
+ *  - `usefulRuns` — запуски со статусом `success`;
+ *  - `wastedTokens` — токены запусков со статусом `error`/`aborted`;
+ *  - `score = (totalTokens - wastedTokens) / totalTokens * 100`, округление
+ *    до 2 знаков; при отсутствии токенов score = 0.
+ *
+ * Fail-open: пустой список, только незавершённые записи и записи без валидных
+ * токенов дают нули и пустой `scoreByModel` — без NaN/Infinity и без выбросов.
+ */
+export function tokenEfficiencyScore(
+  records: AnalyticsRecord[],
+): TokenEfficiencyScore {
+  const list = Array.isArray(records) ? records : [];
+  const byModel = new Map<string, ModelEfficiencyRow>();
+  let runs = 0;
+  let usefulRuns = 0;
+  let totalTokens = 0;
+  let wastedTokens = 0;
+
+  for (const record of list) {
+    if (!record || record.status === "running") continue;
+    const status = String(record.status ?? "");
+    const model = String(record.model ?? "").trim() || "(default)";
+    const tokens = nonNegativeTokens(record.tokens);
+    const wasted = WASTED_TOKEN_STATUSES.has(status) ? tokens : 0;
+
+    runs += 1;
+    totalTokens += tokens;
+    wastedTokens += wasted;
+    if (status === "success") usefulRuns += 1;
+
+    const row = byModel.get(model) ?? {
+      model,
+      runs: 0,
+      usefulRuns: 0,
+      totalTokens: 0,
+      wastedTokens: 0,
+      score: 0,
+    };
+    row.runs += 1;
+    row.totalTokens += tokens;
+    row.wastedTokens += wasted;
+    if (status === "success") row.usefulRuns += 1;
+    byModel.set(model, row);
+  }
+
+  const scoreByModel: Record<string, ModelEfficiencyRow> = {};
+  for (const model of [...byModel.keys()].sort((a, b) => a.localeCompare(b))) {
+    const row = byModel.get(model)!;
+    scoreByModel[model] = {
+      ...row,
+      score: tokensEfficiency(row.totalTokens, row.wastedTokens),
+    };
+  }
+
+  return {
+    score: tokensEfficiency(totalTokens, wastedTokens),
+    runs,
+    usefulRuns,
+    totalTokens,
+    wastedTokens,
+    scoreByModel,
+  };
+}
+
+/** Уверенность прогноза расхода (E-4.1). */
+export type ForecastConfidence = "low" | "medium" | "high";
+
+/** E-4.1: линейный прогноз расхода на следующий период. */
+export interface SpendForecast {
+  /** Прогноз расхода на ближайшие `days` дней, USD. */
+  projectedUsd: number;
+  /** Средний расход за день в окне, USD. */
+  dailyRateUsd: number;
+  /** Сколько завершённых запусков попало в окно. */
+  basedOnRuns: number;
+  /** Плотность истории: low / medium / high. */
+  confidence: ForecastConfidence;
+}
+
+/**
+ * E-4.1: линейный прогноз затрат по завершённым запускам за последние N дней.
+ *
+ * Окно — `[now - days * 24h, now]`; расход относится ко времени завершения
+ * (`finishedAt`, для легаси — `startedAt`), как и в `buildBudgetReport`.
+ * `dailyRateUsd = spent / days`, `projectedUsd = dailyRateUsd * days`
+ * (прогноз на следующий период той же длины). Все суммы округляются до 6
+ * знаков, деление на ноль исключено.
+ *
+ * Fail-open: пустая история/все `running`/невалидные даты дают нули и
+ * `confidence: "low"` — без NaN и Infinity.
+ */
+export function forecastSpend(
+  records: AnalyticsRecord[],
+  days = 7,
+  now = new Date(),
+): SpendForecast {
+  const windowDays = Math.max(1, Math.floor(Number(days) || 7));
+  const endMs =
+    now instanceof Date && Number.isFinite(now.getTime())
+      ? now.getTime()
+      : Date.now();
+  const startMs = endMs - windowDays * 24 * 60 * 60 * 1000;
+  let spent = 0;
+  let basedOnRuns = 0;
+
+  for (const record of Array.isArray(records) ? records : []) {
+    if (!record || record.status === "running") continue;
+    const finishedMs = record.finishedAt
+      ? new Date(record.finishedAt).getTime()
+      : NaN;
+    const startedMs = new Date(record.startedAt).getTime();
+    const time = Number.isFinite(finishedMs) ? finishedMs : startedMs;
+    if (!Number.isFinite(time) || time < startMs || time > endMs) continue;
+    const cost = recordCost(record);
+    if (!Number.isFinite(cost)) continue;
+    spent += cost;
+    basedOnRuns += 1;
+  }
+
+  const dailyRateUsd = roundUsd(spent / windowDays);
+  const projectedUsd = roundUsd(dailyRateUsd * windowDays);
+  let confidence: ForecastConfidence = "low";
+  if (basedOnRuns >= windowDays * 2) confidence = "high";
+  else if (basedOnRuns >= Math.max(1, Math.ceil(windowDays / 2)))
+    confidence = "medium";
+
+  return { projectedUsd, dailyRateUsd, basedOnRuns, confidence };
+}

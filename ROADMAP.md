@@ -60,16 +60,6 @@ agent-steward — execution engine с опциональной регистра�
 ## Деталь 3.3 — Экономика v2
 `src/core/budget*`, `src/analytics*`
 
-**Задача E-3 — Token efficiency score** · P3 · ⬜
-- [ ] E-3.1 Метрика и расчёт
-
-**Задача E-4 — Прогноз и Grafana JSON** · P3 · ⬜
-- [ ] E-4.1 Прогноз затрат
-- [ ] E-4.2 Экспорт в Grafana
-
-**Задача E-5 — Local vs cloud** · P3 · ⬜
-- [ ] E-5.1 Разбивка запусков и стоимости
-
 ## Деталь 3.4 — Docker runner
 `src/core/runner*`
 
@@ -201,6 +191,8 @@ agent-steward — execution engine с опциональной регистра�
 - [ ] PL-104 Post-flight `scripts/steward-commit.ps1` при `non-fast-forward` (push в общий `dev` отклонён) делает `fetch` + `rebase`, но rebase падает с `cannot rebase: You have unstaged changes` из-за чужих незакоммиченных файлов в общем worktree; следующий `rebase --quit` даёт `fatal: no rebase in progress` и «CONFLICT — manual resolution required», а задача получает `status=error` «Post-flight script failed (код 2)», хотя коммит и Quality Gate уже прошли (STEWARD-B1 14:02, STEWARD-B5 14:10, лог `.steward-dev/steward-commit.log`) — P1. Действие: использовать `git rebase --autostash` или явно сохранять/возвращать чужие изменения, не аварийно завершать задачу после успешного коммита и гейта; регрессия в `test-execution-hardening.mjs`. Воспроизведено 23.11.2026.
 - [ ] PL-105 Настройки `workingDirectory`/`worktree` задачи STEWARD-B5 не применяются к реальному запуску: в логе дважды `PL-59: worktree-snapshot пропущен: дерево не является git-репозиторием (PL-25: проверка отключена)`, хотя `.steward-dev` — полноценный git-репозиторий (ветка `steward-work`) — P2. Действие: передавать `-Workdir` в `run-task.ps1` (связано с PL-86) и проверять в pre-flight, что snapshot/изоляция действительно активны; регрессия в `test-execution-hardening.mjs`. Воспроизведено 23.11.2026.
 - [ ] PL-106 Три задачи STEWARD-B2/B3/B5 стартовали одновременно в 10:49:54Z в одном и том же worktree; две из них умерли с «Прервано (сбой/перезагрузка)» примерно через 585 с — повтор PL-77, но для пакетных задач (создавались без `worktree:true` и без `dependsOn`) — P1. Действие: при создании пакетных задач включать `worktree:true` или выстраивать `dependsOn`, добавить guard `maxConcurrent` и регрессию в `test-execution-hardening.mjs`. Воспроизведено 23.11.2026.
+- [ ] PL-107 Quality Gate задачи `SEC3-1` вызывает глобальный `npm run lint` (`eslint src`) и падает из-за 21 ошибки в чужих незакоммиченных файлах (`src/core/approval-api.ts`, `src/core/execution.ts`, `src/core/run-panel-api.ts`, `src/core/task-name.ts`, `src/db/runs-repo.ts`), хотя собственные тесты задания зелёные (build 0, test-budget 68/68, test-savings 20/20, test-docs 129/129); задача получает `status=error`, а afterScript пропускает коммит из-за отсутствующего маркера — P1. Действие: гейт линтера проверять только файлы из SCOPE задачи (`npx eslint <task files>`) либо запускать задачу в изолированном worktree, и не смешивать чужие ошибки с вердиктом задачи; регрессия в `test-execution-hardening.mjs`. Воспроизведено 23.11.2026 11:22Z.
+- [ ] PL-108 Явный вызов `subagent` (агент `explore`, минимальный промпт) мгновенно завершается `Free usage limit reached. Connect a provider or subscribe to OpenCode Go ...` — окружение, а не баг репозитория (тот же класс, что PL-72/PL-90); из-за этого проверка плагина на одну явную субзадачу не выполнена — P3. Действие: либо подключить провайдер/подписку, либо явно документировать в roadmap, что суб-агенты недоступны на Free-тарифе; повторить после смены тарифа. Воспроизведено 23.11.2026.
 
 ---
 
