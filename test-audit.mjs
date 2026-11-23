@@ -12,6 +12,7 @@ process.env.APPDATA = tempRoot;
 process.env.OPENCODE_SCHEDULER_HOME = path.join(tempRoot, "opencode", "windows-scheduler");
 
 const audit = await import("./dist/core/audit.js");
+const permissions = await import("./dist/core/permissions.js");
 const dbModule = await import("./dist/db/index.js");
 
 const { recordAudit, readAuditLog, cleanupAuditLog, clearAuditLog, resetAuditCleanupThrottle, recordToolBlocked, recordTaskToolBlocks, recordEgressAttempt, runEgressGuardedWithAudit, summarizeEgressRun, EGRESS_ALLOWED_ACTION, EGRESS_BLOCKED_ACTION } = audit;
@@ -324,7 +325,176 @@ check(
     healthy.report.includes("разрешены"),
 );
 
-// --- 8. Итог ------------------------------------------------------------------
+// --- 8. ARCH-7.1: очередь ручных одобрений ------------------------------------
+resetAuditCleanupThrottle();
+clearAuditLog();
+
+check(
+  "ARCH-7.1: R2/R3 требуют одобрения, R0/R1 — нет",
+  permissions.requiresApproval("R2") &&
+    permissions.requiresApproval("R3") &&
+    !permissions.requiresApproval("R0") &&
+    !permissions.requiresApproval("R1") &&
+    !permissions.requiresApproval("R9") &&
+    !permissions.requiresApproval(undefined) &&
+    permissions.APPROVAL_REQUIRED_RISK_CLASSES.join(",") === "R2,R3",
+);
+
+const approvalRequest = audit.requestApproval({
+  requestId: "arch7-approve-1",
+  taskName: "deploy-prod",
+  riskClass: "R2",
+  runRef: "run-ref-1",
+  reason: "внешние эффекты",
+  actor: "mcp",
+  source: "test-audit",
+});
+check(
+  "ARCH-7.1: запрос создан в статусе pending с полными полями",
+  approvalRequest.requestId === "arch7-approve-1" &&
+    approvalRequest.status === "pending" &&
+    approvalRequest.decision === null &&
+    approvalRequest.riskClass === "R2" &&
+    approvalRequest.runRef === "run-ref-1" &&
+    approvalRequest.reason === "внешние эффекты" &&
+    approvalRequest.requestedBy === "mcp" &&
+    !!approvalRequest.createdAt,
+);
+
+const duplicateRequest = audit.requestApproval({
+  requestId: "arch7-approve-1",
+  taskName: "deploy-prod",
+  riskClass: "R2",
+  runRef: "run-ref-1",
+  reason: "другой текст — должен быть проигнорирован",
+  actor: "gui",
+});
+check(
+  "ARCH-7.1: повторный запрос не дублируется",
+  duplicateRequest.requestId === approvalRequest.requestId &&
+    duplicateRequest.status === "pending" &&
+    duplicateRequest.reason === "внешние эффекты" &&
+    readAuditLog({ action: audit.APPROVAL_REQUESTED_ACTION }).total === 1,
+);
+check(
+  "ARCH-7.1: ожидающий запрос виден в очереди",
+  audit.listPendingApprovals().some((item) => item.requestId === "arch7-approve-1"),
+);
+
+const approved = audit.decideApproval("arch7-approve-1", "approve", {
+  actor: "gui",
+  reason: "проверено вручную",
+  source: "test-audit",
+});
+check(
+  "ARCH-7.1: решение approve записано (кто/когда/решение/причина/ссылка)",
+  approved.status === "approved" &&
+    approved.decision === "approve" &&
+    approved.decidedBy === "gui" &&
+    !!approved.decidedAt &&
+    approved.reason === "проверено вручную" &&
+    approved.runRef === "run-ref-1",
+);
+
+const approvalDecisionRows = readAuditLog({ action: audit.APPROVAL_APPROVED_ACTION });
+const approvalDecisionEvent = approvalDecisionRows.records[0] ?? {};
+const approvalDecisionDetails = approvalDecisionEvent.details ?? {};
+check(
+  "ARCH-7.1: событие approval.approved содержит полный аудит решения",
+  approvalDecisionRows.total === 1 &&
+    approvalDecisionEvent.target === "arch7-approve-1" &&
+    approvalDecisionEvent.actor === "gui" &&
+    typeof approvalDecisionEvent.ts === "string" &&
+    approvalDecisionDetails.decision === "approve" &&
+    approvalDecisionDetails.reason === "проверено вручную" &&
+    approvalDecisionDetails.runRef === "run-ref-1" &&
+    approvalDecisionDetails.riskClass === "R2" &&
+    approvalDecisionDetails.taskName === "deploy-prod",
+);
+
+const secondDecision = audit.decideApproval("arch7-approve-1", "reject", {
+  actor: "http",
+  reason: "передумали",
+});
+check(
+  "ARCH-7.1: решения идемпотентны — первое побеждает, строк не добавляется",
+  secondDecision.status === "approved" &&
+    secondDecision.decidedBy === "gui" &&
+    secondDecision.decision === "approve" &&
+    readAuditLog({ action: audit.APPROVAL_APPROVED_ACTION }).total === 1 &&
+    readAuditLog({ action: audit.APPROVAL_REJECTED_ACTION }).total === 0,
+);
+check(
+  "ARCH-7.1: одобренный запрос ушёл из очереди ожидания",
+  !audit.listPendingApprovals().some((item) => item.requestId === "arch7-approve-1") &&
+    audit.listApprovals().some((item) => item.requestId === "arch7-approve-1" && item.status === "approved"),
+);
+
+audit.requestApproval({
+  requestId: "arch7-reject-1",
+  taskName: "destructive-cleanup",
+  riskClass: "R3",
+  runRef: "run-ref-2",
+  actor: "mcp",
+});
+const rejected = audit.decideApproval("arch7-reject-1", "reject", {
+  actor: "http",
+  reason: "нет разрешения",
+  source: "test-audit",
+});
+check(
+  "ARCH-7.1: reject фиксируется со всеми атрибутами",
+  rejected.status === "rejected" &&
+    rejected.decision === "reject" &&
+    rejected.decidedBy === "http" &&
+    !!rejected.decidedAt &&
+    rejected.reason === "нет разрешения" &&
+    rejected.runRef === "run-ref-2" &&
+    readAuditLog({ action: audit.APPROVAL_REJECTED_ACTION }).total === 1,
+);
+
+audit.requestApproval({
+  requestId: "arch7-block-1",
+  taskName: "blocked-mission",
+  riskClass: "R2",
+  runRef: "blocked-run-ref",
+  actor: "cron",
+});
+audit.recordApprovalGateBlock({
+  requestId: "arch7-block-1",
+  taskName: "blocked-mission",
+  riskClass: "R2",
+  runRef: "blocked-run-ref",
+  status: "pending",
+  actor: "cron",
+});
+const waitingRows = readAuditLog({ action: audit.RUN_AWAITING_APPROVAL_ACTION });
+check(
+  "ARCH-7.2: аудит показывает ожидание одобрения до запуска",
+  waitingRows.total === 1 &&
+    waitingRows.records[0].target === "arch7-block-1" &&
+    waitingRows.records[0].details.status === "pending" &&
+    waitingRows.records[0].details.runRef === "blocked-run-ref" &&
+    waitingRows.records[0].details.decision === null,
+);
+audit.recordApprovalGateBlock({
+  requestId: "arch7-reject-1",
+  taskName: "destructive-cleanup",
+  riskClass: "R3",
+  runRef: "run-ref-2",
+  status: "rejected",
+  reason: "нет разрешения",
+});
+const rejectedRows = readAuditLog({ action: audit.RUN_APPROVAL_REJECTED_ACTION });
+check(
+  "ARCH-7.2: аудит показывает отказ запуска по одобрению",
+  rejectedRows.total === 1 &&
+    rejectedRows.records[0].details.decision === "reject" &&
+    rejectedRows.records[0].details.runRef === "run-ref-2",
+);
+check("ARCH-7.1: неизвестный запрос возвращает null", audit.getApproval("arch7-missing") === null);
+
+// --- 9. Итог ------------------------------------------------------------------
 const failures = results.filter((item) => !item.ok);
 console.log(`\nAudit: ${results.length - failures.length}/${results.length} проверок пройдено.`);
 if (failures.length > 0) {

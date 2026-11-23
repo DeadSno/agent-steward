@@ -72,6 +72,20 @@ export function normalizeRiskClass(
   return isRiskClass(value) ? value : fallback;
 }
 
+/* ─── ARCH-7.1: классы риска, требующие ручного одобрения ─────────────────── */
+
+/**
+ * ARCH-7.1 (связь с A-1, docs/ROADMAP.md §3): externally-visible риск.
+ * R0/R1 — read-only/сетевой scope и проходят без одобрения;
+ * R2 (edit/subagent) и R3 (shell/legacy) — только после approve.
+ */
+export const APPROVAL_REQUIRED_RISK_CLASSES: readonly RiskClass[] = ["R2", "R3"];
+
+/** ARCH-7.1: единая проверка «нужен ли ручной approve» для execution loop. */
+export function requiresApproval(riskClass: unknown): boolean {
+  return isRiskClass(riskClass) && APPROVAL_REQUIRED_RISK_CLASSES.includes(riskClass);
+}
+
 /** Ограничения, которые компилятор связывает с классом риска. */
 export interface PolicyLimits {
   /** Максимум шагов плана (совпадает с дефолтом планировщика для R2). */

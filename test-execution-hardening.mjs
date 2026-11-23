@@ -435,6 +435,8 @@ try {
     const context = createAdHocRunContext(`ARCH-4 ${suffix} миссия`, {
       taskName: `arch4-${suffix}-${Date.now()}-${Math.random().toString(16).slice(2)}`,
       taskType: "mission",
+      // ARCH-4 проверяет эффекты, а не очередь одобрений: держим R0.
+      riskClass: "R0",
     });
     return buildExecutionPlan(context);
   };

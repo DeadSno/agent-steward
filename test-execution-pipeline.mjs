@@ -25,6 +25,7 @@ const dbPath = path.join(tempRoot, "ac1.db");
 const { initDb, closeDb, getDb } = await import("./dist/db/index.js");
 const repo = await import("./dist/db/runs-repo.js");
 const ac1 = await import("./dist/core/execution.js");
+const audit = await import("./dist/core/audit.js");
 // record-history имеет isDirectInvocation guard — импорт не запускает main().
 const recorder = await import("./dist/core/record-history.js");
 
@@ -165,7 +166,12 @@ check(
 
 // --- 4. GATE отклоняет результат -------------------------------------------
 const gatePlan = await ac1.buildExecutionPlan(
-  ac1.createAdHocRunContext("run tests; write file", { taskName: "gate-report", cwd: tempRoot }),
+  ac1.createAdHocRunContext("run tests; write file", {
+    taskName: "gate-report",
+    cwd: tempRoot,
+    // ARCH-7: этот тест проверяет GATE, а не очередь одобрений — держим R0.
+    riskClass: "R0",
+  }),
 );
 const gateRun = await ac1.executeExecutionPlan(gatePlan, {
   executors: [executor],
@@ -185,6 +191,8 @@ const reviewPlan = await ac1.buildExecutionPlan(
     taskName: "review-report",
     cwd: tempRoot,
     taskType: "totally_unknown_task",
+    // ARCH-7: проверяем пропуск review-шага, а не очередь одобрений.
+    riskClass: "R0",
   }),
 );
 check("plan: неизвестный тип уходит в explore", reviewPlan.steps[0].route.target === "explore");
@@ -584,6 +592,186 @@ check("ARCH-1.3:восстановление evidence_path → цепочка в
 check(
   "ARCH-1.3:readGateOutcomeLedger({verify:false}) не проверяет цепочку",
   repo.readGateOutcomeLedger({ verify: false }).chain.ok === true,
+);
+
+// --- 10. ARCH-7.2: гейт одобрений в execution loop ---------------------------
+const approvalExecutor = {
+  id: "arch7-test",
+  supports: () => true,
+  execute: async () => ({ output: "ok" }),
+};
+const makeApprovalPlan = (taskName, riskClass) =>
+  ac1.buildExecutionPlan(
+    ac1.createAdHocRunContext("run tests; write file", {
+      taskName,
+      cwd: tempRoot,
+      riskClass,
+    }),
+  );
+
+const r0Plan = await makeApprovalPlan("arch7-r0", "R0");
+const r1Plan = await makeApprovalPlan("arch7-r1", "R1");
+const r0Run = await ac1.executeExecutionPlan(r0Plan, { executors: [approvalExecutor] });
+const r1Run = await ac1.executeExecutionPlan(r1Plan, { executors: [approvalExecutor] });
+check(
+  "ARCH-7.2: R0 проходит без одобрения",
+  r0Run.status === "passed" && typeof r0Run.runId === "string" && r0Run.approval === undefined,
+);
+check(
+  "ARCH-7.2: R1 проходит без одобрения",
+  r1Run.status === "passed" && typeof r1Run.runId === "string" && r1Run.approval === undefined,
+);
+check(
+  "ARCH-7.2: для R0/R1 в очереди нет запросов",
+  audit.listApprovals().every((item) => item.taskName !== "arch7-r0" && item.taskName !== "arch7-r1"),
+);
+
+// R2: пока нет одобрения — нет ни run, ни эффектов; повтор запроса не дублируется.
+const r2Plan = await makeApprovalPlan("arch7-r2", "R2");
+let r2Effects = 0;
+const r2Options = {
+  executors: [approvalExecutor],
+  effects: [
+    {
+      id: "arch7-r2-effect",
+      reversibility: "reversible",
+      apply: () => {
+        r2Effects += 1;
+      },
+      compensate: () => {
+        r2Effects -= 1;
+      },
+    },
+  ],
+  approval: {
+    approvalKey: "arch7-r2-key",
+    runRef: "arch7-r2-ref",
+    reason: "внешние эффекты",
+    actor: "cron",
+  },
+};
+check("ARCH-7.2: до запроса R2-запуск не существует", repo.listRuns("arch7-r2", 50).length === 0);
+const r2Pending = await ac1.executeExecutionPlan(r2Plan, r2Options);
+check(
+  "ARCH-7.2: R2 без одобрения → awaiting_approval, runId=null, шагов нет",
+  r2Pending.status === "awaiting_approval" &&
+    r2Pending.runId === null &&
+    r2Pending.steps.length === 0 &&
+    r2Pending.approval?.status === "pending",
+);
+check(
+  "ARCH-7.2: R2 без одобрения не создаёт run в ledger",
+  repo.listRuns("arch7-r2", 50).length === 0,
+);
+check("ARCH-7.2: R2 без одобрения не применяет эффекты", r2Effects === 0);
+check(
+  "ARCH-7.2: статус ожидания зафиксирован в аудите",
+  audit.readAuditLog({ action: audit.RUN_AWAITING_APPROVAL_ACTION, target: "arch7-r2-key" }).total === 1,
+);
+check(
+  "ARCH-7.1: повторный запрос R2 не дублируется",
+  audit.readAuditLog({ action: audit.APPROVAL_REQUESTED_ACTION, target: "arch7-r2-key" }).total === 1,
+);
+const r2PendingAgain = await ac1.executeExecutionPlan(r2Plan, r2Options);
+check(
+  "ARCH-7.2: повторный прогон до одобрения снова блокируется и не дублирует запрос",
+  r2PendingAgain.status === "awaiting_approval" &&
+    r2PendingAgain.runId === null &&
+    audit.readAuditLog({ action: audit.APPROVAL_REQUESTED_ACTION, target: "arch7-r2-key" }).total === 1,
+);
+
+const r2Decision = audit.decideApproval("arch7-r2-key", "approve", {
+  actor: "gui",
+  reason: "проверено оператором",
+  source: "test-execution-pipeline",
+});
+check(
+  "ARCH-7.1: решение approve сохраняет кто/когда/решение/причину/ссылку",
+  r2Decision.status === "approved" &&
+    r2Decision.decision === "approve" &&
+    r2Decision.decidedBy === "gui" &&
+    !!r2Decision.decidedAt &&
+    r2Decision.reason === "проверено оператором" &&
+    r2Decision.runRef === "arch7-r2-ref",
+);
+const r2Approved = await ac1.executeExecutionPlan(r2Plan, r2Options);
+check(
+  "ARCH-7.2: после approve run создан, шаги исполнены и эффект применён",
+  r2Approved.status === "passed" &&
+    typeof r2Approved.runId === "string" &&
+    r2Approved.approval?.status === "approved" &&
+    // эффект объявлен общим → применяется по одному разу на каждый из 2 шагов
+    r2Effects === 2,
+);
+check(
+  "ARCH-7.2: metadata созданного run связана с запросом одобрения",
+  repo.getRun(r2Approved.runId)?.metadata?.approvalRequestId === "arch7-r2-key",
+);
+check(
+  "ARCH-7.1: одобренный запрос не создал второй approval.requested",
+  audit.readAuditLog({ action: audit.APPROVAL_REQUESTED_ACTION, target: "arch7-r2-key" }).total === 1 &&
+    audit.readAuditLog({ action: audit.APPROVAL_APPROVED_ACTION, target: "arch7-r2-key" }).total === 1,
+);
+
+// R3: reject блокирует запуск и эффекты, решение идемпотентно.
+const r3Plan = await makeApprovalPlan("arch7-r3", "R3");
+let r3Effects = 0;
+const r3Options = {
+  executors: [approvalExecutor],
+  effects: [
+    {
+      id: "arch7-r3-effect",
+      reversibility: "irreversible",
+      apply: () => {
+        r3Effects += 1;
+      },
+    },
+  ],
+  approval: {
+    approvalKey: "arch7-r3-key",
+    runRef: "arch7-r3-ref",
+    reason: "destructive",
+    actor: "cron",
+  },
+};
+const r3Pending = await ac1.executeExecutionPlan(r3Plan, r3Options);
+check(
+  "ARCH-7.2: R3 без одобрения блокируется до createRun",
+  r3Pending.status === "awaiting_approval" && r3Pending.runId === null && r3Effects === 0,
+);
+const r3Decision = audit.decideApproval("arch7-r3-key", "reject", {
+  actor: "http",
+  reason: "нет разрешения",
+  source: "test-execution-pipeline",
+});
+check(
+  "ARCH-7.1: решение reject содержит полный аудит",
+  r3Decision.status === "rejected" &&
+    r3Decision.decision === "reject" &&
+    r3Decision.decidedBy === "http" &&
+    !!r3Decision.decidedAt &&
+    r3Decision.reason === "нет разрешения" &&
+    r3Decision.runRef === "arch7-r3-ref",
+);
+const r3Rejected = await ac1.executeExecutionPlan(r3Plan, r3Options);
+check(
+  "ARCH-7.2: reject блокирует run и эффекты",
+  r3Rejected.status === "rejected" &&
+    r3Rejected.runId === null &&
+    r3Rejected.steps.length === 0 &&
+    r3Effects === 0 &&
+    repo.listRuns("arch7-r3", 50).length === 0,
+);
+check(
+  "ARCH-7.2: отказ запуска записан в аудит",
+  audit.readAuditLog({ action: audit.RUN_APPROVAL_REJECTED_ACTION, target: "arch7-r3-key" }).total === 1,
+);
+check(
+  "ARCH-7.1: повторное решение не дублирует аудит reject",
+  audit.decideApproval("arch7-r3-key", "approve", { actor: "gui", reason: "передумали" }).status ===
+    "rejected" &&
+    audit.readAuditLog({ action: audit.APPROVAL_REJECTED_ACTION, target: "arch7-r3-key" }).total === 1 &&
+    audit.readAuditLog({ action: audit.APPROVAL_APPROVED_ACTION, target: "arch7-r3-key" }).total === 0,
 );
 
 closeDb();

@@ -44,9 +44,15 @@ import {
   classifyRiskClass,
   compilePermissionPolicy,
   isRiskClass,
+  requiresApproval,
   type CompiledPermissionPolicy,
   type RiskClass,
 } from "./permissions.js";
+import {
+  recordApprovalGateBlock,
+  requestApproval,
+  type ApprovalRecord,
+} from "./audit.js";
 
 /** Откуда пришёл запуск. Оба источника идут одним путём. */
 export type RunOrigin = "registered" | "ad-hoc";
@@ -328,6 +334,27 @@ export function contextGateHashes(
 }
 
 /**
+ * ARCH-7.2: стабильный ключ запроса на одобрение. Явный `approval.approvalKey`
+ * выигрывает; иначе ключ детерминированно выводится из контекста — одинаковая
+ * миссия не создаёт дубликатов в очереди.
+ */
+export function approvalKeyFor(
+  context: RunContext,
+  options: Pick<ExecutePlanOptions, "approval"> = {},
+): string {
+  const explicit = options.approval?.approvalKey ?? context.metadata?.approvalKey;
+  if (typeof explicit === "string" && explicit.trim()) return explicit.trim();
+  return `approval:${sha256({
+    origin: context.origin,
+    taskName: context.taskName,
+    mission: context.mission,
+    cwd: context.cwd,
+    trigger: context.trigger,
+    riskClass: context.riskClass,
+  })}`;
+}
+
+/**
  * Приводит RunTrigger к trigger_kind из docs/EXECUTION-LOOP.md §3.
  * ad-hoc миссия ≠ зарегистрированная задача даже при том же prompt.
  */
@@ -562,15 +589,30 @@ export interface ExecutedStep {
   error?: string;
 }
 
+/** ARCH-7.2: параметры гейта ручных одобрений. */
+export interface ApprovalGateOptions {
+  /** Стабильный ключ запроса (иначе вычисляется из контекста). */
+  approvalKey?: string;
+  /** Ссылка на будущий запуск в аудите одобрений. */
+  runRef?: string;
+  /** Кто инициировал запрос. */
+  actor?: string;
+  /** Причина запроса. */
+  reason?: string;
+}
+
 /** Результат выполнения плана. */
 export interface ExecutionResult {
-  runId: string;
-  status: "passed" | "failed";
+  /** null, если запуск не создан (ARCH-7.2: нет одобрения). */
+  runId: string | null;
+  status: "passed" | "failed" | "awaiting_approval" | "rejected";
   steps: ExecutedStep[];
   error: string | null;
   plan: ExecutionPlan;
   /** ARCH-4: результаты саг отложенных эффектов по шагам. */
   effects?: EffectSagaResult[];
+  /** ARCH-7.2: состояние очереди одобрений, если класс риска её требует. */
+  approval?: ApprovalRecord;
 }
 
 /** Опции исполнения. */
@@ -592,6 +634,8 @@ export interface ExecutePlanOptions {
   effects?: readonly EffectIntent[];
   /** Эффекты конкретных шагов (имеют приоритет над общими `effects`). */
   effectsByStep?: Readonly<Record<string, readonly EffectIntent[]>>;
+  /** ARCH-7.2: гейт ручных одобрений для R2/R3. */
+  approval?: ApprovalGateOptions;
 }
 
 function pickExecutor(step: PlannedStep, executors: StepExecutor[]): StepExecutor | undefined {
@@ -614,6 +658,50 @@ export async function executeExecutionPlan(
   options: ExecutePlanOptions,
 ): Promise<ExecutionResult> {
   validateRunContext(plan.context);
+
+  // ARCH-7.2: гейт одобрений — ДО createRun и до применения любых эффектов.
+  // При отсутствии approve run не создаётся, эффекты не объявляются и не
+  // применяются, а статус/аудит показывают ожидание (или отказ).
+  let approval: ApprovalRecord | null = null;
+  if (requiresApproval(plan.context.riskClass)) {
+    const requestId = approvalKeyFor(plan.context, options);
+    const runRef = options.approval?.runRef ?? requestId;
+    approval = requestApproval({
+      requestId,
+      taskName: plan.context.taskName,
+      riskClass: plan.context.riskClass,
+      runRef,
+      reason: options.approval?.reason ?? null,
+      actor: options.approval?.actor ?? "system",
+      source: "execution-loop",
+    });
+    if (approval.status !== "approved") {
+      const status = approval.status === "rejected" ? "rejected" : "awaiting_approval";
+      const message =
+        approval.status === "rejected"
+          ? `Запуск "${plan.context.taskName}" отклонён (${requestId})`
+          : `Запуск "${plan.context.taskName}" ожидает ручного одобрения (${requestId})`;
+      recordApprovalGateBlock({
+        requestId,
+        taskName: plan.context.taskName,
+        riskClass: plan.context.riskClass,
+        runRef,
+        reason: approval.reason,
+        status: approval.status === "rejected" ? "rejected" : "pending",
+        actor: options.approval?.actor ?? "system",
+        source: "execution-loop",
+      });
+      return {
+        runId: null,
+        status,
+        steps: [],
+        error: message,
+        plan,
+        approval,
+      };
+    }
+  }
+
   const run = createRun({
     taskName: plan.context.taskName,
     steps: plan.steps.map((step) => ({ stepName: step.stepName })),
@@ -632,6 +720,9 @@ export async function executeExecutionPlan(
       })),
       ...(plan.context.metadata ?? {}),
       ...(options.metadata ?? {}),
+      ...(approval
+        ? { approvalRequestId: approval.requestId, approvalRunRef: approval.runRef }
+        : {}),
     },
   });
   startRun(run.id);
@@ -788,6 +879,7 @@ export async function executeExecutionPlan(
     steps: executed,
     error: firstError,
     plan,
+    ...(approval ? { approval } : {}),
     ...(sagaResults.length > 0 ? { effects: sagaResults } : {}),
   };
 }

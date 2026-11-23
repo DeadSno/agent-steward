@@ -9,6 +9,8 @@ import {
   type EgressPolicy,
   type EgressGuardedResult,
   type PermissionPolicy,
+  type RiskClass,
+  normalizeRiskClass,
 } from "./permissions.js";
 
 /**
@@ -552,4 +554,246 @@ export function clearAuditLog(): void {
 /** Сбрасывает троттлинг очистки (для тестов). */
 export function resetAuditCleanupThrottle(): void {
   lastCleanupAt = 0;
+}
+
+/* ─── ARCH-7.1: очередь ручных одобрений (R2/R3) ─────────────────────────── */
+
+/**
+ * Очередь живёт прямо в журнале аудита: отдельная таблица не нужна и не
+ * меняет SCHEMA_VERSION. Идемпотентность ensured ключом запроса — повторный
+ * requestApproval/decideApproval не добавляет строк.
+ */
+export const APPROVAL_REQUESTED_ACTION = "approval.requested";
+export const APPROVAL_APPROVED_ACTION = "approval.approved";
+export const APPROVAL_REJECTED_ACTION = "approval.rejected";
+export const RUN_AWAITING_APPROVAL_ACTION = "run.awaiting_approval";
+export const RUN_APPROVAL_REJECTED_ACTION = "run.approval_rejected";
+
+export type ApprovalDecision = "approve" | "reject";
+export type ApprovalStatus = "pending" | "approved" | "rejected";
+
+export interface ApprovalRecord {
+  /** Стабильный ключ запроса (= target в аудите). */
+  requestId: string;
+  taskName: string;
+  riskClass: RiskClass;
+  /** Стабильная ссылка на будущий запуск. */
+  runRef: string | null;
+  /** Причина запроса/решения. */
+  reason: string | null;
+  status: ApprovalStatus;
+  decision: ApprovalDecision | null;
+  /** Кто принял решение (actors аудита). */
+  decidedBy: string | null;
+  /** Когда принято решение (ISO). */
+  decidedAt: string | null;
+  /** Кто создал запрос. */
+  requestedBy: string | null;
+  /** Когда создан запрос (ISO). */
+  createdAt: string;
+}
+
+export interface ApprovalRequestInput {
+  requestId: string;
+  taskName: string;
+  riskClass: RiskClass;
+  runRef?: string | null;
+  reason?: string | null;
+  actor?: AuditActor;
+  source?: string | null;
+}
+
+export interface ApprovalDecisionInput {
+  actor?: AuditActor;
+  reason?: string | null;
+  source?: string | null;
+}
+
+export interface ApprovalGateBlockInput {
+  requestId: string;
+  taskName: string;
+  riskClass: RiskClass;
+  runRef?: string | null;
+  reason?: string | null;
+  status: Extract<ApprovalStatus, "pending" | "rejected">;
+  actor?: AuditActor;
+  source?: string | null;
+}
+
+function asDetails(value: unknown): Record<string, unknown> {
+  return value != null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function optionalString(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function approvalFromEvents(events: readonly AuditRecord[]): ApprovalRecord | null {
+  const request = events.find((event) => event.action === APPROVAL_REQUESTED_ACTION);
+  if (!request) return null;
+  const decision = events.find(
+    (event) =>
+      event.action === APPROVAL_APPROVED_ACTION || event.action === APPROVAL_REJECTED_ACTION,
+  );
+  const requestDetails = asDetails(request.details);
+  const decisionDetails = decision ? asDetails(decision.details) : {};
+  const decisionValue: ApprovalDecision | null = decision
+    ? decision.action === APPROVAL_APPROVED_ACTION
+      ? "approve"
+      : "reject"
+    : null;
+  return {
+    requestId: request.target ?? "",
+    taskName: optionalString(requestDetails.taskName) ?? request.target ?? "",
+    riskClass: normalizeRiskClass(requestDetails.riskClass),
+    runRef: optionalString(requestDetails.runRef),
+    reason: optionalString(decisionDetails.reason) ?? optionalString(requestDetails.reason),
+    status: decisionValue === "approve" ? "approved" : decisionValue === "reject" ? "rejected" : "pending",
+    decision: decisionValue,
+    decidedBy: decision?.actor ?? null,
+    decidedAt: decision?.ts ?? null,
+    requestedBy: request.actor ?? null,
+    createdAt: request.ts,
+  };
+}
+
+function readApprovalEvents(requestId: string): AuditRecord[] {
+  if (!requestId.trim()) return [];
+  const { records } = readAuditLog({ target: requestId, limit: 5000 });
+  return records.filter((record) =>
+    [APPROVAL_REQUESTED_ACTION, APPROVAL_APPROVED_ACTION, APPROVAL_REJECTED_ACTION].includes(
+      record.action,
+    ),
+  );
+}
+
+/**
+ * ARCH-7.1: создаёт запрос на одобрение. Повторный вызов с тем же requestId
+ * возвращает существующую запись и НЕ пишет новый approval.requested.
+ */
+export function requestApproval(input: ApprovalRequestInput): ApprovalRecord {
+  const requestId = String(input.requestId ?? "").trim();
+  if (!requestId) throw new Error("ARCH-7.1: requestId обязателен");
+  const existing = getApproval(requestId);
+  if (existing) return existing;
+
+  const runRef = optionalString(input.runRef);
+  recordAudit({
+    action: APPROVAL_REQUESTED_ACTION,
+    targetType: "approval",
+    target: requestId,
+    actor: input.actor ?? "system",
+    source: input.source ?? "approval-queue",
+    details: {
+      requestId,
+      taskName: input.taskName,
+      riskClass: input.riskClass,
+      runRef,
+      reason: optionalString(input.reason),
+      status: "pending",
+    },
+  });
+  return (
+    getApproval(requestId) ?? {
+      requestId,
+      taskName: input.taskName,
+      riskClass: input.riskClass,
+      runRef,
+      reason: optionalString(input.reason),
+      status: "pending",
+      decision: null,
+      decidedBy: null,
+      decidedAt: null,
+      requestedBy: input.actor ?? "system",
+      createdAt: new Date().toISOString(),
+    }
+  );
+}
+
+/**
+ * ARCH-7.1: фиксирует решение approve/reject. Первое решение побеждает:
+ * повторные вызовы идут по идемпотентному пути и не дублируют аудит.
+ */
+export function decideApproval(
+  requestId: string,
+  decision: ApprovalDecision,
+  input: ApprovalDecisionInput = {},
+): ApprovalRecord | null {
+  const current = getApproval(requestId);
+  if (!current) return null;
+  if (current.status !== "pending") return current;
+
+  const action = decision === "approve" ? APPROVAL_APPROVED_ACTION : APPROVAL_REJECTED_ACTION;
+  recordAudit({
+    action,
+    targetType: "approval",
+    target: current.requestId,
+    actor: input.actor ?? "system",
+    source: input.source ?? "approval-queue",
+    details: {
+      requestId: current.requestId,
+      decision,
+      reason: optionalString(input.reason),
+      runRef: current.runRef,
+      riskClass: current.riskClass,
+      taskName: current.taskName,
+    },
+  });
+  return getApproval(current.requestId) ?? current;
+}
+
+/** Возвращает текущее состояние запроса или null. */
+export function getApproval(requestId: string): ApprovalRecord | null {
+  return approvalFromEvents(readApprovalEvents(requestId));
+}
+
+/** Все известные запросы (новые сверху). */
+export function listApprovals(limit = 5000): ApprovalRecord[] {
+  const actions = [APPROVAL_REQUESTED_ACTION, APPROVAL_APPROVED_ACTION, APPROVAL_REJECTED_ACTION];
+  const byTarget = new Map<string, AuditRecord[]>();
+  const { records } = readAuditLog({ limit });
+  for (const record of records) {
+    if (!actions.includes(record.action)) continue;
+    const key = record.target ?? "";
+    const group = byTarget.get(key);
+    if (group) group.push(record);
+    else byTarget.set(key, [record]);
+  }
+  const result: ApprovalRecord[] = [];
+  for (const events of byTarget.values()) {
+    const approval = approvalFromEvents(events);
+    if (approval) result.push(approval);
+  }
+  return result.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+/** Только ожидающие решения запросы. */
+export function listPendingApprovals(limit = 5000): ApprovalRecord[] {
+  return listApprovals(limit).filter((approval) => approval.status === "pending");
+}
+
+/**
+ * ARCH-7.2: аудит блокировки запуска гейтом одобрений. Run ещё не создан,
+ * поэтому ссылка на него фиксируется в details как runRef.
+ */
+export function recordApprovalGateBlock(input: ApprovalGateBlockInput): number | null {
+  const rejected = input.status === "rejected";
+  return recordAudit({
+    action: rejected ? RUN_APPROVAL_REJECTED_ACTION : RUN_AWAITING_APPROVAL_ACTION,
+    targetType: "approval",
+    target: input.requestId,
+    actor: input.actor ?? "system",
+    source: input.source ?? "execution-loop",
+    details: {
+      requestId: input.requestId,
+      taskName: input.taskName,
+      riskClass: input.riskClass,
+      runRef: optionalString(input.runRef),
+      status: input.status,
+      reason: optionalString(input.reason),
+      decision: rejected ? "reject" : null,
+    },
+  });
 }

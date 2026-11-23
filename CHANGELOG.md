@@ -30,6 +30,10 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 - **ARCH-6.2 — деградация без тихого успеха при закрытой сети.** Попытка выхода к неразрешённому хосту блокируется: действие не вызывается, guard возвращает `ok=false` и `status="degraded"`, отказ фиксируется в аудите; `summarizeEgressRun` сводит попытки к `success=false` / `status="degraded"` и отчёту с причиной и хостом (без слова «успех»). При отсутствии отказов status остаётся `ok`. Проверено: `node test-audit.mjs` (53/53, exit 0; тесты блокировки, аудита отказа и деградации отчёта), `node test-permissions-policy.mjs` (86/86, exit 0), `npm run build`, `node test-docs.mjs`.
 
+- **ARCH-7.1 — очередь ручных одобрений для R2/R3.** `requiresApproval()` в `permissions.ts` выделяет R2/R3 (связь с A-1 §3); `audit.ts` хранит очередь в `audit_log` без новой таблицы и без изменения `SCHEMA_VERSION`: `requestApproval`/`decideApproval` идемпотентны по `requestId` (первое решение побеждает), в аудит решения попадают кто (`actor`), когда (`ts`), `decision`, `reason` и `runRef`; `listApprovals`/`listPendingApprovals` дают read-путь очереди. Проверено: `node test-audit.mjs` (exit 0, тесты R2/R3, R0/R1, reject, дублей и полноты аудита), `npm run build`, `node test-docs.mjs`;
+
+- **ARCH-7.2 — гейт одобрений до `createRun`.** `executeExecutionPlan` вызывает очередь до создания запуска и до объявления/применения эффектов: без approve возвращает `status="awaiting_approval"|"rejected"`, `runId=null` и пустые шаги, в аудит пишется `run.awaiting_approval`/`run.approval_rejected`; после approve run создаётся с `approvalRequestId` в metadata. R0/R1 проходят без одобрения. Проверено: `node test-execution-pipeline.mjs` (exit 0, тесты блокировки run/эффектов, approve/reject и отсутствия дублей), `npm run build`, `node test-docs.mjs`;
+
 ## [0.0.6] - 2026-11-20
 
 ### Added
