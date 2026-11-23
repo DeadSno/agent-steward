@@ -104,6 +104,11 @@ Artifact checklist (copy into the prompt and tick before reporting done):
 - [ ] CHANGELOG.md: one entry per closed detail/subtask with the ID and the result.
 - [ ] TEST-PLAN.md: §5 row for each existing `test-*.mjs`, filename in backticks;
       no row for a missing file; counters match the code.
+- [ ] If the task adds a NEW `test-*.mjs`, put `package.json`, `TEST-PLAN.md` and every
+      counter file into SCOPE immediately: add `test:<name>` and the `node test-<name>.mjs`
+      call to the `test` chain, a §5 row, and update the file/script/suite counters in
+      README (all locales) and local `SKILL.md`. Otherwise `test-docs.mjs` and
+      `test-test-plan.mjs` fail the Quality Gate after otherwise correct work (PL-67).
 - [ ] reports/<name>.md: report written with statuses, verification commands and results.
 - [ ] Verification commands actually run (build / target test / lint baseline).
 ````

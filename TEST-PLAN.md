@@ -44,7 +44,7 @@
 cd agent-steward
 npm run build          # tsc: dist/ (сервер, RPC, ядро)
 npm run build:gui      # vite: gui-experimental.cjs (панель OpenCode)
-npm test               # 120 файлов test-*.mjs (112 npm-скриптов), полный регресс
+npm test               # 121 файлов test-*.mjs (113 npm-скриптов), полный регресс
 node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с сид-данными
 ```
 
@@ -825,6 +825,7 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 | `test-env.mjs` | D04 |
 | `test-model-validation.mjs` | D04 (валидация идентификатора модели в tool-аргументах, P2-11) |
 | `test-chaos-dag.mjs` | D05, D15 (nightly crash/kill-9 DAG) |
+| `test-task-logs.mjs` | D16 (PL-67: поиск лога задачи по короткому/префиксному имени) |
 
 ---
 
