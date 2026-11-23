@@ -117,20 +117,6 @@ Legacy: `opencode-windows-scheduler@1.5.8`.
 - [ ] P-5.2 Опциональные VS Code / JetBrains extension только для UX
 - [ ] P-5.3 Subpath exports `./core`, `./mcp`, `./dsh` (без монорепо — 130 тестов остаются рабочими)
 
-## Деталь 3.10 — Экономика токенов: снижение затрат (0.0.7+)
-`src/core/usage-surface.ts`, `src/index.ts`, `src/core/opencode-usage.ts`, `skills/`
-
-> Замер (gpt-tokenizer): 30 инструментов ≈ **14 213 токенов/запрос** (7 628 символов
-> description + 48 229 символов схем); 48% — `schedule_task` + `update_task`.
-> SKILL.md ≈ 20 017 символов ≈ **5 005 токенов**. В `scheduler.db` (722 записи)
-> телеметрия = 0 — весь Economy v2 (бюджеты, efficiency, forecast) fail-open спит.
-> Дочерние запуски уже регистрируют 0 инструментов (QV-8) — цену платит только главный агент.
-
-**Задача T-7 — Меньше «сожжённых» токенов + роутинг моделей (P6–P7)** · P3 · ⬜
-- [ ] T-7.1 `dry_run`/валидация перед запуском — снизить долю `error`/`skipped` (сейчас 320 skipped)
-- [ ] T-7.2 Дешёвая модель для рутины, дорогая — только для сложных задач (существующий budget/router)
-- [ ] T-7.3 KPI `tokenEfficiencyScore` в дашборде
-
 ---
 
 # 4. Правила работы (канбан)

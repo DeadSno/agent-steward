@@ -419,6 +419,17 @@ const Metrics = {
     total: { type: "number" },
     success: { type: "number" },
     error: { type: "number" },
+    // T-7.3: KPI токен-эффективности (необязательное поле для старых клиентов).
+    tokenEfficiency: {
+      type: "object" as const,
+      properties: {
+        score: { type: "number" },
+        runs: { type: "number" },
+        usefulRuns: { type: "number" },
+        totalTokens: { type: "number" },
+        wastedTokens: { type: "number" },
+      },
+    },
   },
   required: ["total", "success", "error"],
 } as const;

@@ -467,7 +467,7 @@ export default Plugin.define({
     const [cronError, setCronError] = createSignal("")
 
     // Метрики и история запусков
-    const [metrics, setMetrics] = createSignal<{ total: number; success: number; error: number; skipped: number; interrupted: number; toolBlocked: number }>({ total: 0, success: 0, error: 0, skipped: 0, interrupted: 0, toolBlocked: 0 })
+    const [metrics, setMetrics] = createSignal<{ total: number; success: number; error: number; skipped: number; interrupted: number; toolBlocked: number; tokenEfficiency?: { score: number; runs: number; usefulRuns: number; totalTokens: number; wastedTokens: number } }>({ total: 0, success: 0, error: 0, skipped: 0, interrupted: 0, toolBlocked: 0 })
     const [historyOpen, setHistoryOpen] = createSignal<string | null>(null)
     const [history, setHistory] = createSignal<HistoryRecord[]>([])
 
@@ -2198,6 +2198,7 @@ export default Plugin.define({
           skipped: m.skipped ?? 0,
           interrupted: m.interrupted ?? 0,
           toolBlocked: m.toolBlocked ?? 0,
+          tokenEfficiency: m.tokenEfficiency,
         })
       } catch (err: any) {
         console.error("RPC Error (get_metrics):", err)
@@ -3212,6 +3213,16 @@ export default Plugin.define({
                   style="margin-top:2px;font-size:11px;color:#8e8e93"
                 >
                   {gt("gui.metricsToolBlockedLine", { count: metrics().toolBlocked })}
+                </div>
+                <div
+                  title={gt("gui.metricsTokenEfficiencyTitle")}
+                  style="margin-top:2px;font-size:11px;color:#8e8e93"
+                >
+                  {gt("gui.metricsTokenEfficiencyLine", {
+                    score: metrics().tokenEfficiency?.score ?? 0,
+                    tokens: metrics().tokenEfficiency?.totalTokens ?? 0,
+                    wasted: metrics().tokenEfficiency?.wastedTokens ?? 0,
+                  })}
                 </div>
               </div>
               <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">

@@ -20,6 +20,7 @@ const {
   scopeModulesFromText, qualityGateCoverageWarning, MODULE_REQUIRED_TEST_SUITES,
   qualityGateLintWarning, REQUIRED_LINT_CHECKS,
   qualityGateDocsScopeWarning, roadmapDuplicateIds,
+  recommendModelForTask, preflightSkipRiskWarnings,
 } = await import("./dist/core/dry-run.js");
 const {
   modelAvailabilityWarning,
@@ -446,6 +447,27 @@ try {
   check("PL-117: дубли ID в доступной ROADMAP задачи попадают в предупреждение",
     hasDocsGateWarning(dupIds.warnings) &&
     dupIds.warnings.some((w) => w.includes("дубли ID") && w.includes("PL-1")));
+
+  // 19. T-7.1/T-7.2: preflight рисков пропуска и рекомендация модели.
+  const sharedCwd = fs.mkdtempSync(path.join(os.tmpdir(), "ws-scheduler-preflight-"));
+  await saveTask({ name: "T7-Routine", schedule: "0 9 * * *", prompt: "Собери отчёт о статусе задач", workingDirectory: sharedCwd, dependsOn: ["T7-Complex"] });
+  await saveTask({ name: "T7-Complex", schedule: "0 9 * * *", prompt: "Проведи аудит безопасности и рефакторинг ядра", workingDirectory: sharedCwd });
+  const routineReport = await simulatePipeline("T7-Routine");
+  check("T-7.1: общий checkout без worktree даёт preflight-предупреждение о lock-skip",
+    routineReport.warnings.some((w) => w.includes("T-7.1:") && w.includes("T7-Complex")));
+  check("T-7.1: рекомендация модели добавлена в каждую задачу отчёта",
+    routineReport.tasks.every((task) => task.modelRecommendation && typeof task.modelRecommendation.tier === "string"));
+  check("T-7.2: рутина получает free-модель, сложная — дорогую",
+    recommendModelForTask("Собери отчёт").model === "opencode/hy4-flash-free" &&
+    recommendModelForTask("Сделай аудит безопасности и рефакторинг").model === "anthropic/claude-3-5-sonnet");
+  check("T-7.2: явная модель пользователя не подменяется",
+    recommendModelForTask("Аудит", "opencode/hy4-flash-free").recommended === false &&
+    recommendModelForTask("Аудит", "opencode/hy4-flash-free").currentModel === "opencode/hy4-flash-free");
+  check("T-7.1: worktree и уникальные cwd не дают ложного предупреждения",
+    preflightSkipRiskWarnings([
+      { name: "A", worktree: true, workingDirectory: sharedCwd },
+      { name: "B", workingDirectory: path.join(sharedCwd, "b") },
+    ]).length === 0);
 } finally {
   closeDb();
 }
