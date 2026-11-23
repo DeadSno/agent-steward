@@ -1343,6 +1343,46 @@ try {
   check("PL-77/79/82/86/87/99: секция не выбросила исключение", false, "section threw");
 }
 
+// --- PL-121: checkout-lock и причина gate-integrity (строковые регрессии) ---
+// Без реального powershell: проверяем WRAPPER_SCRIPT из dist, чтобы не зависеть
+// от OC-планировщика и параллельной нагрузки.
+try {
+  check(
+    "PL-121: checkout-lock ключ — SHA256 от Workdir, первые 16 hex",
+    psWrapperScript.includes("[System.Security.Cryptography.SHA256]::Create()") &&
+      psWrapperScript.includes("[System.Text.Encoding]::UTF8.GetBytes($Workdir)") &&
+      psWrapperScript.includes(".Substring(0, 16).ToLowerInvariant()") &&
+      psWrapperScript.includes('"checkout-$checkoutHash.lock"')
+  );
+  check(
+    "PL-121: checkout-lock захватывается атомарно (CreateNew) с PID-ISO",
+    psWrapperScript.includes(
+      "[System.IO.File]::Open($script:checkoutLockFile, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)"
+    ) && psWrapperScript.includes('"$PID-$startedAtIso"')
+  );
+  check(
+    "PL-121: живой владелец checkout-lock пропускает задачу с причиной PL-121",
+    psWrapperScript.includes("PL-121: в чек-ауте $Workdir уже идёт другая задача") &&
+      psWrapperScript.includes("$script:skipMainTask = $true") &&
+      psWrapperScript.includes("Get-LockOwnerPid -Content $checkoutHolderRaw") &&
+      psWrapperScript.includes("Test-ProcessAlive -ProcessId $checkoutHolderPid")
+  );
+  check(
+    "PL-121: checkout-lock освобождается в finally только своим владельцем",
+    psWrapperScript.includes("Remove-Item $script:checkoutLockFile -Force") &&
+      psWrapperScript.includes("$script:checkoutLockAcquired")
+  );
+  check(
+    "PL-121: errorMessage гейта содержит причину gate-integrity (изменённые пути)",
+    psWrapperScript.includes('$gateMarker = "gate-integrity:"') &&
+      psWrapperScript.includes("$script:errorMessage = $worktreeDetail") &&
+      psWrapperScript.includes('$worktreeDetail = "$worktreeDetail ($worktreeReason)"')
+  );
+} catch (err) {
+  console.log("[diag] PL-121 section THREW:", err instanceof Error ? err.stack : String(err));
+  check("PL-121: секция не выбросила исключение", false, "section threw");
+}
+
 // --- PL-80/81/101/104/105: регрессии коммит-хелперов и обёртки (B4) ---
 try {
   const repoRoot = process.cwd();

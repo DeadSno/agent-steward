@@ -269,6 +269,102 @@ if ($LockFile) {
     }
 }
 
+# PL-121: кросс-процессная блокировка НА ЧЕК-АУТ. Блокировка задачи выше
+# уникальна для задачи, а in-process planRuntimeIsolation не защищает OS-запуски:
+# параллельные задачи с одним -Workdir видят чужой diff, гейт падает с общим
+# сообщением, а afterScript коммитит чужие правки. Ключ — первые 16 hex SHA256
+# от $Workdir, поэтому все задачи одного чек-аута делят один и тот же lock.
+$script:checkoutLockAcquired = $false
+$script:checkoutLockFile = ""
+$checkoutHash = ""
+try {
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $hashBytes = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($Workdir))
+        $checkoutHash = [System.BitConverter]::ToString($hashBytes).Replace("-", "").Substring(0, 16).ToLowerInvariant()
+    } finally {
+        $sha.Dispose()
+    }
+} catch {
+    $checkoutHash = ""
+}
+if (-not $checkoutHash) {
+    # Не можем посчитать ключ — не запускаем задачу без защиты чек-аута.
+    Write-Log "[agent-steward] PL-121: не удалось вычислить checkout-lock по Workdir — запуск пропущен."
+    if ($script:lockAcquired -and $LockFile -and (Test-Path $LockFile)) {
+        try { Remove-Item $LockFile -Force } catch {}
+    }
+    exit 0
+}
+$checkoutLocksDir = Split-Path -Parent $LockFile
+$script:checkoutLockFile = Join-Path $checkoutLocksDir "checkout-$checkoutHash.lock"
+try {
+    if ($checkoutLocksDir -and -not (Test-Path -LiteralPath $checkoutLocksDir)) {
+        New-Item -ItemType Directory -Force -Path $checkoutLocksDir | Out-Null
+    }
+    $checkoutStream = [System.IO.File]::Open($script:checkoutLockFile, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+    try {
+        $checkoutBytes = [System.Text.Encoding]::UTF8.GetBytes("$PID-$startedAtIso")
+        $checkoutStream.Write($checkoutBytes, 0, $checkoutBytes.Length)
+    } finally {
+        $checkoutStream.Dispose()
+    }
+    $script:checkoutLockAcquired = $true
+} catch [System.IO.IOException] {
+    $checkoutStale = $false
+    $checkoutHolderPid = 0
+    try {
+        $checkoutHolderRaw = "$(Get-Content -LiteralPath $script:checkoutLockFile -Raw -ErrorAction Stop)".Trim()
+        $checkoutHolderPid = Get-LockOwnerPid -Content $checkoutHolderRaw
+    } catch {}
+    if ($checkoutHolderPid -gt 0) {
+        $checkoutStale = -not (Test-ProcessAlive -ProcessId $checkoutHolderPid)
+    } else {
+        try {
+            $checkoutAgeMs = ((Get-Date) - (Get-Item -LiteralPath $script:checkoutLockFile).LastWriteTime).TotalMilliseconds
+            if ($checkoutAgeMs -gt $StaleLockMaxAgeMs) { $checkoutStale = $true }
+        } catch {}
+    }
+    if ($checkoutStale) {
+        # Атомарно уводим мёртвый lock в уникальное имя: чужой живой lock не трогаем.
+        $checkoutStalePath = "$($script:checkoutLockFile).stale-$PID-$([DateTime]::UtcNow.Ticks)"
+        $checkoutMoved = $false
+        try {
+            Move-Item -LiteralPath $script:checkoutLockFile -Destination $checkoutStalePath -Force -ErrorAction Stop
+            $checkoutMoved = $true
+        } catch {}
+        if ($checkoutMoved) {
+            try {
+                $checkoutStream = [System.IO.File]::Open($script:checkoutLockFile, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+                try {
+                    $checkoutBytes = [System.Text.Encoding]::UTF8.GetBytes("$PID-$startedAtIso")
+                    $checkoutStream.Write($checkoutBytes, 0, $checkoutBytes.Length)
+                } finally {
+                    $checkoutStream.Dispose()
+                }
+                $script:checkoutLockAcquired = $true
+            } catch {}
+            try { Remove-Item -LiteralPath $checkoutStalePath -Force -ErrorAction SilentlyContinue } catch {}
+        }
+    }
+    if (-not $script:checkoutLockAcquired) {
+        Write-Log "[agent-steward] PL-121: в чек-ауте $Workdir уже идёт другая задача — запуск пропущен."
+        $script:skipMainTask = $true
+        $script:exitCode = 0
+        # afterScript не запускаем: иначе коммитим чужой diff. Снимаем свой lock задачи.
+        if ($script:lockAcquired -and $LockFile -and (Test-Path $LockFile)) {
+            try { Remove-Item $LockFile -Force } catch {}
+        }
+        exit 0
+    }
+} catch {
+    Write-Log "[agent-steward] PL-121: не удалось захватить checkout-блокировку: $_"
+    if ($script:lockAcquired -and $LockFile -and (Test-Path $LockFile)) {
+        try { Remove-Item $LockFile -Force } catch {}
+    }
+    exit 0
+}
+
 # Crash recovery: фиксируем начало ДО pre-flight и основной задачи.
 # Если процесс убьют (таймаут/KILL/перезагрузка), останется finished_at = NULL,
 # и при следующем старте плагина recovery пометит запись как error.
@@ -1111,9 +1207,23 @@ try {
             $worktreeCode = $LASTEXITCODE
             foreach ($line in $worktreeOut) { Write-Log "[agent-steward] $line" }
             if ($worktreeCode -ne 0) {
+                # PL-121: не теряем причину — достаём строку gate-integrity: из вывода
+                # worktree-verify, чтобы в логе/истории были конкретные изменившиеся пути.
+                $worktreeReason = ""
+                $gateMarker = "gate-integrity:"
+                foreach ($line in $worktreeOut) {
+                    $lineText = "$line"
+                    $markerIndex = $lineText.IndexOf($gateMarker)
+                    if ($markerIndex -ge 0) {
+                        $worktreeReason = $lineText.Substring($markerIndex + $gateMarker.Length).Trim()
+                        break
+                    }
+                }
                 $gateIntegrityOk = $false
-                Write-Log "[agent-steward] ОШИБКА: рабочее дерево изменилось во время прогона — гейт не доверяем."
-                $script:errorMessage = "Quality Gate: рабочее дерево изменилось во время прогона"
+                $worktreeDetail = "Quality Gate: рабочее дерево изменилось во время прогона"
+                if ($worktreeReason) { $worktreeDetail = "$worktreeDetail ($worktreeReason)" }
+                Write-Log "[agent-steward] ОШИБКА: $worktreeDetail — гейт не доверяем."
+                $script:errorMessage = $worktreeDetail
                 $script:exitCode = 1
                 $gatePassed = $false
             }
@@ -1229,6 +1339,13 @@ try {
     if ($script:lockAcquired -and $LockFile -and (Test-Path $LockFile)) {
         try {
             Remove-Item $LockFile -Force
+        } catch {}
+    }
+    # PL-121: checkout-lock общий для всех задач чек-аута — снимаем только тот,
+    # который захватили сами; чужой живой lock не удаляем никогда.
+    if ($script:checkoutLockAcquired -and $script:checkoutLockFile -and (Test-Path $script:checkoutLockFile)) {
+        try {
+            Remove-Item $script:checkoutLockFile -Force
         } catch {}
     }
 }
