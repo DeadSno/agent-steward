@@ -203,6 +203,8 @@ This re-downloads dependencies but keeps the worktree self-contained. Without ei
 `npm run build` and `node test-*.mjs` in a fresh worktree fail — treat environment setup as
 the first step of any task that runs in a worktree (the W-1 class of tasks).
 
+Reproduced once more on 23.11.2026 in this repository: an explicit `explore` sub-agent refused to start with the exact `Free usage limit reached` error, while the main agent completed the same SCOPE and the Quality Gate was unchanged. Treat sub-agents as optional on Free tiers and record the attempt in `reports/steward-b2.md` (PL-108).
+
 ## 5. Matrix builds (multi-repository)
 
 Use a matrix when the same prompt must run in several workspaces:
