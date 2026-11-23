@@ -372,6 +372,13 @@ export interface FeedbackSettings {
   contactEmail: string;
   /** Лимит отчётов в час (антиспам, F-1.7). */
   maxPerHour: number;
+  /**
+   * UX-3.8.2: явное согласие на автоматическую отправку отчёта о
+   * повторяющейся ошибке. По умолчанию false — авто-отправка выключена.
+   */
+  autoReportRepeatErrors: boolean;
+  /** UX-3.8.2: порог N одинаковых crash/error в час для авто-отчёта. */
+  autoReportRepeatThreshold: number;
 }
 
 /**
@@ -475,6 +482,8 @@ export const DEFAULT_FEEDBACK_SETTINGS: FeedbackSettings = {
   includeLogs: false,
   contactEmail: "",
   maxPerHour: 6,
+  autoReportRepeatErrors: false,
+  autoReportRepeatThreshold: 3,
 };
 
 export function defaultFeedbackSettings(): FeedbackSettings {
@@ -520,6 +529,16 @@ export function normalizeFeedbackSettings(
     contactEmail:
       typeof raw.contactEmail === "string" ? raw.contactEmail.trim().slice(0, 254) : fallback.contactEmail,
     maxPerHour: normalizeIntInRange(raw.maxPerHour, fallback.maxPerHour, 1, 100),
+    autoReportRepeatErrors:
+      typeof raw.autoReportRepeatErrors === "boolean"
+        ? raw.autoReportRepeatErrors
+        : fallback.autoReportRepeatErrors,
+    autoReportRepeatThreshold: normalizeIntInRange(
+      raw.autoReportRepeatThreshold,
+      fallback.autoReportRepeatThreshold,
+      2,
+      100,
+    ),
   };
 }
 

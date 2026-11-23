@@ -108,7 +108,7 @@ interface OutboxRow {
   last_attempt_at: string | null;
 }
 
-interface AntispamRow {
+export interface AntispamRow {
   at: string;
   hash: string;
 }
@@ -445,6 +445,83 @@ function recentAntispam(now: Date): AntispamRow[] {
   return getDb()
     .prepare("SELECT at, hash FROM feedback_spam WHERE at >= ? ORDER BY at DESC LIMIT 200")
     .all(new Date(now.getTime() - 60 * 60_000).toISOString()) as AntispamRow[];
+}
+
+/* ------------------------------------------------------------------ */
+/* UX-3.8.2 — гейт авто-отчёта о повторяющейся ошибке                   */
+/* ------------------------------------------------------------------ */
+
+/** Одно событие crash/error для счётчика повторов (UX-3.8.2). */
+export interface RepeatErrorEvent {
+  /** ISO-момент события. */
+  at: string;
+  /** Стабильный хеш описания (descriptionHash) — «одинаковость» ошибки. */
+  hash: string;
+}
+
+/** Причина отказа гейта авто-отчёта (UX-3.8.2). */
+export type AutoReportBlockReason =
+  | "opt_in_required"
+  | "feedback_disabled"
+  | "not_repeated"
+  | "duplicate"
+  | "rate_limited";
+
+/** Решение гейта: только решение, без сети и без фоновой отправки. */
+export interface AutoReportDecision {
+  shouldReport: boolean;
+  reason?: AutoReportBlockReason;
+  /** Сколько одинаковых crash/error за последний час. */
+  repeatCount: number;
+}
+
+/** Считает одинаковые crash/error в окне последнего часа (60 минут). */
+export function countRepeatErrors(
+  events: RepeatErrorEvent[],
+  description: string,
+  now: Date,
+): number {
+  const hash = descriptionHash(description);
+  const hourAgo = now.getTime() - 60 * 60_000;
+  return events.filter((event) => {
+    const at = Date.parse(event.at);
+    return Number.isFinite(at) && at >= hourAgo && event.hash === hash;
+  }).length;
+}
+
+/**
+ * UX-3.8.2 — минимальный opt-in-гейт автоматической отправки отчёта.
+ *
+ * Ничего не отправляет и не создаёт фоновых задач: возвращает только решение.
+ * Без явного согласия (`autoReportRepeatErrors: false`, в том числе по
+ * умолчанию) всегда `shouldReport: false`. Проходит тот же антиспам, что и
+ * ручной `report_bug` (F-1.7), и требует N одинаковых ошибок за час.
+ */
+export function shouldAutoReportRepeatError(
+  settings: FeedbackSettings,
+  events: RepeatErrorEvent[],
+  description: string,
+  now: Date,
+  antispamRecords: AntispamRow[] = [],
+): AutoReportDecision {
+  const repeatCount = countRepeatErrors(events, description, now);
+
+  if (settings.autoReportRepeatErrors !== true) {
+    return { shouldReport: false, reason: "opt_in_required", repeatCount };
+  }
+  if (!settings.enabled || !validateFeedbackEndpoint(settings.endpoint).ok) {
+    return { shouldReport: false, reason: "feedback_disabled", repeatCount };
+  }
+  if (repeatCount < settings.autoReportRepeatThreshold) {
+    return { shouldReport: false, reason: "not_repeated", repeatCount };
+  }
+
+  // Тот же антиспам, что и у ручного report_bug (F-1.7).
+  const antispam = evaluateAntispam(antispamRecords, description, now, settings.maxPerHour);
+  if (!antispam.allowed) {
+    return { shouldReport: false, reason: antispam.reason, repeatCount };
+  }
+  return { shouldReport: true, repeatCount };
 }
 
 /* ------------------------------------------------------------------ */

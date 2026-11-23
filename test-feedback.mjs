@@ -13,6 +13,7 @@ const {
   FEEDBACK_SCHEMA_VERSION,
   buildFeedbackPayload,
   buildReportPreview,
+  countRepeatErrors,
   descriptionHash,
   enqueueOutbox,
   evaluateAntispam,
@@ -21,6 +22,7 @@ const {
   redactText,
   reportFeedback,
   sendFeedbackWithRetry,
+  shouldAutoReportRepeatError,
   validateFeedbackEndpoint,
 } = await import("./dist/core/feedback.js");
 const { closeDb } = await import("./dist/db/index.js");
@@ -217,6 +219,121 @@ check(
   evaluateAntispam(many, "new report", base, 6).reason === "rate_limited",
 );
 
+/* UX-3.8.2 — opt-in-гейт авто-отчёта о повторяющейся ошибке (только решение). */
+const gateNow = new Date("2026-11-23T12:00:00.000Z");
+const gateHash = descriptionHash("boom in gate");
+const gateEvents = [
+  { at: "2026-11-23T11:57:00.000Z", hash: gateHash },
+  { at: "2026-11-23T11:58:00.000Z", hash: gateHash },
+  { at: "2026-11-23T11:59:00.000Z", hash: gateHash },
+  { at: "2026-11-23T11:59:30.000Z", hash: "other-hash" },
+  { at: "2026-11-22T10:00:00.000Z", hash: gateHash },
+];
+const gateSettings = {
+  ...settings,
+  autoReportRepeatErrors: true,
+  autoReportRepeatThreshold: 3,
+};
+
+check(
+  "UX-3.8.2 default: авто-отчёт выключен по умолчанию, согласие не подменяется",
+  DEFAULT_FEEDBACK_SETTINGS.autoReportRepeatErrors === false &&
+    DEFAULT_FEEDBACK_SETTINGS.autoReportRepeatThreshold >= 2 &&
+    normalizeFeedbackSettings({}, DEFAULT_FEEDBACK_SETTINGS).autoReportRepeatErrors === false &&
+    normalizeFeedbackSettings(
+      { autoReportRepeatErrors: true, autoReportRepeatThreshold: 4 },
+      DEFAULT_FEEDBACK_SETTINGS,
+    ).autoReportRepeatErrors === true,
+);
+
+check(
+  "UX-3.8.2 countRepeatErrors: одинаковые ошибки только за последний час",
+  countRepeatErrors(gateEvents, "boom in gate", gateNow) === 3 &&
+    countRepeatErrors(gateEvents, "another error", gateNow) === 0,
+);
+
+const optInOff = shouldAutoReportRepeatError(
+  { ...gateSettings, autoReportRepeatErrors: false },
+  gateEvents,
+  "boom in gate",
+  gateNow,
+);
+check(
+  "UX-3.8.2 gate: без явного согласия всегда отказ, даже при N повторах",
+  optInOff.shouldReport === false && optInOff.reason === "opt_in_required",
+);
+
+const repeatNotEnough = shouldAutoReportRepeatError(
+  { ...gateSettings, autoReportRepeatThreshold: 4 },
+  gateEvents,
+  "boom in gate",
+  gateNow,
+);
+check(
+  "UX-3.8.2 gate: порог N не достигнут — отказ с reason not_repeated",
+  repeatNotEnough.shouldReport === false &&
+    repeatNotEnough.reason === "not_repeated" &&
+    repeatNotEnough.repeatCount === 3,
+);
+
+const gateOk = shouldAutoReportRepeatError(gateSettings, gateEvents, "boom in gate", gateNow);
+check(
+  "UX-3.8.2 gate: согласие + N повторов + чистый antispam — решение send",
+  gateOk.shouldReport === true && gateOk.repeatCount === 3,
+);
+
+const gateDuplicate = shouldAutoReportRepeatError(
+  gateSettings,
+  gateEvents,
+  "boom in gate",
+  gateNow,
+  [{ at: "2026-11-23T11:59:00.000Z", hash: gateHash }],
+);
+check(
+  "UX-3.8.2 gate: тот же antispam блокирует дубль в окне 5 минут",
+  gateDuplicate.shouldReport === false && gateDuplicate.reason === "duplicate",
+);
+
+const gateRateLimited = shouldAutoReportRepeatError(
+  gateSettings,
+  gateEvents,
+  "boom in gate",
+  gateNow,
+  Array.from({ length: 6 }, () => ({ at: "2026-11-23T11:30:00.000Z", hash: "other" })),
+);
+check(
+  "UX-3.8.2 gate: антиспам-лимит N/час применяется и к авто-отчёту",
+  gateRateLimited.shouldReport === false && gateRateLimited.reason === "rate_limited",
+);
+
+const gateDisabled = shouldAutoReportRepeatError(
+  { ...gateSettings, enabled: false },
+  gateEvents,
+  "boom in gate",
+  gateNow,
+);
+const gateBadEndpoint = shouldAutoReportRepeatError(
+  { ...gateSettings, endpoint: "http://example.com/report" },
+  gateEvents,
+  "boom in gate",
+  gateNow,
+);
+check(
+  "UX-3.8.2 gate: выключенный feedback и невалидный endpoint блокируют",
+  gateDisabled.shouldReport === false &&
+    gateDisabled.reason === "feedback_disabled" &&
+    gateBadEndpoint.reason === "feedback_disabled",
+);
+
+const outboxBeforeGate = listOutbox().length;
+const gatePure = shouldAutoReportRepeatError(gateSettings, gateEvents, "boom in gate", gateNow);
+check(
+  "UX-3.8.2 gate: чистое решение не трогает сеть/outbox и не ломает report_bug",
+  gatePure.shouldReport === true &&
+    listOutbox().length === outboxBeforeGate &&
+    typeof reportFeedback === "function",
+);
+
 /* F-3.2 — GUI/RPC/агент должны пробрасывать секцию feedback (регресс: чекбокс сбрасывался). */
 const { manageSettingsSchema } = await import("./dist/index.js");
 const { SchedulerRpc } = await import("./dist/rpc.js");
@@ -269,6 +386,29 @@ check(
   loadedFeedback.enabled === true &&
     loadedFeedback.endpoint === "https://feedback.example.workers.dev/report" &&
     loadedFeedback.maxPerHour === 7,
+);
+
+/* UX-3.8.2 — явное согласие и порог N сохраняются и нормализуются. */
+await settingsModule.saveSettings({
+  feedback: {
+    enabled: true,
+    endpoint: "https://feedback.example.workers.dev/report",
+    includeLogs: false,
+    contactEmail: "",
+    maxPerHour: 6,
+    autoReportRepeatErrors: true,
+    autoReportRepeatThreshold: 4,
+  },
+});
+const autoFeedback = (await settingsModule.loadSettings()).feedback;
+check(
+  "UX-3.8.2 settings: согласие и порог N сохраняются, невалидный порог нормализуется",
+  autoFeedback.autoReportRepeatErrors === true &&
+    autoFeedback.autoReportRepeatThreshold === 4 &&
+    normalizeFeedbackSettings(
+      { autoReportRepeatThreshold: 0 },
+      DEFAULT_FEEDBACK_SETTINGS,
+    ).autoReportRepeatThreshold === 2,
 );
 
 closeDb();
