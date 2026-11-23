@@ -130,53 +130,51 @@ sequenceDiagram
 
 ### 4.3 Resume после краша
 
-Источник: [run-journal.ts](src/db/run-journal.ts) (`recoverInterruptedSteps`), [run-resume.ts](src/db/run-resume.ts) (`findResumeStep`, `resumeRun`), [runs-repo.ts](src/db/runs-repo.ts) (`renewStepLease`), [run-dlq.ts](src/db/run-dlq.ts). **Ниже — целевой поток:** `recoverInterruptedSteps` действительно вызывается при старте, а `resumeRun` в `src/` не вызывается вообще (только в тестах) — см. PL-92.
+Источник: [run-panel-api.ts](src/core/run-panel-api.ts) (`resumeDurableRunExecution`), [execution.ts](src/core/execution.ts) (`durableExecutorDescriptor`, `writeGateOutcome`), [run-resume.ts](src/db/run-resume.ts) (`resumeRun`), [run-journal.ts](src/db/run-journal.ts) (`recoverInterruptedSteps`), [run-dlq.ts](src/db/run-dlq.ts). **PL-92 закрыт:** `resumeRun` подключён к RPC/GUI через фасад, который восстанавливает исполнителя из `metadata.durableExecution`.
 
 ```mermaid
 sequenceDiagram
-    participant BOOT as старт плагина или рекордера
+    participant GUI as GUI / MCP
+    participant RPE as run-panel-api.ts
+    participant EX as execution.ts
     participant RJ as run-journal.ts
-    participant DB as runs-repo.ts
     participant RS as run-resume.ts
     participant CTX as run-context.ts
-    participant H as StepHandler
+    participant DB as runs-repo.ts
+    participant H as StepExecutor
+    participant GI as gate-integrity.ts
     participant DLQ as run-dlq.ts
-    participant AUD as audit.ts
 
-    BOOT->>RJ: recoverInterruptedSteps
-    RJ->>DB: listRunningSteps
-    DB-->>RJ: шаги status running
-    loop каждый running-шаг
-        RJ->>DB: проверить lease_until и owner_id
-        alt lease жив
-            DB-->>RJ: не трогаем чужой шаг
-        else lease истёк
-            RJ->>DB: пометить STEP_INTERRUPTED_ERROR
-            RJ->>AUD: записать причину прерывания
-        end
-    end
-    BOOT--xRS: resumeRun с runId — НЕ вызывается в production (PL-92)
-    Note over BOOT,RS: ResumeResult готовит run, но исполнителя шага не запускает
+    GUI->>RPE: resume_durable_run(runId)
+    RPE->>DB: getRun → metadata.durableExecution
+    DB-->>RPE: plan + StepExecutorDescriptor
+    RPE->>EX: executorForDescriptor → createOpenCodeExecutor / createMissionWrapperExecutor
+    RPE->>RS: resumeRun(runId, handlers)
+    RS->>RJ: recoverInterruptedSteps
+    RJ->>DB: listRunningSteps → STEP_INTERRUPTED_ERROR при истёкшем lease
     RS->>DB: findResumeStep и listRunSteps
     DB-->>RS: первый незавершённый шаг по position
     RS->>CTX: pendingInjectionsForStep
     CTX-->>RS: инъекции comment file artifact
-    RS->>H: вызвать StepHandler с контекстом
-    H->>DB: finishStep success или failure
+    RS->>H: executor.execute({ step, context, plan })
+    H-->>RS: StepExecutionResult output
+    RS->>DB: finishStep success или failure
     alt детерминированное падение
         H->>DLQ: enqueueDeadLetter attempts-exhausted
-        Note over DLQ: открытая запись на шаг только одна
-        DLQ-->>AUD: ожидает ручного retry или discard
+        Note over DLQ: ручной retry пока не вызывает исполнителя (PL-97)
     else успех
         RS->>DB: finishRun
     end
+    RPE->>GI: writeGateOutcome verdict pass/fail
+    GI->>DB: recordGateOutcome prev_hash row_hash
     RS->>CTX: consumeInjections consumed_at и consumed_attempt
-    RS-->>BOOT: ResumeResult
+    RS-->>RPE: ResumeResult
+    RPE-->>GUI: executed / skipped / failedStep
 ```
 
-**Что видно:** recovery не финализирует шаг с живым lease (`owner_id` + `lease_until`). Возобновление идёт строго по `position` из `findResumeStep`; инъекции на паузе потребляются ровно один раз. Стрелка `--x` к `resumeRun` означает, что в текущем production-коде этот вызов отсутствует.
+**Что видно:** recovery не финализирует шаг с живым lease (`owner_id` + `lease_until`). Возобновление идёт строго по `position` из `findResumeStep`; инъекции на паузе потребляются ровно один раз. Исполнитель поднимается из дескриптора, а вердикт возобновлённого шага пишется в ту же хеш-цепочку `gate_outcomes`.
 
-**Ключевые выводы:** идемпотентность шага держится на `idempotency_key` + `attempt` в `run_steps`, а не на повторном вызове агента вслепую. Механизмов два и они не смешиваются: `recoverInterruptedSteps` (массовый при старте, реально работает) и `resumeRun` (точечный по runId — только библиотека и тесты, PL-92). `retryDeadLetter` тоже лишь готовит шаг и ждёт внешний обработчик. DLQ — тупик для детерминированных ошибок, а не общий ретрай.
+**Ключевые выводы:** идемпотентность шага держится на `idempotency_key` + `attempt` в `run_steps`, а не на повторном вызове агента вслепую. PL-92 закрыт для RPC/GUI-пути; остался смежный тупик: `retryDeadLetter` готовит шаг, но не вызывает исполнителя (PL-97). Функции GATE и отложенные эффекты не сериализуются, поэтому при resume восстанавливается только транспорт + план — это осознанная граница, а не регресс.
 
 ---
 

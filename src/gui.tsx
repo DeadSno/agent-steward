@@ -1209,7 +1209,7 @@ export default Plugin.define({
       }
     }
 
-    /** Resume только готовит запуск: снимает паузу и выбирает следующий шаг. */
+    /** PL-92: resume доигрывает шаги, если сохранён дескриптор исполнения. */
     async function handleResumeRun(run: RunPanelRun) {
       if (!window.confirm(gt("gui.runsResumeConfirm", { task: run.taskName }))) return
       setRunPanelBusy(true)

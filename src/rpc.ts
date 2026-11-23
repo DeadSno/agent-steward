@@ -1217,6 +1217,12 @@ const ResumeDurableRunOutput = {
     run: RunPanelRunSchema,
     stepName: { type: ["string", "null"] },
     prepared: { type: "boolean" },
+    // PL-92: resume теперь может реально выполнить шаги.
+    resumedFrom: { type: ["string", "null"] },
+    executed: { type: "array", items: { type: "string" } },
+    skipped: { type: "array", items: { type: "string" } },
+    injected: { type: "array", items: { type: "string" } },
+    failedStep: { type: ["string", "null"] },
   },
   required: ["success"],
   additionalProperties: false,

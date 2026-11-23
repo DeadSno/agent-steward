@@ -116,6 +116,7 @@ const repo = await import("./dist/db/runs-repo.js");
 const journal = await import("./dist/db/run-journal.js");
 const resume = await import("./dist/db/run-resume.js");
 const panel = await import("./dist/core/run-panel-api.js");
+const execution = await import("./dist/core/execution.js");
 
 initDb(dbPath);
 
@@ -205,6 +206,53 @@ assert(seen.build.length === 0, "следующий шаг не получает
 const after = panel.listRunPanel({ filter: "all" }).runs.find((run) => run.id === runA.id);
 assert(after.pendingInjections === 0, "после выполнения контекст потреблён");
 assert(after.injections[0].consumedByStep === "prepare", "история показывает получателя");
+
+// 3.4.1 PL-92: resume реально доигрывает шаги по metadata.durableExecution.
+const execContext = execution.createAdHocRunContext("PL-92 resume", {
+  taskName: "pl92-resume",
+  cwd: tempRoot,
+  taskType: "apply_diff",
+});
+const execPlan = await execution.buildExecutionPlan(execContext);
+assert(execPlan.steps.length === 1, "PL-92: план состоит из одного шага");
+const durableRun = repo.createRun({
+  taskName: "pl92-resume",
+  steps: execPlan.steps.map((step) => ({ stepName: step.stepName })),
+  metadata: {
+    durableExecution: {
+      schema: 1,
+      plan: execPlan,
+      executor: { kind: "opencode" },
+      evidencePath: null,
+    },
+  },
+});
+repo.startRun(durableRun.id);
+const durablePause = panel.pauseRunPanel(durableRun.id, {
+  comment: "PL-92 injection",
+  author: "test",
+});
+assert(durablePause.success, "PL-92: пауза перед возобновлением");
+let invocations = 0;
+const durableResume = await panel.resumeDurableRunExecution(durableRun.id, {
+  invokeOpenCode: (input) => {
+    invocations += 1;
+    assert(input.prompt === execContext.prompt, "PL-92: исполнитель получил промпт из плана");
+    return "done";
+  },
+});
+assert(durableResume.success, "PL-92: resume выполнил шаг, а не только переоткрыл запуск");
+assert(invocations === execPlan.steps.length, "PL-92: исполнитель вызван для каждого шага");
+assert(durableResume.executed?.length === execPlan.steps.length, "PL-92: шаги отмечены выполненными");
+assert(durableResume.run.status === "passed", "PL-92: запуск закрыт как passed");
+const durableGateRows = repo.listGateOutcomes(10000).filter((row) => row.runId === durableRun.id);
+assert(durableGateRows.length >= 1, "PL-92: вердикт возобновлённого шага попал в ledger");
+assert(durableGateRows.every((row) => row.verdict === "pass"), "PL-92: вердикт pass");
+const noDescriptor = await panel.resumeDurableRunExecution(runA.id);
+assert(
+  !noDescriptor.success && String(noDescriptor.error).includes("durableExecution"),
+  "PL-92: запуск без дескриптора честно отклоняется",
+);
 
 // 3.5. Пауза во время running-шага возвращает предупреждение.
 const runB = createRun("pause-gui-running", ["slow"]);

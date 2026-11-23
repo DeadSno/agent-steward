@@ -8,8 +8,10 @@
  *
  * Resume здесь, как и retry в DLQ (36.6), только готовит запуск: снимает
  * паузу/переоткрывает failed и возвращает первый незавершённый шаг.
- * Выполнение шагов запускает исполнитель DAG через `resumeRun`, поэтому
- * фасад не притворяется, что работа уже сделана.
+ * PL-92 добавляет `resumeDurableRunExecution`: если в `runs.metadata_json`
+ * сохранён дескриптор исполнения, фасад восстанавливает исполнителя и реально
+ * доигрывает шаги через `resumeRun`. Без дескриптора (старые/registered run)
+ * он честно возвращает ошибку вместо бутафорского «успеха».
  */
 import {
   getRun,
@@ -26,7 +28,21 @@ import {
   type RunInjection,
   type PauseRunInput,
 } from "../db/run-context.js";
-import { findResumeStep } from "../db/run-resume.js";
+import {
+  findResumeStep,
+  resumeRun,
+  type StepHandler,
+} from "../db/run-resume.js";
+import {
+  createOpenCodeExecutor,
+  writeGateOutcome,
+  type DurableExecutionDescriptor,
+  type ExecutionPlan,
+  type OpenCodeInvocation,
+  type StepExecutor,
+  type StepExecutorDescriptor,
+} from "./execution.js";
+import { createMissionWrapperExecutor } from "./mission.js";
 
 /** Фильтр панели: конкретный статус, все записи или активные. */
 export type RunPanelFilter = RunStatus | "all" | "active";
@@ -255,6 +271,177 @@ export function resumeRunPanel(runId: string): RunPanelActionResult {
       run: toPanelRun(getRun(runId)!),
       stepName: next?.stepName ?? null,
       prepared: true,
+    };
+  } catch (err) {
+    return { success: false, error: errorText(err) };
+  }
+}
+
+/* ------------------------------------------------------------------------- *
+ * PL-92: настоящее выполнение при resume.
+ *
+ * `resumeRun` уже умеет доигрывать шаги с инъекциями и leases, но ему нужны
+ * тела шагов. Раньше их не было ни в RPC, ни в GUI — resume только менял
+ * статус. Теперь `executeExecutionPlan` сохраняет в `runs.metadata_json`
+ * дескриптор (план + транспорт), а здесь мы поднимаем исполнитель заново.
+ * ------------------------------------------------------------------------- */
+
+export interface ResumeDurableExecutionOptions {
+  /** Исполнители, переданные вызывающим; имеют приоритет над дескриптором. */
+  executors?: StepExecutor[];
+  /** Вход OpenCode для дескриптора `{ kind: "opencode" }`. */
+  invokeOpenCode?: (input: OpenCodeInvocation) => unknown;
+}
+
+export interface ResumeExecutionResult extends RunPanelActionResult {
+  /** С какого шага продолжили. */
+  resumedFrom?: string | null;
+  /** Шаги, реально выполненные в этот раз. */
+  executed?: string[];
+  /** Уже завершённые шаги. */
+  skipped?: string[];
+  /** Идентификаторы потреблённых инъекций. */
+  injected?: string[];
+  /** Первый упавший шаг. */
+  failedStep?: string | null;
+}
+
+/** Достаём дескриптор из metadata старых и новых запусков без броска. */
+function durableExecutionFromRun(run: RunRecord): DurableExecutionDescriptor | null {
+  const metadata = run.metadata;
+  if (!metadata || typeof metadata !== "object") return null;
+  const value = (metadata as Record<string, unknown>).durableExecution;
+  if (!value || typeof value !== "object") return null;
+  const candidate = value as Partial<DurableExecutionDescriptor>;
+  const plan = candidate.plan as ExecutionPlan | undefined;
+  if (
+    candidate.schema !== 1 ||
+    !candidate.executor ||
+    !plan ||
+    !plan.context ||
+    !Array.isArray(plan.steps)
+  ) {
+    return null;
+  }
+  return candidate as DurableExecutionDescriptor;
+}
+
+/** Восстанавливаем исполнителя по сохранённому дескриптору. */
+function executorForDescriptor(
+  descriptor: StepExecutorDescriptor,
+  options: ResumeDurableExecutionOptions,
+): StepExecutor {
+  const explicit = options.executors?.find(
+    (executor) => executor.descriptor?.kind === descriptor.kind,
+  );
+  if (explicit) return explicit;
+
+  if (descriptor.kind === "opencode") {
+    if (!options.invokeOpenCode) {
+      throw new Error(
+        "Для возобновления opencode-шага нужен invokeOpenCode (или явный executors)",
+      );
+    }
+    return createOpenCodeExecutor(options.invokeOpenCode);
+  }
+  if (descriptor.kind === "mission-wrapper") {
+    return createMissionWrapperExecutor(descriptor.wrapperPath, {
+      cwd: descriptor.cwd,
+      timeoutSeconds: descriptor.timeoutSeconds,
+    });
+  }
+  throw new Error(
+    `Неизвестный дескриптор исполнителя: ${String((descriptor as { kind?: unknown }).kind)}`,
+  );
+}
+
+/**
+ * Возобновляет durable-запуск и ДОИГРЫВАЕТ его шаги.
+ *
+ * Для старых/registered-запусков без `metadata.durableExecution` возвращает
+ * `{ success: false }`: подготовка доступна через `resumeRunPanel`, но выполнять
+ * нечего — честный отказ лучше ложного «успеха».
+ */
+export async function resumeDurableRunExecution(
+  runId: string,
+  options: ResumeDurableExecutionOptions = {},
+): Promise<ResumeExecutionResult> {
+  try {
+    const run = getRun(runId);
+    if (!run) return { success: false, error: `Запуск не найден: ${runId}` };
+    const descriptor = durableExecutionFromRun(run);
+    if (!descriptor) {
+      return {
+        success: false,
+        error: `Запуск ${runId} не содержит metadata.durableExecution: автоматическое выполнение невозможно. Доступна только подготовка через resumeRunPanel.`,
+      };
+    }
+
+    const executor = executorForDescriptor(descriptor.executor, options);
+    const { plan } = descriptor;
+    const planned = new Map(plan.steps.map((step) => [step.stepName, step]));
+    const handlers: Record<string, StepHandler> = {};
+    for (const step of plan.steps) {
+      handlers[step.stepName] = async (record) => {
+        const target = planned.get(record.stepName);
+        if (!target) {
+          throw new Error(`Шаг ${record.stepName} отсутствует в сохранённом плане`);
+        }
+        if (target.route.executor === null) {
+          throw new Error(`Маршрут ${target.route.target} не исполняется автоматически`);
+        }
+        if (!executor.supports(target.route)) {
+          throw new Error(
+            `Исполнитель ${executor.id} не поддерживает маршрут ${String(target.route.executor)}`,
+          );
+        }
+        const result = await executor.execute({ step: target, context: plan.context, plan });
+        if (result.error) throw new Error(result.error);
+        return result.output;
+      };
+    }
+
+    const resumed = await resumeRun(runId, { handlers, stopOnError: true });
+
+    // PL-92: вердикт возобновлённого шага должен попасть в ту же хеш-цепочку.
+    const byName = new Map(listRunSteps(runId).map((step) => [step.stepName, step]));
+    for (const stepName of resumed.executed) {
+      const record = byName.get(stepName);
+      const target = planned.get(stepName);
+      if (!record || !target) continue;
+      writeGateOutcome({
+        context: plan.context,
+        runId,
+        stepId: record.id,
+        stepName,
+        taskType: target.route.taskType,
+        executor: executor.id,
+        routeSource: target.route.source,
+        routeReason: target.route.reason,
+        gateType:
+          typeof plan.context.metadata?.qualityGate === "string"
+            ? plan.context.metadata.qualityGate
+            : null,
+        verdict: record.status === "passed" ? "pass" : "fail",
+        attempt: record.attempt,
+        firstPass: record.attempt === 1,
+        evidencePath: descriptor.evidencePath,
+      });
+    }
+
+    const finalRun = getRun(runId)!;
+    return {
+      success: resumed.failedStep === null,
+      ...(resumed.failedStep
+        ? { error: resumed.error ?? `Шаг ${resumed.failedStep} завершился ошибкой` }
+        : {}),
+      run: toPanelRun(finalRun),
+      stepName: resumed.resumedFrom,
+      resumedFrom: resumed.resumedFrom,
+      executed: resumed.executed,
+      skipped: resumed.skipped,
+      injected: resumed.injected,
+      failedStep: resumed.failedStep,
     };
   } catch (err) {
     return { success: false, error: errorText(err) };

@@ -534,6 +534,40 @@ export interface StepExecutor {
   readonly id: string;
   supports(route: StepRoute): boolean;
   execute(input: StepExecutionInput): Promise<StepExecutionResult> | StepExecutionResult;
+  /**
+   * PL-92: сериализуемый способ восстановить исполнителя после краша.
+   * Без него `metadata.durableExecution` нельзя воссоздать в новом процессе.
+   */
+  readonly descriptor?: StepExecutorDescriptor;
+}
+
+/**
+ * PL-92: как именно исполнялся шаг. Хранится в `runs.metadata_json`, чтобы
+ * `resumeDurableRunExecution` мог поднять тот же транспорт без доступа к
+ * исходному объекту `StepExecutor` (функции не сериализуются).
+ */
+export type StepExecutorDescriptor =
+  | { kind: "opencode" }
+  | {
+      kind: "mission-wrapper";
+      wrapperPath: string;
+      cwd: string;
+      timeoutSeconds: number;
+    };
+
+/** PL-92: самодостаточное описание для возобновления прерванного запуска. */
+export interface DurableExecutionDescriptor {
+  schema: 1;
+  plan: ExecutionPlan;
+  executor: StepExecutorDescriptor;
+  evidencePath: string | null;
+}
+
+/** PL-92: выбирает первого исполнителя с сериализуемым дескриптором. */
+export function durableExecutorDescriptor(
+  executors: readonly StepExecutor[],
+): StepExecutorDescriptor | null {
+  return executors.find((executor) => executor.descriptor)?.descriptor ?? null;
 }
 
 /** HTTP-/CLI-независимый исполнитель OpenCode: транспорт передаётся функцией. */
@@ -553,6 +587,7 @@ export function createOpenCodeExecutor(
 ): StepExecutor {
   return {
     id,
+    descriptor: { kind: "opencode" },
     supports: (route) => route.executor !== null,
     async execute({ step, context, plan }) {
       const output = await invoke({
@@ -1094,6 +1129,10 @@ export async function executeExecutionPlan(
     }
   }
 
+  // PL-92: сохраняем план и способ воссоздания исполнителя в ledger. Функции
+  // (`supports`/`execute`/`gate`) не сериализуются, поэтому храним дескриптор.
+  const durableDescriptor = durableExecutorDescriptor(options.executors);
+
   const run = createRun({
     taskName: plan.context.taskName,
     steps: plan.steps.map((step) => ({ stepName: step.stepName })),
@@ -1114,6 +1153,16 @@ export async function executeExecutionPlan(
       ...(options.metadata ?? {}),
       ...(approval
         ? { approvalRequestId: approval.requestId, approvalRunRef: approval.runRef }
+        : {}),
+      ...(durableDescriptor
+        ? {
+            durableExecution: {
+              schema: 1,
+              plan,
+              executor: durableDescriptor,
+              evidencePath: options.evidencePath ?? null,
+            } satisfies DurableExecutionDescriptor,
+          }
         : {}),
     },
   });

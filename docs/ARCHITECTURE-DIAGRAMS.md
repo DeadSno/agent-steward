@@ -255,7 +255,7 @@ flowchart TB
         RUNS["createRun / finishStep — runs-repo.ts:257 / :496"]
         LEDGER["recordGateOutcome / readGateOutcomeLedger / verifyGateOutcomeChain — runs-repo.ts:748 / :858 / :829"]
         CAP["recordCapabilityOutcome — capability-repo.ts:241<br/>recordGateVerdict — capability-repo.ts:503"]
-        RESUME["findResumeStep — run-resume.ts:76 / resumeRunPanel (подготовка)"]
+        RESUME["findResumeStep — run-resume.ts:76<br/>resumeDurableRunExecution — run-panel-api.ts"]
         DLQ["enqueueDeadLetter / retryDeadLetter — run-dlq.ts:128 / :238"]
         BUDGET["evaluateBudgetGate — budget.ts:180<br/>вызов: checkBudgetGate index.ts:7948"]
     end
@@ -279,14 +279,16 @@ flowchart TB
     JOUR -.->|PL-93| GATE
     GATE -.-> WG
     LEDGER -.->|PL-93| CAP
-    RESUME -.->|PL-92| JOUR
+    EXEC -->|metadata.durableExecution| RESUME
+    RESUME -->|StepExecutor + handlers| JOUR
+    RESUME -->|writeGateOutcome| WG
 ```
 
-**Условные обозначения:** сплошная стрелка — реальный вызов в `src/`; пунктирная — модуль существует и покрыт тестами, но в production execution loop не подключён (PL-92, PL-93, PL-94, PL-96).
+**Условные обозначения:** сплошная стрелка — реальный вызов в `src/`; пунктирная — модуль существует и покрыт тестами, но в production execution loop не подключён (PL-93, PL-94, PL-96).
 
-**Что видно:** ядро реально замыкает лишь «исполнение → ledger» и «capability_map → роутинг». Полного цикла «исполнение → ledger → обучение карты → роутинг» в текущем коде нет: `recordGateVerdict` вызывается отдельно от `writeGateOutcome` и в движок не встроен.
+**Что видно:** ядро реально замыкает «исполнение → ledger» и после PL-92 ещё и «metadata.durableExecution → resume → тот же journal/ledger». Полного цикла «исполнение → ledger → обучение карты → роутинг» в текущем коде нет: `recordGateVerdict` вызывается отдельно от `writeGateOutcome` и в движок не встроен.
 
-**Ключевые выводы:** `writeGateOutcome` ([execution.ts](src/core/execution.ts:395)) — единственная точка записи вердикта в ledger, но не в обучение карты. Бюджет проверяется до старта задачи в [index.ts](src/index.ts:7948) (`checkBudgetGate`), а не внутри `executeExecutionPlan`. Lease шага (`renewStepLease` в [runs-repo.ts](src/db/runs-repo.ts:553) и [run-journal.ts](src/db/run-journal.ts:119)) — основа safe-resume, но сам `resumeRun` в прогон не подключён (PL-92).
+**Ключевые выводы:** `writeGateOutcome` ([execution.ts](src/core/execution.ts:395)) — единственная точка записи вердикта в ledger, но не в обучение карты. Бюджет проверяется до старта задачи в [index.ts](src/index.ts:7948) (`checkBudgetGate`), а не внутри `executeExecutionPlan`. Lease шага (`renewStepLease` в [runs-repo.ts](src/db/runs-repo.ts:553) и [run-journal.ts](src/db/run-journal.ts:119)) — основа safe-resume; PL-92 подключил `resumeRun` к RPC/GUI-пути, но DLQ-retry всё ещё ждёт обработчика (PL-97).
 
 ### 6. Модель данных (ER-диаграмма)
 
@@ -427,7 +429,7 @@ erDiagram
 7. **Суб-агент как механизм выполнения ненадёжен на Free-модели** — при автопроверке документа суб-агент упал с «Free usage limit reached» (аналог PL-72/PL-76). Добавлено как PL-90.
 8. **Очередь одобрений без интерфейса (PL-95).** `requestApproval`/`decideApproval`/`listPendingApprovals` есть в [audit.ts](src/core/audit.ts:679), гейт встроен в `executeExecutionPlan` (:1057), но `grep -i approv src/rpc.ts` даёт 0 совпадений — RPC-методов и GUI-экрана нет. Прежний `[TODO: проверить]` снят: метода просто не существует, имя выдумывать нельзя.
 
-9. **Resume и DLQ-retry не исполняются в production (PL-92).** `resumeRun`/`resumeRunSync` ([run-resume.ts](src/db/run-resume.ts:128)) вызываются только тестами; [run-panel-api.ts](src/core/run-panel-api.ts:241) лишь открывает run заново и возвращает `prepared: true`; `retryDeadLetter` ([run-dlq.ts](src/db/run-dlq.ts:238)) явно перекладывает выполнение на «внешний обработчик», которого в `src/` нет. Диаграмма 4.3 описывает ***целевой*** поток, а не текущий.
+9. **Resume подключён, DLQ-retry — нет (PL-97).** PL-92 закрыт: `executeExecutionPlan` пишет `metadata.durableExecution`, а `resumeDurableRunExecution` ([run-panel-api.ts](src/core/run-panel-api.ts)) восстанавливает `StepExecutor`, вызывает `resumeRun` и фиксирует вердикт через `writeGateOutcome`; RPC/GUI идут через него. Осталось: `retryDeadLetter` ([run-dlq.ts](src/db/run-dlq.ts:238)) по-прежнему перекладывает выполнение на «внешний обработчик», которого в `src/` нет. Диаграмма 4.3 описывает текущий рабочий поток resume и отдельно отмечает тупик DLQ.
 
 10. **Эскалация и flake-aware retry не подключены к движку (PL-93).** [escalation.ts](src/core/router/escalation.ts:184) (`runGateWithRetry`, `resolveGateOutcome`, `escalateAfterGate`) не импортируется [execution.ts](src/core/execution.ts): вердикт пишется напрямую через `writeGateOutcome` (:1215/:1254). `isGateQuarantined` ([capability-repo.ts](src/db/capability-repo.ts:616)) тоже не вызывается в роутинге — карантин влияет только на обучение карты.
 
@@ -435,7 +437,7 @@ erDiagram
 
 12. **Ledger проверяется лишь первые 1000 строк (PL-96).** `verifyGateOutcomeChain()` ([runs-repo.ts](src/db/runs-repo.ts:829)) без аргументов использует `listGateOutcomes()` с дефолтным лимитом 1000; автопроверки цепочки на старте нет.
 
-> **Важно для читателя:** пункты 9–12 означают, что часть подсистем реализована как проверенная библиотека, но не встроена в production execution loop. Диаграммы 3 и 4.1 показывают фактические вызовы сплошной линией, а неподключённые связи — пунктиром.
+> **Важно для читателя:** пункты 9–12 означают, что часть подсистем реализована как проверенная библиотека, но не встроена в production execution loop (для resume — только в части DLQ). Диаграммы 3 и 4.1 показывают фактические вызовы сплошной линией, а неподключённые связи — пунктиром.
 
 ### Ссылки на смежные документы
 

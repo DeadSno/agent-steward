@@ -129,7 +129,7 @@ import { discardDlq, listDlq, retryDlq } from "./core/dlq-api.js";
 import {
   listRunPanel,
   pauseRunPanel,
-  resumeRunPanel,
+  resumeDurableRunExecution,
 } from "./core/run-panel-api.js";
 import {
   findStuckMatrixClones,
@@ -6484,7 +6484,7 @@ const v2Plugin = Plugin.define({
       resume_durable_run: async (input: unknown) => {
         const source = (input ?? {}) as { runId?: string };
         if (!source.runId) return { success: false, error: "runId is required" };
-        return resumeRunPanel(source.runId);
+        return resumeDurableRunExecution(source.runId);
       },
       get_templates: async () => {
         try {

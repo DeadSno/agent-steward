@@ -463,19 +463,22 @@ async function runWrapperProcess(
   });
 }
 
-function createWrapperExecutor(
+/**
+ * PL-92: исполнитель миссии-обёртки. Экспортируется, чтобы фасад resume мог
+ * воссоздать его из дескриптора, сохранённого в `runs.metadata_json`.
+ */
+export function createMissionWrapperExecutor(
   wrapperPath: string,
-  spec: MissionSpec,
+  spec: Pick<MissionSpec, "cwd" | "timeoutSeconds">,
 ): StepExecutor {
+  const cwd = spec.cwd ?? process.cwd();
+  const timeoutSeconds = spec.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS;
   return {
     id: "mission-wrapper",
+    descriptor: { kind: "mission-wrapper", wrapperPath, cwd, timeoutSeconds },
     supports: (route) => route.executor !== null,
     async execute() {
-      const { output, error } = await runWrapperProcess(
-        wrapperPath,
-        spec.cwd ?? process.cwd(),
-        spec.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS,
-      );
+      const { output, error } = await runWrapperProcess(wrapperPath, cwd, timeoutSeconds);
       return error ? { output, error } : { output };
     },
   };
@@ -533,7 +536,7 @@ export async function runMission(
     if (!executor) {
       const prepared = await prepareWrapper(spec, context, taskName);
       logFile = prepared.logFile;
-      executor = createWrapperExecutor(prepared.wrapperPath, spec);
+      executor = createMissionWrapperExecutor(prepared.wrapperPath, spec);
     }
     dependencies.onPrepared?.({ taskName, cwd: context.cwd });
 
