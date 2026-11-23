@@ -5,6 +5,7 @@ import { WRAPPER_DIR } from "../../types.js";
 import { shellQuote } from "../scheduler/posix.js";
 import type { ScheduleGateSpec } from "../schedule-v2.js";
 import type { TaskGuards } from "../guard.js";
+import type { SessionMode } from "../session.js";
 import { createGateSnapshot } from "../gate-integrity.js";
 import {
   buildOpencodeConfig as buildPermissionsConfig,
@@ -46,7 +47,7 @@ export interface BashWrapperOptions {
   /** LLM-модель для `opencode run --model` (если не задана — модель по умолчанию). */
   model?: string;
   /** Спринт 24: режим сессии — "new" | "reuse" | "last". */
-  sessionMode?: import("../session.js").SessionMode;
+  sessionMode?: SessionMode;
   /** Спринт 24: id сессии для режима "reuse". */
   sessionId?: string;
   /** Спринт 24: sidecar-файл с актуальным id сессии (перекрывает sessionId). */

@@ -1,10 +1,5 @@
 import type { TriageRule, TriageRuleAction } from "../settings.js";
-import type {
-  TriageCategory,
-  TriageInput,
-  TriageSeverity,
-  TriageVerdict,
-} from "./triage.js";
+import type { TriageInput, TriageVerdict } from "./triage.js";
 
 /**
  * Rules-движок триажа (Спринт 30.4).

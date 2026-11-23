@@ -310,13 +310,13 @@ export function parseCron(expr: string): ParsedCron {
 
 function domMatches(p: { year: number; month: number; day: number }, spec: ParsedCron): boolean {
   const last = lastDayOfMonth(p.year, p.month);
-  if (spec.dayOfMonth && spec.dayOfMonth.has(p.day)) return true;
+  if (spec.dayOfMonth?.has(p.day)) return true;
   if (spec.lastDom && p.day === last) return true;
   return false;
 }
 
 function dowMatches(p: { year: number; month: number; day: number; weekday: number }, spec: ParsedCron): boolean {
-  if (spec.dayOfWeek && spec.dayOfWeek.has(p.weekday)) return true;
+  if (spec.dayOfWeek?.has(p.weekday)) return true;
   for (const { weekday, n } of spec.nthWeekday) {
     const dom = nthWeekdayOfMonth(p.year, p.month, weekday, n);
     if (dom === p.day) return true;
@@ -438,12 +438,6 @@ function dayMatches(y: number, m: number, d: number, spec: ParsedCron): boolean 
   if (dowAny) return dm;
   return dm || dw;
 }
-
-function dayStartUtc(y: number, m: number, d: number, timeZone?: string): Date {
-  const d0 = wallToUtc(y, m, d, 0, 0, timeZone);
-  return d0 ?? new Date(Date.UTC(y, m - 1, d, 0, 0));
-}
-
 
 // ---------------------------------------------------------------------------
 // Окна запуска (notBefore/notAfter, «дд:мм» 24ч, можно через полночь).

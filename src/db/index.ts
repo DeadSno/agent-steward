@@ -16,12 +16,22 @@ export interface SqliteRunResult {
   lastInsertRowid: number | bigint;
 }
 
+/**
+ * Граница `node:sqlite`: в @types/node нет типов для этого модуля, поэтому
+ * драйвер оборачиваем сами. Параметры запросов — `unknown` (вызывающему
+ * коду можно передавать любые значения), а форма результата произвольна:
+ * `any` в возвращаемых типах остаётся только на этой границе внешнего API
+ * (QA-A2.7) — вызывающий код сужает его type guard-ом (см. isRecord в
+ * модулях репозиториев).
+ */
+/* eslint-disable @typescript-eslint/no-explicit-any -- внешний API node:sqlite, QA-A2.7 */
 export interface SqliteStatement {
-  run(...params: any[]): SqliteRunResult;
-  get(...params: any[]): any;
-  all(...params: any[]): any[];
-  iterate(...params: any[]): IterableIterator<any>;
+  run(...params: unknown[]): SqliteRunResult;
+  get(...params: unknown[]): any;
+  all(...params: unknown[]): any[];
+  iterate(...params: unknown[]): IterableIterator<any>;
 }
+/* eslint-enable @typescript-eslint/no-explicit-any -- node:sqlite, QA-A2.7 */
 
 export interface SqliteDatabase {
   exec(sql: string): void;
@@ -40,7 +50,7 @@ function loadSqlite(): DatabaseSyncCtor {
   try {
     const mod = nodeRequire("node:sqlite") as { DatabaseSync: DatabaseSyncCtor };
     return mod.DatabaseSync;
-  } catch (err: any) {
+  } catch (err: unknown) {
     throw new Error(
       `node:sqlite недоступен (${err instanceof Error ? err.message : String(err)}). ` +
         "Планировщику требуется Node.js 22.5+ (рекомендуется Node 24).",
@@ -131,8 +141,15 @@ export function getDbStatus(): {
   let journalMode = "unknown";
   let schemaVersion = 0;
   try {
-    const row = getDb().prepare("PRAGMA journal_mode;").get();
-    journalMode = String(row?.journal_mode ?? "unknown");
+    const row: unknown = getDb().prepare("PRAGMA journal_mode;").get();
+    const mode =
+      typeof row === "object" && row !== null ? (row as { journal_mode?: unknown }).journal_mode : undefined;
+    journalMode =
+      mode == null
+        ? "unknown"
+        : typeof mode === "string" || typeof mode === "number" || typeof mode === "boolean"
+          ? String(mode)
+          : "unknown";
     schemaVersion = getSchemaVersion(getDb());
   } catch {
     // Если БД ещё не открыта — не роняем health-check.
@@ -199,7 +216,7 @@ export function withTransaction<T>(fn: () => T): T {
 
 /** Пуста ли БД (не считая служебных настроек вроде retry_state). */
 export function isDatabaseEmpty(): boolean {
-  const row = getDb()
+  const row: unknown = getDb()
     .prepare(
       `SELECT
          (SELECT COUNT(*) FROM tasks) +
@@ -208,5 +225,7 @@ export function isDatabaseEmpty(): boolean {
          (SELECT COUNT(*) FROM templates) AS count`,
     )
     .get();
-  return Number(row?.count) === 0;
+  const count =
+    typeof row === "object" && row !== null ? (row as { count?: unknown }).count : undefined;
+  return Number(count) === 0;
 }

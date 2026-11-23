@@ -142,7 +142,7 @@ export function readProcessCmdline(pid: number): string | null {
  */
 export function isFallbackProcessAlive(pid: number, taskName: string): boolean {
   const cmdline = readProcessCmdline(pid);
-  return cmdline !== null && cmdline.includes(fallbackMarker(taskName));
+  return cmdline?.includes(fallbackMarker(taskName)) ?? false;
 }
 
 function hasProcfs(): boolean {

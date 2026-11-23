@@ -12,6 +12,11 @@ export type TelegramParseMode = "" | "HTML" | "Markdown" | "MarkdownV2";
 /** Таймаут запроса по умолчанию. */
 const DEFAULT_TIMEOUT_MS = 10_000;
 
+// QA-A2.7: проверка формы для ответов внешнего API.
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 export interface TelegramSendOptions {
   /** База API; по умолчанию https://api.telegram.org. */
   apiBase?: string;
@@ -284,7 +289,7 @@ function splitRawMessageForSend(
 /** Пауза без утечки таймера. */
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms);
+    setTimeout(resolve, ms);
     // timer.unref?.() УБРАН: процесс не должен завершаться во время 429-ретрая,
     // иначе уведомление теряется (record-history — короткоживущий процесс,
     // event loop не удерживается unref-таймером).
@@ -369,15 +374,20 @@ export async function sendTelegramMessage(
         });
 
         const raw = await response.text().catch(() => "");
-        let parsed: any = null;
+        // QA-A2.7: ответ Bot API — внешние данные, сужаем через guard.
+        let parsed: Record<string, unknown> | null = null;
         try {
-          parsed = raw ? JSON.parse(raw) : null;
+          const value: unknown = raw ? JSON.parse(raw) : null;
+          if (isRecord(value)) parsed = value;
         } catch {
           parsed = null;
         }
 
         if (response.status === 429 && attempt < TELEGRAM_MAX_RETRIES) {
-          const retryAfter = Number(parsed?.parameters?.retry_after);
+          const parameters = parsed?.parameters;
+          const retryAfter = Number(
+            isRecord(parameters) ? parameters.retry_after : undefined,
+          );
           const delaySeconds = Number.isFinite(retryAfter) && retryAfter > 0
             ? Math.min(60, Math.ceil(retryAfter))
             : Math.min(30, 2 ** attempt);
@@ -385,8 +395,9 @@ export async function sendTelegramMessage(
           continue;
         }
 
+        const descriptionValue = parsed?.description;
         const description =
-          (typeof parsed?.description === "string" && parsed.description) ||
+          (typeof descriptionValue === "string" && descriptionValue) ||
           raw.slice(0, 200) ||
           `HTTP ${response.status}`;
 

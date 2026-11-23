@@ -99,10 +99,9 @@ export class FileWatchManager {
     for (const [key, entry] of Array.from(this.entries.entries())) {
       const target = wanted.find((d) => d.name.toLowerCase() === key);
       if (
-        !target ||
-        target.path !== entry.path ||
-        target.globs.join("\u0000") !== entry.globs.join("\u0000") ||
-        target.ignore.join("\u0000") !== entry.ignore.join("\u0000")
+        target?.path !== entry.path ||
+        target?.globs.join("\u0000") !== entry.globs.join("\u0000") ||
+        target?.ignore.join("\u0000") !== entry.ignore.join("\u0000")
       ) {
         await this.remove(key);
       }
@@ -187,8 +186,8 @@ export class FileWatchManager {
         if (this.stopped) return;
         try {
           const result = this.handler(name, changedPath);
-          if (result && typeof (result).catch === "function") {
-            (result).catch((err: any) => {
+          if (result && typeof result === "object" && typeof result.catch === "function") {
+            result.catch((err: unknown) => {
               console.error(
                 `[agent-steward] Ошибка запуска задачи "${name}" по изменению файла: ${
                   err instanceof Error ? err.message : String(err)
@@ -217,7 +216,7 @@ export class FileWatchManager {
     watcher.on("error", (err) => {
       console.error(
         `[agent-steward] Ошибка наблюдения за "${watchPath}" (задача "${name}"): ${
-          (err as any)?.message ?? String(err)
+          err instanceof Error ? err.message : String(err)
         }`,
       );
     });

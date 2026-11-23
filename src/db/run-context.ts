@@ -12,6 +12,11 @@ import {
   type RunStepRecord,
 } from "./runs-repo.js";
 import { requireRun } from "./run-journal.js";
+import { safeStringify } from "../text.js";
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
 /**
  * Пауза с инъекцией контекста (Спринт 36.7).
@@ -105,9 +110,9 @@ function nowIso(): string {
 function parseJson(value: unknown): unknown {
   if (value == null) return null;
   try {
-    return JSON.parse(String(value));
+    return JSON.parse(safeStringify(value));
   } catch {
-    return String(value);
+    return safeStringify(value);
   }
 }
 
@@ -115,18 +120,22 @@ function isStepDone(status: RunStepRecord["status"]): boolean {
   return status === "passed" || status === "skipped";
 }
 
-function rowToInjection(row: any): RunInjection {
+function rowToInjection(row: unknown): RunInjection {
+  if (!isRecord(row)) {
+    throw new Error("Некорректная строка вставки контекста");
+  }
   return {
-    id: String(row.id),
-    runId: String(row.run_id),
-    stepName: String(row.step_name),
-    kind: String(row.kind) as InjectionKind,
-    content: String(row.content ?? ""),
-    author: String(row.author ?? DEFAULT_AUTHOR),
+    id: safeStringify(row.id),
+    runId: safeStringify(row.run_id),
+    stepName: safeStringify(row.step_name),
+    kind: safeStringify(row.kind) as InjectionKind,
+    content: safeStringify(row.content ?? ""),
+    author: safeStringify(row.author ?? DEFAULT_AUTHOR),
     metadata: parseJson(row.metadata_json),
-    createdAt: String(row.created_at),
-    consumedAt: row.consumed_at == null ? null : String(row.consumed_at),
-    consumedByStep: row.consumed_by_step == null ? null : String(row.consumed_by_step),
+    createdAt: safeStringify(row.created_at),
+    consumedAt: row.consumed_at == null ? null : safeStringify(row.consumed_at),
+    consumedByStep:
+      row.consumed_by_step == null ? null : safeStringify(row.consumed_by_step),
     consumedAttempt:
       row.consumed_attempt == null ? null : Number(row.consumed_attempt),
   };
@@ -156,7 +165,7 @@ function redactValue(value: unknown, depth = 0, seen = new WeakSet<object>()): u
     }
     return result;
   }
-  return String(value);
+  return safeStringify(value);
 }
 
 function maskText(value: string): string {
@@ -244,7 +253,7 @@ function insertInjection(runId: string, row: InjectionRow, createdAt: string): R
 }
 
 function requireInjection(id: string): RunInjection {
-  const row = getDb().prepare("SELECT * FROM run_injections WHERE id = ?").get(id);
+  const row: unknown = getDb().prepare("SELECT * FROM run_injections WHERE id = ?").get(id);
   if (!row) throw new Error(`Вставка контекста не найдена: ${id}`);
   return rowToInjection(row);
 }
@@ -277,7 +286,7 @@ export function pendingInjectionsForStep(runId: string, stepName: string): RunIn
 
 /** Одна вставка по id (для GUI/диагностики). */
 export function getRunInjection(id: string): RunInjection | undefined {
-  const row = getDb().prepare("SELECT * FROM run_injections WHERE id = ?").get(id);
+  const row: unknown = getDb().prepare("SELECT * FROM run_injections WHERE id = ?").get(id);
   return row ? rowToInjection(row) : undefined;
 }
 

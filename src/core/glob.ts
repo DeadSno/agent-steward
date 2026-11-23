@@ -17,7 +17,13 @@ const WINDOWS = process.platform === "win32";
 
 /** Нормализует путь или маску: "/" как разделитель, без ведущего "./". */
 export function normalizePath(value: unknown): string {
-  let text = String(value ?? "").trim().replace(/\\/g, "/");
+  let text =
+    (typeof value === "string" || typeof value === "number" || typeof value === "boolean"
+      ? String(value)
+      : ""
+    )
+      .trim()
+      .replace(/\\/g, "/");
   if (!text) return "";
   while (text.startsWith("./")) text = text.slice(2);
   // Схлопываем повторные слэши, но не трогаем начало (UNC уже приведён к "/").

@@ -43,7 +43,15 @@ export function isInternalTaskName(taskName: string): boolean {
   return taskName.startsWith("__");
 }
 
-function rowToMetrics(row: any): TaskMetricsRow {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function rowToMetrics(input: unknown): TaskMetricsRow {
+  if (!isRecord(input)) {
+    throw new Error("Некорректная строка метрик");
+  }
+  const row = input;
   return {
     taskName: String(row.task_name),
     total: Number(row.total) || 0,
@@ -97,7 +105,7 @@ export function incrementMetrics(
 
 /** Метрики одной задачи (нули, если задача ещё не запускалась). */
 export function getMetrics(taskName: string): TaskMetricsRow {
-  const row = getDb()
+  const row: unknown = getDb()
     .prepare("SELECT * FROM metrics WHERE lower(task_name) = lower(?) LIMIT 1")
     .get(taskName);
   if (!row) {
@@ -108,7 +116,7 @@ export function getMetrics(taskName: string): TaskMetricsRow {
 
 /** Метрики всех реальных задач (служебные строки исключены). */
 export function getAllMetrics(includeInternal = false): TaskMetricsRow[] {
-  const rows = getDb()
+  const rows: unknown[] = getDb()
     .prepare("SELECT * FROM metrics ORDER BY task_name COLLATE NOCASE ASC")
     .all();
   return rows.map(rowToMetrics).filter((row) => includeInternal || !isInternalTaskName(row.taskName));
@@ -131,7 +139,7 @@ export function getTotals(includeInternal = false): MetricsTotals {
   // PL-37: служебные задачи (__*), используемые тестами/пробами, не должны
   // попадать в агрегированные метрики — getAllMetrics их уже фильтрует.
   const internalFilter = includeInternal ? "" : "AND task_name NOT LIKE '\\_\\_%' ESCAPE '\\'";
-  const row = getDb()
+  const row: unknown = getDb()
     .prepare(
       `SELECT
          COUNT(*) AS total,
@@ -148,15 +156,16 @@ export function getTotals(includeInternal = false): MetricsTotals {
        WHERE status <> 'running' ${internalFilter}`,
     )
     .get();
+  const totals = isRecord(row) ? row : undefined;
   return {
-    total: Number(row?.total) || 0,
-    success: Number(row?.success) || 0,
-    error: Number(row?.error) || 0,
-    skipped: Number((row as { skipped?: number } | undefined)?.skipped) || 0,
-    interrupted: Number((row as { interrupted?: number } | undefined)?.interrupted) || 0,
-    partial: Number(row?.partial) || 0,
-    tokens: Number(row?.tokens) || 0,
-    costUsd: Number(row?.cost_usd) || 0,
+    total: Number(totals?.total) || 0,
+    success: Number(totals?.success) || 0,
+    error: Number(totals?.error) || 0,
+    skipped: Number(totals?.skipped) || 0,
+    interrupted: Number(totals?.interrupted) || 0,
+    partial: Number(totals?.partial) || 0,
+    tokens: Number(totals?.tokens) || 0,
+    costUsd: Number(totals?.cost_usd) || 0,
   };
 }
 
@@ -192,6 +201,6 @@ export function upsertMetricsRow(row: TaskMetricsRow): void {
 
 /** Количество строк метрик. */
 export function countMetrics(): number {
-  const row = getDb().prepare("SELECT COUNT(*) AS count FROM metrics").get();
-  return Number(row?.count) || 0;
+  const row: unknown = getDb().prepare("SELECT COUNT(*) AS count FROM metrics").get();
+  return Number(isRecord(row) ? row.count : 0) || 0;
 }

@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { LOG_DIR } from "../types.js";
 import { redactSecretsInText } from "./secrets.js";
+import { safeStringify } from "../text.js";
 
 /**
  * Машиночитаемые логи запусков (Спринт 22).
@@ -18,18 +19,8 @@ import { redactSecretsInText } from "./secrets.js";
  */
 
 /** События структурированного лога. */
-export type StructuredLogEvent =
-  | "run.started"
-  | "run.finished"
-  | "hook.received"
-  | "matrix.started"
-  | "matrix.advanced"
-  | "matrix.queue_started"
-  | "matrix.cancelled"
-  | "matrix.aggregated"
-  | "matrix.aggregator_started"
-  | "matrix.error"
-  | string;
+// QA-A2.7: литеральные события поглощаются string — оставляем доменный тип.
+export type StructuredLogEvent = string;
 
 export interface StructuredLogRecord {
   /** Время записи (ISO). */
@@ -252,28 +243,33 @@ export function readStructuredLogs(
   const records: StructuredLogRecord[] = [];
   let malformed = 0;
 
+  function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+  }
+
   // Архив старше текущего файла; порядок не важен, ниже сортируем по ts.
   for (const file of [STRUCTURED_LOG_ARCHIVE, STRUCTURED_LOG_FILE]) {
     for (const line of readLines(file)) {
-      let parsed: any;
+      // QA-A2.7: JSONL — внешние данные, сужаем через проверку формы.
+      let parsed: Record<string, unknown> | null = null;
       try {
-        parsed = JSON.parse(line);
+        const value: unknown = JSON.parse(line);
+        if (isRecord(value)) parsed = value;
       } catch {
-        malformed += 1;
-        continue;
+        // malformed считается ниже
       }
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      if (parsed === null) {
         malformed += 1;
         continue;
       }
       if (typeof parsed.ts !== "string") parsed.ts = "";
       if (typeof parsed.event !== "string") parsed.event = "";
-      if (task && String(parsed.task ?? "").toLowerCase() !== task) continue;
-      if (status && String(parsed.status ?? "").toLowerCase() !== status) continue;
+      if (task && safeStringify(parsed.task ?? "").toLowerCase() !== task) continue;
+      if (status && safeStringify(parsed.status ?? "").toLowerCase() !== status) continue;
       if (event && String(parsed.event).toLowerCase() !== event) continue;
       if (since && String(parsed.ts) < since) continue;
       if (until && String(parsed.ts) > until) continue;
-      records.push(parsed as StructuredLogRecord);
+      records.push(parsed as unknown as StructuredLogRecord);
     }
   }
 

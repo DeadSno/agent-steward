@@ -627,8 +627,7 @@ export function removeMatrixChildren(parentName: string): string[] {
   const all = listTasks();
   for (const definition of all) {
     const isClone =
-      definition.matrixParentId &&
-      definition.matrixParentId.trim().toLowerCase() === parentName.trim().toLowerCase();
+      definition.matrixParentId?.trim().toLowerCase() === parentName.trim().toLowerCase();
     const isAggregator =
       definition.name.trim().toLowerCase() === matrixCompleteName(parentName).toLowerCase();
     if (isClone || isAggregator) removed.push(definition.name);

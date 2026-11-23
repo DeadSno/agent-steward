@@ -108,7 +108,7 @@ export function runStepOnce<T>(
         attempt: existing.attempt,
       };
     }
-    if (existing && existing.status === "running") {
+    if (existing?.status === "running") {
       throw new StepInFlightError(runId, key);
     }
     if (!existing) {
@@ -159,7 +159,7 @@ export async function runStepOnceAsync<T>(
         attempt: existing.attempt,
       };
     }
-    if (existing && existing.status === "running") {
+    if (existing?.status === "running") {
       throw new StepInFlightError(runId, key);
     }
     if (!existing) {

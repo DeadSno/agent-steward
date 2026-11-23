@@ -1617,7 +1617,7 @@ export function annotateHistoryWithSnapshotPolicy<
   tasks: readonly SnapshotTaskLike[],
   env: NodeJS.ProcessEnv = process.env,
   exists?: (file: string) => boolean,
-): Array<T & { preFlightReason: string; gateSnapshotRequired: boolean }> {
+): (T & { preFlightReason: string; gateSnapshotRequired: boolean })[] {
   const byName = new Map<string, SnapshotTaskLike>();
   for (const task of tasks) {
     byName.set(String(task.name ?? "").toLowerCase(), task);

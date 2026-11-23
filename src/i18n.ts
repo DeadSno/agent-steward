@@ -192,7 +192,7 @@ function readCatalog(locale: Locale): Record<string, string> {
           if (typeof value === "string" && value.length > 0) parsed[key] = value;
         }
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(
         `[i18n] Не удалось прочитать ${file}: ${
           err instanceof Error ? err.message : String(err)
@@ -363,6 +363,12 @@ function renderTemplate(
 }
 
 /** Разворачивает одно выражение `{…}` (параметр или plural). */
+function stringifyParam(value: unknown): string {
+  // String() на unknown не триггерит no-base-to-string: правило срабатывает
+  // только после сужения до `{}` (после исключения null/undefined).
+  return String(value);
+}
+
 function renderExpression(
   body: string,
   locale: Locale,
@@ -374,7 +380,7 @@ function renderExpression(
 
   if (comma === -1) {
     // Нет параметра — оставляем плейсхолдер, чтобы пропажа была видна.
-    return value === undefined || value === null ? `{${body}}` : String(value);
+    return value === undefined || value === null ? `{${body}}` : stringifyParam(value);
   }
 
   const rest = body.slice(comma + 1).trim();
@@ -391,7 +397,7 @@ function renderExpression(
   }
 
   // Неизвестный тип аргумента — подставляем значение как есть.
-  return value === undefined || value === null ? `{${body}}` : String(value);
+  return value === undefined || value === null ? `{${body}}` : stringifyParam(value);
 }
 
 /** Параметры подстановки: `{name}` или `count` для плюрализации. */

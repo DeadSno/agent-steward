@@ -657,7 +657,7 @@ export async function simulatePipeline(taskName: string): Promise<DryRunReport> 
     const triggerType = def.triggerType ?? "cron";
     const trigger = triggerType as DryRunTaskItem["trigger"];
     const entryMode: DryRunTaskItem["entryMode"] =
-      lower === rootLower || (matrixParent && matrixParent.toLowerCase() === rootLower)
+      lower === rootLower || matrixParent?.toLowerCase() === rootLower
         ? "manual"
         : "dag";
 

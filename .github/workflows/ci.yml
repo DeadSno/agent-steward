@@ -47,13 +47,13 @@ jobs:
         run: npm run test:parallel
 
       # P3-2: ESLint — информационный шаг: выход 0 даже при warnings (PL-22).
-      # Реальный гейт — следующий шаг lint:baseline.
+      # QA-A2.7: эпик типизации закрыт, реальный гейт — строгий линтер ниже.
       - name: Lint (informational)
         run: npm run lint
 
-      # QA-A2.0: новый warning ломает CI, пока эпик типизации не закрыт (A2.7).
-      - name: ESLint baseline (no new warnings)
-        run: npm run lint:baseline
+      # QA-A2.7: baseline-гейт снят — в src/ 0 warning / 0 error, любой warning ломает CI.
+      - name: ESLint strict (zero warnings)
+        run: npm run lint:strict
 
       - name: Test in English locale
         if: matrix.os == 'ubuntu-latest'

@@ -1,6 +1,5 @@
 import {
   finishRun,
-  getRun,
   listRunSteps,
   reopenRun,
   startRun,

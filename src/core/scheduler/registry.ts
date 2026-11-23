@@ -4,6 +4,11 @@ import { getProfileDir, getProfileName } from "../../profiles.js";
 import { LockManager, withLockWait } from "../lock.js";
 import type { TriggerType } from "./types.js";
 
+/** QA-A2.7: записи реестра приходят из JSON — сужаем unknown до записи. */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 /**
  * Запись реестра задач POSIX-бэкендов.
  *
@@ -87,9 +92,12 @@ export class TaskRegistry {
     if (!Array.isArray(parsed)) {
       return this.quarantineCorrupt(new Error("expected an array of registry entries"));
     }
-    return parsed.filter(
+    const entries: unknown[] = parsed as unknown[];
+    return entries.filter(
       (entry): entry is RegistryEntry =>
-        entry && typeof entry.name === "string" && typeof entry.command === "string",
+        isRecord(entry) &&
+        typeof entry.name === "string" &&
+        typeof entry.command === "string",
     );
   }
 

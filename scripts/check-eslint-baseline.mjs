@@ -11,7 +11,8 @@
  * Исторический старт эпика QA-A2 — 826 предупреждений; он лежит в поле
  * epicStartWarnings как справка. Гейт сравнивает с актуальными числами:
  * после QA-A2.1 их 543, и каждая следующая подзадача (A2.2-A2.5) опускает
- * планку. Гейт снимается в QA-A2.7.
+ * планку. QA-A2.7 закрыл эпик с 0 warning / 0 error: гейт снят, CI использует
+ * npm run lint:strict. Скрипт оставлен для истории и проверки регрессий.
  *
  * Запуск: node scripts/check-eslint-baseline.mjs [--update]
  */
@@ -96,8 +97,9 @@ export function makeBaseline(current) {
     task: "QA-A2.0",
     epicStartWarnings: EPIC_START_WARNINGS,
     note:
-      "Ratchet: новое предупреждение — красный CI. После уменьшения счётчика " +
-      "обновить через npm run lint:baseline:update. Гейт снимается в QA-A2.7.",
+      "QA-A2.7: эпик типизации закрыт — 0 warning / 0 error в src/. " +
+      "Baseline-гейт снят: CI использует npm run lint:strict. " +
+      "Профиль сохранён нулевым для истории.",
     totals: { warnings: current.warnings, errors: current.errors },
     byRule: current.byRule,
     byFile: current.byFile,

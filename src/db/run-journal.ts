@@ -264,7 +264,7 @@ export function listRunningSteps(runId?: string): RunStepRecord[] {
   const steps: RunStepRecord[] = [];
   for (const row of rows) {
     const step = getStep(String(row.run_id), String(row.step_name));
-    if (step && step.status === "running") steps.push(step);
+    if (step?.status === "running") steps.push(step);
   }
   return steps;
 }

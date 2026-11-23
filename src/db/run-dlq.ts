@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { getDb, withTransaction } from "./index.js";
+import { safeStringify } from "../text.js";
 import {
   getRun,
   getStep,
@@ -37,7 +38,7 @@ export interface DlqEntry {
   runId: string;
   stepName: string;
   status: DlqStatus;
-  reason: DlqReason | string | null;
+  reason: string | null;
   error: string | null;
   /** Номер попытки на момент постановки в очередь. */
   attempts: number;
@@ -89,17 +90,17 @@ function normalizeLimit(limit: number | undefined, fallback: number): number {
 
 function dlqRowToEntry(row: Record<string, unknown>): DlqEntry {
   return {
-    id: String(row.id),
-    runId: String(row.run_id),
-    stepName: String(row.step_name),
-    status: String(row.status) as DlqStatus,
-    reason: row.reason == null ? null : String(row.reason),
-    error: row.error == null ? null : String(row.error),
+    id: safeStringify(row.id),
+    runId: safeStringify(row.run_id),
+    stepName: safeStringify(row.step_name),
+    status: safeStringify(row.status) as DlqStatus,
+    reason: row.reason == null ? null : safeStringify(row.reason),
+    error: row.error == null ? null : safeStringify(row.error),
     attempts: Number(row.attempts) || 0,
-    createdAt: String(row.created_at),
-    updatedAt: String(row.updated_at),
-    resolvedAt: row.resolved_at == null ? null : String(row.resolved_at),
-    resolution: row.resolution == null ? null : String(row.resolution),
+    createdAt: safeStringify(row.created_at),
+    updatedAt: safeStringify(row.updated_at),
+    resolvedAt: row.resolved_at == null ? null : safeStringify(row.resolved_at),
+    resolution: row.resolution == null ? null : safeStringify(row.resolution),
   };
 }
 
@@ -114,10 +115,10 @@ export function isDeadLetterStep(
 
 /** Открытая запись DLQ на конкретный шаг (или undefined). */
 export function findOpenDeadLetter(runId: string, stepName: string): DlqEntry | undefined {
-  const row = getDb()
+  const row: unknown = getDb()
     .prepare("SELECT * FROM run_dlq WHERE run_id = ? AND step_name = ? AND status = 'open' LIMIT 1")
     .get(runId, stepName);
-  return row ? dlqRowToEntry(row) : undefined;
+  return row ? dlqRowToEntry(row as Record<string, unknown>) : undefined;
 }
 
 /**
@@ -200,8 +201,8 @@ export function scanDeadLetters(options: ScanOptions = {}): DlqEntry[] {
 }
 
 export function getDeadLetter(id: string): DlqEntry | undefined {
-  const row = getDb().prepare("SELECT * FROM run_dlq WHERE id = ?").get(id);
-  return row ? dlqRowToEntry(row) : undefined;
+  const row: unknown = getDb().prepare("SELECT * FROM run_dlq WHERE id = ?").get(id);
+  return row ? dlqRowToEntry(row as Record<string, unknown>) : undefined;
 }
 
 /** Записи очереди, новые сверху. По умолчанию — только открытые. */
@@ -209,21 +210,22 @@ export function listDeadLetters(options: ListDlqOptions = {}): DlqEntry[] {
   const limit = normalizeLimit(options.limit, 100);
   const status = options.status ?? "open";
   if (status === "all") {
-    return getDb()
+    const rows: unknown[] = getDb()
       .prepare("SELECT * FROM run_dlq ORDER BY created_at DESC, rowid DESC LIMIT ?")
-      .all(limit)
-      .map((row) => dlqRowToEntry(row));
+      .all(limit);
+    return rows.map((row) => dlqRowToEntry(row as Record<string, unknown>));
   }
-  return getDb()
+  const rows: unknown[] = getDb()
     .prepare("SELECT * FROM run_dlq WHERE status = ? ORDER BY created_at DESC, rowid DESC LIMIT ?")
-    .all(status, limit)
-    .map((row) => dlqRowToEntry(row));
+    .all(status, limit);
+  return rows.map((row) => dlqRowToEntry(row as Record<string, unknown>));
 }
 
 /** Сколько записей в статусе (по умолчанию открытых). */
 export function countDeadLetters(status: DlqStatus = "open"): number {
-  const row = getDb().prepare("SELECT COUNT(*) AS count FROM run_dlq WHERE status = ?").get(status);
-  return Number(row?.count) || 0;
+  const row: unknown = getDb().prepare("SELECT COUNT(*) AS count FROM run_dlq WHERE status = ?").get(status);
+  const count = typeof row === "object" && row !== null ? (row as { count?: unknown }).count : undefined;
+  return Number(count) || 0;
 }
 
 /**
@@ -303,7 +305,7 @@ export function discardDeadLetter(id: string, resolution = "discarded"): DlqEntr
 
 /** Готова ли схема к работе с DLQ (таблица из миграции v5). */
 export function isDlqReady(): boolean {
-  const row = getDb()
+  const row: unknown = getDb()
     .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'run_dlq'")
     .get();
   return Boolean(row);

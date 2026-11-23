@@ -543,7 +543,7 @@ export interface OpenCodeInvocation {
 }
 
 export function createOpenCodeExecutor(
-  invoke: (input: OpenCodeInvocation) => Promise<unknown> | unknown,
+  invoke: (input: OpenCodeInvocation) => unknown,
   id = "opencode",
 ): StepExecutor {
   return {
@@ -588,7 +588,7 @@ export class GateRejectedError extends Error {
 
 /** Приводит путь из `git diff --name-only` / `-Files` к одному виду. */
 function normalizeCommitPath(value: unknown): string {
-  return String(value ?? "")
+  return (typeof value === "string" ? value : "")
     .trim()
     .replace(/^"|"$/g, "")
     .replace(/\\/g, "/")

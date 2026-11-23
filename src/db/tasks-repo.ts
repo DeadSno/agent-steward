@@ -1,5 +1,6 @@
 import { getDb } from "./index.js";
 import type { TaskDefinition } from "../task-transfer.js";
+import { safeStringify } from "../text.js";
 
 /**
  * Репозиторий определений задач.
@@ -9,8 +10,12 @@ import type { TaskDefinition } from "../task-transfer.js";
  * и "daily report" — это одна и та же задача.
  */
 
-function normalizeDefinition(raw: any): TaskDefinition {
-  const definition: TaskDefinition = { ...raw };
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function normalizeDefinition(raw: unknown): TaskDefinition {
+  const definition = { ...(isRecord(raw) ? raw : {}) } as unknown as TaskDefinition;
   // Совместимость со старым полем workdir.
   if (
     definition.workingDirectory === undefined &&
@@ -23,8 +28,10 @@ function normalizeDefinition(raw: any): TaskDefinition {
   return definition;
 }
 
-function rowToDefinition(row: any): TaskDefinition {
-  return normalizeDefinition(JSON.parse(String(row.definition_json)));
+function rowToDefinition(row: unknown): TaskDefinition {
+  const json = isRecord(row) ? row.definition_json : undefined;
+  const parsed: unknown = JSON.parse(safeStringify(json));
+  return normalizeDefinition(parsed);
 }
 
 /** Все определения задач (по алфавиту). */
@@ -51,7 +58,7 @@ export function listMatrixClones(parentName: string): TaskDefinition[] {
 
 /** Определение по имени без учёта регистра. */
 export function getTask(name: string): TaskDefinition | undefined {
-  const row = getDb()
+  const row: unknown = getDb()
     .prepare(
       "SELECT definition_json FROM tasks WHERE lower(name) = lower(?) LIMIT 1",
     )
@@ -65,16 +72,20 @@ export function getTask(name: string): TaskDefinition | undefined {
  */
 export function saveTask(definition: TaskDefinition): void {
   const instance = getDb();
-  const existing = instance
+  const existing: unknown = instance
     .prepare(
       "SELECT name, definition_json, created_at FROM tasks WHERE lower(name) = lower(?) LIMIT 1",
     )
     .get(definition.name);
+  const existingRow = isRecord(existing) ? existing : undefined;
 
   let existingCreatedAt: string | undefined;
-  if (existing) {
+  if (existingRow) {
     try {
-      existingCreatedAt = JSON.parse(String(existing.definition_json))?.createdAt;
+      const parsed: unknown = JSON.parse(safeStringify(existingRow.definition_json));
+      existingCreatedAt = isRecord(parsed)
+        ? (parsed.createdAt as string | undefined)
+        : undefined;
     } catch {
       existingCreatedAt = undefined;
     }
@@ -85,7 +96,10 @@ export function saveTask(definition: TaskDefinition): void {
   const workingDirectory =
     rest.workingDirectory?.trim() || workdir?.trim() || undefined;
   const createdAt =
-    definition.createdAt ?? existingCreatedAt ?? existing?.created_at ?? now;
+    definition.createdAt ??
+    existingCreatedAt ??
+    (existingRow?.created_at != null ? safeStringify(existingRow.created_at) : undefined) ??
+    now;
 
   const normalized: TaskDefinition = {
     ...rest,
@@ -102,7 +116,7 @@ export function saveTask(definition: TaskDefinition): void {
       : null;
   const isMatrixParent = normalized.isMatrixParent ? 1 : 0;
 
-  if (existing) {
+  if (existingRow) {
     instance
       .prepare(
         "UPDATE tasks SET name = ?, definition_json = ?, created_at = ?, updated_at = ?, matrix_parent_id = ?, is_matrix_parent = ? WHERE name = ?",
@@ -114,7 +128,7 @@ export function saveTask(definition: TaskDefinition): void {
         now,
         matrixParentId,
         isMatrixParent,
-        existing.name,
+        safeStringify(existingRow.name),
       );
   } else {
     instance
@@ -142,8 +156,8 @@ export function deleteTask(name: string): boolean {
 
 /** Количество задач (для миграции и тестов). */
 export function countTasks(): number {
-  const row = getDb().prepare("SELECT COUNT(*) AS count FROM tasks").get();
-  return Number(row?.count) || 0;
+  const row: unknown = getDb().prepare("SELECT COUNT(*) AS count FROM tasks").get();
+  return Number(isRecord(row) ? row.count : 0) || 0;
 }
 
 /**

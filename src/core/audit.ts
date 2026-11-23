@@ -1,4 +1,5 @@
 import { getDb } from "../db/index.js";
+import { safeStringify } from "../text.js";
 import { redactSecretsInText } from "./secrets.js";
 import {
   resolvePermissions,
@@ -22,7 +23,8 @@ import {
  * записи проглатывается: аудит не должен ломать основную операцию.
  */
 
-export type AuditActor = "mcp" | "gui" | "http" | "system" | string;
+// QA-A2.7: литералы ("mcp"/"gui"/...) поглощаются string — оставляем доменный тип.
+export type AuditActor = string;
 
 export interface AuditEntryInput {
   action: string;
@@ -164,25 +166,32 @@ function maybeCleanup(): void {
   }
 }
 
-function rowToRecord(row: any): AuditRecord {
+// QA-A2.7: строка SQLite — граница внешних данных, сужаем через guard.
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function rowToRecord(row: unknown): AuditRecord {
+  const r: Record<string, unknown> = isRecord(row) ? row : {};
   let details: unknown = null;
-  if (row.details_json) {
+  if (r.details_json) {
     try {
-      details = JSON.parse(String(row.details_json));
+      const parsed: unknown = JSON.parse(safeStringify(r.details_json));
+      details = parsed;
     } catch {
-      details = String(row.details_json);
+      details = safeStringify(r.details_json);
     }
   }
   return {
-    id: Number(row.id),
-    ts: String(row.ts),
-    action: String(row.action),
-    targetType: row.target_type == null ? null : String(row.target_type),
-    target: row.target == null ? null : String(row.target),
-    actor: String(row.actor ?? "system"),
-    source: row.source == null ? null : String(row.source),
+    id: Number(r.id),
+    ts: safeStringify(r.ts),
+    action: safeStringify(r.action),
+    targetType: r.target_type == null ? null : safeStringify(r.target_type),
+    target: r.target == null ? null : safeStringify(r.target),
+    actor: safeStringify(r.actor ?? "system"),
+    source: r.source == null ? null : safeStringify(r.source),
     details,
-    remote: row.remote == null ? null : String(row.remote),
+    remote: r.remote == null ? null : safeStringify(r.remote),
   };
 }
 
@@ -468,13 +477,16 @@ export function readAuditLog(filter: ReadAuditFilter = {}): ReadAuditResult {
   const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
   try {
     const db = getDb();
-    const totalRow = db
+    const totalRow: unknown = db
       .prepare(`SELECT COUNT(*) AS count FROM audit_log ${clause}`)
       .get(...params);
     const rows = db
       .prepare(`SELECT * FROM audit_log ${clause} ORDER BY ts DESC, id DESC LIMIT ?`)
       .all(...params, limit);
-    return { records: rows.map(rowToRecord), total: Number(totalRow?.count) || 0 };
+    return {
+      records: rows.map(rowToRecord),
+      total: isRecord(totalRow) ? Number(totalRow.count) || 0 : 0,
+    };
   } catch (err) {
     try {
       console.warn(
@@ -515,8 +527,8 @@ export function cleanupAuditLog(options: {
       const result = db.prepare("DELETE FROM audit_log WHERE ts < ?").run(cutoff);
       deleted += Number(result.changes) || 0;
     }
-    const countRow = db.prepare("SELECT COUNT(*) AS count FROM audit_log").get();
-    const count = Number(countRow?.count) || 0;
+    const countRow: unknown = db.prepare("SELECT COUNT(*) AS count FROM audit_log").get();
+    const count = isRecord(countRow) ? Number(countRow.count) || 0 : 0;
     if (count > maxRecords) {
       const excess = count - maxRecords;
       const result = db

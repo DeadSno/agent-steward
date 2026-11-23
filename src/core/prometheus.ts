@@ -69,7 +69,7 @@ interface DurationStats {
 }
 
 function emptyDurationStats(): DurationStats {
-  return { buckets: new Array(DURATION_BUCKETS_SECONDS.length).fill(0), sumSeconds: 0, count: 0 };
+  return { buckets: Array.from({ length: DURATION_BUCKETS_SECONDS.length }, () => 0), sumSeconds: 0, count: 0 };
 }
 
 /** Собирает и рендерит снимок метрик. Чистая функция от состояния БД. */

@@ -1,4 +1,5 @@
 import { getDb } from "./index.js";
+import { safeStringify } from "../text.js";
 
 /**
  * Key-value настройки в SQLite (таблица settings).
@@ -6,12 +7,12 @@ import { getDb } from "./index.js";
  */
 
 export function getSetting<T>(key: string, fallback: T): T {
-  const row = getDb()
+  const row: unknown = getDb()
     .prepare("SELECT value_json FROM settings WHERE key = ? LIMIT 1")
     .get(key);
-  if (!row) return fallback;
+  if (typeof row !== "object" || row === null) return fallback;
   try {
-    return JSON.parse(String(row.value_json)) as T;
+    return JSON.parse(safeStringify((row as { value_json?: unknown }).value_json)) as T;
   } catch {
     return fallback;
   }
@@ -47,7 +48,7 @@ export function decrementCounterSetting(key: string, initial: number): number | 
      ON CONFLICT(key) DO NOTHING`,
   ).run(key, JSON.stringify(Math.max(0, Math.floor(initial))));
 
-  const row = db
+  const row: unknown = db
     .prepare(
       `UPDATE settings
           SET value_json = CAST(CAST(value_json AS INTEGER) - 1 AS TEXT)
@@ -57,6 +58,6 @@ export function decrementCounterSetting(key: string, initial: number): number | 
     )
     .get(key);
 
-  if (!row) return null;
-  return Number(row.value);
+  if (typeof row !== "object" || row === null) return null;
+  return Number((row as { value?: unknown }).value);
 }

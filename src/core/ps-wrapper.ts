@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { PLUGIN_DIR, LOG_DIR, LOCK_DIR, WRAPPER_DIR, STALE_LOCK_MAX_AGE_MS, sanitizeName } from "../types.js";
+import { PLUGIN_DIR, LOCK_DIR, WRAPPER_DIR, STALE_LOCK_MAX_AGE_MS, sanitizeName } from "../types.js";
 import type { ScheduleGateSpec } from "./schedule-v2.js";
 import type { TaskGuards } from "./guard.js";
 import { createGateSnapshot } from "./gate-integrity.js";

@@ -97,7 +97,7 @@ async function git(cwd: string, args: string[]): Promise<GitResult> {
  * Работает и для подкаталога, и для уже связанного worktree.
  */
 export async function isGitRepository(dir: string): Promise<string | null> {
-  if (!dir || !dir.trim()) return null;
+  if (!dir?.trim()) return null;
   const result = await git(dir, ["rev-parse", "--show-toplevel"]);
   if (!result.ok || !result.stdout) return null;
   return result.stdout;
@@ -447,7 +447,7 @@ export async function removeRunWorktree(
   await git(repoRoot, ["worktree", "prune", "--expire=now"]);
 
   // Ветка одноразовая: после удаления рабочей копии она больше не нужна.
-  if (options.deleteBranch !== false && branch && branch.startsWith(BRANCH_PREFIX)) {
+  if (options.deleteBranch !== false && branch?.startsWith(BRANCH_PREFIX)) {
     await git(repoRoot, ["branch", "-D", branch]);
   }
 

@@ -515,7 +515,7 @@ export function selectDependentsToTrigger(
 
       for (const requiredName of requiredNames) {
         const record = latestByTask.get(key(requiredName));
-        if (!record || record.status !== "success") {
+        if (record?.status !== "success") {
           allSuccess = false;
           break;
         }
@@ -877,7 +877,7 @@ export async function cleanupWindowsOneShotTask(
 
   const getDefinition = deps.getDefinition ?? getTask;
   const definition = getDefinition(taskName);
-  if (!definition || definition.triggerType !== "once") return false;
+  if (definition?.triggerType !== "once") return false;
 
   const deleteTask =
     deps.deleteTask ??
@@ -942,7 +942,7 @@ async function handleCompletion(
     const nameKey = (name: string): string => name.trim().toLowerCase();
 
     // Успешный запуск сбрасывает счётчик повторов.
-    await deleteSetting(retryStateKey(taskName));
+    deleteSetting(retryStateKey(taskName));
     if (chainTarget) {
       const key = nameKey(chainTarget);
       triggered.add(key);

@@ -151,7 +151,7 @@ function contentFromBody(body: unknown, protocol: "ollama" | "openai"): string {
   if (protocol === "openai" && isRecord(body)) {
     const choices = body.choices;
     if (Array.isArray(choices) && choices.length > 0) {
-      const first = choices[0];
+      const first: unknown = choices[0];
       if (isRecord(first) && isRecord(first.message)) {
         const content = first.message.content;
         if (typeof content === "string") return content;

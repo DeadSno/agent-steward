@@ -83,7 +83,7 @@ const defaultRunner: GitRunner = (cwd, args) =>
       },
       (err, stdout) => {
         if (err) {
-          reject(err instanceof Error ? err : new Error(String(err)));
+          reject(err instanceof Error ? err : new Error("git exec failed"));
           return;
         }
         resolve(String(stdout ?? ""));

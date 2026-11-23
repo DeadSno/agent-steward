@@ -2,6 +2,7 @@ import type { TriageDecision } from "./triage-chain.js";
 import type { TriageInput } from "./triage.js";
 import type { TriageShadowSettings } from "../settings.js";
 import { isShadowActive } from "../settings.js";
+import { safeStringify } from "../text.js";
 import { readAuditLog, recordAudit } from "./audit.js";
 import { getDb } from "../db/index.js";
 
@@ -61,10 +62,13 @@ function truncate(value: string | null | undefined): string | null {
     : text;
 }
 
-function detailsOf(record: { details: unknown }): Record<string, any> {
-  return record.details && typeof record.details === "object"
-    ? (record.details as Record<string, any>)
-    : {};
+/** QA-A2.7: детали приходят из JSON-колонки аудита — сужаем до записи. */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function detailsOf(record: { details: unknown }): Record<string, unknown> {
+  return isRecord(record.details) ? record.details : {};
 }
 
 /**
@@ -138,20 +142,20 @@ export function readTriageDecisions(
     return {
       id: record.id,
       taskName: record.target ?? "",
-      status: String(details.status ?? ""),
+      status: safeStringify(details.status ?? ""),
       action: details.action === "skip" ? "skip" : "notify",
       source: (details.source ?? "off") as TriageDecision["source"],
-      ruleId: details.ruleId ?? undefined,
-      failure: details.failure ?? undefined,
+      ruleId: typeof details.ruleId === "string" ? details.ruleId : undefined,
+      failure: details.failure as TriageDecision["failure"] | undefined,
       confidence:
         typeof details.confidence === "number" ? details.confidence : undefined,
       latencyMs: Number(details.latencyMs) || 0,
       attempts: Number(details.attempts) || 0,
       shadow: details.shadow === true,
       suppressed: details.suppressed === true,
-      category: details.category ?? undefined,
-      severity: details.severity ?? undefined,
-      reason: details.reason ?? undefined,
+      category: typeof details.category === "string" ? details.category : undefined,
+      severity: typeof details.severity === "string" ? details.severity : undefined,
+      reason: typeof details.reason === "string" ? details.reason : undefined,
       async: details.async === true,
       ts: record.ts,
     };

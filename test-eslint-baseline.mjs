@@ -1,5 +1,6 @@
 /**
- * QA-A2.0 — точечный тест baseline-гейта ESLint.
+ * QA-A2.7 — точечный тест снятого baseline-гейта ESLint.
+ * Baseline сохранён нулевым для истории; CI проверяет npm run lint:strict.
  * Запуск: node test-eslint-baseline.mjs (или npm run test:eslint-baseline).
  */
 import assert from "node:assert/strict";
@@ -37,9 +38,9 @@ check("QA-A2.0: старт эпика зафиксирован как 826", () =
   assert.equal(EPIC_START_WARNINGS, 826);
 });
 
-check("baseline: счётчики согласованы между всеми срезами", () => {
+check("QA-A2.7: baseline нулевой и согласован между всеми срезами", () => {
   assert.equal(baseline.totals.errors, 0);
-  assert.ok(baseline.totals.warnings > 0);
+  assert.equal(baseline.totals.warnings, 0);
   const sum = (obj) => Object.values(obj).reduce((a, b) => a + b, 0);
   assert.equal(sum(baseline.byRule), baseline.totals.warnings);
   assert.equal(sum(baseline.byFile), baseline.totals.warnings);
@@ -47,6 +48,9 @@ check("baseline: счётчики согласованы между всеми �
     Object.values(baseline.byFileRule).reduce((a, rules) => a + sum(rules), 0),
     baseline.totals.warnings
   );
+  assert.deepEqual(baseline.byRule, {});
+  assert.deepEqual(baseline.byFile, {});
+  assert.deepEqual(baseline.byFileRule, {});
 });
 
 check("baseline: пути относительные и без обратных слешей", () => {
@@ -118,12 +122,14 @@ check("makeBaseline: сохраняет исторический старт и �
   assert.equal(doc.totals.errors, 0);
 });
 
-check("CI: шаг проверки baseline подключён после Lint", () => {
-  assert.ok(ci.includes("npm run lint:baseline"));
-  assert.ok(ci.indexOf("npm run lint:baseline") > ci.indexOf("npm run lint\n"));
+check("QA-A2.7: CI использует lint:strict после Lint, baseline-гейт убран", () => {
+  assert.ok(ci.includes("npm run lint:strict"));
+  assert.ok(!ci.includes("npm run lint:baseline"));
+  assert.ok(ci.indexOf("npm run lint:strict") > ci.indexOf("npm run lint\n"));
 });
 
-check("package.json: скрипты baseline и тест подключены в npm test", () => {
+check("package.json: скрипт lint:strict и тест подключены в npm test", () => {
+  assert.equal(pkg.scripts["lint:strict"], "eslint src --max-warnings=0");
   assert.equal(pkg.scripts["lint:baseline"], "node scripts/check-eslint-baseline.mjs");
   assert.equal(pkg.scripts["lint:baseline:update"], "node scripts/check-eslint-baseline.mjs --update");
   assert.equal(pkg.scripts["test:eslint-baseline"], "node test-eslint-baseline.mjs");

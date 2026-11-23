@@ -1,11 +1,18 @@
 import { randomUUID } from "node:crypto";
 import { getDb } from "./index.js";
 import type { TaskTemplate } from "../templates.js";
+import { safeStringify } from "../text.js";
 
 /** Репозиторий пользовательских шаблонов задач. */
 
-function rowToTemplate(row: any): TaskTemplate {
-  return JSON.parse(String(row.definition_json)) as TaskTemplate;
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function rowToTemplate(row: unknown): TaskTemplate {
+  const json = isRecord(row) ? row.definition_json : undefined;
+  const parsed: unknown = JSON.parse(safeStringify(json));
+  return parsed as TaskTemplate;
 }
 
 /** Все шаблоны (по имени). */
@@ -28,7 +35,7 @@ export function listTemplates(): TaskTemplate[] {
 
 /** Шаблон по id. */
 export function getTemplate(id: string): TaskTemplate | undefined {
-  const row = getDb()
+  const row: unknown = getDb()
     .prepare("SELECT definition_json FROM templates WHERE id = ? LIMIT 1")
     .get(id);
   return row ? rowToTemplate(row) : undefined;
@@ -74,6 +81,7 @@ export function deleteTemplate(idOrName: string): void {
 
 /** Количество шаблонов (для миграции и тестов). */
 export function countTemplates(): number {
-  const row = getDb().prepare("SELECT COUNT(*) AS count FROM templates").get();
-  return Number(row?.count) || 0;
+  const row: unknown = getDb().prepare("SELECT COUNT(*) AS count FROM templates").get();
+  const count = isRecord(row) ? row.count : undefined;
+  return Number(count) || 0;
 }

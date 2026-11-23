@@ -9,6 +9,7 @@ import {
   type SavingsRecord,
   type SavingsReport,
 } from "./savings.js";
+import { safeStringify } from "../text.js";
 
 /** Оценка стоимости, если запись истории не содержит costUsd. */
 export const ESTIMATED_COST_PER_1K_TOKENS_USD = 0.003;
@@ -402,7 +403,7 @@ export function buildAnalytics(
 /** Экранирование значения для CSV (RFC 4180). */
 export function csvCell(value: unknown): string {
   if (value === null || value === undefined) return "";
-  const text = String(value);
+  const text = safeStringify(value);
   if (/[",\r\n;]/.test(text)) return `"${text.replace(/"/g, '""')}"`;
   return text;
 }

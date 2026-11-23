@@ -313,17 +313,6 @@ export function taskFullName(name: string): string {
   return WINDOWS_TASK_PREFIX + name;
 }
 
-/** Убирает папку плагина (новую или старую) из полного имени задачи. */
-function shortTaskName(fullName: string): string {
-  if (fullName.startsWith(WINDOWS_TASK_PREFIX)) {
-    return fullName.slice(WINDOWS_TASK_PREFIX.length);
-  }
-  if (fullName.startsWith(LEGACY_WINDOWS_TASK_PREFIX)) {
-    return fullName.slice(LEGACY_WINDOWS_TASK_PREFIX.length);
-  }
-  return fullName;
-}
-
 /**
  * Признак того, что schtasks не нашёл задачу (локаль-независимый набор фраз).
  * Используется для fallback на старую папку windows-scheduler.
@@ -759,7 +748,7 @@ function parseListOutput(output: string): ScheduledTaskInfo[] {
       .filter(Boolean);
     if (lines.length === 0) continue;
 
-    const task: any = {};
+    const task: Record<string, string> = {};
     let currentKey: string | null = null;
     let currentValue: string[] = [];
 
@@ -782,14 +771,15 @@ function parseListOutput(output: string): ScheduledTaskInfo[] {
       setTaskField(task, currentKey, currentValue.join(" ").trim());
     }
 
-    tasks.push(task);
+    // QA-A2.7: schtasks печатает поля как строки; отсутствующие поля остаются undefined.
+    tasks.push(task as unknown as ScheduledTaskInfo);
   }
 
   return tasks;
 }
 
 /** Сохраняет поле в объект задачи, преобразуя ключи schtasks в camelCase. */
-export function setTaskField(task: any, key: string, value: string): void {
+export function setTaskField(task: Record<string, string>, key: string, value: string): void {
   const keyLower = key.toLowerCase();
 
   const map: Record<string, string> = {

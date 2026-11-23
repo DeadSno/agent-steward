@@ -117,14 +117,22 @@ function assertMaxSteps(maxSteps: number): void {
   }
 }
 
-function normalizeSteps(raw: readonly MissionStep[], maxSteps: number): MissionStep[] {
+// QA-A2.7: вывод модели — внешние данные, сужаем через guard.
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function normalizeSteps(raw: unknown, maxSteps: number): MissionStep[] {
   if (!Array.isArray(raw) || raw.length === 0) {
     throw new Error("Декомпозер вернул пустой план");
   }
   const steps: MissionStep[] = [];
   for (const item of raw.slice(0, maxSteps)) {
-    const stepName = typeof item?.stepName === "string" ? item.stepName.trim() : "";
-    const taskType = typeof item?.taskType === "string" ? normalizeTaskType(item.taskType) : "";
+    if (!isRecord(item)) {
+      throw new Error("Декомпозер вернул шаг без имени или типа задачи");
+    }
+    const stepName = typeof item.stepName === "string" ? item.stepName.trim() : "";
+    const taskType = typeof item.taskType === "string" ? normalizeTaskType(item.taskType) : "";
     if (!stepName || !taskType) {
       throw new Error("Декомпозер вернул шаг без имени или типа задачи");
     }

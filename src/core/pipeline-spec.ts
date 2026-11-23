@@ -13,6 +13,7 @@ import {
   parseCron,
   validateLaunchWindow,
 } from "./schedule-v2.js";
+import { safeStringify } from "../text.js";
 import { validateModelId, validateTaskName } from "../types.js";
 import { normalizeTaskGuards, type TaskGuards } from "./guard.js";
 
@@ -402,7 +403,7 @@ export function validatePipelineSpec(input: unknown): PipelineValidationResult {
             return;
           }
           seen.add(key);
-          if (stepId && key === stepId.toLowerCase()) {
+          if (stepId?.toLowerCase() === key) {
             err(`${path}.needs[${needIndex}]`, "Шаг не может зависеть от самого себя.");
             return;
           }
@@ -468,7 +469,7 @@ export function validatePipelineSpec(input: unknown): PipelineValidationResult {
         err(`${path}.activeDays`, "activeDays — массив целых чисел 0…6 (0 = воскресенье).");
       }
     }
-    if (raw.windowPolicy !== undefined && !WINDOW_POLICIES.has(String(raw.windowPolicy))) {
+    if (raw.windowPolicy !== undefined && !WINDOW_POLICIES.has(safeStringify(raw.windowPolicy))) {
       err(`${path}.windowPolicy`, "windowPolicy: skip | postpone | run.");
     }
   });
@@ -507,12 +508,12 @@ function validateDefaults(
     validateCron(defaults.schedule, "defaults.schedule", err);
   }
   if (defaults.trigger !== undefined) {
-    if (!TRIGGERS.has(String(defaults.trigger))) {
+    if (!TRIGGERS.has(safeStringify(defaults.trigger))) {
       err("defaults.trigger", "trigger: cron | file | git | mcp-event | once | dag.");
     } else if (defaults.trigger === "dag" || defaults.trigger === "once") {
       warn(
         "defaults.trigger",
-        `trigger: ${String(defaults.trigger)} в defaults применяется ко всем шагам — обычно его задают на шаге.`,
+        `trigger: ${safeStringify(defaults.trigger)} в defaults применяется ко всем шагам — обычно его задают на шаге.`,
       );
     }
   }
@@ -706,13 +707,13 @@ function validateMatrix(
       seen.add(key);
     });
   }
-  if (value.strategy !== undefined && !MATRIX_STRATEGIES.has(String(value.strategy))) {
+  if (value.strategy !== undefined && !MATRIX_STRATEGIES.has(safeStringify(value.strategy))) {
     err(`${path}.strategy`, "strategy: parallel | sequential.");
   }
-  if (value.failureMode !== undefined && !MATRIX_FAILURE_MODES.has(String(value.failureMode))) {
+  if (value.failureMode !== undefined && !MATRIX_FAILURE_MODES.has(safeStringify(value.failureMode))) {
     err(`${path}.failureMode`, "failureMode: continue | stop.");
   }
-  if (value.aggregation !== undefined && !MATRIX_AGGREGATIONS.has(String(value.aggregation))) {
+  if (value.aggregation !== undefined && !MATRIX_AGGREGATIONS.has(safeStringify(value.aggregation))) {
     err(`${path}.aggregation`, "aggregation: summary | per-task.");
   }
   validateOptionalInteger(value.concurrency, `${path}.concurrency`, 1, undefined, err);

@@ -112,8 +112,8 @@ export async function writeSessionStateFile(
  */
 export async function rotateSessionIfNeeded(taskName: string): Promise<void> {
   try {
-    const def = await getTask(taskName);
-    if (!def || def.session !== "reuse") return;
+    const def = getTask(taskName);
+    if (def?.session !== "reuse") return;
 
     const maxRuns = def.sessionMaxRuns ?? 0;
     const count = (def.sessionRunCount ?? 0) + 1;
@@ -143,7 +143,7 @@ export async function rotateSessionIfNeeded(taskName: string): Promise<void> {
           : "сессия удалена";
 
       const newSessionId = generateSessionId();
-      await saveTask({
+      saveTask({
         ...def,
         sessionId: newSessionId,
         sessionRunCount: 0,
@@ -155,7 +155,7 @@ export async function rotateSessionIfNeeded(taskName: string): Promise<void> {
         reason: `maxRuns=${maxRuns} достигнут; ${rotationNote}, создана новая, счётчик сброшен`,
       });
     } else {
-      await saveTask({ ...def, sessionRunCount: count });
+      saveTask({ ...def, sessionRunCount: count });
     }
   } catch (error) {
     console.warn(`[session] Ротация сессии задачи "${taskName}" не выполнена:`, error);

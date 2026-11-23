@@ -8,13 +8,7 @@ import {
   buildAnalytics,
   type AnalyticsRecord,
   type AnalyticsReport,
-  type BuildAnalyticsOptions,
 } from "./analytics.js";
-import {
-  computeSavings,
-  type SavingsRecord,
-  type SavingsReport,
-} from "./savings.js";
 import { t } from "../i18n.js";
 
 // ==================== Типы ====================
@@ -167,7 +161,7 @@ export interface SelfAnalysisOptions {
 
 /** Рассчитывает общий балл здоровья системы. */
 export function calculateHealthScore(report: AnalyticsReport): HealthScore {
-  const { totals, tasks, errors } = report;
+  const { totals, errors } = report;
 
   // Реальные метрики (то, что видит пользователь в self_analysis).
   const realAvgDurationMs = totals.avgDurationMs;
@@ -258,9 +252,7 @@ export function detectAnomalies(
     byTask.get(key)!.push(record);
   }
 
-  for (const [taskKey, taskRecords] of byTask) {
-    const taskName = taskRecords[0]?.taskName || taskKey;
-
+  for (const taskRecords of byTask.values()) {
     // 1. Всплеск ошибок
     const errorSpike = detectErrorSpike(taskRecords, windowDays);
     if (errorSpike) anomalies.push(errorSpike);
@@ -422,7 +414,6 @@ function detectUnusualPattern(records: AnalyticsRecord[]): Anomaly | null {
   // Проверяем паттерн: все подряд ошибки или все подряд успехи
   const recent = records.slice(0, 5);
   const allErrors = recent.every(r => r.status === "error");
-  const allSuccess = recent.every(r => r.status === "success");
 
   if (allErrors) {
     return {
@@ -466,7 +457,8 @@ function detectStalledRun(records: AnalyticsRecord[], now: Date): Anomaly | null
       metadata: {
         hoursRunning,
         startedAt: running.startedAt,
-        taskId: (running as any).id,
+        // QA-A2.7: поле id есть не у всех AnalyticsRecord — сохраняем прежнюю семантику undefined.
+        taskId: (running as AnalyticsRecord & { id?: number }).id,
       },
     };
   }
@@ -478,10 +470,9 @@ function detectStalledRun(records: AnalyticsRecord[], now: Date): Anomaly | null
 /** Анализирует тренды метрик. */
 export function analyzeTrends(
   records: AnalyticsRecord[],
-  options: SelfAnalysisOptions = {},
+  _options: SelfAnalysisOptions = {},
 ): Trend[] {
   const trends: Trend[] = [];
-  const windowDays = options.days ?? 14;
 
   // Разделяем на периоды
   const half = Math.floor(records.length / 2);

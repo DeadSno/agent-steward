@@ -45,8 +45,6 @@ Legacy: `opencode-windows-scheduler@1.5.8`.
 
 **Подзадачи:**
 
-- [ ] QA-A2.7 Финальная верификация: `npm run lint` → 0 ошибок и 0 предупреждений, `npm run build`, `npm test` зелёные; снять baseline-гейт, закрыть эпик.
-
 # 2. Задачи согласно архитектуре (Execution model)
 
 agent-steward — execution engine с опциональной регистрацией триггеров. Четыре входа ведут в один путь исполнения; планировщик ОС — только полоса A (cron/once), а не центральный маршрут. Оркестрация (цепочки, DAG, ретраи, матрицы, эскалации) выполняется ядром и рекордером прямыми запусками обёрток.
@@ -198,6 +196,12 @@ agent-steward — execution engine с опциональной регистра�
 - [ ] PL-65 Quality Gate ARCH-7 не включал `test-mission-run.mjs`, поэтому регрессия ARCH-7.2 (обычный ad-hoc-запуск R2 блокировался без одобрения, `test-mission-run.mjs` падал) прошла незамеченной и была найдена только итоговой проверкой: `qualityGate` задачи ARCH-7 и `test-mission-run.mjs` — P1. Действие: требовать в `dry_run`/`qualityGate` полного набора сюит, затронутых изменёнными модулями (`src/core/execution.ts` → `test-mission-run.mjs`, `test-execution-pipeline.mjs`, `test-execution-hardening.mjs`), и добавить проверку покрытия в `test-dry-run.mjs`.
 
 - [ ] PL-66 Ни один из Quality Gate ARCH-задач не включал `npm run lint`/`lint:baseline`, поэтому error `@typescript-eslint/array-type` в `src/db/capability-repo.ts:635` (Agents ARCH-3) дошёл до GitHub Actions: CI run #312 на `d9e7e8d` — Build и Test зелёные на всех 6 матрицах, но шаг «Lint (informational)» упал везде, а «ESLint baseline» был пропущен — P1. Действие: добавить `npm run lint && npm run lint:baseline` в обязательные проверки `qualityGate` и в подсказки `dry_run`; предупреждать о пропущенной линтер-проверке; регрессия в `test-dry-run.mjs`.
+
+- [ ] PL-67 `get_task_logs` не находит лог по короткому/префиксному имени задачи: `get_task_logs({name: 'ARCH-7'})` отдаёт «Лог задачи ... не найден по пути ...\arch-7.log», хотя реальный файл — `arch-7-approval-queue.log`; вызов с полным именем `ARCH-7 - Approval queue` работает — P1. Найдено при проверке плагина 23.11.2026. Действие: в `src/core/scheduler/logs.ts` (`getTaskLogs`) резолвить имя по записям задач/слага либо fuzzy-искать `<slug>*.log` в LOG_DIR; регрессия в новом `test-*-logs.mjs`.
+
+- [ ] PL-68 Исчерпание free-лимита модели посреди прогона (`Free usage limit reached`, задача BL-QA-A2.7-lint-zero 23.11.2026) приводит к общему `error` с «Код возврата 1»: Quality Gate и afterScript пропускаются, частично исправленные 121 файл остаются незакоммиченными, причина не отличается от обычного падения агента — P1. Действие: классифицировать ошибку квоты отдельным статусом/сообщением, сохранить partial-diff артефакт, предлагать continue с другой моделью; регрессия в `test-execution-hardening.mjs`.
+
+- [ ] PL-69 env-переменные workspace (`AGENT_STEWARD_GATE_ALLOW_PATHS`) наследуются всеми дочерними процессами задачи, включая тестовые сюиты: при прошлом гейте BL-QA-A2.7 23.11.2026 падали 3 проверки PL-25/PL-47 в `test-execution-pipeline.mjs` (без переменной тот же тест зелёный) — P2. Действие: в тестах gate-integrity явно сбрасывать/переопределять переменные окружения (`delete process.env...`), в документацииworkspace-env предупреждать о влиянии на тесты; регрессия в `test-execution-pipeline.mjs`.
 
 ---
 

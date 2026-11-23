@@ -500,7 +500,8 @@ const POLICY_BASE: Record<PermissionPolicy, readonly PermissionAction[]> = {
 
 export interface PermissionInput {
   /** Глобальная политика из SchedulerSettings.permissions.defaultPolicy. */
-  policy?: PermissionPolicy | string | null;
+  // QA-A2.7: PermissionPolicy — подмножество string, поэтому достаточно string.
+  policy?: string | null;
   /** Переходный флаг задачи: вернуть shell в гибридной политике. */
   legacyShell?: boolean;
   /** Явный allowlist задачи (уже нормализованный или сырой). */

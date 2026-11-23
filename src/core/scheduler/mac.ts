@@ -5,12 +5,10 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { sanitizeName } from "../../types.js";
+import { safeStringify } from "../../text.js";
 import { getProfileDir, getProfileName } from "../../profiles.js";
 import { buildLaunchdCalendar, buildOneShotGuardCommand, launchdLabel } from "../one-shot.js";
-import {
-  needsPollMode,
-  systemTimeZone,
-} from "../schedule-v2.js";
+import { systemTimeZone } from "../schedule-v2.js";
 import { PosixSchedulerBase } from "./posix.js";
 import type { RegistryEntry } from "./registry.js";
 
@@ -351,7 +349,7 @@ export function supportsModernLaunchctl(
 /** Признак того, что launchctl не знает bootstrap/bootout (максимально старая macOS). */
 function needsLegacyLaunchctlFallback(error: unknown): boolean {
   const source = error as { message?: unknown; stderr?: unknown } | null;
-  const text = `${String(source?.message ?? "")}\n${String(source?.stderr ?? "")}`;
+  const text = `${safeStringify(source?.message ?? "")}\n${safeStringify(source?.stderr ?? "")}`;
   return /unrecognized subcommand|unknown subcommand|invalid subcommand|unrecognized option|Usage:/i.test(
     text,
   );

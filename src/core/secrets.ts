@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { PLUGIN_DIR } from "../types.js";
+import { safeStringify } from "../text.js";
 import { isProcessAlive } from "./lock.js";
 
 /**
@@ -43,6 +44,11 @@ let secretsLockDepth = 0;
 
 function sleepSync(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/** QA-A2.7: разбор внешнего JSON — сужаем unknown до записи перед чтением полей. */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function withSecretsLock<T>(fn: () => T): T {
@@ -236,7 +242,7 @@ function loadKey(): Buffer {
   try {
     const stat = fs.statSync(SECRETS_KEY_FILE);
     const stamp = `${stat.mtimeMs}:${stat.size}`;
-    if (keyCache && keyCache.stamp === stamp) return keyCache.key;
+    if (keyCache?.stamp === stamp) return keyCache.key;
     const raw = fs.readFileSync(SECRETS_KEY_FILE);
     if (raw.length !== KEY_BYTES) {
       throw new Error("повреждён файл ключа секретов");
@@ -313,12 +319,12 @@ function readFileSafe(): SecretsFile {
   try {
     const stat = fs.statSync(SECRETS_FILE);
     const stamp = `${stat.mtimeMs}:${stat.size}`;
-    if (cache && cache.stamp === stamp) return cache.file;
-    const parsed = JSON.parse(fs.readFileSync(SECRETS_FILE, "utf8"));
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    if (cache?.stamp === stamp) return cache.file;
+    const parsed: unknown = JSON.parse(fs.readFileSync(SECRETS_FILE, "utf8"));
+    if (!isRecord(parsed)) {
       throw new Error("некорректный формат secrets.json");
     }
-    const rawSecrets = (parsed).secrets;
+    const rawSecrets = parsed.secrets;
     const secrets: Record<string, StoredSecret> = {};
     if (rawSecrets && typeof rawSecrets === "object" && !Array.isArray(rawSecrets)) {
       for (const [name, entry] of Object.entries(rawSecrets)) {
@@ -552,7 +558,7 @@ function knownSecretValues(): string[] {
  * присваивания вида `TOKEN=...` / `password: ...`.
  */
 export function redactSecretsInText(text: unknown): string {
-  const source = typeof text === "string" ? text : String(text ?? "");
+  const source = typeof text === "string" ? text : safeStringify(text ?? "");
   if (!source) return source;
   let result = source;
 

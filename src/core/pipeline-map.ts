@@ -14,7 +14,6 @@ import {
   type PipelineSpec,
   type PipelineStep,
   type PipelineTrigger,
-  type PipelineWindowPolicy,
 } from "./pipeline-spec.js";
 
 export interface PipelineMapOptions {

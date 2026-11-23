@@ -13,6 +13,7 @@ import {
 import { needsPosixPollMode } from "../schedule-v2.js";
 import { LockManager, withLockWait } from "../lock.js";
 import { getBasePluginDir, getProfileName } from "../../profiles.js";
+import { safeStringify } from "../../text.js";
 import { taskFolderNameForProfile, legacyTaskFolderNameForProfile } from "../../types.js";
 import { PosixSchedulerBase, shellQuote } from "./posix.js";
 import type { RegistryEntry } from "./registry.js";
@@ -91,7 +92,7 @@ export class LinuxScheduler extends PosixSchedulerBase {
       return stdout;
     } catch (err: unknown) {
       const stderrRaw = (err as { stderr?: unknown } | undefined)?.stderr;
-      const stderr = typeof stderrRaw === "string" ? stderrRaw : String(stderrRaw ?? "");
+      const stderr = typeof stderrRaw === "string" ? stderrRaw : safeStringify(stderrRaw ?? "");
       // "no crontab for user" — это нормальное состояние. Любую другую ошибку
       // (нет доступа, сбой crontab) нельзя превращать в пустой crontab: иначе
       // последующая запись затрёт пользовательские задания.

@@ -2,6 +2,7 @@ import type { GateVerdict } from "../core/router/escalation.js";
 import { normalizeTaskType } from "../core/router/rules.js";
 import { getDb, withTransaction } from "./index.js";
 import { getSetting, setSetting } from "./settings-repo.js";
+import { safeStringify } from "../text.js";
 import { recordGateOutcome } from "./runs-repo.js";
 
 /**
@@ -197,7 +198,7 @@ function rowToRecord(row: Record<string, unknown>): CapabilityRecord {
     last10Runs.length > 0 ? decayedSuccessRate(last10Runs) : successRate;
   return {
     taskType: String(row.task_type),
-    model: String(row.model ?? DEFAULT_MODEL),
+    model: safeStringify(row.model ?? DEFAULT_MODEL),
     runsTotal,
     runsPassed,
     firstPassCount,

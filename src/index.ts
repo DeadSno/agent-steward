@@ -1,4 +1,4 @@
-import { Plugin, Rpc } from "@opencode/plugin";
+import { Plugin } from "@opencode/plugin";
 import type {
   Hooks as V1Hooks,
   PluginInput as V1PluginInput,
@@ -16,6 +16,8 @@ import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+// QA-A2.7: безопасное приведение unknown к строке без no-base-to-string.
+import { safeStringify } from "./text.js";
 import { LockManager } from "./core/lock.js";
 import {
   LOCK_DIR,
@@ -38,7 +40,6 @@ import {
   preservedSessionRunCount,
   sessionStatePath,
   writeSessionStateFile,
-  type SessionMode,
 } from "./core/session.js";
 import { ensureWrapper, writePromptFile, writeWrapperCmd, lockFilePath, requestImmediateRun, gateAllowPathsFromAfterScript } from "./core/ps-wrapper.js";
 import { getSchedulerBackend, LinuxScheduler } from "./core/scheduler/index.js";
@@ -70,22 +71,13 @@ import { createShutdownGate, type ShutdownGateState } from "./core/shutdown.js";
 import { CHILD_RUN_ENV, isChildRunMode } from "./core/run-mode.js";
 import { SchedulerRpc } from "./rpc.js";
 import {
-  validatePipelineSpec,
-  type PipelineValidationResult,
-} from "./core/pipeline-spec.js";
-import {
   loadPipelineFile,
   parsePipelineYaml,
   type PipelineParseResult,
 } from "./core/pipeline-io.js";
-import {
-  planPipelineApply,
-  executePipelineApply,
-  type PipelineApplyPlan,
-} from "./core/pipeline-apply.js";
+import { planPipelineApply } from "./core/pipeline-apply.js";
 import {
   pipelineExportLookupError,
-  pipelineSpecToTasks,
   tasksToPipelineSpec,
 } from "./core/pipeline-map.js";
 import { stringify as yamlStringify } from "yaml";
@@ -109,7 +101,6 @@ import { formatLogRunMarker, runMission, type MissionSpec } from "./core/mission
 import {
   DEFAULT_PERMISSION_POLICY,
   buildOpencodeConfig,
-  formatPolicyLog,
   resolvePermissions,
 } from "./core/permissions.js";
 import { runHistoryRetention, maybeRunHistoryRetention } from "./core/retention.js";
@@ -223,7 +214,6 @@ import {
 } from "./core/secrets.js";
 import {
   auditDateFilterError,
-  cleanupAuditLog,
   readAuditLog,
   recordAudit,
   recordTaskToolBlocks,
@@ -2178,7 +2168,8 @@ async function deleteTaskWithFamily(
       } catch {
         // Не критично.
       }
-      removeTaskArtifacts(child);
+      // QA-A2.7: умышленно fire-and-forget, ошибки подавлены внутри функции.
+      void removeTaskArtifacts(child);
 
       removed.push(child);
     }
@@ -2190,7 +2181,8 @@ async function deleteTaskWithFamily(
   } catch {
     // Определения могло уже не быть — задача всё равно удалена из ОС.
   }
-  removeTaskArtifacts(trimmed);
+  // QA-A2.7: умышленно fire-and-forget, ошибки подавлены внутри функции.
+  void removeTaskArtifacts(trimmed);
 
   return { removed, existed };
 }
@@ -2558,7 +2550,7 @@ async function updateTaskFromInput(
           ? renameRef(task.nextTaskOnError)
           : task.nextTaskOnError;
         if (!changed) continue;
-        await saveTask({
+        saveTask({
           ...task,
           ...(dependsOn ? { dependsOn } : {}),
           nextTaskOnSuccess,
@@ -3035,7 +3027,7 @@ const pipelineApplyExecute = wrapExecute<PipelineApplyArgs>(async (args) => {
   }
 
   const spec = parsed.spec!;
-  const existing = await listTaskDefinitions();
+  const existing = listTaskDefinitions();
   const plan = planPipelineApply(spec, existing, {
     resolveWorkspaceId: (nameOrId: string) => {
       const ws = getWorkspace(nameOrId);
@@ -3162,7 +3154,8 @@ const pipelineApplyExecute = wrapExecute<PipelineApplyArgs>(async (args) => {
         errors.push(`update ${item.task.name}: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
-    refreshTriggers();
+    // QA-A2.7: умышленно fire-and-forget, ошибки подавляются внутри refreshTriggers.
+    void refreshTriggers();
   }
 
   return {
@@ -3182,7 +3175,7 @@ const pipelineApplyExecute = wrapExecute<PipelineApplyArgs>(async (args) => {
 
 /** pipeline_export — выгрузить задачи конвейера как opencode.pipeline.yaml. */
 const pipelineExportExecute = wrapExecute<PipelineExportArgs>(async (args) => {
-  const allTasks = await listTaskDefinitions();
+  const allTasks = listTaskDefinitions();
   // QA-P3.2: два имени — это ошибка, а не молчаливый выбор первого.
   const explicit = args.pipeline?.trim();
   const alias = args.pipelineName?.trim();
@@ -3710,6 +3703,8 @@ const manageTemplatesExecute = wrapExecute<TemplatesArgs>(async (args) => {
   }
 
   const { action, ...fields } = args;
+  // QA-A2.7: action уже обработан ветками выше, в поля шаблона он не входит.
+  void action;
   if (!fields.name?.trim() || !fields.prompt?.trim()) {
     return {
       content: JSON.stringify({
@@ -5926,7 +5921,7 @@ const v2Plugin = Plugin.define({
           dryRun?: boolean;
         };
         try {
-          if (!description || !description.trim()) {
+          if (!description?.trim()) {
             return { success: false, error: "description is required" };
           }
           const settings = await loadSettings();
@@ -6553,7 +6548,7 @@ const v2Plugin = Plugin.define({
           };
         }
       },
-      export_tasks: async (input: unknown) => {
+      export_tasks: async (_input: unknown) => {
         try {
           const tasks = await scheduler.listTasks();
           const exportTasks = tasks.map((t) => ({
@@ -7574,7 +7569,7 @@ export async function schedulerCreateTask(
     // но явно предупреждаем: проверка наличия не выполнена.
     console.warn(
       `[agent-steward] Задача "${name}" создана, но проверить её в планировщике не удалось: ${
-        verifyQueryError instanceof Error ? verifyQueryError.message : String(verifyQueryError)
+        verifyQueryError instanceof Error ? verifyQueryError.message : safeStringify(verifyQueryError)
       }`,
     );
   }
@@ -8313,14 +8308,14 @@ function matchesEventFilter(filter: string | undefined, payload: unknown): boole
   try {
     text = JSON.stringify(payload ?? {});
   } catch {
-    text = String(payload ?? "");
+    text = safeStringify(payload ?? "");
   }
 
   const pair = /^([A-Za-z0-9_.-]+)\s*=\s*(.*)$/.exec(raw);
   if (pair && payload !== null && typeof payload === "object") {
     const fieldValue = (payload as Record<string, unknown>)[pair[1]];
     const expected = pair[2].trim().replace(/^["']|["']$/g, "");
-    return String(fieldValue ?? "") === expected;
+    return safeStringify(fieldValue ?? "") === expected;
   }
 
   try {
