@@ -803,6 +803,104 @@ check(
     audit.readAuditLog({ action: audit.APPROVAL_APPROVED_ACTION, target: "arch7-r3-key" }).total === 0,
 );
 
+// --- PL-93: retry гейта, эскалация и карантин в execution loop ------------
+const flakePlan = await ac1.buildExecutionPlan(
+  ac1.createAdHocRunContext("PL-93 flake gate", {
+    taskName: "pl93-flake",
+    cwd: tempRoot,
+    taskType: "run_tests",
+    riskClass: "R0",
+    metadata: { qualityGate: "pl93-flake-gate" },
+  }),
+);
+let gateCalls = 0;
+const flakeRun = await ac1.executeExecutionPlan(flakePlan, {
+  executors: [executor],
+  gate: () => {
+    gateCalls += 1;
+    return gateCalls === 1
+      ? { ok: false, verdict: "flake", reason: "первый прогон гейта шумный" }
+      : { ok: true, verdict: "pass" };
+  },
+  escalation: { enabled: true },
+});
+check("PL-93: гейт flake повторен на том же артефакте", gateCalls === 2);
+check("PL-93: шаг passed после повтора гейта", flakeRun.status === "passed");
+check(
+  "PL-93: вердикт flake записан в gate_outcomes",
+  repo.listGateOutcomes(1000).some(
+    (row) => row.runId === flakeRun.runId && row.verdict === "flake",
+  ),
+);
+
+let localCalls = 0;
+let cloudCalls = 0;
+const localExecutor = {
+  id: "local",
+  supports: (route) => route.executor === "local",
+  execute: () => {
+    localCalls += 1;
+    return { output: "local" };
+  },
+};
+const cloudExecutor = {
+  id: "cloud",
+  supports: (route) => route.executor === "cloud",
+  execute: () => {
+    cloudCalls += 1;
+    return { output: "cloud" };
+  },
+};
+const escalationPlan = await ac1.buildExecutionPlan(
+  ac1.createAdHocRunContext("PL-93 escalate", {
+    taskName: "pl93-escalate",
+    cwd: tempRoot,
+    taskType: "run_tests",
+    riskClass: "R0",
+  }),
+);
+const escalatedRun = await ac1.executeExecutionPlan(escalationPlan, {
+  executors: [localExecutor, cloudExecutor],
+  gate: ({ step }) => (step.route.executor === "cloud" ? { ok: true } : { ok: false, reason: "local fail" }),
+  escalation: { enabled: true },
+});
+check("PL-93: local executed один раз", localCalls === 1);
+check("PL-93: cloud подобран и исполнен после эскалации", cloudCalls === 1);
+check("PL-93: запуск passed после эскалации", escalatedRun.status === "passed");
+check("PL-93: маршрут шага обновлён до cloud", escalatedRun.steps[0].target === "cloud");
+
+const pl93Capability = await import("./dist/db/capability-repo.js");
+for (const suffix of ["q1", "q2"]) {
+  pl93Capability.recordGateVerdict({
+    outcomeKey: `pl93-${suffix}`,
+    taskType: "run_tests",
+    gateKey: "pl93-unstable-gate",
+    verdict: "flake",
+    attemptsToPass: 2,
+    firstPass: false,
+  });
+}
+check("PL-93: карантин гейта активен", pl93Capability.isGateQuarantined("pl93-unstable-gate"));
+const quarantinedPlan = await ac1.buildExecutionPlan(
+  ac1.createAdHocRunContext("PL-93 quarantine", {
+    taskName: "pl93-quarantine",
+    cwd: tempRoot,
+    taskType: "run_tests",
+    riskClass: "R0",
+    metadata: { qualityGate: "pl93-unstable-gate" },
+  }),
+);
+check(
+  "PL-93: карантин меняет маршрут на review",
+  quarantinedPlan.steps[0].route.target === "review" && quarantinedPlan.steps[0].route.executor === null,
+);
+check(
+  "PL-93: предупреждение о карантине в плане",
+  quarantinedPlan.warnings.some((warning) => warning.includes("карантине")),
+);
+const quarantinedRun = await ac1.executeExecutionPlan(quarantinedPlan, { executors: [executor] });
+check("PL-93: шаг в карантине пропущен", quarantinedRun.steps[0].status === "skipped");
+
 closeDb();
 try {
   fs.rmSync(tempRoot, { recursive: true, force: true });

@@ -26,6 +26,16 @@ import {
   type GateVerdictValue,
 } from "../db/runs-repo.js";
 import { runStepStatefullyAsync } from "../db/run-journal.js";
+import { isGateQuarantined, recordGateVerdict } from "../db/capability-repo.js";
+import {
+  MAX_ESCALATION_STEPS,
+  escalateAfterGate,
+  runGateWithRetry,
+  type GateOutcome as EscalationOutcome,
+  type GateResult as EscalationGateResult,
+  type GateTarget,
+  type GateVerdict as EscalationVerdict,
+} from "./router/escalation.js";
 import {
   abortDeferredEffects,
   applyDeferredEffects,
@@ -472,8 +482,25 @@ export async function buildExecutionPlan(
   validateRunContext(context);
   const planned = await planStepsForContext(context, options);
   const warnings: string[] = [];
+  const qualityGate =
+    typeof context.metadata?.qualityGate === "string" && context.metadata.qualityGate.trim()
+      ? context.metadata.qualityGate.trim()
+      : null;
+  const quarantined = qualityGate !== null && isGateQuarantined(qualityGate);
+  if (quarantined) {
+    warnings.push(`Гейт "${qualityGate}" в карантине: автоматический роутинг отключён.`);
+  }
   const steps = planned.steps.map((step, order) => {
-    const route = routeStep(step.taskType, options.thresholds);
+    const baseRoute = routeStep(step.taskType, options.thresholds);
+    const route: StepRoute = quarantined
+      ? {
+          ...baseRoute,
+          target: "review",
+          executor: null,
+          transport: null,
+          reason: `gate-quarantined:${qualityGate}`,
+        }
+      : baseRoute;
     if (route.target === "review" || route.target === "explore") {
       warnings.push(
         `Шаг "${step.stepName}" (${step.taskType}) не исполняется автоматически: ${route.reason}`,
@@ -608,10 +635,12 @@ export function createOpenCodeExecutor(
 export interface GateVerdict {
   ok: boolean;
   reason?: string;
+  /** PL-93: явный вердикт ARCH-3.1; по умолчанию выводится из `ok`. */
+  verdict?: EscalationVerdict;
 }
 
 export type Gate = (
-  input: StepExecutionInput & { result: StepExecutionResult },
+  input: StepExecutionInput & { result: StepExecutionResult; attempt?: number },
 ) => GateVerdict | Promise<GateVerdict>;
 
 /** Ошибка GATE: шаг выполнен, но результат не принят. */
@@ -1019,6 +1048,17 @@ export interface ExecutionResult {
   snapshot?: WorktreeSnapshotDecision;
 }
 
+/**
+ * PL-93: включение flake-aware retry и таблицы переходов эскалации.
+ * По умолчанию выключено, чтобы не менять существующие прогоны с одним
+ * исполнителем: старый контракт `gate: {ok, reason}` сохраняется.
+ */
+export interface ExecutionEscalationOptions {
+  enabled?: boolean;
+  /** Сколько автоматических переходов допустимо (1..MAX_ESCALATION_STEPS). */
+  maxEscalations?: number;
+}
+
 /** Опции исполнения. */
 export interface ExecutePlanOptions {
   /** Исполнители в порядке приоритета. */
@@ -1044,6 +1084,8 @@ export interface ExecutePlanOptions {
    * одобрения для привилегированных операций.
    */
   approval?: ApprovalGateOptions;
+  /** PL-93: retry гейта и эскалация local → cloud → review. */
+  escalation?: ExecutionEscalationOptions;
 }
 
 function pickExecutor(step: PlannedStep, executors: StepExecutor[]): StepExecutor | undefined {
@@ -1052,6 +1094,165 @@ function pickExecutor(step: PlannedStep, executors: StepExecutor[]): StepExecuto
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/* ------------------------------------------------------------------------- *
+ * PL-93:retry вердикта гейта и таблица переходов эскалации в execution loop.
+ * ------------------------------------------------------------------------- */
+
+function gateTargetForRoute(route: StepRoute): GateTarget {
+  if (route.target === "cloud") return "cloud";
+  if (route.target === "review" || route.target === "explore") return "review";
+  return "local";
+}
+
+function routeForTarget(route: StepRoute, target: GateTarget): StepRoute {
+  if (target === "local") {
+    return { ...route, target: "local", executor: "local", transport: "direct" };
+  }
+  if (target === "cloud") {
+    return { ...route, target: "cloud", executor: "cloud", transport: "cloud" };
+  }
+  return { ...route, target: "review", executor: null, transport: null };
+}
+
+/** Ключ гейта для capability_map: явный qualityGate, иначе имя шага. */
+function gateKeyFor(plan: ExecutionPlan, step: PlannedStep): string {
+  const qualityGate = plan.context.metadata?.qualityGate;
+  return typeof qualityGate === "string" && qualityGate.trim()
+    ? qualityGate.trim()
+    : step.stepName;
+}
+
+/** PL-93: вердикт гейта обучает capability_map и обновляет карантин. */
+function recordCapabilityGateVerdict(
+  runId: string,
+  step: PlannedStep,
+  plan: ExecutionPlan,
+  outcome: EscalationOutcome,
+  attempt: number,
+): void {
+  const reasons = outcome.reasons.filter((reason) => reason.length > 0).join("; ");
+  recordGateVerdict({
+    outcomeKey: `esc:${runId}:${step.stepName}:${attempt}`,
+    taskType: step.route.taskType,
+    gateKey: gateKeyFor(plan, step),
+    verdict: outcome.verdict,
+    attemptsToPass: outcome.attemptsToPass,
+    firstPass: outcome.firstPass,
+    runId,
+    stepName: step.stepName,
+    gateType: gateKeyFor(plan, step),
+    ...(reasons ? { reason: reasons } : {}),
+  });
+}
+
+interface EscalatedStepExecution {
+  output: unknown;
+  executorId: string;
+  target: GateTarget;
+  outcome: EscalationOutcome;
+  escalations: number;
+}
+
+/**
+ * Исполняет шаг с ARCH-3.1 retry гейта и ARCH-3 таблицей переходов.
+ * Повтор гейта не перезапускает агента; эскалация меняет маршрут и, если для
+ * нового уровня есть исполнитель, перезапускает шаг один раз.
+ */
+async function executeStepWithEscalation(
+  runId: string,
+  step: PlannedStep,
+  plan: ExecutionPlan,
+  options: ExecutePlanOptions,
+  pick: (route: StepRoute) => StepExecutor | undefined,
+  onOutcome: (outcome: EscalationOutcome) => void,
+): Promise<EscalatedStepExecution> {
+  const maxEscalations = Math.max(
+    1,
+    Math.min(MAX_ESCALATION_STEPS, Math.floor(options.escalation?.maxEscalations ?? MAX_ESCALATION_STEPS)),
+  );
+  let target = gateTargetForRoute(step.route);
+  let escalations = 0;
+
+  for (;;) {
+    const route = routeForTarget(step.route, target);
+    const executor = route.executor === null ? undefined : pick(route);
+    if (!executor) {
+      throw new Error(
+        `Нет исполнителя для маршрута ${route.executor ?? "review"}/${String(route.transport)} после эскалации на ${target}`,
+      );
+    }
+    const result = await executor.execute({ step: { ...step, route }, context: plan.context, plan });
+    const agentExitCode =
+      typeof result.exitCode === "number" ? result.exitCode : result.error ? 1 : 0;
+    const workCompleted = result.output !== undefined;
+    let gateResult: EscalationGateResult;
+    let outcome: EscalationOutcome;
+
+    if (options.gate && shouldRunQualityGate({ agentExitCode, hasQualityGate: true, workCompleted })) {
+      outcome = await runGateWithRetry(async (attempt) => {
+        const verdict = await options.gate!({
+          step: { ...step, route },
+          context: plan.context,
+          plan,
+          result,
+          attempt,
+        });
+        return {
+          passed: verdict.ok,
+          ...(verdict.reason ? { reason: verdict.reason } : {}),
+          verdict: verdict.verdict ?? (verdict.ok ? "pass" : "fail"),
+        } satisfies EscalationGateResult;
+      });
+      gateResult = {
+        passed: outcome.passed,
+        ...(outcome.reasons.length > 0 ? { reason: outcome.reasons.join("; ") } : {}),
+        verdict: outcome.verdict,
+      };
+    } else {
+      const decision = resolveAgentExitVerdict({
+        agentExitCode,
+        gatePassed: null,
+        workCompleted,
+        taskName: plan.context.taskName,
+      });
+      if (decision.status === "error") {
+        throw new Error(result.error ?? decision.reason ?? "Код возврата агента");
+      }
+      outcome = {
+        verdict: "pass",
+        passed: true,
+        attempts: 1,
+        attemptsToPass: 1,
+        firstPass: true,
+        retried: false,
+        reasons: [],
+      };
+      gateResult = { passed: true, verdict: "pass" };
+    }
+
+    recordCapabilityGateVerdict(runId, step, plan, outcome, escalations + 1);
+    onOutcome(outcome);
+
+    if (!gateResult.passed) {
+      const decision = escalateAfterGate(target, gateResult);
+      const canEscalate =
+        (decision.action === "escalate-cloud" || decision.action === "escalate-review") &&
+        escalations < maxEscalations &&
+        decision.next !== target;
+      const nextExecutor = canEscalate ? pick(routeForTarget(step.route, decision.next)) : undefined;
+      if (nextExecutor && decision.next !== "review") {
+        target = decision.next;
+        escalations += 1;
+        continue;
+      }
+      const reason = gateResult.reason ?? "GATE отклонил результат шага";
+      throw new Error(`GATE: ${reason} (${decision.action}/${decision.reason})`);
+    }
+
+    return { output: result.output, executorId: executor.id, target, outcome, escalations };
+  }
 }
 
 /**
@@ -1215,8 +1416,30 @@ export async function executeExecutionPlan(
       });
     }
 
+    const escalationEnabled = options.escalation?.enabled === true;
+    const escalationState: {
+      outcome: EscalationOutcome | null;
+      executorId: string | null;
+      target: GateTarget | null;
+    } = { outcome: null, executorId: null, target: null };
+
     try {
       const execution = await runStepStatefullyAsync(run.id, step.stepName, async () => {
+        if (escalationEnabled) {
+          const escalated = await executeStepWithEscalation(
+            run.id,
+            step,
+            plan,
+            options,
+            (route) => options.executors.find((item) => item.supports(route)),
+            (outcome) => {
+              escalationState.outcome = outcome;
+            },
+          );
+          escalationState.executorId = escalated.executorId;
+          escalationState.target = escalated.target;
+          return escalated.output;
+        }
         const result = await executor.execute({ step, context: plan.context, plan });
         // PL-62: код выхода процесса агента — ещё не вердикт. Даже при
         // ненулевом коде запускаем гейт, если агент оставил артефакты/вывод.
@@ -1267,22 +1490,24 @@ export async function executeExecutionPlan(
         stepId: getStep(run.id, step.stepName)?.id ?? null,
         stepName: step.stepName,
         taskType: step.route.taskType,
-        executor: executor.id,
+        executor: escalationState.executorId ?? executor.id,
         routeSource: step.route.source,
-        routeReason: step.route.reason,
+        routeReason: escalationState.target
+          ? `${step.route.reason};escalated-to:${escalationState.target}`
+          : step.route.reason,
         gateType:
           typeof plan.context.metadata?.qualityGate === "string"
             ? plan.context.metadata.qualityGate
             : null,
-        verdict: "pass",
+        verdict: escalationState.outcome?.verdict ?? "pass",
         attempt: execution.attempt,
-        firstPass: execution.attempt === 1,
+        firstPass: escalationState.outcome?.firstPass ?? execution.attempt === 1,
         evidencePath: options.evidencePath ?? null,
       });
       executed.push({
         stepName: step.stepName,
         taskType: step.route.taskType,
-        target: step.route.target,
+        target: escalationState.target ?? step.route.target,
         status: "passed",
         attempt: execution.attempt,
         output: execution.result,
@@ -1306,14 +1531,16 @@ export async function executeExecutionPlan(
         stepId: getStep(run.id, step.stepName)?.id ?? null,
         stepName: step.stepName,
         taskType: step.route.taskType,
-        executor: executor.id,
+        executor: escalationState.executorId ?? executor.id,
         routeSource: step.route.source,
-        routeReason: step.route.reason,
+        routeReason: escalationState.target
+          ? `${step.route.reason};escalated-to:${escalationState.target}`
+          : step.route.reason,
         gateType:
           typeof plan.context.metadata?.qualityGate === "string"
             ? plan.context.metadata.qualityGate
             : null,
-        verdict: "fail",
+        verdict: escalationState.outcome?.verdict ?? "fail",
         attempt: failedAttempt,
         firstPass: false,
         evidencePath: options.evidencePath ?? null,
@@ -1321,7 +1548,7 @@ export async function executeExecutionPlan(
       executed.push({
         stepName: step.stepName,
         taskType: step.route.taskType,
-        target: step.route.target,
+        target: escalationState.target ?? step.route.target,
         status: "failed",
         attempt: failedAttempt,
         error: message,

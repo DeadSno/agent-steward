@@ -56,10 +56,13 @@ sequenceDiagram
                 EX->>JR: runStepStatefullyAsync
                 JR->>OC: StepExecutor execute
                 OC-->>JR: output и exitCode
-                JR--xESC: runGateWithRetry и resolveGateOutcome — НЕ вызывается (PL-93)
-                note over JR,ESC: executeExecutionPlan пишет вердикт напрямую через writeGateOutcome, минуя retry/эскалацию
+                opt execution.escalation.enabled === true (PL-93)
+                    EX->>ESC: runGateWithRetry → resolveGateOutcome → escalateAfterGate
+                    ESC-->>EX: verdict local fail → cloud; flake/infra_fail → blocked
+                    EX->>DB: recordGateVerdict обучает capability_map и карантин
+                end
                 JR-->>EX: результат шага
-                EX->>EX: writeGateOutcome
+                EX->>EX: writeGateOutcome с финальным verdict (flake/fail — при эскалации)
                 EX->>DB: recordGateOutcome с prev_hash и row_hash
                 alt вердикт pass
                     EX->>GI: applyDeferredEffects
@@ -75,9 +78,9 @@ sequenceDiagram
     end
 ```
 
-**Что видно:** единый путь `RunContext → ExecutionPlan → executeExecutionPlan`. Гейт одобрений и бюджет стоят **до** `createRun`; намерения эффектов — **до** гейта; применение эффектов — **только после** `pass`. Стрелки `--x` с пометками PL-94 и PL-93 показывают вызовы, которых в production нет.
+**Что видно:** единый путь `RunContext → ExecutionPlan → executeExecutionPlan`. Гейт одобрений и бюджет стоят **до** `createRun`; намерения эффектов — **до** гейта; применение эффектов — **только после** `pass`. Эскалация PL-93 показана в блоке `opt`: она вызывается только при явном `execution.escalation.enabled`, по умолчанию путь остаётся прежним. Стрелка `--x` с пометкой PL-94 показывает вызов, которого в production нет.
 
-**Ключевые выводы:** три места, где запуск может быть остановлен без побочных эффектов: budget gate (вызывается в [index.ts](src/index.ts:7948), не в движке), approval gate, worktree snapshot gate (`decideWorktreeSnapshot`/`enforceWorktreeSnapshot`, PL-59). Ledger-запись делает `writeGateOutcome`, а не сам исполнитель — поэтому registered и ad-hoc дают одинаковый набор хэшей. Компиляция контекста и flake-aware эскалация в этом пути отсутствуют (PL-94, PL-93).
+**Ключевые выводы:** три места, где запуск может быть остановлен без побочных эффектов: budget gate (вызывается в [index.ts](src/index.ts:7948), не в движке), approval gate, worktree snapshot gate (`decideWorktreeSnapshot`/`enforceWorktreeSnapshot`, PL-59). Ledger-запись делает `writeGateOutcome`, а не сам исполнитель — поэтому registered и ad-hoc дают одинаковый набор хэшей. Компиляция контекста в этом пути отсутствует (PL-94); flake-aware эскалация подключена, но только при `escalation.enabled` (PL-93).
 
 ### 4.2 Matrix fan-out
 
