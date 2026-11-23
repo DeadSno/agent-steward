@@ -65,9 +65,9 @@ check("0 9 * * * -> DAILY /st 09:00", daily.sc === "DAILY" && daily.startTime ==
 const yearly = convertCronToSchTasks("0 4 1 1 *");
 check("QV-10: '0 4 1 1 *' -> MONTHLY", yearly.sc === "MONTHLY");
 check(
-  "QV-10: yearly flags /d 1 /m JANUARY /st 04:00",
+  "QV-10: yearly flags /d 1 /m 1 /st 04:00",
   JSON.stringify(buildScheduleFlags(yearly)) ===
-    JSON.stringify(["/sc", "MONTHLY", "/st", "04:00", "/d", "1", "/m", "JANUARY"]),
+    JSON.stringify(["/sc", "MONTHLY", "/st", "04:00", "/d", "1", "/m", "1"]),
 );
 check("QV-10: yearly is native (no poll)", isNativeSchtasksExpr("0 4 1 1 *") === true);
 check("QV-10: yearly needsPollMode=false", needsPollMode("0 4 1 1 *") === false);
@@ -83,6 +83,37 @@ try {
   badMonth = true;
 }
 check("QV-10: невалидный месяц отклоняется", badMonth);
+
+// --- PL-56: сборка флагов для русской локали: /m — число 1..12, а не имя месяца ---
+// На русской Windows `schtasks /m` ждёт число 1..12 или имя месяца на языке
+// системы; английское имя («JANUARY») даёт «ОШИБКА: Неправильное значение
+// параметра /M». Конвертер не знает локаль ОС, поэтому передаёт число.
+const pl56Flags = buildScheduleFlags(convertCronToSchTasks("0 4 1 1 *"));
+const pl56MonthIndex = pl56Flags.indexOf("/m");
+const pl56MonthValue = pl56Flags[pl56MonthIndex + 1];
+check(
+  "PL-56: yearly /m — числовой месяц '1', а не 'JANUARY' (русская локаль)",
+  pl56MonthValue === "1" && !pl56Flags.includes("JANUARY"),
+);
+check(
+  "PL-56: /m значение — число 1..12 (корректно для любой локали ОС)",
+  /^(?:[1-9]|1[0-2])$/.test(pl56MonthValue ?? ""),
+);
+
+// PL-56: все 12 месяцев дают числовой /m без английских имён.
+const pl56EnglishNames = [
+  "JANUARY", "FEBRUARY", "MARCH", "APRIL", "MAY", "JUNE",
+  "JULY", "AUGUST", "SEPTEMBER", "OCTOBER", "NOVEMBER", "DECEMBER",
+];
+let pl56AllNumeric = true;
+for (let n = 1; n <= 12; n++) {
+  const f = buildScheduleFlags(convertCronToSchTasks(`0 4 1 ${n} *`));
+  const v = f[f.indexOf("/m") + 1];
+  if (v !== String(n) || pl56EnglishNames.some((name) => f.includes(name))) {
+    pl56AllNumeric = false;
+  }
+}
+check("PL-56: месяцы 1..12 -> числовой /m 1..12 без английских имён", pl56AllNumeric);
 
 console.log(`\n${passed}/${passed + failed} проверок пройдено`);
 process.exit(failed > 0 ? 1 : 0);

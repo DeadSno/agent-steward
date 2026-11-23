@@ -15,7 +15,7 @@ const UNSUPPORTED_ERROR =
   "  M H * * *              -> DAILY, ежедневно в HH:MM (/st HH:MM)\n" +
   "  M H * * D              -> WEEKLY, по неделям в день D в HH:MM (/d D /st HH:MM)\n" +
   "  M H D * *              -> MONTHLY, первого числа каждого месяца (/d D /st HH:MM)\n" +
-  "  M H D M *              -> MONTHLY в указанном месяце (/m MONTH), раз в год\n" +
+  "  M H D M *              -> MONTHLY в указанном месяце (/m N, N=1..12), раз в год\n" +
   "\n" +
   "Не поддерживаются: диапазоны (1-5), списки (1,2,3), комбинации месяца и дня недели,\n" +
   "*/N в поле дня месяца или дня недели, а также любые другие сложные выражения.\n" +
@@ -36,20 +36,28 @@ const DAY_OF_WEEK_MAP: Record<string, string> = {
   "7": "SUN",
 };
 
-/** Месяцы для schtasks /m (номер месяца cron 1..12). */
+/**
+ * Допустимые номера месяцев cron для schtasks /m (ключи 1..12).
+ *
+ * PL-56: раньше значениями карты были английские имена («JANUARY» и т.п.).
+ * На локализованной ОС `schtasks /m` ожидает число 1..12 или имя месяца на
+ * языке системы, поэтому английское имя отвергалось русской Windows с
+ * «ОШИБКА: Неправильное значение параметра /M». Передаём числовой месяц —
+ * он одинаково корректен на любой локали.
+ */
 const MONTH_MAP: Record<string, string> = {
-  "1": "JANUARY",
-  "2": "FEBRUARY",
-  "3": "MARCH",
-  "4": "APRIL",
-  "5": "MAY",
-  "6": "JUNE",
-  "7": "JULY",
-  "8": "AUGUST",
-  "9": "SEPTEMBER",
-  "10": "OCTOBER",
-  "11": "NOVEMBER",
-  "12": "DECEMBER",
+  "1": "1",
+  "2": "2",
+  "3": "3",
+  "4": "4",
+  "5": "5",
+  "6": "6",
+  "7": "7",
+  "8": "8",
+  "9": "9",
+  "10": "10",
+  "11": "11",
+  "12": "12",
 };
 
 /**
@@ -206,22 +214,26 @@ export function convertCronToSchTasks(cron: string): CronConversion {
     };
   }
 
-  // --- ПАТТЕРН 5: M H D [*|M] * -> MONTHLY (/d D [/m MONTH] /st HH:MM) ---
+  // --- ПАТТЕРН 5: M H D [*|M] * -> MONTHLY (/d D [/m N] /st HH:MM) ---
   // QV-10: годовое выражение `0 4 1 1 *` раньше не конвертировалось и уходило
   // в минутный опрос ОС. Теперь оно выражается нативно: schtasks MONTHLY с /m
   // фиксирует месяц, а /d — день, поэтому тик один раз в год без пустых опросов.
+  // PL-56: /m передаётся числом 1..12 (не английским именем), иначе локализованная
+  // Windows (в т.ч. русская) отклоняет задачу как неверное значение параметра /M.
   const dom = parseIntInRange(dayOfMonth, 1, 31);
   if (m !== undefined && h !== undefined && dom !== undefined && isStar(dayOfWeek)) {
     const startTime = String(h).padStart(2, "0") + ":" + String(m).padStart(2, "0");
     const extraFlags: string[] = ["/d", String(dom)];
     if (!isStar(month)) {
-      const monthName = MONTH_MAP[month];
-      if (!monthName) {
+      const monthNumber = MONTH_MAP[month];
+      if (!monthNumber) {
         throw new Error(
           "Неподдерживаемое поле месяца: " + month + ".\n\n" + UNSUPPORTED_ERROR,
         );
       }
-      extraFlags.push("/m", monthName);
+      // PL-56: числовой месяц 1..12 работает на любой локали ОС, в отличие от
+      // английского имени месяца, которое русская Windows не принимает в /m.
+      extraFlags.push("/m", monthNumber);
     }
     return {
       sc: "MONTHLY",
