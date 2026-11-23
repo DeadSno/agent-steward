@@ -21,6 +21,9 @@ model, the modules, the data model and the extension points.
 - [Security model](#security-model)
 - [Extension points](#extension-points)
 
+The target execution loop — registration, OS trigger, run wrapper, Quality Gate and
+ledger — is described in [docs/EXECUTION-LOOP.md](./EXECUTION-LOOP.md).
+
 ## Design principles
 
 1. **The OS scheduler owns time.** The plugin never keeps a timer in memory for cron

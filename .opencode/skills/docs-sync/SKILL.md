@@ -16,7 +16,7 @@ project: agent-steward
 | Новый/удалённый tool или RPC метод | `README.md`, `docs/ARCHITECTURE.md`, `docs/FEATURES.md`, `TEST-PLAN.md` — счётчики сверяет `node test-docs.mjs` |
 | Схема БД / `SCHEMA_VERSION` | `docs/ARCHITECTURE.md` (текст версии обязателен для `test-docs`) |
 | Поведение scheduler / gate / guard / worktree | `docs/PIPELINE.md`, `docs/EXECUTION-LOOP.md`, `docs/SAFETY.md` |
-| Совместимость V1/V2 | `docs/COMPATIBILITY.md`, `docs/V1-V2-COMPATIBILITY-PLAN.md` |
+| Совместимость V1/V2 | `docs/COMPATIBILITY.md` (разделы «Двойной экспорт» и «Связанные документы») |
 | Локали | `locales/{ru,en,zh}.json` — новый ключ во всех трёх; `README.ru.md`, `README.zh.md` |
 | Релиз | `CHANGELOG.md`, `package.json` version, `ROADMAP*.md` |
 

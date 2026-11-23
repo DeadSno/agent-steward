@@ -191,15 +191,13 @@ agent-steward — execution engine с опциональной регистра�
 
 - [ ] PL-66 Ни один из Quality Gate ARCH-задач не включал `npm run lint`/`lint:baseline`, поэтому error `@typescript-eslint/array-type` в `src/db/capability-repo.ts:635` (Agents ARCH-3) дошёл до GitHub Actions: CI run #312 на `d9e7e8d` — Build и Test зелёные на всех 6 матрицах, но шаг «Lint (informational)» упал везде, а «ESLint baseline» был пропущен — P1. Действие: добавить `npm run lint && npm run lint:baseline` в обязательные проверки `qualityGate` и в подсказки `dry_run`; предупреждать о пропущенной линтер-проверке; регрессия в `test-dry-run.mjs`.
 
-## Деталь 1.9 — Полная проверка документации через планировщик (23.11.2026)
+- [ ] PL-86 Генератор `.cmd`-обёртки не передаёт `-Workdir` в `run-task.ps1`: в `src/core/ps-wrapper.ts:1391-1392` путь используется только для `cd /d`, поэтому `$Workdir` внутри обёртки пуст. Следствия: (а) snapshot/worktree-проверки Quality Gate молча пропускаются (`preFlightStatus: skipped`), (б) обработчик квоты PL-83 на строке 941 делает `Join-Path $Workdir ...` вне `try/catch` и роняет задачу с `Cannot bind argument to parameter 'Path' because it is an empty string.` — P1. Действие: передавать `-Workdir "$effectiveWorkdir"` в `psArgs` с экранированием (или инициализировать `$Workdir` из `Get-Location` при пустом значении), обернуть формирование пути diff в `try/catch`, добавить регрессию в `test-execution-hardening.mjs`, проверяющую наличие `-Workdir` в сгенерированном `.cmd`.
 
-**Задача DOC-1 — Аудит документации движком agent-steward** · P2 · 🔄
+- [ ] PL-87 Ошибка исчерпания лимита Free-модели маскируется падением обёртки: DOC-1A (`mimo-v2.6-flash-free`, 09:23–09:36Z) и суб-агент сессии завершились `Free usage limit reached`, но вместо сообщения PL-83 «квота исчерпана, перезапустите с другой моделью» пользователь видит бессмысленный `Path`-error — P2. Действие: после исправления PL-86 проверить, что PL-83 пишет внятную причину с путём `reports/quota-*.diff`; рассмотреть автопереключение на настроенную модель задачи из `model` вместо модели по умолчанию.
 
-> Сессия проверки работоспособности плагина: один и тот же аудит документации прогоняется двумя входами — с реальной OS-привязкой (cron → schtasks) и без неё (mcp-event + workspace binding). Результат каждого прогона — отдельный отчёт в `reports/`.
+- [ ] PL-88 `schedule_task`/`update_task` принимают модель без префикса провайдера: схема `src/index.ts:540-545` — `z.string().optional()`, формат не проверяется. Прогон DOC-1B с `model: hy4-flash-free` упал за 4 с с `Invalid model reference: hy4-flash-free`; с `opencode/hy4-flash-free` работает — P2. Действие: валидировать формат `provider/model` (или явно документировать допустимые значения) в `schedule_task`/`update_task` и в `dry_run`, регрессия в `test-agent-tools.mjs`.
 
-- [ ] DOC-1.1 Прогон аудита документации задачей с OS-триггером (cron), отчёт `reports/DOC-1A-os-bound.md`
-- [ ] DOC-1.2 Тот же аудит через mcp-event без OS-расписания, отчёт `reports/DOC-1B-event-driven.md`
-- [ ] DOC-1.3 Свести результаты найденных багов в роадмап, закрыть DOC-1 и перенести в CHANGELOG
+- [ ] PL-89 Мета-гейт `test-docs.mjs` проверяет в `.opencode/skills/release-check/SKILL.md` только счётчики tools/RPC, но не suites: устаревшее «115 наборов» прошло 129/129 и было найдено только ручной сверкой (DOC-1A) — P2. Действие: расширить проверку release-check на suites=116 (как для `agent-steward-dev`/`docs-sync`) и добавить регрессию. Число 115 в самой SKILL.md уже исправлено на 116.
 
 ---
 
