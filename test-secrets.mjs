@@ -283,6 +283,18 @@ check(
 deleteSecret("fresh_dead_owner_lock");
 check("после снятия осиротевшего лока .lock-файла нет", !fs.existsSync(lockFile));
 
+// PL-85: transient EPERM при создании лока на Windows должен повторяться так же,
+// как EEXIST. Проверяем исходный код напрямую — воспроизвести гонку с
+// антивирусом в детерминированном тесте невозможно.
+check(
+  "PL-85: лок секретов повторяет transient EPERM наравне с EEXIST",
+  /code !== "EEXIST" && code !== "EPERM"/.test(secretsSource),
+);
+check(
+  "PL-85: комментарий к повтору EPERM содержит метку находки",
+  /PL-85[\s\S]{0,260}EPERM|EPERM[\s\S]{0,260}PL-85/.test(secretsSource),
+);
+
 // Каждый setSecret — отдельный процесс (как завершение задачи). Без лока
 // параллельные RMW теряли записи.
 const childScript = path.join(tempRoot, "set-secret-child.mjs");
