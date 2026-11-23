@@ -926,6 +926,29 @@ try {
     # Параметры -RetryCount/-RetryDelaySeconds принимаются, но игнорируются.
     $script:exitCode = Invoke-OpenCodeOnce -CommandPath $opencodeCmd -Arguments $opencodeArgs
 
+    # PL-83: исчерпание квоты/баланса модели — отдельный класс ошибки, а не
+    # обычный «Код возврата 1». Иначе гейт и afterScript пропускаются, а частично
+    # изменённое дерево остаётся без артефакта и без понятной подсказки.
+    if ($script:exitCode -ne 0 -and $LogFile -and (Test-Path -LiteralPath $LogFile)) {
+        $quotaLine = @()
+        try {
+            $quotaLine = @(Get-Content -LiteralPath $LogFile -Tail 80 -ErrorAction Stop |
+                Where-Object { $_ -match 'Free usage limit reached|Insufficient Balance|free usage limit' } |
+                Select-Object -Last 1)
+        } catch {}
+        if ($quotaLine.Count -gt 0) {
+            $quotaReason = [string]$quotaLine[0]
+            $quotaDiff = Join-Path $Workdir ("reports/quota-" + ($TaskName -replace '[^a-zA-Z0-9_-]', '-') + ".diff")
+            try {
+                New-Item -ItemType Directory -Force -Path (Split-Path -Parent $quotaDiff) | Out-Null
+                & git -C $Workdir diff > $quotaDiff 2>&1
+            } catch {}
+            Write-Log "[agent-steward] PL-83: квота модели исчерпана: $quotaReason"
+            $script:errorMessage = "PL-83: квота модели исчерпана ($quotaReason). Частичные правки сохранены в $quotaDiff. Перезапустите задачу с другой моделью: update_task name=$TaskName model=provider/model"
+            $script:exitCode = 126
+        }
+    }
+
     # Quality Gate: проверочная команда выполняется ТОЛЬКО после успешного
     # завершения opencode run. Если ИИ упал — шлюз не запускаем.
     if ($QualityGate -and $script:exitCode -eq 0) {

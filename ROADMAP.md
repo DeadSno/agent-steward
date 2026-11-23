@@ -194,7 +194,6 @@ agent-steward — execution engine с опциональной регистра�
 - [ ] PL-66 Ни один из Quality Gate ARCH-задач не включал `npm run lint`/`lint:baseline`, поэтому error `@typescript-eslint/array-type` в `src/db/capability-repo.ts:635` (Agents ARCH-3) дошёл до GitHub Actions: CI run #312 на `d9e7e8d` — Build и Test зелёные на всех 6 матрицах, но шаг «Lint (informational)» упал везде, а «ESLint baseline» был пропущен — P1. Действие: добавить `npm run lint && npm run lint:baseline` в обязательные проверки `qualityGate` и в подсказки `dry_run`; предупреждать о пропущенной линтер-проверке; регрессия в `test-dry-run.mjs`.
 
 
-- [ ] PL-83 Исчерпание free-лимита модели посреди прогона (`Free usage limit reached`, задача BL-QA-A2.7-lint-zero 23.11.2026) приводит к общему `error` с «Код возврата 1»: Quality Gate и afterScript пропускаются, частично исправленные 121 файл остаются незакоммиченными, причина не отличается от обычного падения агента — P1. Действие: классифицировать ошибку квоты отдельным статусом/сообщением, сохранить partial-diff артефакт, предлагать continue с другой моделью; регрессия в `test-execution-hardening.mjs`.
 
 ---
 

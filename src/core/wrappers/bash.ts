@@ -660,6 +660,17 @@ export function buildBashWrapperScript(options: BashWrapperOptions): string {
     // SIGTERM/SIGKILL сами по себе неотличимы от обычного падения.
     '  ERROR_MESSAGE="Таймаут: превышено ${TIMEOUT_SECONDS} с"',
     '  log "[scheduler] Задача \'$TASK_NAME\' прервана по таймауту (${TIMEOUT_SECONDS} с)."',
+    // PL-83: квота/баланс модели — отдельный класс ошибки (код 126 + явная
+    // подсказка и partial-diff), а не безликий «Код возврата 1».
+    'elif [ "$EXIT_CODE" -ne 0 ] && [ -f "$LOG_FILE" ] && grep -qE \'Free usage limit reached|Insufficient Balance|free usage limit\' "$LOG_FILE"; then',
+    '  QUOTA_REASON=$(grep -E \'Free usage limit reached|Insufficient Balance|free usage limit\' "$LOG_FILE" | tail -n 1)',
+    '  SAFE_NAME=$(printf \'%s\' "$TASK_NAME" | tr -c \'[:alnum:]_-\' \'-\')',
+    '  QUOTA_DIFF="$WORKDIR/reports/quota-$SAFE_NAME.diff"',
+    '  mkdir -p "$WORKDIR/reports" 2>/dev/null || true',
+    '  git -C "$WORKDIR" diff > "$QUOTA_DIFF" 2>&1 || true',
+    '  log "[scheduler] PL-83: квота модели исчерпана: $QUOTA_REASON"',
+    '  ERROR_MESSAGE="PL-83: квота модели исчерпана ($QUOTA_REASON). Частичные правки сохранены в $QUOTA_DIFF. Перезапустите задачу с другой моделью: update_task name=$TASK_NAME model=provider/model"',
+    "  EXIT_CODE=126",
     'elif [ "$EXIT_CODE" -ne 0 ]; then',
     '  log "[scheduler] Задача \'$TASK_NAME\' завершилась с кодом $EXIT_CODE."',
     '  ERROR_MESSAGE="Код возврата $EXIT_CODE"',

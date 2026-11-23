@@ -72,9 +72,14 @@ const { initDb } = await import("./dist/db/index.js");
 const { saveTask } = await import("./dist/db/tasks-repo.js");
 const { getHistory } = await import("./dist/db/history-repo.js");
 const { getSetting, deleteSetting } = await import("./dist/db/settings-repo.js");
-const { writeWrapperCmd, writePromptFile, lockFilePath, ensureWrapper } = await import(
-  "./dist/core/ps-wrapper.js"
-);
+const {
+  writeWrapperCmd,
+  writePromptFile,
+  lockFilePath,
+  ensureWrapper,
+  WRAPPER_SCRIPT: psWrapperScript,
+} = await import("./dist/core/ps-wrapper.js");
+const { buildBashWrapperScript } = await import("./dist/core/wrappers/bash.js");
 // ARCH-4: отложенные эффекты и saga-компенсация.
 const { createAdHocRunContext, buildExecutionPlan, executeExecutionPlan } = await import(
   "./dist/core/execution.js"
@@ -86,6 +91,43 @@ const { readAuditLog } = await import("./dist/core/audit.js");
 
 initDb();
 await ensureWrapper();
+
+// PL-83: исчерпание квоты модели классифицируется отдельно от обычного
+// «Код возврата 1» в обеих обёртках (PowerShell и bash).
+const bashQuotaScript = buildBashWrapperScript({
+  sanitizedName: "quota-probe",
+  taskName: "Quota Probe",
+  promptFile: path.join(tempRoot, "quota-prompt.txt"),
+  timeoutSeconds: 60,
+  lockFile: path.join(tempRoot, "quota-probe.lock"),
+  workdir: tempRoot,
+  logFile: path.join(tempRoot, "quota-probe.log"),
+  recorderFile: path.join(tempRoot, "record-history.js"),
+});
+check(
+  "PL-83 PowerShell: квота обнаруживается по логу",
+  psWrapperScript.includes("Free usage limit reached|Insufficient Balance|free usage limit") &&
+    psWrapperScript.includes("Get-Content -LiteralPath $LogFile -Tail 80")
+);
+check(
+  "PL-83 PowerShell: отдельный код 126 и подсказка по модели",
+  psWrapperScript.includes("$script:exitCode = 126") &&
+    psWrapperScript.includes("update_task name=$TaskName model=provider/model")
+);
+check(
+  "PL-83 PowerShell: partial-diff сохраняется в reports",
+  psWrapperScript.includes('reports/quota-') && psWrapperScript.includes("git -C $Workdir diff")
+);
+check(
+  "PL-83 bash: квота обнаруживается по логу и даёт код 126",
+  bashQuotaScript.includes("Free usage limit reached|Insufficient Balance|free usage limit") &&
+    bashQuotaScript.includes("EXIT_CODE=126")
+);
+check(
+  "PL-83 bash: partial-diff и подсказка по модели",
+  bashQuotaScript.includes('QUOTA_DIFF="$WORKDIR/reports/quota-$SAFE_NAME.diff"') &&
+    bashQuotaScript.includes("update_task name=$TASK_NAME model=provider/model")
+);
 
 const recorder = path.resolve("dist/core/record-history.js");
 
