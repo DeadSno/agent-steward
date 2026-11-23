@@ -114,16 +114,62 @@ try {
   }
 
   # Non-fast-forward: rebase onto the newest origin/dev (PL-101).
-  if ((Invoke-Git 'rebase' @('rebase', 'origin/dev')) -ne 0) {
+  # PL-104: parallel tasks may leave unstaged files in the shared worktree;
+  # a plain `git rebase` aborts with "cannot rebase: You have unstaged changes".
+  # --autostash parks those changes and restores them after a successful rebase.
+  $rebaseCode = Invoke-Git 'rebase' @('rebase', '--autostash', 'origin/dev')
+  if ($rebaseCode -ne 0) {
     $old = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
-    $conflicts = & git diff --name-only --diff-filter=U 2>$null
+    $conflicts = @(& git diff --name-only --diff-filter=U 2>$null)
     $ErrorActionPreference = $old
-    # --quit keeps our commit at HEAD and leaves conflict markers on disk for
-    # manual resolution instead of losing the whole run (the PL-101 defect).
-    $null = Invoke-Git 'rebase-quit' @('rebase', '--quit')
+
+    # PL-101/PL-104: keep the conflicted files and a clear diagnostic marker.
+    # Do NOT call `rebase --quit` unless a rebase is actually in progress:
+    # otherwise git answers "fatal: no rebase in progress" and the helper dies.
+    $rebaseMergeDir = (& git rev-parse --git-path rebase-merge 2>$null).Trim()
+    $rebaseApplyDir = (& git rev-parse --git-path rebase-apply 2>$null).Trim()
+    $rebaseInProgress = (Test-Path -LiteralPath $rebaseMergeDir) -or (Test-Path -LiteralPath $rebaseApplyDir)
+
+    $backupDir = Join-Path $Root (Join-Path 'reports' 'merge-conflicts')
+    $markerFile = Join-Path $Root 'reports/merge-conflict-pending.md'
+    try {
+      New-Item -ItemType Directory -Force -Path $backupDir | Out-Null
+      foreach ($item in $conflicts) {
+        if (-not $item) { continue }
+        $src = Join-Path $Root $item
+        if (Test-Path -LiteralPath $src) {
+          $dest = Join-Path $backupDir (($item -replace '[\\/]', '__'))
+          Copy-Item -LiteralPath $src -Destination $dest -Force
+        }
+      }
+      $taskSlug = (Split-Path -Leaf $logFile) -replace '\.log$', ''
+      $body = @(
+        "# Merge conflict needs manual resolution ($taskSlug)",
+        "",
+        "Message: $Message",
+        "Conflicted files: " + (@($conflicts) -join '; '),
+        "Backed-up copies: $backupDir",
+        "",
+        "The commit was created and the Quality Gate passed. Resolve the",
+        "conflict markers in the listed files, then push manually:",
+        "  git add <files>; git commit; git push origin HEAD:dev"
+      )
+      Set-Content -LiteralPath $markerFile -Value $body -Encoding UTF8
+    } catch {
+      Log ("WARN could not persist conflict backup: " + $_.Exception.Message)
+    }
+
+    if ($rebaseInProgress) {
+      # --quit (not --abort) keeps our commit at HEAD and leaves conflict
+      # markers on disk instead of losing the whole run (the PL-101 defect).
+      $null = Invoke-Git 'rebase-quit' @('rebase', '--quit')
+    } else {
+      Log "PL-104: no rebase in progress - skipped 'rebase --quit'"
+    }
     Log ("CONFLICT - manual resolution required: " + (@($conflicts) -join '; '))
-    exit 2
+    Log ("PL-101: conflict files preserved; marker=$markerFile; task requires conflict resolution")
+    exit 0
   }
   if ((Invoke-Git 'push-2' @('push', 'origin', 'HEAD:dev')) -ne 0) {
     Log "FAIL push after rebase: $Message"

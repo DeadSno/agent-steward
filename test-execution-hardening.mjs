@@ -1226,6 +1226,123 @@ try {
   check("PL-77/79/82/86/87/99: секция не выбросила исключение", false, "section threw");
 }
 
+// --- PL-80/81/101/104/105: регрессии коммит-хелперов и обёртки (B4) ---
+try {
+  const repoRoot = process.cwd();
+  const parsePs = (abs) => {
+    const escaped = abs.replace(/'/g, "''");
+    const command =
+      "$t=$null;$e=$null;" +
+      `[void][System.Management.Automation.Language.Parser]::ParseFile('${escaped}',[ref]$t,[ref]$e);` +
+      "exit $e.Count";
+    return spawnSync("powershell.exe", ["-NoProfile", "-Command", command], {
+      encoding: "utf8",
+      windowsHide: true,
+    });
+  };
+
+  // PL-80: комментарии в .ps1 — только ASCII, иначе PS 5.1 читает их как ANSI.
+  for (const rel of ["scripts/pl-commit.ps1", "scripts/steward-commit.ps1"]) {
+    const abs = path.join(repoRoot, rel);
+    const bytes = fs.readFileSync(abs);
+    const nonAscii = [...bytes].filter((b) => b > 127).length;
+    check(`PL-80: ${path.basename(rel)} содержит только ASCII`, nonAscii === 0, `nonAscii=${nonAscii}`);
+    const parsed = parsePs(abs);
+    check(
+      `PL-80: ${path.basename(rel)} парсится Windows PowerShell`,
+      parsed.status === 0,
+      `exit=${parsed.status} ${parsed.stderr ?? ""}`
+    );
+  }
+
+  // PL-81: код выхода агента — факт завершения, а не вердикт проверки.
+  check(
+    "PL-81: обёртка отделяет код агента от классификатора квоты",
+    psWrapperScript.includes("$agentExitCode = $script:exitCode") &&
+      psWrapperScript.includes("$quotaDetected = $true")
+  );
+  check(
+    "PL-81: гейт запускается при exit!=0, если есть артефакты работы",
+    psWrapperScript.includes("$runQualityGate = $QualityGate") &&
+      psWrapperScript.includes("($script:exitCode -eq 0 -or $agentWorkCompleted)") &&
+      !psWrapperScript.includes("if ($QualityGate -and $script:exitCode -eq 0)")
+  );
+  check(
+    "PL-81: расхождение логируется, статус остаётся success",
+    psWrapperScript.includes("PL-81: расхождение") &&
+      psWrapperScript.includes("$script:errorMessage = $divergenceReason") &&
+      psWrapperScript.includes("$script:exitCode = 0")
+  );
+  const { resolveAgentExitVerdict: resolveB4 } = await import("./dist/core/execution.js");
+  const b4Verdict = resolveB4({
+    agentExitCode: 1,
+    gatePassed: true,
+    taskName: "PL-81 regression",
+    log: () => {},
+  });
+  check(
+    "PL-81: exit=1 + gate=pass — success, post-flight разрешён",
+    b4Verdict.status === "success" &&
+      b4Verdict.runAfterScript === true &&
+      b4Verdict.diverged === true,
+    JSON.stringify(b4Verdict)
+  );
+  const wrapperAbs = path.join(tempRoot, "wrapper-parse-check.ps1");
+  // ensureWrapper() пишет BOM — без него PS 5.1 читает кириллицу как ANSI.
+  fs.writeFileSync(wrapperAbs, "\uFEFF" + psWrapperScript, "utf8");
+  const wrapperParsed = parsePs(wrapperAbs);
+  check("PL-81: сгенерированный run-task.ps1 парсится PowerShell", wrapperParsed.status === 0, `exit=${wrapperParsed.status}`);
+
+  // PL-101/PL-104: коммит-хелпер переживает non-fast-forward и чужие правки.
+  const helper = fs.readFileSync(path.join(repoRoot, "scripts/steward-commit.ps1"), "utf8");
+  check(
+    "PL-104: rebase использует --autostash вместо обычного rebase",
+    helper.includes("@('rebase', '--autostash', 'origin/dev')") &&
+      !helper.includes("@('rebase', 'origin/dev')")
+  );
+  check(
+    "PL-104: rebase --quit защищён проверкой активного rebase",
+    helper.includes("$rebaseInProgress") &&
+      helper.indexOf("$rebaseInProgress") < helper.indexOf("@('rebase', '--quit')") &&
+      helper.includes("no rebase in progress - skipped 'rebase --quit'")
+  );
+  check(
+    "PL-101: конфликт сохраняется и помечается без падения задачи",
+    helper.includes("merge-conflicts") &&
+      helper.includes("merge-conflict-pending.md") &&
+      helper.includes("PL-101: conflict files preserved") &&
+      !helper.includes("exit 2")
+  );
+
+  // PL-105: pre-flight проверяет, что WorkingDirectory задачи — git worktree.
+  check(
+    "PL-105: pre-flight проверяет git-дерево и логирует статус snapshot/isolation",
+    psWrapperScript.includes("PL-105:") &&
+      psWrapperScript.includes("rev-parse --is-inside-work-tree") &&
+      psWrapperScript.includes("snapshot/isolation active") &&
+      psWrapperScript.includes("snapshot/isolation disabled")
+  );
+  const { decideWorktreeSnapshot: decideB4 } = await import("./dist/core/execution.js");
+  const wtDir = path.join(tempRoot, "pl105-worktree");
+  fs.mkdirSync(path.join(wtDir, "src"), { recursive: true });
+  fs.writeFileSync(path.join(wtDir, ".git"), "gitdir: /nowhere\n", "utf8");
+  fs.writeFileSync(path.join(wtDir, "src", "x.ts"), "// x\n", "utf8");
+  const wtDecision = decideB4({
+    taskName: "pl105-probe",
+    qualityGate: 'node -e "process.exit(0)"',
+    workdir: wtDir,
+    env: { ...process.env, AGENT_STEWARD_GATE_GUARD_PATHS: "src" },
+  });
+  check(
+    "PL-105: git-worktree (.git — файл) распознаётся как репозиторий",
+    wtDecision.required === true && !/git-репозиторием/.test(wtDecision.skipReason),
+    JSON.stringify(wtDecision)
+  );
+} catch (err) {
+  console.log("[diag] PL-80/81/101/104/105 section THREW:", err instanceof Error ? err.stack : String(err));
+  check("PL-80/81/101/104/105: секция не выбросила исключение", false, "section threw");
+}
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\nExecution hardening: ${results.length - failed.length}/${results.length} проверок пройдено.`);
 try {

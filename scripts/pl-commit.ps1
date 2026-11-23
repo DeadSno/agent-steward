@@ -1,10 +1,10 @@
-# Post-flight commit+push for one QA-findings task (Деталь 1.5 / 1.6).
+# Post-flight commit+push for one QA-findings task (Detail 1.5 / 1.6).
 # Called by agent-steward's afterScript. Commits ONLY the files owned by the task
 # and only when that task's quality gate wrote its own success marker.
 # Generalizes scripts/qa-a2-commit.ps1: the marker is a parameter, so parallel
 # tasks cannot consume each other's gate signal.
-# PL-41: the commit itself is pathspec-limited — `git commit -m <msg> -- <files>`
-# — so foreign staged changes never enter this task's commit. Plain
+# PL-41: the commit itself is pathspec-limited - `git commit -m <msg> -- <files>`
+# - so foreign staged changes never enter this task's commit. Plain
 # `git add -- <files>` is NOT enough: `git add` stages only our files, but a bare
 # `git commit -m <msg>` commits the WHOLE index, so anything another process
 # staged in the meantime (or left staged before this run) would be swept into the
@@ -131,7 +131,7 @@ try {
     Start-Sleep -Seconds 3
   }
   if (-not $pushed) {
-    # A parallel task may have pushed our commit already — verify before failing.
+    # A parallel task may have pushed our commit already - verify before failing.
     $null = Invoke-Git 'fetch' @('fetch', 'origin', 'dev')
     $old = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'

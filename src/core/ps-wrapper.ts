@@ -715,6 +715,22 @@ try {
         Set-Location $Workdir
     }
 
+    # PL-105: pre-flight проверка, что workingDirectory задачи совпадает с
+    # git-репозиторием. Иначе PL-59 молча пишет "дерево не является
+    # git-репозиторием", хотя каталог может быть полноценным worktree.
+    $script:gitWorktreeActive = $false
+    if ($Workdir) {
+        try {
+            $gitTreeOut = & git -C $Workdir rev-parse --is-inside-work-tree 2>$null
+            $script:gitWorktreeActive = ($LASTEXITCODE -eq 0 -and "$gitTreeOut".Trim() -eq "true")
+        } catch {}
+    }
+    if ($script:gitWorktreeActive) {
+        Write-Log "[agent-steward] PL-105: WorkingDirectory '$Workdir' is a git worktree - snapshot/isolation active."
+    } else {
+        Write-Log "[agent-steward] PL-105: WARNING WorkingDirectory '$Workdir' is not a git worktree - snapshot/isolation disabled. Set workingDirectory to the git repository root."
+    }
+
     # PL-25: фиксируем состояние рабочего дерева до запуска ИИ. Перед гейтом
     # сверяем его, чтобы чужие незакоммиченные правки src/ не давали ложный зелёный.
     if ($QualityGate -and $GateSnapshotFile -and $Workdir -and $gateIntegrityFile -and (Test-Path -LiteralPath $gateIntegrityFile)) {
@@ -941,6 +957,10 @@ try {
     # запусков: N попыток внутри обёртки × N+1 запуск из recorder'а.
     # Параметры -RetryCount/-RetryDelaySeconds принимаются, но игнорируются.
     $script:exitCode = Invoke-OpenCodeOnce -CommandPath $opencodeCmd -Arguments $opencodeArgs
+    # PL-81: код выхода процесса запоминаем до всех классификаторов (квота и т.д.),
+    # чтобы потом отличить "ошибку агента" от "ошибки верификации".
+    $agentExitCode = $script:exitCode
+    $quotaDetected = $false
 
     # PL-83: исчерпание квоты/баланса модели — отдельный класс ошибки, а не
     # обычный «Код возврата 1». Иначе гейт и afterScript пропускаются, а частично
@@ -973,12 +993,35 @@ try {
             if ($Model) { $modelHint = " Текущая модель задачи: $Model." }
             $script:errorMessage = "PL-83: квота модели исчерпана ($quotaReason). Частичные правки сохранены в $quotaDiff. Перезапустите задачу с другой моделью: update_task name=$TaskName model=provider/model$modelHint"
             $script:exitCode = 126
+            $quotaDetected = $true
         }
     }
 
-    # Quality Gate: проверочная команда выполняется ТОЛЬКО после успешного
-    # завершения opencode run. Если ИИ упал — шлюз не запускаем.
-    if ($QualityGate -and $script:exitCode -eq 0) {
+    # PL-81: код выхода процесса — факт завершения, а не вердикт проверки.
+    # Гейт запускается и при ненулевом коде, если агент оставил артефакты/вывод
+    # (workCompleted). Причину кода фиксируем в логе, но статус задачи defines
+    # verdict гейта; post-flight в любом случае выполняется в finally.
+    $agentWorkCompleted = $false
+    if ($LogFile -and (Test-Path -LiteralPath $LogFile)) {
+        try {
+            # Строки обёртки начинаются с "[yyyy-MM-dd HH:mm:ss]" или
+            # "[agent-steward]"; всё остальное — вывод самого агента.
+            $agentLines = @(Get-Content -LiteralPath $LogFile -Tail 200 -ErrorAction Stop |
+                Where-Object { $_ -and $_ -notmatch '^\[' } |
+                Select-Object -First 1)
+            if ($agentLines.Count -gt 0) { $agentWorkCompleted = $true }
+        } catch {}
+    }
+    if (-not $agentWorkCompleted -and $Workdir) {
+        try {
+            $dirty = & git -C $Workdir status --porcelain 2>$null
+            if ($LASTEXITCODE -eq 0 -and @($dirty).Count -gt 0) { $agentWorkCompleted = $true }
+        } catch {}
+    }
+    $gatePassed = $null
+    $runQualityGate = $QualityGate -and -not $quotaDetected -and
+        ($script:exitCode -eq 0 -or $agentWorkCompleted)
+    if ($runQualityGate) {
         # G-1.2: перед запуском гейта сверяем его входы со snapshot'ом,
         # снятым при создании задачи. При расхождении гейт НЕ выполняется.
         $gateIntegrityOk = $false
@@ -993,16 +1036,19 @@ try {
                     Write-Log "[agent-steward] ОШИБКА: целостность входов Quality Gate нарушена (snapshot mismatch)."
                     $script:errorMessage = "Quality Gate: целостность входов нарушена (snapshot mismatch)"
                     $script:exitCode = 1
+                    $gatePassed = $false
                 }
             } else {
                 Write-Log "[agent-steward] ОШИБКА: не найден помощник проверки целостности гейта."
                 $script:errorMessage = "Quality Gate: помощник проверки целостности не найден"
                 $script:exitCode = 1
+                $gatePassed = $false
             }
         } else {
             Write-Log "[agent-steward] ОШИБКА: snapshot гейта отсутствует — запуск с гейтом невозможен."
             $script:errorMessage = "Quality Gate: snapshot входов отсутствует"
             $script:exitCode = 1
+            $gatePassed = $false
         }
 
         if ($gateIntegrityOk -and $worktreeSnapshotFile -and (Test-Path -LiteralPath $worktreeSnapshotFile)) {
@@ -1016,6 +1062,7 @@ try {
                 Write-Log "[agent-steward] ОШИБКА: рабочее дерево изменилось во время прогона — гейт не доверяем."
                 $script:errorMessage = "Quality Gate: рабочее дерево изменилось во время прогона"
                 $script:exitCode = 1
+                $gatePassed = $false
             }
         }
 
@@ -1028,14 +1075,27 @@ try {
                 Write-Log "[agent-steward] ОШИБКА: Quality Gate превысил таймаут $GateTimeoutSeconds с и был остановлен."
                 $script:errorMessage = "Quality Gate: превышен таймаут $GateTimeoutSeconds с"
                 $script:exitCode = 1
+                $gatePassed = $false
             } elseif ($gateCode -ne 0) {
                 Write-Log "[agent-steward] ОШИБКА: Quality Gate провален. Код возврата: $gateCode"
                 $script:errorMessage = "Quality Gate провален. Код возврата: $gateCode"
                 $script:exitCode = 1
+                $gatePassed = $false
             } else {
                 Write-Log "[agent-steward] Quality Gate пройден."
+                $gatePassed = $true
             }
         }
+    }
+
+    # PL-81: разделяем "ошибку агента" и "ошибку верификации". Если гейт прошёл,
+    # ненулевой код возврата агента не делает задачу error: причина кода
+    # фиксируется в истории, а post-flight (коммит) выполняется в полном объёме.
+    if ($gatePassed -eq $true -and $agentExitCode -ne 0 -and $script:exitCode -ne 0) {
+        $divergenceReason = "Код возврата $agentExitCode при пройденном qualityGate (PL-81)"
+        Write-Log "[agent-steward] PL-81: расхождение: код выхода процесса агента $agentExitCode, qualityGate=pass — задача '$TaskName' считается успешной, причина кода зафиксирована"
+        $script:errorMessage = $divergenceReason
+        $script:exitCode = 0
     }
 
     if ($script:exitCode -ne 0) {
