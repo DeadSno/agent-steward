@@ -240,7 +240,7 @@ flowchart TB
         BP["buildExecutionPlan — execution.ts:478<br/>isGateQuarantined — capability-repo.ts:616"]
         ROUTE["routeStep — router/dispatch.ts:51"]
         DECIDE["decideCapabilityRoute — capability-repo.ts:329"]
-        COMPILE["compileRunContext — run-context.ts:593 (НЕ в прогоне)"]
+        COMPILE["compileContextForRoute — router/dispatch.ts:133<br/>compileRunContext — run-context.ts:593"]
     end
 
     subgraph run["Исполнение"]
@@ -275,7 +275,8 @@ flowchart TB
     CAP --> DECIDE
     JOUR --> DLQ
     BUDGET -.->|только в index.ts, не в execution| BP
-    ROUTE -.->|PL-94| COMPILE
+    BP -->|compileContextForRoute| COMPILE
+    COMPILE -->|compiledContext + contextHash| EXEC
     BP -->|isGateQuarantined → review| CAP
     EXEC -->|execution.escalation.enabled| GATE
     EXEC -->|recordGateVerdict| CAP
@@ -285,11 +286,11 @@ flowchart TB
     RESUME -->|writeGateOutcome| WG
 ```
 
-**Условные обозначения:** сплошная стрелка — реальный вызов в `src/`; пунктирная — модуль существует и покрыт тестами, но в production execution loop не подключён (PL-94).
+**Условные обозначения:** сплошная стрелка — реальный вызов в `src/`; пунктирная `BUDGET -.-> BP` означает не «неподключённый модуль», а то, что бюджет проверяется в `index.ts`, а не внутри `execution.ts`. PL-93 и PL-94 переведены на сплошные стрелки.
 
-**Что видно:** после PL-93 ядро замыкает «исполнение → ledger → обучение карты → роутинг»: `executeExecutionPlan` при `execution.escalation.enabled` вызывает `runGateWithRetry`/`escalateAfterGate`, пишет вердикт через `writeGateOutcome` и обучает capability map через `recordGateVerdict`; `buildExecutionPlan` проверяет `isGateQuarantined` и уводит шаг в `review`. После PL-92 добавлен и путь «metadata.durableExecution → resume → тот же journal/ledger».
+**Что видно:** после PL-93 ядро замыкает «исполнение → ledger → обучение карты → роутинг»: `executeExecutionPlan` при `execution.escalation.enabled` вызывает `runGateWithRetry`/`escalateAfterGate`, пишет вердикт через `writeGateOutcome` и обучает capability map через `recordGateVerdict`; `buildExecutionPlan` проверяет `isGateQuarantined` и уводит шаг в `review`. После PL-94 план дополнительно несёт `CompiledContext`: `compileContextForRoute` собирает его из ledger, `contextHash` передаётся исполнителю, а при эскалации контекст пересобирается под новую модель/окно. После PL-92 добавлен и путь «metadata.durableExecution → resume → тот же journal/ledger».
 
-**Ключевые выводы:** `writeGateOutcome` ([execution.ts](src/core/execution.ts:405)) — единственная точка записи вердикта в ledger, а при включённой эскалации рядом вызывается и `recordGateVerdict` ([capability-repo.ts](src/db/capability-repo.ts:503)). Эскалация **по умолчанию выключена** (`escalation.enabled` должен быть явным), поэтому Python/CLI-вызовы без опции сохраняют старое поведение. Бюджет проверяется до старта задачи в [index.ts](src/index.ts:7948) (`checkBudgetGate`), а не внутри `executeExecutionPlan`. Lease шага (`renewStepLease` в [runs-repo.ts](src/db/runs-repo.ts:553) и [run-journal.ts](src/db/run-journal.ts:119)) — основа safe-resume; PL-92 подключил `resumeRun` к RPC/GUI-пути, но DLQ-retry всё ещё ждёт обработчика (PL-97).
+**Ключевые выводы:** `writeGateOutcome` ([execution.ts](src/core/execution.ts:405)) — единственная точка записи вердикта в ledger, а при включённой эскалации рядом вызывается и `recordGateVerdict` ([capability-repo.ts](src/db/capability-repo.ts:503)). Эскалация **по умолчанию выключена** (`escalation.enabled` должен быть явным), поэтому Python/CLI-вызовы без опции сохраняют старое поведение. Скомпилированный контекст теперь не теряется между планом и исполнителем: `CompiledContext.contextHash` доходит до `StepExecutionInput` и `OpenCodeInvocation`, а при эскалации пересобирается через `recompileContextForRouteEscalation`. Бюджет проверяется до старта задачи в [index.ts](src/index.ts:7948) (`checkBudgetGate`), а не внутри `executeExecutionPlan`. Lease шага (`renewStepLease` в [runs-repo.ts](src/db/runs-repo.ts:553) и [run-journal.ts](src/db/run-journal.ts:119)) — основа safe-resume; PL-92 подключил `resumeRun` к RPC/GUI-пути, но DLQ-retry всё ещё ждёт обработчика (PL-97).
 
 ### 6. Модель данных (ER-диаграмма)
 
@@ -434,11 +435,11 @@ erDiagram
 
 10. **PL-93 закрыт: эскалация подключена, но opt-in.** [execution.ts](src/core/execution.ts:1265) импортирует `runGateWithRetry`/`escalateAfterGate` ([escalation.ts](src/core/router/escalation.ts:184)/:220) и `isGateQuarantined`/`recordGateVerdict` ([capability-repo.ts](src/db/capability-repo.ts:616)/:503). При `escalation.enabled: true` гейт повторяется до 2 попыток на артефакте, стабильный `fail` local уходит на cloud-исполнителя (если он есть в `executors`), вердикт пишется через `writeGateOutcome`, а через `recordGateVerdict` обновляется capability map и карантин. `buildExecutionPlan` ([execution.ts](src/core/execution.ts:478)) при карантине гейта уводит шаг в `review`. По умолчанию эскалация выключена: production-вызовы без опции ведут себя как раньше (PL-99 — включить её в реальном mission/index-пути и передать функцию гейта).
 
-11. **Компиляция контекста по ledger не работает в прогоне (PL-94).** `buildExecutionPlan` ([execution.ts](src/core/execution.ts:478)) вызывает `routeStep`, но не `compileContextForRoute` ([dispatch.ts](src/core/router/dispatch.ts:133)); `recompileContextOnEscalation` ([run-context.ts](src/db/run-context.ts:814)) не вызывается вовсе. Исполнителю передаётся сырой `RunContext` без `contextHash`.
+11. **PL-94 закрыт: контекст компилируется из ledger и доходит до исполнителя.** `buildExecutionPlan` ([execution.ts](src/core/execution.ts:478)) после `routeStep` вызывает `compileContextForRoute` ([dispatch.ts](src/core/router/dispatch.ts:133)) и сохраняет `CompiledContext` (`compiledFrom: "ledger"`, SHA-256 `contextHash`, модель `local-7b`/`cloud-large`) в `PlannedStep.compiledContext`. Поле передаётся в `StepExecutionInput` и `OpenCodeInvocation`, а при PL-93-эскалации `executeStepWithEscalation` пересобирает контекст через `recompileContextForRouteEscalation`/`recompileContextOnEscalation` ([run-context.ts](src/db/run-context.ts:814)) под новую модель и окно. Регрессия в `test-execution-pipeline.mjs` проверяет 12 свойств, включая разные `contextHash` для local и cloud. Полный контур «committed + execution.escalation.enabled» в реальных вызовах остаётся за PL-102.
 
 12. **PL-96 закрыт: цепочка проверяется полностью, автопроверки на старте всё ещё нет (PL-98).** `verifyGateOutcomeChain()` ([runs-repo.ts](src/db/runs-repo.ts:837)) теперь без аргументов читает все строки через `listAllGateOutcomes()` (:827); `readGateOutcomeLedger()` (:869) тоже проверяет полную цепочку при `verify !== false`, хотя возвращает `rows` с заданным `limit`. Регрессия в `test-capability-map.mjs` на 1005 записях ловит подмену `evidence_path` после 1000-й строки. Осталось: автоматическая проверка при старте/в аудит — PL-98.
 
-> **Важно для читателя:** пункты 3, 8, 9, 11, 12 означают, что часть подсистем реализована как проверенная библиотека, но не встроена в production execution loop (для resume — только в части DLQ). Эскалация (п. 10) встроена, но требует явного `escalation.enabled`. Диаграммы 3 и 4.1 показывают фактические вызовы сплошной линией, а неподключённые связи — пунктиром.
+> **Важно для читателя:** пункты 3, 8, 9, 12 означают, что часть подсистем реализована как проверенная библиотека, но не встроена в production execution loop (для resume — только в части DLQ). Эскалация (п. 10) встроена, но требует явного `escalation.enabled`; компиляция контекста (п. 11) встроена в `buildExecutionPlan` по умолчанию. Диаграммы 3 и 4.1 показывают фактические вызовы сплошной линией, а неподключённые связи — пунктиром.
 
 ### Ссылки на смежные документы
 

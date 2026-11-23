@@ -395,7 +395,12 @@ export async function resumeDurableRunExecution(
             `Исполнитель ${executor.id} не поддерживает маршрут ${String(target.route.executor)}`,
           );
         }
-        const result = await executor.execute({ step: target, context: plan.context, plan });
+        const result = await executor.execute({
+          step: target,
+          context: plan.context,
+          plan,
+          compiledContext: target.compiledContext,
+        });
         if (result.error) throw new Error(result.error);
         return result.output;
       };

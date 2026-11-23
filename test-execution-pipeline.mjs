@@ -901,6 +901,103 @@ check(
 const quarantinedRun = await ac1.executeExecutionPlan(quarantinedPlan, { executors: [executor] });
 check("PL-93: шаг в карантине пропущен", quarantinedRun.steps[0].status === "skipped");
 
+// --- PL-94: контекст компилируется из ledger и доходит до исполнителя -------
+const pl94Files = {
+  "src/core/router/rules.ts": "PL-94 critical payload",
+  "src/db/capability-repo.ts": "PL-94 ledger payload " + "x".repeat(200),
+};
+const pl94Plan = await ac1.buildExecutionPlan(
+  ac1.createAdHocRunContext("PL-94 compiled context", {
+    taskName: "pl94-context",
+    cwd: tempRoot,
+    taskType: "run_tests",
+    riskClass: "R0",
+  }),
+  { compileContext: { files: pl94Files, tokenBudget: 2000 } },
+);
+const pl94Compiled = pl94Plan.steps[0].compiledContext;
+check("PL-94: compiledContext приложен к шагу плана", Boolean(pl94Compiled));
+check(
+  "PL-94: contextHash детерминированный SHA-256",
+  /^[0-9a-f]{64}$/.test(pl94Compiled?.contextHash ?? ""),
+);
+check("PL-94: модель выбрана из маршрута", pl94Compiled?.model === "local-7b");
+check("PL-94: контекст помечен как ledger", pl94Compiled?.compiledFrom === "ledger");
+
+const pl94Seen = [];
+const pl94Executor = {
+  id: "local",
+  supports: (route) => route.executor === "local",
+  execute: (input) => {
+    pl94Seen.push(input);
+    return { output: "pl94-ok" };
+  },
+};
+const pl94Run = await ac1.executeExecutionPlan(pl94Plan, { executors: [pl94Executor] });
+check("PL-94: запуск с скомпилированным контекстом passed", pl94Run.status === "passed");
+check(
+  "PL-94: исполнитель получил compiledContext",
+  pl94Seen.length === 1 && pl94Seen[0].compiledContext?.contextHash === pl94Compiled.contextHash,
+);
+
+const pl94Invocations = [];
+const pl94Opencode = ac1.createOpenCodeExecutor((input) => {
+  pl94Invocations.push(input);
+  return "done";
+});
+await ac1.executeExecutionPlan(pl94Plan, { executors: [pl94Opencode] });
+check(
+  "PL-94: OpenCodeInvocation получил contextHash",
+  pl94Invocations.length === 1 && pl94Invocations[0].contextHash === pl94Compiled.contextHash,
+);
+
+const pl94LocalSeen = [];
+const pl94CloudSeen = [];
+const pl94ContextPlan = await ac1.buildExecutionPlan(
+  ac1.createAdHocRunContext("PL-94 escalation recompile", {
+    taskName: "pl94-escalate-context",
+    cwd: tempRoot,
+    taskType: "run_tests",
+    riskClass: "R0",
+  }),
+  { compileContext: { files: pl94Files, tokenBudget: 2000 } },
+);
+const pl94ContextRun = await ac1.executeExecutionPlan(pl94ContextPlan, {
+  executors: [
+    {
+      id: "local",
+      supports: (route) => route.executor === "local",
+      execute: (input) => {
+        pl94LocalSeen.push(input);
+        return { output: "local" };
+      },
+    },
+    {
+      id: "cloud",
+      supports: (route) => route.executor === "cloud",
+      execute: (input) => {
+        pl94CloudSeen.push(input);
+        return { output: "cloud" };
+      },
+    },
+  ],
+  gate: ({ step }) => (step.route.executor === "cloud" ? { ok: true } : { ok: false, reason: "local gate fail" }),
+  escalation: { enabled: true },
+});
+check("PL-94: эскалация с пересборкой контекста passed", pl94ContextRun.status === "passed");
+check(
+  "PL-94: локальный шаг получил контекст local-7b",
+  pl94LocalSeen.length === 1 && pl94LocalSeen[0].compiledContext?.model === "local-7b",
+);
+check(
+  "PL-94: облачный шаг получил пересобранный контекст cloud-large",
+  pl94CloudSeen.length === 1 && pl94CloudSeen[0].compiledContext?.model === "cloud-large",
+);
+check(
+  "PL-94: contextHash после эскалации отличается",
+  pl94CloudSeen[0].compiledContext?.contextHash !== pl94LocalSeen[0].compiledContext?.contextHash,
+);
+
 closeDb();
 try {
   fs.rmSync(tempRoot, { recursive: true, force: true });

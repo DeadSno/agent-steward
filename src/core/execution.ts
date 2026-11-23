@@ -26,6 +26,7 @@ import {
   type GateVerdictValue,
 } from "../db/runs-repo.js";
 import { runStepStatefullyAsync } from "../db/run-journal.js";
+import type { CompiledContext, CompileContextOptions } from "../db/run-context.js";
 import { isGateQuarantined, recordGateVerdict } from "../db/capability-repo.js";
 import {
   MAX_ESCALATION_STEPS,
@@ -52,7 +53,13 @@ import {
   type MissionStep,
   type PlanSource,
 } from "./router/planner.js";
-import { routeStep, type StepRoute } from "./router/dispatch.js";
+import {
+  compileContextForRoute,
+  EXECUTOR_MODEL,
+  recompileContextForRouteEscalation,
+  routeStep,
+  type StepRoute,
+} from "./router/dispatch.js";
 import type { CapabilityThresholds } from "../db/capability-repo.js";
 import {
   classifyRiskClass,
@@ -432,6 +439,11 @@ export function writeGateOutcome(options: WriteGateOutcomeOptions): GateOutcomeR
 export interface PlannedStep extends MissionStep {
   order: number;
   route: StepRoute;
+  /**
+   * PL-94: контекст, собранный из ledger после роутинга. Исполнителю передаётся
+   * именно он, а не сырой `RunContext`; при эскалации пересобирается заново.
+   */
+  compiledContext?: CompiledContext;
 }
 
 /** План исполнения: контекст + шаги + источник декомпозиции. */
@@ -448,6 +460,8 @@ export interface BuildPlanOptions {
   maxSteps?: number;
   decomposer?: MissionDecomposer;
   thresholds?: CapabilityThresholds;
+  /** PL-94: параметры компиляции контекста (кроме taskType/model — их даёт маршрут). */
+  compileContext?: Omit<CompileContextOptions, "taskType" | "model">;
 }
 
 function planStepsForContext(
@@ -506,7 +520,11 @@ export async function buildExecutionPlan(
         `Шаг "${step.stepName}" (${step.taskType}) не исполняется автоматически: ${route.reason}`,
       );
     }
-    return { ...step, order, route };
+    const compiledContext = compileContextForRoute(route, {
+      rootDir: context.cwd,
+      ...(options.compileContext ?? {}),
+    });
+    return { ...step, order, route, compiledContext };
   });
   return {
     context,
@@ -539,6 +557,8 @@ export interface StepExecutionInput {
   context: RunContext;
   /** Полный план — исполнителю может понадобиться предыдущий шаг. */
   plan: ExecutionPlan;
+  /** PL-94: детерминированный контекст из ledger (может отсутствовать в старых планах). */
+  compiledContext?: CompiledContext;
 }
 
 /** Результат исполнителя шага. */
@@ -606,6 +626,8 @@ export interface OpenCodeInvocation {
   sessionId: string | null;
   step: PlannedStep;
   context: RunContext;
+  /** PL-94: хэш скомпилированного контекста для трассировки прогона. */
+  contextHash?: string;
 }
 
 export function createOpenCodeExecutor(
@@ -616,7 +638,7 @@ export function createOpenCodeExecutor(
     id,
     descriptor: { kind: "opencode" },
     supports: (route) => route.executor !== null,
-    async execute({ step, context, plan }) {
+    async execute({ step, context, plan, compiledContext }) {
       const output = await invoke({
         prompt: plan.context.prompt,
         cwd: plan.context.cwd,
@@ -625,6 +647,7 @@ export function createOpenCodeExecutor(
         sessionId: plan.context.profile.sessionId ?? null,
         step,
         context,
+        ...(compiledContext ? { contextHash: compiledContext.contextHash } : {}),
       });
       return { output };
     },
@@ -1174,16 +1197,32 @@ async function executeStepWithEscalation(
   );
   let target = gateTargetForRoute(step.route);
   let escalations = 0;
+  let compiledContext = step.compiledContext;
 
   for (;;) {
     const route = routeForTarget(step.route, target);
+    // PL-94: эскалация меняет модель/окно — контекст пересобирается из ledger,
+    // а не переиспользуется. Это тот же путь, что и в router/dispatch.ts.
+    if (escalations > 0 && compiledContext) {
+      compiledContext = recompileContextForRouteEscalation(compiledContext, {
+        rootDir: plan.context.cwd,
+        taskType: route.taskType,
+        model: route.executor ? EXECUTOR_MODEL[route.executor] : compiledContext.model,
+      }).context;
+    }
+    const effectiveStep: PlannedStep = { ...step, route, compiledContext };
     const executor = route.executor === null ? undefined : pick(route);
     if (!executor) {
       throw new Error(
         `Нет исполнителя для маршрута ${route.executor ?? "review"}/${String(route.transport)} после эскалации на ${target}`,
       );
     }
-    const result = await executor.execute({ step: { ...step, route }, context: plan.context, plan });
+    const result = await executor.execute({
+      step: effectiveStep,
+      context: plan.context,
+      plan,
+      compiledContext,
+    });
     const agentExitCode =
       typeof result.exitCode === "number" ? result.exitCode : result.error ? 1 : 0;
     const workCompleted = result.output !== undefined;
@@ -1193,9 +1232,10 @@ async function executeStepWithEscalation(
     if (options.gate && shouldRunQualityGate({ agentExitCode, hasQualityGate: true, workCompleted })) {
       outcome = await runGateWithRetry(async (attempt) => {
         const verdict = await options.gate!({
-          step: { ...step, route },
+          step: effectiveStep,
           context: plan.context,
           plan,
+          compiledContext,
           result,
           attempt,
         });
@@ -1440,7 +1480,12 @@ export async function executeExecutionPlan(
           escalationState.target = escalated.target;
           return escalated.output;
         }
-        const result = await executor.execute({ step, context: plan.context, plan });
+        const result = await executor.execute({
+          step,
+          context: plan.context,
+          plan,
+          compiledContext: step.compiledContext,
+        });
         // PL-62: код выхода процесса агента — ещё не вердикт. Даже при
         // ненулевом коде запускаем гейт, если агент оставил артефакты/вывод.
         const agentExitCode =

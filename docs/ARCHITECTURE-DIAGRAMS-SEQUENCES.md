@@ -41,8 +41,8 @@ sequenceDiagram
         RH->>EX: buildExecutionPlan
         EX->>RT: planMission и routeStep
         RT->>DB: decideCapabilityRoute читает capability_map
-        RT--xCTX: compileContextForRoute compileRunContext — НЕ вызывается (PL-94)
-        note over RT,CTX: buildExecutionPlan вызывает только routeStep, исполнителю передаётся сырой RunContext
+        RT->>CTX: compileContextForRoute → compileRunContext (PL-94)
+        note over RT,CTX: buildExecutionPlan сохраняет CompiledContext в шаге; при эскалации run-context.ts рекомпилирует его под новую модель/окно
         RT-->>EX: ExecutionPlan с маршрутами
         EX->>AUD: requestApproval если options.approval и R2 или R3
         alt нет одобрения
@@ -78,9 +78,9 @@ sequenceDiagram
     end
 ```
 
-**Что видно:** единый путь `RunContext → ExecutionPlan → executeExecutionPlan`. Гейт одобрений и бюджет стоят **до** `createRun`; намерения эффектов — **до** гейта; применение эффектов — **только после** `pass`. Эскалация PL-93 показана в блоке `opt`: она вызывается только при явном `execution.escalation.enabled`, по умолчанию путь остаётся прежним. Стрелка `--x` с пометкой PL-94 показывает вызов, которого в production нет.
+**Что видно:** единый путь `RunContext → ExecutionPlan → executeExecutionPlan`. Гейт одобрений и бюджет стоят **до** `createRun`; намерения эффектов — **до** гейта; применение эффектов — **только после** `pass`. Эскалация PL-93 показана в блоке `opt`: она вызывается только при явном `execution.escalation.enabled`, по умолчанию путь остаётся прежним. Компиляция контекста PL-94 идёт внутри `buildExecutionPlan`: `CompiledContext` с `contextHash` сохраняется в шаге и передаётся исполнителю, при эскалации пересобирается под новую модель/окно.
 
-**Ключевые выводы:** три места, где запуск может быть остановлен без побочных эффектов: budget gate (вызывается в [index.ts](src/index.ts:7948), не в движке), approval gate, worktree snapshot gate (`decideWorktreeSnapshot`/`enforceWorktreeSnapshot`, PL-59). Ledger-запись делает `writeGateOutcome`, а не сам исполнитель — поэтому registered и ad-hoc дают одинаковый набор хэшей. Компиляция контекста в этом пути отсутствует (PL-94); flake-aware эскалация подключена, но только при `escalation.enabled` (PL-93).
+**Ключевые выводы:** три места, где запуск может быть остановлен без побочных эффектов: budget gate (вызывается в [index.ts](src/index.ts:7948), не в движке), approval gate, worktree snapshot gate (`decideWorktreeSnapshot`/`enforceWorktreeSnapshot`, PL-59). Ledger-запись делает `writeGateOutcome`, а не сам исполнитель — поэтому registered и ad-hoc дают одинаковый набор хэшей. Компиляция контекста PL-94 встроена в план: `compileContextForRoute` создаёт `CompiledContext` с `contextHash`, он доходит до исполнителя и OpenCode-invocation; при эскалации `recompileContextForRouteEscalation` пересобирает контекст под новую модель (`local-7b` → `cloud-large`). flake-aware эскалация PL-93 подключена, но только при `escalation.enabled` (PL-102).
 
 ### 4.2 Matrix fan-out
 
