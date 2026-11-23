@@ -162,7 +162,6 @@ agent-steward — execution engine с опциональной регистра�
 
 
 
-- [ ] PL-91 Webhook реализован только на HTTP-слое (`src/server.ts:1227` — `POST /api/hooks/:task?token=…`, `src/integrations.ts:179`, `src/settings.ts` → `incomingWebhooks`), но отсутствует в `RunTrigger` (`src/core/execution.ts:65` — `manual|cron|file|git|mcp-event|once`) и в `triggerKindFor` (`src/core/execution.ts:365`), поэтому в `gate_outcomes`/`runs` webhook-запуск записывается как `manual` — P2. Действие: добавить `webhook` в `RunTrigger` и маппинг в `triggerKindFor`, миграция для старых строк не требуется (добавочное значение), регрессия в `test-execution-pipeline.mjs` + обновить C4/ER-диаграммы. Найдено при сверке DOC-2 с реальным кодом 23.11.2026.
 
 - [ ] PL-102 Эскалация PL-93 подключена к `executeExecutionPlan`, но по умолчанию выключена (`execution.escalation.enabled`): production-вызовы `runMission` ([mission.ts](src/core/mission.ts:540)) и рекордер зарегистрированных задач не передают ни `escalation`, ни функцию `gate`, поэтому flake-aware retry, таблица переходов и обучение `recordGateVerdict` в реальных прогонах по-прежнему не работают — P2. Действие: включить эскалацию в реальном mission/index-пути и передать функцию гейта (или явно задокументировать отказ), добавить регрессию в `test-execution-pipeline.mjs`, обновить sequence 4.1. Найдено после закрытия PL-93.
 

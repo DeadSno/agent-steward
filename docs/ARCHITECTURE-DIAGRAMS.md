@@ -162,7 +162,7 @@ flowchart LR
 
 **Что видно:** система — локальный оркестратор. Четыре класса внешних входов: пользователь (MCP/RPC/CLI/GUI), планировщик ОС, триггеры событий и AI-провайдер как исполняющая сторона. Единственное хранилище — SQLite.
 
-**Ключевые выводы:** планировщик ОС — лишь одна из полос (cron/once), а не центральный маршрут: ядро само выполняет цепочки, DAG, ретраи и матрицы. Webhook-триггер реален (`POST /api/hooks/:task` в [server.ts](src/server.ts), проверка в [integrations.ts](src/integrations.ts)), но отсутствует в типе `RunTrigger` ([execution.ts](src/core/execution.ts:65)) — см. gap-анализ.
+**Ключевые выводы:** планировщик ОС — лишь одна из полос (cron/once), а не центральный маршрут: ядро само выполняет цепочки, DAG, ретраи и матрицы. Webhook-триггер (`POST /api/hooks/:task` в [server.ts](src/server.ts), проверка в [integrations.ts](src/integrations.ts)) с PL-91 добавлен в `RunTrigger` ([execution.ts](src/core/execution.ts:65)) и явно мапится в `triggerKindFor` (:365), поэтому в `runs`/`gate_outcomes` пишется `trigger_kind = webhook`, а не `manual`. Миграция для старых строк не нужна — значение добавочное.
 
 ### 2. Контейнеры (C4 Level 2)
 
@@ -402,7 +402,40 @@ erDiagram
 
 **Что видно:** `runs`/`run_steps` — durable-ядро; `gate_outcomes` — append-only ledger с `prev_hash` → `row_hash`; `capability_map` — агрегат из того же ledger; `run_dlq` и `run_injections` — служебные таблицы для детерминированных падений и паузы.
 
-**Ключевые выводы:** цепочка `prev_hash`/`row_hash` — tamper-evident аудит, а не граница безопасности (прямо указано в комментарии [schema.ts](src/db/schema.ts:14) и §10 `EXECUTION-LOOP.md`). Уникальный индекс `idx_run_dlq_open_unique` гарантирует, что ручной retry не создаст дубль открытой записи. Новые колонки эффектов (`effect_intents`, `effects_applied_at`, …) намеренно **не** входят в `GateOutcomeContent`, чтобы не ломать хеш-цепочку.
+**Ключевые выводы:** цепочка `prev_hash`/`row_hash` — tamper-evident аудит, а не граница безопасности (прямо указано в комментарии [schema.ts](src/db/schema.ts:14) и §10 `EXECUTION-LOOP.md`). Уникальный индекс `idx_run_dlq_open_unique` гарантирует, что ручной retry не создаст дубль открытой записи. Новые колонки эффектов (`effect_intents`, `effects_applied_at`, …) намеренно **не** входят в `GateOutcomeContent`, чтобы не ломать хеш-цепочку. С PL-91 `trigger_kind` отдельно принимает значение `webhook` (ветка HTTP `POST /api/hooks/:task` больше не попадает в отчёты как `manual`; миграция старых строк не нужна — для них остаётся прежнее значение). С PL-93 поля `verdict`, `attempts_to_pass`, `first_pass` в `gate_outcomes` записываются из `resolveGateOutcome`: flake→pass фиксируется как `verdict=flake, attempts_to_pass=2, first_pass=0`, а не как «всё с первого раза».
+
+### 6.1. ARCH-5.1 / ARCH-5.2 и sequence 4.1 (актуальное состояние)
+
+**ARCH-5.1 — компиляция контекста в прогоне (PL-94).** `buildExecutionPlan` ([execution.ts](src/core/execution.ts:468)) теперь для каждого шага вызывает `compileContextForRoute` ([dispatch.ts](src/core/router/dispatch.ts:133)) и кладёт результат в `PlannedStep.compiledContext`. Дополнительная опция `escalationContext` запускает `recompileContextForRouteEscalation` ([dispatch.ts](src/core/router/dispatch.ts:148)) → `recompileContextOnEscalation` ([run-context.ts](src/db/run-context.ts:814)): после смены модели/окна получается patched-контекст с новым `contextHash`. Скомпилированный контекст передаётся исполнителю через `StepExecutionInput.compiledContext` и `OpenCodeInvocation.compiledContext`.
+
+**ARCH-5.2 — эскалация и карантин в прогоне (PL-93).** `executeExecutionPlan` ([execution.ts](src/core/execution.ts:1029)) вызывает `runGateWithRetry` → `resolveGateOutcome` → `escalateAfterGate`; выбор таргета учитывает `isGateQuarantined` и `isEscalationExhausted` (пропуск ровно одного уровня: `local → cloud → review`). Решение записывается в `ExecutionResult.escalations` и `metadata`, patched-контекст пересобирается через `recompileStepContext`.
+
+**Sequence 4.1 (кратко; полная диаграмма — [ARCHITECTURE-DIAGRAMS-SEQUENCES.md](./ARCHITECTURE-DIAGRAMS-SEQUENCES.md), файл вне SCOPE этой правки и требует отдельного обновления):**
+
+```mermaid
+sequenceDiagram
+    participant BP as buildExecutionPlan
+    participant R as routeStep / compileContextForRoute
+    participant E as executeExecutionPlan
+    participant X as StepExecutor
+    participant G as runGateWithRetry / escalateAfterGate
+    participant C as recompileContextOnEscalation
+
+    BP->>R: routeStep + compileContextForRoute
+    R-->>BP: step.compiledContext (contextHash)
+    BP->>E: plan
+    E->>X: execute(step, compiledContext)
+    X-->>E: StepExecutionResult
+    E->>G: gate with attempt (flake → retry)
+    G-->>E: GateOutcome (verdict, attemptsToPass, firstPass)
+    alt провал гейта
+        E->>G: escalateAfterGate(current, gate)
+        G-->>E: next target (учтён карантин)
+        E->>C: recompileContextOnEscalation
+        C-->>E: patched context (новый contextHash)
+    end
+    E->>E: writeGateOutcome(verdict из GateOutcome)
+```
 
 ---
 
@@ -430,8 +463,8 @@ erDiagram
 ### Чего не хватает / неоднозначно
 
 1. **`src/db/gate-repo.ts` отсутствует.** Ledger и обучение карты разнесены по трём модулям (`execution.ts`, `runs-repo.ts`, `capability-repo.ts`). Это не баг, но диаграммы, предполагающие наличие `gate-repo.ts`, будут неверны. Зафиксировано в таблице проверки выше.
-2. **Webhook-триггер есть на HTTP-уровне, но отсутствует в `RunTrigger`.** В [execution.ts](src/core/execution.ts:65) перечислены `manual | cron | file | git | mcp-event | once`, а `triggerKindFor` (:365) превращает `mcp-event` → `mcp`. Ветка webhook попадает в scheduled run через `server.ts`/`integrations.ts`, но как отдельный `trigger_kind` в ledger не попадает → в отчётах webhook-запуски неотличимы от cron. Зафиксировано как PL-91 в `ROADMAP.md`.
-3. **Approval UI/RPC интегрирован (PL-95), но нет автоперезапуска (PL-103).** Фасад [approval-api.ts](src/core/approval-api.ts) открывает очередь через RPC `list_approvals`/`decide_approval` и карточку GUI; решение сохраняется в журнале аудита, но ожидавший high-risk запуск не перезапускается сам (PL-103). Open-задача A-1 §3 тем самым закрыта в части интерфейса.
+2. **Webhook-триггер закрыт (PL-91).** `RunTrigger` в [execution.ts](src/core/execution.ts:65) теперь включает `webhook`, а `triggerKindFor` (:365) явно возвращает `webhook`. Ветка `POST /api/hooks/:task` из `server.ts` попадает в ledger как отдельный `trigger_kind` и в отчётах не смешивается с manual/cron. Для старых строк миграция не нужна. Строка PL-91 удалена из `ROADMAP.md`, регрессия — в `test-execution-pipeline.mjs`.
+3. **Approval UI/RPC не интегрирован.** Ядро очереди одобрений есть (`requestApproval`/`decideApproval` в [audit.ts](src/core/audit.ts), гейт в `executeExecutionPlan`), но открытая задача A-1 §3 ROADMAP ещё не закрыта: GUI/RPC-экрана подтверждения нет.
 4. **Docker/SSH runner отсутствует** — открытые задачи D-1/D-2/D-3 (§3 ROADMAP). Исполнители сейчас: OpenCode CLI, shell, локальная модель.
 5. **Экономика v2 частична** — `budget.ts` считает day/week/per-task гейты, но E-3 (token efficiency), E-4 (прогноз/Grafana), E-5 (local vs cloud) открыты.
 6. **Покрытие Quality Gate неполное** — по PL-65/PL-66 в ROADMAP: часть ARCH-задач не включала затронутые сюиты и `lint`. Обёртка не всегда проверяет SCOPE-пути на существование (PL-79/PL-82).

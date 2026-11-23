@@ -79,7 +79,7 @@ import {
 export type RunOrigin = "registered" | "ad-hoc";
 
 /** Что инициировало запуск. */
-export type RunTrigger = "manual" | "cron" | "file" | "git" | "mcp-event" | "once";
+export type RunTrigger = "manual" | "cron" | "file" | "git" | "mcp-event" | "once" | "webhook";
 
 /** Политика доступа к инструментам (совпадает с core/permissions). */
 export type RunPermissionPolicy = "hybrid" | "secure" | "legacy";
@@ -382,6 +382,9 @@ export function approvalKeyFor(
 export function triggerKindFor(context: RunContext): string {
   if (context.origin === "ad-hoc") return "adhoc";
   if (context.trigger === "mcp-event") return "mcp";
+  // PL-91: вебхук приходит с HTTP-слоя (src/server.ts), но в ledger должен
+  // писаться своим именем, а не падать в «manual».
+  if (context.trigger === "webhook") return "webhook";
   return context.trigger;
 }
 
@@ -1069,6 +1072,23 @@ export interface ExecutionResult {
   approval?: ApprovalRecord;
   /** PL-59: решение о worktree-snapshot (только для registered + qualityGate). */
   snapshot?: WorktreeSnapshotDecision;
+  /** PL-93: решения об эскалации, принятые гейтом и карантином. */
+  escalations?: StepEscalation[];
+}
+
+/** PL-93: одно решение об эскалации в порядке прохода шагов. */
+export interface StepEscalation {
+  stepName: string;
+  from: GateTarget;
+  next: GateTarget;
+  action: EscalationDecision["action"];
+  reason: EscalationDecision["reason"];
+  verdict: GateOutcome["verdict"];
+  /** Карантин гейта повлиял на выбор исполнителя. */
+  quarantined?: boolean;
+  /** Пересобранный контекст под новый уровень (PL-94). */
+  patchedContextHash?: string;
+  detail?: string;
 }
 
 /**
@@ -1411,27 +1431,56 @@ export async function executeExecutionPlan(
 
   const executed: ExecutedStep[] = [];
   const sagaResults: EffectSagaResult[] = [];
+  const escalations: StepEscalation[] = [];
   let firstError: string | null = null;
   const stopOnError = options.stopOnError !== false;
 
   for (const step of plan.steps) {
+    // PL-93: карантин гейта влияет на выбор исполнителя ещё до запуска шага.
+    const originalTarget = routeGateTarget(step.route);
+    const effectiveTarget = resolveExecutionTarget(step, plan.context);
+    const quarantined = effectiveTarget !== originalTarget;
+    // Без карантина маршрут остаётся ровно таким, каким его построил роутер
+    // (включая `explore`) — меняем его только при реальном пропуске уровня.
+    const effectiveRoute = quarantined
+      ? routeForGateTarget(step.route, effectiveTarget)
+      : step.route;
+    if (quarantined) {
+      escalations.push({
+        stepName: step.stepName,
+        from: originalTarget,
+        next: effectiveTarget,
+        action: quarantineAction(effectiveTarget),
+        reason: "infra-error",
+        verdict: "infra_fail",
+        quarantined: true,
+        detail: `гейт «${gateKeyForStep(step, plan.context)}» в карантине`,
+      });
+    }
     const executor =
-      step.route.executor === null ? undefined : pickExecutor(step, options.executors);
+      step.route.executor === null || effectiveRoute.executor === null
+        ? undefined
+        : pickExecutor({ ...step, route: effectiveRoute }, options.executors);
+    // PL-93: вердикт нужен и в catch-ветке. Держим его в объекте: прямое
+    // присваивание внутри колбэка TS сужает до `never` вне колбэка.
+    const gateState: { outcome: GateOutcome | null } = { outcome: null };
 
     // review/explore или нет подходящего транспорта — шаг не исполняется.
     if (!executor) {
       const record = getStep(run.id, step.stepName);
       const reason =
-        step.route.executor === null
-          ? `маршрут ${step.route.target}: ${step.route.reason}`
-          : `нет исполнителя для маршрута ${step.route.executor}/${String(step.route.transport)}`;
+        effectiveRoute.executor === null
+          ? quarantined
+            ? `гейт в карантине: маршрут ${effectiveRoute.target}: ${effectiveRoute.reason}`
+            : `маршрут ${effectiveRoute.target}: ${effectiveRoute.reason}`
+          : `нет исполнителя для маршрута ${effectiveRoute.executor}/${String(effectiveRoute.transport)}`;
       if (record) {
         finishStep(record.id, "skipped", { error: reason });
       }
       executed.push({
         stepName: step.stepName,
         taskType: step.route.taskType,
-        target: step.route.target,
+        target: effectiveRoute.target,
         status: "skipped",
         attempt: record?.attempt ?? 0,
         error: reason,
@@ -1500,10 +1549,50 @@ export async function executeExecutionPlan(
             workCompleted,
           })
         ) {
-          const verdict = await options.gate({ step, context: plan.context, plan, result });
-          gatePassed = verdict.ok;
-          if (!verdict.ok) {
-            throw new GateRejectedError(verdict.reason ?? "GATE отклонил результат шага");
+          // PL-93: гейт повторяется на том же артефакте только для
+          // flake/infra_fail; стабильные pass/fail выполняются один раз.
+          const gateAttempts: GateResult[] = [];
+          const retried = await runGateWithRetry(async (attempt) => {
+            const verdict = await options.gate!({
+              step,
+              context: plan.context,
+              plan,
+              result,
+              attempt,
+              compiledContext: step.compiledContext,
+            });
+            const attemptResult: GateResult = { passed: verdict.ok };
+            if (verdict.reason !== undefined) attemptResult.reason = verdict.reason;
+            if (verdict.verdict !== undefined) attemptResult.verdict = verdict.verdict;
+            gateAttempts.push(attemptResult);
+            return attemptResult;
+          });
+          // Единый источник полей ledger: verdict / attempts_to_pass / first_pass.
+          const resolved = resolveGateOutcome(gateAttempts);
+          gatePassed = retried.passed;
+          gateState.outcome = resolved;
+          const decision = escalateAfterGate(effectiveTarget, {
+            passed: retried.passed,
+            verdict: resolved.verdict,
+            reason: resolved.reasons.join("; "),
+          });
+          const patched = decision.action === "accept" ? null : recompileStepContext(step, decision.next);
+          if (decision.action !== "accept") {
+            escalations.push({
+              stepName: step.stepName,
+              from: decision.from,
+              next: decision.next,
+              action: decision.action,
+              reason: decision.reason,
+              verdict: resolved.verdict,
+              ...(patched ? { patchedContextHash: patched.contextHash } : {}),
+              detail: resolved.reasons.join("; ") || undefined,
+            });
+          }
+          if (!gatePassed) {
+            throw new GateRejectedError(
+              resolved.reasons.join("; ") || "GATE отклонил результат шага",
+            );
           }
         }
         const decision = resolveAgentExitVerdict({
@@ -1615,5 +1704,6 @@ export async function executeExecutionPlan(
     ...(approval ? { approval } : {}),
     ...(snapshotDecision ? { snapshot: snapshotDecision } : {}),
     ...(sagaResults.length > 0 ? { effects: sagaResults } : {}),
+    ...(escalations.length > 0 ? { escalations } : {}),
   };
 }

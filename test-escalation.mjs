@@ -10,6 +10,7 @@
 //
 // Запуск: node test-escalation.mjs (после npm run build).
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import {
@@ -193,6 +194,55 @@ assert(
   blockedInfra.action === "blocked" && blockedInfra.reason === "infra-error",
   "infra_fail не эскалируется (это не вина агента)",
 );
+
+// 8. PL-93: эскалация подключена к execution loop (контракт + smoke).
+const executionSource = fs.readFileSync(path.join("src", "core", "execution.ts"), "utf8");
+for (const symbol of [
+  "runGateWithRetry",
+  "resolveGateOutcome",
+  "escalateAfterGate",
+  "nextGateTarget",
+  "isEscalationExhausted",
+  "isGateQuarantined",
+]) {
+  assert(
+    new RegExp(`\\b${symbol}\\b`).test(executionSource),
+    `PL-93: execution.ts использует ${symbol}`,
+  );
+}
+
+const execRoot = fs.mkdtempSync(path.join(os.tmpdir(), "escalation-exec-"));
+const { initDb, closeDb } = await import("./dist/db/index.js");
+const exec = await import("./dist/core/execution.js");
+const runsRepo = await import("./dist/db/runs-repo.js");
+initDb(path.join(execRoot, "escalation.db"));
+const smokeContext = exec.createAdHocRunContext("run tests", {
+  taskName: "escalation-smoke",
+  cwd: execRoot,
+  taskType: "run_tests",
+  riskClass: "R0",
+});
+const smokePlan = await exec.buildExecutionPlan(smokeContext);
+let smokeCalls = 0;
+const smokeRun = await exec.executeExecutionPlan(smokePlan, {
+  executors: [{ id: "smoke", supports: () => true, execute: () => ({ output: "done" }) }],
+  gate: ({ attempt }) => {
+    smokeCalls += 1;
+    return attempt === 1
+      ? { ok: false, verdict: "flake", reason: "первый вызов флакнул" }
+      : { ok: true, reason: "второй вызов прошёл" };
+  },
+});
+assert(smokeCalls === 2, "PL-93: executeExecutionPlan повторил гейт на flake");
+assert(smokeRun.status === "passed", "PL-93: flake-pass завершил запуск passed");
+const smokeOutcome = runsRepo.listGateOutcomes().find((row) => row.runId === smokeRun.runId);
+assert(
+  smokeOutcome?.verdict === "flake" && smokeOutcome.attemptsToPass === 2 &&
+    smokeOutcome.firstPass === 0,
+  "PL-93: ledger хранит flake/attempts_to_pass=2/first_pass=0",
+);
+closeDb();
+fs.rmSync(execRoot, { recursive: true, force: true });
 
 if (process.exitCode === 1) {
   console.error("Escalation: есть падения.");
