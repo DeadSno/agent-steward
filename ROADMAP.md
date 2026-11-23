@@ -205,6 +205,8 @@ agent-steward — execution engine с опциональной регистра�
 
 - [ ] PL-65 Quality Gate ARCH-7 не включал `test-mission-run.mjs`, поэтому регрессия ARCH-7.2 (обычный ad-hoc-запуск R2 блокировался без одобрения, `test-mission-run.mjs` падал) прошла незамеченной и была найдена только итоговой проверкой: `qualityGate` задачи ARCH-7 и `test-mission-run.mjs` — P1. Действие: требовать в `dry_run`/`qualityGate` полного набора сюит, затронутых изменёнными модулями (`src/core/execution.ts` → `test-mission-run.mjs`, `test-execution-pipeline.mjs`, `test-execution-hardening.mjs`), и добавить проверку покрытия в `test-dry-run.mjs`.
 
+- [ ] PL-66 Ни один из Quality Gate ARCH-задач не включал `npm run lint`/`lint:baseline`, поэтому error `@typescript-eslint/array-type` в `src/db/capability-repo.ts:635` (Agents ARCH-3) дошёл до GitHub Actions: CI run #312 на `d9e7e8d` — Build и Test зелёные на всех 6 матрицах, но шаг «Lint (informational)» упал везде, а «ESLint baseline» был пропущен — P1. Действие: добавить `npm run lint && npm run lint:baseline` в обязательные проверки `qualityGate` и в подсказки `dry_run`; предупреждать о пропущенной линтер-проверке; регрессия в `test-dry-run.mjs`.
+
 ---
 
 # 4. Правила работы (канбан)

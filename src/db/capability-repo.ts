@@ -632,12 +632,12 @@ export function getGateQuarantineWarning(
 }
 
 /** Снимок карантинов для отчёта (с пометкой истёкших). */
-export function listGateQuarantines(now: Date = new Date()): Array<{
+export function listGateQuarantines(now: Date = new Date()): {
   gateKey: string;
   flakeCount: number;
   quarantinedUntil: string | null;
   expired: boolean;
-}> {
+}[] {
   const state = readQuarantineState();
   return Object.keys(state).map((gateKey) => {
     const entry = state[gateKey];

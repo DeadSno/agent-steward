@@ -36,6 +36,8 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 - **ARCH-7.3 — одобрение только по явному запросу.** Гейт ARCH-7.2 включается лишь при передаче `options.approval` в `executeExecutionPlan`: обычные ad-hoc/registered прогоны с риск-классом R2 и hybrid-политикой больше не блокируются и не создают записи в очереди. Регрессия `test-mission-run.mjs` (63/63) устранена; добавлены проверки R2 без `options.approval` в `test-execution-pipeline.mjs`. Проверено: `npm run build`, `node test-mission-run.mjs`, `node test-execution-pipeline.mjs`, `node test-execution-hardening.mjs`, `node test-audit.mjs`, `node test-docs.mjs` — все exit 0.
 
+- **PL-66 — ESLint-error в CI после ARCH-3.** Возвращаемый тип `listGateQuarantines()` приведён к `}[]` вместо запрещённого `Array<{...}>` (`src/db/capability-repo.ts:635`): `npm run lint` снова без error, `npm run lint:baseline` проходит. Найдено по падению GitHub Actions run #312 на `d9e7e8d` (все 6 matrix jobs: Build/Test зелёные, «Lint (informational)» красный); в роадмап добавлен PL-66 об отсутствии lint в Quality Gate. Проверено: `npm run lint`, `npm run lint:baseline`, `npm run build`, `node test-capability-map.mjs`, `node test-docs.mjs`.
+
 ## [0.0.6] - 2026-11-20
 
 ### Added
