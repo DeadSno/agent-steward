@@ -16,7 +16,10 @@
  * `windowsVerbatimArguments`, а кавычки экранируются удвоением в `quoteCmdArg`.
  */
 import { execFile } from "node:child_process";
-import { validateCmdLineText } from "./task-name.js";
+import {
+  validateCmdLineText,
+  validateModelReference,
+} from "./task-name.js";
 
 /** Готовая команда для `execFile`/`execFileSync`. */
 export interface OpencodeCommand {
@@ -82,6 +85,87 @@ export function opencodeCommandFor(
 /** Команда запуска OpenCode на текущей платформе. */
 export function opencodeCommand(args: string[]): OpencodeCommand {
   return opencodeCommandFor(process.platform, args);
+}
+
+/**
+ * PL-76: ключ сравнения моделей — регистр и пробелы не важны, вариант `#high`
+ * относится к той же модели.
+ */
+export function normalizeModelKey(model: string | null | undefined): string {
+  return (model ?? "").trim().toLowerCase().split("#", 1)[0] ?? "";
+}
+
+/**
+ * PL-76: выбирает запасную модель из доступных, не повторяя текущую.
+ *
+ * Приоритет: бесплатная модель того же провайдера → любая модель того же
+ * провайдера → любая бесплатная → первая отличная. Для окружения с
+ * `opencode/hy4-flash-free` это даёт рабочий фолбэк без смены провайдера.
+ */
+export function chooseFallbackModel(
+  current: string,
+  available: readonly string[],
+): string | null {
+  const currentKey = normalizeModelKey(current);
+  const candidates: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of available) {
+    const model = (raw ?? "").trim();
+    const key = normalizeModelKey(model);
+    if (!model || !key || key === currentKey || seen.has(key)) continue;
+    seen.add(key);
+    candidates.push(model);
+  }
+  if (candidates.length === 0) return null;
+
+  const provider = currentKey.split("/", 1)[0] ?? "";
+  const sameProvider = candidates.filter((m) =>
+    normalizeModelKey(m).startsWith(`${provider}/`),
+  );
+  const isFree = (m: string): boolean => /-free$/i.test(normalizeModelKey(m));
+  return (
+    sameProvider.find(isFree) ??
+    sameProvider[0] ??
+    candidates.find(isFree) ??
+    candidates[0] ??
+    null
+  );
+}
+
+/**
+ * PL-76: предупреждение `dry_run` о недоступной модели с предложением запасной.
+ *
+ * Формат проверяется общей валидацией PL-74/PL-88. Если список доступных
+ * моделей пуст (CLI недоступен или static-режим), проверка fail-open:
+ * предупреждение не выдаётся. Quality Gate никогда не меняется — только
+ * предлагается заменить `--model`, гейт должен остаться прежним.
+ */
+export function modelAvailabilityWarning(
+  model: string | null | undefined,
+  available: readonly string[],
+  qualityGate?: string | null,
+): string | null {
+  if (!model?.trim()) return null;
+
+  const formatError = validateModelReference(model);
+  if (formatError) return `PL-74/PL-88: ${formatError}`;
+
+  if (available.length === 0) return null;
+  const key = normalizeModelKey(model);
+  if (available.some((m) => normalizeModelKey(m) === key)) return null;
+
+  const fallback = chooseFallbackModel(model, available);
+  const gate = typeof qualityGate === "string" && qualityGate.trim()
+    ? ` Сохраните qualityGate без изменений: «${qualityGate.trim()}».`
+    : " Сохраните qualityGate задачи без изменений.";
+  return (
+    `PL-76: модель «${model.trim()}» недоступна у настроенного провайдера ` +
+    "(Free usage limit reached / модель не найдена в opencode models)." +
+    (fallback
+      ? ` Запасная модель: «${fallback}» — укажите её вместо текущей.`
+      : " Запасных моделей в списке доступных нет.") +
+    gate
+  );
 }
 
 /**

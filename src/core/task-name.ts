@@ -1,6 +1,11 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { PLUGIN_DIR, WRAPPER_DIR, sanitizeName } from "../types.js";
+import {
+  PLUGIN_DIR,
+  WRAPPER_DIR,
+  sanitizeName,
+  validateModelId,
+} from "../types.js";
 
 /**
  * P1-10: разные имена задач могут сжаться в один sanitized-идентификатор
@@ -63,8 +68,52 @@ export function validateCmdLineText(
   if (/[\r\n]/.test(text)) {
     return `${what} командной строки не может содержать перевод строки`;
   }
-  if (/\0/.test(text)) {
+  if (text.includes("\0")) {
     return `${what} командной строки не может содержать NUL`;
+  }
+  return null;
+}
+
+/**
+ * PL-74/PL-88: примеры моделей для подсказки при неверном формате.
+ * `opencode/hy4-flash-free` — рабочая модель текущего окружения; её префикс
+ * обязателен: OpenCode отвергает голое `hy4-flash-free` как
+ * `Invalid model reference: hy4-flash-free` ещё до запуска агента.
+ */
+export const MODEL_FORMAT_EXAMPLES = [
+  "opencode/hy4-flash-free",
+  "anthropic/claude-3-5-sonnet",
+  "openai/gpt-4o",
+] as const;
+
+/**
+ * PL-74/PL-88: общая валидация ссылки на модель — `provider/model` (необязательно
+ * с вариантом `provider/model#variant`). Пустая строка означает «модель не
+ * задана, использовать модель по умолчанию» и допустима.
+ *
+ * `validateModelId()` отвечает только за безопасность командной строки; здесь
+ * дополнительно требуется непустой префикс провайдера, без которого запуск
+ * агента падает. Возвращает понятную ошибку с подсказкой доступных моделей
+ * (список можно получить командой `opencode models`).
+ */
+export function validateModelReference(
+  raw: string | null | undefined,
+): string | null {
+  const model = (raw ?? "").trim();
+  if (!model) return null;
+
+  const unsafe = validateModelId(model);
+  if (unsafe) return unsafe;
+
+  const withoutVariant = model.split("#", 1)[0] ?? "";
+  const slash = withoutVariant.indexOf("/");
+  if (slash <= 0 || slash === withoutVariant.length - 1) {
+    return (
+      `Модель «${raw}» указана без префикса провайдера. ` +
+      `Используйте формат "provider/model", например: ${MODEL_FORMAT_EXAMPLES.join(", ")}. ` +
+      "Доступные модели смотрите командой `opencode models` (например, " +
+      `${MODEL_FORMAT_EXAMPLES[0]}).`
+    );
   }
   return null;
 }

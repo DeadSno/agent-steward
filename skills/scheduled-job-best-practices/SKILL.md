@@ -141,6 +141,38 @@ than a missing line, because the gate then checks a file that will never appear.
   Prefer "ensure state" over "append" — e.g. rewrite a report file rather than appending.
 - **Blast radius**: avoid `git push --force`, `rm -rf`, mass dependency upgrades or
   production deploys without a Quality Gate and a manual `run_task_now` smoke test first.
+- **Model reference format (PL-74/PL-88)**: always pass `model` as `provider/model`
+  (optionally `provider/model#variant`), e.g. `opencode/hy4-flash-free`. A bare
+  `hy4-flash-free` is rejected by `schedule_task`/`update_task` and by `dry_run`:
+  OpenCode would fail with `Invalid model reference: ...` before the agent starts.
+  Discover valid values with `opencode models`.
+
+### 4.1 Sub-agents on Free-tier providers (PL-72/PL-90)
+
+A sub-agent is an optimisation, not a guarantee. On Free usage limits the provider
+may refuse the spawn immediately, so never make a deliverable depend on it:
+
+1. **Check the provider before spawning.** Run `opencode models` (or the plugin's
+   availability check) and confirm the intended `provider/model` is present. For a
+   scheduled task, run `dry_run` first: it now warns with `PL-76:` when the model is
+   unavailable and names a fallback (preferring a free model of the same provider,
+   e.g. `opencode/hy4-flash-free`).
+2. **Fall back to the primary agent on `Free usage limit reached`.** If a sub-agent
+   (`general`, `explore`, etc.) fails with `Free usage limit reached. Connect a
+   provider or subscribe to OpenCode Go...`, do not retry it in a loop and do not
+   abandon the work. Continue in the main agent session and finish the SCOPE.
+3. **Keep the reason in the report.** Record in the task report (for this repository:
+   `reports/steward-b2.md`) the sub-agent type, the exact error text, the model/provider
+   that was attempted, the fact that work was completed by the main agent, and that
+   the Quality Gate was still run unchanged. A silently dropped failure is worse than
+   an honest environment note.
+4. **Do not fake completion.** A tracking task with `runsTotal=0` stays "tracking
+   closed in ROADMAP/CHANGELOG", never `✅ [ВЫПОЛНЕНО]`.
+
+Confirmed again in the current session: the sub-agent launched for the DOC-2
+architecture-diagram authoring failed with this exact `Free usage limit reached`
+error (PL-90, a repeat of PL-72); the document was finished by the main agent and the
+reason was kept in the report. This is an environment limit, not a repository bug.
 
 ## 5. Matrix builds (multi-repository)
 

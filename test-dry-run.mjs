@@ -20,6 +20,12 @@ const {
   scopeModulesFromText, qualityGateCoverageWarning, MODULE_REQUIRED_TEST_SUITES,
   qualityGateLintWarning, REQUIRED_LINT_CHECKS,
 } = await import("./dist/core/dry-run.js");
+const {
+  modelAvailabilityWarning,
+  chooseFallbackModel,
+  normalizeModelKey,
+} = await import("./dist/core/opencode-cli.js");
+const { createToolHandlers } = await import("./dist/index.js");
 const { t } = await import("./dist/i18n.js");
 
 const results = [];
@@ -328,6 +334,55 @@ try {
   const fullLint = await simulatePipeline("PL-66-FullLint");
   check("PL-66: полный qualityGate проходит без предупреждения",
     !hasLintWarning(fullLint.warnings));
+
+  // 17. PL-76: проверка доступности модели в dry_run + запасная модель без потери гейта.
+  const available = ["opencode/hy4-flash-free", "anthropic/claude-3-5-sonnet"];
+  const gate = "npm run build && node test-model-validation.mjs";
+  check("PL-76: доступная модель предупреждения не даёт",
+    modelAvailabilityWarning("opencode/hy4-flash-free", available, gate) === null);
+  check("PL-76: пустой список доступных моделей — fail-open",
+    modelAvailabilityWarning("opencode/mimo-v2.6-flash-free", [], gate) === null);
+  check("PL-76: модель без провайдера отвергается уже в dry_run",
+    /provider\/model/.test(modelAvailabilityWarning("hy4-flash-free", available, gate) ?? ""));
+  check("PL-76: normalizeModelKey снимает регистр/пробелы/вариант",
+    normalizeModelKey("  OpenCode/HY4-FLASH-FREE#high ") === "opencode/hy4-flash-free");
+  check("PL-76: запасная модель — бесплатная того же провайдера",
+    chooseFallbackModel("opencode/mimo-v2.6-flash-free", [
+      "anthropic/claude-3-5-sonnet", "opencode/hy4-flash-free", "openai/gpt-4o",
+    ]) === "opencode/hy4-flash-free");
+  const unavailableWarning = modelAvailabilityWarning(
+    "opencode/mimo-v2.6-flash-free", available, gate,
+  );
+  check("PL-76: предупреждение называет причину, фолбэк и сохраняет qualityGate",
+    /PL-76:/.test(unavailableWarning ?? "") &&
+      /Free usage limit reached/.test(unavailableWarning ?? "") &&
+      /opencode\/hy4-flash-free/.test(unavailableWarning ?? "") &&
+      (unavailableWarning ?? "").includes(gate));
+
+  // Интеграция: dry_run через MCP-обработчик добавляет предупреждение в отчёт.
+  await saveTask({
+    name: "PL-76-Unavailable", schedule: "0 9 * * *",
+    prompt: "Проверь доступность модели", qualityGate: gate,
+    model: "opencode/mimo-v2.6-flash-free",
+  });
+  const previousOverride = process.env.OPENCODE_SCHEDULER_AVAILABLE_MODELS;
+  process.env.OPENCODE_SCHEDULER_AVAILABLE_MODELS = available.join(",");
+  try {
+    const dryReport = JSON.parse(
+      (await createToolHandlers({}).dry_run({ name: "PL-76-Unavailable" })).content,
+    );
+    const modelWarning = dryReport.warnings.find((w) => w.includes("PL-76:"));
+    check("PL-76: dry_run отдаёт предупреждение о недоступной модели с фолбэком",
+      dryReport.success === true &&
+        /opencode\/hy4-flash-free/.test(modelWarning ?? "") &&
+        (modelWarning ?? "").includes(gate));
+  } finally {
+    if (previousOverride === undefined) {
+      delete process.env.OPENCODE_SCHEDULER_AVAILABLE_MODELS;
+    } else {
+      process.env.OPENCODE_SCHEDULER_AVAILABLE_MODELS = previousOverride;
+    }
+  }
 } finally {
   closeDb();
 }

@@ -6,6 +6,9 @@
 import { strict as assert } from "node:assert";
 
 const { validateModelId } = await import("./dist/types.js");
+const { validateModelReference, MODEL_FORMAT_EXAMPLES } = await import(
+  "./dist/core/task-name.js"
+);
 
 const valid = [
   "anthropic/claude-sonnet-4",
@@ -54,6 +57,36 @@ for (const model of invalid) {
 // Пустая строка/пробелы означают «модель не задана» — это не ошибка.
 assert.strictEqual(validateModelId(""), null);
 assert.strictEqual(validateModelId("   "), null);
+
+// PL-74/PL-88: общая валидация формата provider/model. Префикс провайдера
+// обязателен — без него OpenCode падает «Invalid model reference: ...».
+for (const model of [
+  "opencode/hy4-flash-free",
+  "anthropic/claude-sonnet-4",
+  "openai/gpt-5#high",
+  "local/llama3.2:8b",
+]) {
+  assert.strictEqual(
+    validateModelReference(model),
+    null,
+    `PL-74/PL-88: модель «${model}» с префиксом провайдера допустима`
+  );
+}
+assert.strictEqual(validateModelReference(""), null, "пустая модель = default");
+assert.strictEqual(validateModelReference("   "), null, "пробелы = default");
+
+for (const model of ["hy4-flash-free", "mimo-v2.6-flash-free", "gpt-4o", "/model", "provider/"]) {
+  const error = validateModelReference(model);
+  assert.ok(error, `PL-74/PL-88: модель без префикса «${model}» отвергается`);
+  assert.ok(error.includes("provider/model"), "сообщение объясняет формат");
+  assert.ok(error.includes("opencode models"), "сообщение подсказывает доступные модели");
+  assert.ok(
+    MODEL_FORMAT_EXAMPLES.every((example) => error.includes(example)),
+    "подсказка содержит примеры доступных моделей, включая opencode/hy4-flash-free"
+  );
+}
+const unsafeReference = validateModelReference("bad;calc");
+assert.ok(unsafeReference && unsafeReference.includes("bad;calc"), "PL-74/PL-88: небезопасные символы отвергаются");
 
 // P2-11.T1.2: свободный текст уходит в .cmd только в base64 — payload из
 // model/workspaceName/списка инструментов не должен появляться в командной строке.
@@ -114,5 +147,5 @@ try {
 }
 
 console.log(
-  `Model validation: ${valid.length + invalid.length + 2} проверок и base64-обёртка пройдены.`
+  `Model validation: ${valid.length + invalid.length + 2} базовых проверок + PL-74/PL-88 (формат provider/model) и base64-обёртка пройдены.`
 );
