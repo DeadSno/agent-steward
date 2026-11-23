@@ -131,11 +131,6 @@ Legacy: `opencode-windows-scheduler@1.5.8`.
 > накопился дрейф — устаревшие счётчики, висячие ссылки на закрытые задачи
 > и одна содержательная ошибка в sequence 4.1.
 
-**Задача DS-2 — Диаграммы состояний: недостающие переходы** · P2 · ⬜
-- [ ] DS-2.1 5.1 (run): добавить `pending→paused`, `paused→passed`, `paused→cancelled` из `RUN_TRANSITIONS` (`src/db/runs-repo.ts`)
-- [ ] DS-2.2 5.2 (step): добавить `pending→failed`; убрать self-loop `failed→failed` (DLQ — отдельная таблица, не переход состояния) или вынести в примечание
-- [ ] DS-2.3 Задокументировать расхождение: `retryStep` делает raw UPDATE `failed→running` в обход `STEP_TRANSITIONS` (failed в таблице терминален)
-
 **Задача DS-3 — Счётчики, локали и висячие ссылки** · P2 · ⬜
 - [ ] DS-3.1 `docs/ARCHITECTURE.md`: «30-tool registry» → 32, RPC «57 methods» → 59, добавить локаль `tr` в Localization и settings
 - [ ] DS-3.2 `docs/ARCHITECTURE-DIAGRAMS.md`: список файлов core дополнить `agents.ts`, `approval-api.ts`, `environment.ts`, `runner.ts`, `runner-docker.ts`, `runner-ssh.ts`, `tool-profile.ts` (71 → 78 модулей); убрать висячие ссылки на PL-90/65/66/79/82, D-1…D-3, E-3…E-5 (закрыты/удалены); обновить gap-analysis (runner'ы уже в коде)
