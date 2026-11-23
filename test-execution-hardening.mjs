@@ -135,7 +135,8 @@ check(
   "PL-113 PowerShell: аргументы идут через JSON-файл и EncodedCommand",
   psWrapperScript.includes("ConvertTo-Json -InputObject @($Arguments) -Compress -Depth 32") &&
     psWrapperScript.includes("-EncodedCommand $encodedCommand") &&
-    psWrapperScript.includes("| ConvertFrom-Json); & ''{1}'' @a")
+    psWrapperScript.includes("| ConvertFrom-Json; & ''{1}'' @a") &&
+    !psWrapperScript.includes("@(Get-Content -LiteralPath ''{0}''")
 );
 check(
   "PL-113 PowerShell: больше нет -File с аргументами в cmdline",

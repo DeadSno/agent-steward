@@ -415,7 +415,7 @@ function Invoke-ChildWithArgs {
     $argsFile = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "sched-args-" + [guid]::NewGuid().ToString("N") + ".json")
     try {
         ConvertTo-Json -InputObject @($Arguments) -Compress -Depth 32 | Set-Content -LiteralPath $argsFile -Encoding UTF8
-        $childCode = '$a = @(Get-Content -LiteralPath ''{0}'' -Raw -Encoding UTF8 | ConvertFrom-Json); & ''{1}'' @a; exit $LASTEXITCODE' -f $argsFile.Replace("'", "''"), $CommandPath.Replace("'", "''")
+        $childCode = '$a = Get-Content -LiteralPath ''{0}'' -Raw -Encoding UTF8 | ConvertFrom-Json; & ''{1}'' @a; exit $LASTEXITCODE' -f $argsFile.Replace("'", "''"), $CommandPath.Replace("'", "''")
         $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($childCode))
         if ($LogFile) {
             & powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand $encodedCommand *>&1 | ForEach-Object { Format-LogLine $_ } | Out-File -FilePath $LogFile -Append -Encoding utf8
