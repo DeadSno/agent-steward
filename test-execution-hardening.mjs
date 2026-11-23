@@ -1371,6 +1371,42 @@ try {
   check("PL-80/81/101/104/105: секция не выбросила исключение", false, "section threw");
 }
 
+// --- PL-112: prompt destructive-command guard ---
+try {
+  const { inspectPromptSafety } = await import("./dist/core/guard.js");
+  check(
+    "PL-112: inspectPromptSafety пропускает обычный промпт с абсолютным workdir",
+    inspectPromptSafety("WORKDIR: C:\\repo\\project. Nicely ask the agent to edit files.").safe === true
+  );
+  check(
+    "PL-112: Remove-Item -Recurse в промпте отклоняется",
+    inspectPromptSafety("Remove-Item -Recurse -Force C:\\repo").safe === false
+  );
+  check(
+    "PL-112: rm -rf в промпте отклоняется",
+    inspectPromptSafety("rm -rf /repo").safe === false
+  );
+  check(
+    "PL-112: del /s в промпте отклоняется",
+    inspectPromptSafety("del /s /q C:\\repo\\*.md").safe === false
+  );
+  check(
+    "PL-112: абсолютная цель удаления отклоняется",
+    inspectPromptSafety("Remove-Item C:\\Windows\\System32").safe === false
+  );
+  check(
+    "PL-112: обход .. в цели удаления отклоняется",
+    inspectPromptSafety("rm -rf ..\\..\\repo").safe === false
+  );
+  check(
+    "PL-112: упоминание в прозе не считается командой",
+    inspectPromptSafety("В отчёте описано, как Remove-Item повредил файлы в прошлый раз.").safe === true
+  );
+} catch (err) {
+  console.log("[diag] PL-112 section THREW:", err instanceof Error ? err.stack : String(err));
+  check("PL-112: секция не выбросила исключение", false, "section threw");
+}
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\nExecution hardening: ${results.length - failed.length}/${results.length} проверок пройдено.`);
 try {

@@ -429,3 +429,31 @@ export async function evaluateGuards(
 
   return { passed: reasons.length === 0, reasons, checks };
 }
+
+
+/**
+ * PL-112: lightweight static check for destructive commands inside a task prompt.
+ * Only command-like lines are inspected so prose mentions (e.g. a finding
+ * describing a past incident) do not produce false positives.
+ */
+export interface PromptSafetyReport {
+  safe: boolean;
+  reasons: string[];
+}
+
+export function inspectPromptSafety(prompt: string): PromptSafetyReport {
+  const reasons: string[] = [];
+  const text = String(prompt ?? "");
+  const command = String.raw`^\s*(?:&|>|cmd\s+\/c\s+)?(?:powershell(?:\.exe)?\s+-[^\s]+\s+)?`;
+  const destructive = [
+    new RegExp(command + String.raw`Remove-Item\b[^\n]*(?:-Recurse|-r\b)`, "im"),
+    new RegExp(command + String.raw`\brm\s+-[a-z]*r[a-z]*f?\b`, "im"),
+    new RegExp(command + String.raw`\b(?:del|rmdir)\s+\/[sq]\b`, "im"),
+  ];
+  if (destructive.some((re) => re.test(text))) reasons.push("destructive recursive delete");
+  const absoluteTarget = /(?:Remove-Item|\brm\b|\bdel\b|\brmdir\b)[^\n]*[A-Za-z]:[\\/]/i;
+  if (absoluteTarget.test(text)) reasons.push("absolute path as delete target");
+  const traversalTarget = /(?:Remove-Item|\brm\b|\bdel\b|\brmdir\b)[^\n]*\.\.[\\/]/i;
+  if (traversalTarget.test(text)) reasons.push("parent traversal as delete target");
+  return { safe: reasons.length === 0, reasons };
+}

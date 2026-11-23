@@ -3,6 +3,7 @@ import path from "node:path";
 import { PLUGIN_DIR, LOCK_DIR, WRAPPER_DIR, STALE_LOCK_MAX_AGE_MS, sanitizeName } from "../types.js";
 import type { ScheduleGateSpec } from "./schedule-v2.js";
 import type { TaskGuards } from "./guard.js";
+import { inspectPromptSafety } from "./guard.js";
 import { createGateSnapshot } from "./gate-integrity.js";
 
 /**
@@ -1238,6 +1239,10 @@ export async function ensureWrapper(): Promise<string> {
  * из недоверенного источника (импорт, шаблон, RPC).
  */
 export async function writePromptFile(taskName: string, prompt: string): Promise<string> {
+  const safety = inspectPromptSafety(prompt);
+  if (!safety.safe) {
+    throw new Error(`PL-112: unsafe prompt rejected (${safety.reasons.join("; ")})`);
+  }
   const promptDir = path.join(PLUGIN_DIR, "prompts");
   await fs.mkdir(promptDir, { recursive: true });
   const promptPath = path.join(promptDir, `${sanitizeName(taskName)}.txt`);
