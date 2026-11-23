@@ -131,6 +131,7 @@ import {
   pauseRunPanel,
   resumeDurableRunExecution,
 } from "./core/run-panel-api.js";
+import { decideApprovalPanel, listApprovalPanel } from "./core/approval-api.js";
 import {
   findStuckMatrixClones,
   maybeSendDigest,
@@ -6485,6 +6486,18 @@ const v2Plugin = Plugin.define({
         const source = (input ?? {}) as { runId?: string };
         if (!source.runId) return { success: false, error: "runId is required" };
         return resumeDurableRunExecution(source.runId);
+      },
+      list_approvals: async (input: unknown) => {
+        const source = (input ?? {}) as { limit?: unknown };
+        return listApprovalPanel({ limit: source.limit });
+      },
+      decide_approval: async (input: unknown) => {
+        const source = (input ?? {}) as {
+          requestId?: string;
+          decision?: string;
+          decidedBy?: string;
+        };
+        return decideApprovalPanel(source.requestId, source.decision, source.decidedBy);
       },
       get_templates: async () => {
         try {

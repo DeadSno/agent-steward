@@ -328,6 +328,21 @@ interface RunPanelRun {
   pendingInjections: number
 }
 
+/** PL-95: запрос одобрения из журнала аудита. */
+interface ApprovalPanelRecord {
+  requestId: string
+  taskName: string
+  riskClass: string
+  runRef: string | null
+  reason: string | null
+  status: "pending" | "approved" | "rejected"
+  decision: "approve" | "reject" | null
+  decidedBy: string | null
+  decidedAt: string | null
+  requestedBy: string | null
+  createdAt: string
+}
+
 function statusColor(status: JobStatus): string {
   switch (status) {
     case "running": return "#f5a623"
@@ -625,6 +640,10 @@ export default Plugin.define({
     const [runPanelActive, setRunPanelActive] = createSignal(0)
     const [runPanelBusy, setRunPanelBusy] = createSignal(false)
     const [runPanelCollapsed, setRunPanelCollapsed] = createSignal(true)
+    // PL-95: очередь одобрений через RPC, журнал аудита без новой таблицы.
+    const [approvalRecords, setApprovalRecords] = createSignal<ApprovalPanelRecord[]>([])
+    const [approvalBusy, setApprovalBusy] = createSignal(false)
+    const [approvalCollapsed, setApprovalCollapsed] = createSignal(true)
     // AB-8: ad-hoc миссия без регистрации в ОС.
     const [missionCollapsed, setMissionCollapsed] = createSignal(true)
     const [missionPrompt, setMissionPrompt] = createSignal("")
@@ -802,6 +821,7 @@ export default Plugin.define({
       void loadAuditGui()
       void loadDlqGui()
       void loadRunPanel()
+      void loadApprovals()
     }
 
     /** Текущие настройки уведомлений из сигналов формы. */
@@ -1117,6 +1137,55 @@ export default Plugin.define({
         console.error("RPC Error (list_durable_runs):", err)
       } finally {
         setRunPanelBusy(false)
+      }
+    }
+
+    /** PL-95: загрузка очереди одобрений из журнала аудита. */
+    async function loadApprovals() {
+      setApprovalBusy(true)
+      try {
+        const result = await rpc.list_approvals({ limit: 50 })
+        if (result?.success) {
+          setApprovalRecords(result.approvals ?? [])
+        } else if (result?.error) {
+          console.error("RPC Error (list_approvals):", result.error)
+        }
+      } catch (err: any) {
+        console.error("RPC Error (list_approvals):", err)
+      } finally {
+        setApprovalBusy(false)
+      }
+    }
+
+    /** PL-95: одобрить или отклонить запрос; первое решение не перезаписывается. */
+    async function handleApprovalDecision(record: ApprovalPanelRecord, decision: "approve" | "reject") {
+      if (!window.confirm(gt(decision === "approve" ? "gui.approvalsApproveConfirm" : "gui.approvalsRejectConfirm", { task: record.taskName }))) return
+      setApprovalBusy(true)
+      try {
+        const result = await rpc.decide_approval({
+          requestId: record.requestId,
+          decision,
+          decidedBy: "gui",
+        })
+        if (result?.success) {
+          ctx.toast.show({
+            title: gt(decision === "approve" ? "gui.approvalsApproved" : "gui.approvalsRejected"),
+            variant: "success",
+            description: gt("gui.approvalsDecisionDescription", { task: record.taskName }),
+          })
+        } else {
+          ctx.toast.show({
+            title: gt("gui.approvalsDecisionFailed"),
+            variant: "error",
+            description: result?.error ?? gt("gui.runsUnknownError"),
+          })
+        }
+        await loadApprovals()
+      } catch (err: any) {
+        console.error("RPC Error (decide_approval):", err)
+        ctx.toast.show({ title: gt("gui.approvalsDecisionFailed"), variant: "error", description: errorMessage(err) })
+      } finally {
+        setApprovalBusy(false)
       }
     }
 
@@ -4511,6 +4580,88 @@ export default Plugin.define({
 
                   {runPanelRuns().length === 0 && (
                     <div style="font-size:11px;color:#8e8e93;padding:6px 0">{gt("gui.runsEmpty")}</div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* ✅ PL-95: очередь одобрений задач с высоким риском */}
+            <div style="width:100%;max-width:900px;box-sizing:border-box;margin-top:8px;background:#1e1e1e;border:1px solid #333;border-radius:10px;overflow:hidden">
+              <button
+                onClick={() => setApprovalCollapsed(!approvalCollapsed())}
+                style="display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;box-sizing:border-box;padding:10px 14px;background:transparent;border:none;color:#e0e0e0;font-size:12px;font-weight:600;cursor:pointer;text-align:left"
+              >
+                <span>{gt("gui.approvalsHeading")}</span>
+                <span style="display:flex;align-items:center;gap:8px;font-size:11px;font-weight:400;color:#8e8e93">
+                  {gt("gui.approvalsPendingCount", { count: approvalRecords().filter((a) => a.status === "pending").length })}
+                  <span>{approvalCollapsed() ? "▾" : "▴"}</span>
+                </span>
+              </button>
+
+              {!approvalCollapsed() && (
+                <div style="padding:0 14px 14px;display:flex;flex-direction:column;gap:10px">
+                  <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
+                    <div style="font-size:11px;color:#8e8e93">{gt("gui.approvalsHint")}</div>
+                    <button
+                      onClick={() => void loadApprovals()}
+                      disabled={approvalBusy()}
+                      style="padding:6px 12px;background:#007acc;color:white;border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:500"
+                    >
+                      {approvalBusy() ? gt("gui.loading") : gt("gui.refresh")}
+                    </button>
+                  </div>
+
+                  {approvalRecords().map((record) => (
+                    <div style="border:1px solid #333;border-radius:8px;background:#0f0f0f;padding:10px;display:flex;flex-direction:column;gap:8px">
+                      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
+                        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                          <span style="color:#5ac8fa;font-weight:600;font-size:12px">{record.taskName}</span>
+                          <span style="font-size:10px;color:#8e8e93">{record.riskClass}</span>
+                          <span
+                            style={`font-size:10px;font-weight:600;padding:2px 7px;border-radius:999px;border:1px solid ${
+                              record.status === "pending"
+                                ? "#ff9f0a"
+                                : record.status === "approved"
+                                  ? "#34c759"
+                                  : "#ff3b30"
+                            };color:#e0e0e0`}
+                          >
+                            {record.status}
+                          </span>
+                        </div>
+                        <span style="font-size:10px;color:#8e8e93">{record.requestId.slice(0, 12)}</span>
+                      </div>
+                      {record.reason && (
+                        <div style="font-size:11px;color:#e0e0e0;overflow-wrap:anywhere">{record.reason}</div>
+                      )}
+                      {record.decidedBy && (
+                        <div style="font-size:10px;color:#8e8e93">
+                          {gt("gui.approvalsDecidedBy", { who: record.decidedBy })}
+                        </div>
+                      )}
+                      {record.status === "pending" ? (
+                        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                          <button
+                            onClick={() => void handleApprovalDecision(record, "approve")}
+                            disabled={approvalBusy()}
+                            style="padding:5px 10px;background:#34c759;color:#0a1a0a;border:none;border-radius:5px;cursor:pointer;font-size:11px;font-weight:600"
+                          >
+                            ✓ {gt("gui.approvalsApprove")}
+                          </button>
+                          <button
+                            onClick={() => void handleApprovalDecision(record, "reject")}
+                            disabled={approvalBusy()}
+                            style="padding:5px 10px;background:#ff3b30;color:white;border:none;border-radius:5px;cursor:pointer;font-size:11px;font-weight:600"
+                          >
+                            ✗ {gt("gui.approvalsReject")}
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
+                  ))}
+
+                  {approvalRecords().length === 0 && (
+                    <div style="font-size:11px;color:#8e8e93;padding:6px 0">{gt("gui.approvalsEmpty")}</div>
                   )}
                 </div>
               )}

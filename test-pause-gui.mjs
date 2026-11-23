@@ -37,7 +37,13 @@ const rpcSrc = fs.readFileSync(path.join(root, "src", "rpc.ts"), "utf8");
 const indexSrc = fs.readFileSync(path.join(root, "src", "index.ts"), "utf8");
 const guiSrc = fs.readFileSync(path.join(root, "src", "gui.tsx"), "utf8");
 
-for (const method of ["list_durable_runs", "pause_durable_run", "resume_durable_run"]) {
+for (const method of [
+  "list_durable_runs",
+  "pause_durable_run",
+  "resume_durable_run",
+  "list_approvals",
+  "decide_approval",
+]) {
   assert(new RegExp(`\\b${method}:\\s*\\{\\s*input:`).test(rpcSrc), `rpc.ts объявляет ${method}`);
   assert(new RegExp(`\\b${method}:\\s*async`).test(indexSrc), `index.ts обрабатывает ${method}`);
   assert(guiSrc.includes(`rpc.${method}(`), `gui.tsx вызывает rpc.${method}`);
@@ -64,6 +70,11 @@ assert(
   "GUI имеет обработчики pause/resume",
 );
 assert(guiSrc.includes("gui.runsRunningWarning"), "GUI показывает предупреждение о running-шаге");
+assert(guiSrc.includes("gui.approvalsHeading"), "GUI рисует секцию одобрений");
+assert(
+  guiSrc.includes("handleApprovalDecision") && guiSrc.includes("approvalRecords"),
+  "GUI имеет состояние и обработчик решений по одобрениям",
+);
 
 // QA-C.1: счётчик времени запуска сбрасывается, таймер очищается.
 assert(
@@ -102,6 +113,27 @@ const usedKeys = new Set(
   [...guiSrc.matchAll(/gt\("(gui\.runs[^"]*)"/g)].map((match) => match[1]),
 );
 for (const key of usedKeys) {
+  for (const locale of ["ru", "en", "zh"]) {
+    assert(
+      typeof catalogs[locale][key] === "string" && catalogs[locale][key].length > 0,
+      `${locale}: ключ ${key} непустой`,
+    );
+  }
+}
+
+// PL-95: паритет ключей gui.approvals* и всех ключей, используемых в GUI.
+const approvalKeys = new Set(
+  Object.keys(catalogs.ru).filter((key) => key.startsWith("gui.approvals")),
+);
+assert(approvalKeys.size > 0, "в ru есть ключи gui.approvals*");
+for (const locale of ["en", "zh"]) {
+  const missing = [...approvalKeys].filter((key) => !(key in catalogs[locale]));
+  assert(missing.length === 0, `${locale}: нет пропущенных gui.approvals* (${missing.join(", ") || "нет"})`);
+}
+const usedApprovalKeys = new Set(
+  [...guiSrc.matchAll(/gt\("(gui\.approvals[^"]*)"/g)].map((match) => match[1]),
+);
+for (const key of usedApprovalKeys) {
   for (const locale of ["ru", "en", "zh"]) {
     assert(
       typeof catalogs[locale][key] === "string" && catalogs[locale][key].length > 0,
@@ -279,6 +311,50 @@ assert(panel.listRunPanel({ limit: 1 }).runs.length === 1, "лимит спис�
 assert(panel.listRunPanel({ filter: "bogus" }).success, "неизвестный фильтр безопасен");
 const missing = panel.resumeRunPanel("does-not-exist");
 assert(!missing.success && String(missing.error).includes("не найден"), "resume неизвестного запуска отклонён");
+
+// PL-95: очередь одобрений через фасад (журнал аудита, без новой таблицы).
+const approvals = await import("./dist/core/approval-api.js");
+const audit = await import("./dist/core/audit.js");
+const approvalRequestId = `pl95-${Date.now()}`;
+const createdApproval = audit.requestApproval({
+  requestId: approvalRequestId,
+  taskName: "pl95-high-risk",
+  riskClass: "high",
+  reason: "PL-95 regression",
+  actor: "test",
+});
+assert(createdApproval?.requestId === approvalRequestId, "PL-95: запрос одобрения создан");
+const approvalList = approvals.listApprovalPanel({ limit: 50 });
+assert(approvalList.success, "PL-95: listApprovalPanel успешен");
+assert(
+  approvalList.approvals.some((item) => item.requestId === approvalRequestId && item.status === "pending"),
+  "PL-95: pending-запрос виден в списке",
+);
+assert(approvals.listApprovalPanel({ limit: 0 }).approvals.length >= 1, "PL-95: лимит ограничен снизу");
+assert(approvals.listApprovalPanel({ limit: 99999 }).approvals.length <= 500, "PL-95: лимит ограничен сверху");
+assert(
+  !approvals.decideApprovalPanel("", "approve").success,
+  "PL-95: пустой requestId отклонён",
+);
+assert(
+  !approvals.decideApprovalPanel(approvalRequestId, "maybe").success,
+  "PL-95: неизвестное решение отклонено",
+);
+const decided = approvals.decideApprovalPanel(approvalRequestId, "approve", "gui");
+assert(decided.success && decided.approval?.status === "approved", "PL-95: решение approve сохранено");
+assert(
+  approvals.listApprovalPanel().approvals.find((item) => item.requestId === approvalRequestId)?.decidedBy === "gui",
+  "PL-95: автор решения виден в списке",
+);
+const duplicate = approvals.decideApprovalPanel(approvalRequestId, "reject", "gui");
+assert(
+  duplicate.success && duplicate.approval?.status === "approved",
+  "PL-95: первое решение не перезаписывается",
+);
+assert(
+  !approvals.decideApprovalPanel("pl95-unknown", "approve").success,
+  "PL-95: неизвестный запрос отклонён",
+);
 
 // QA-B.4: бюджеты доступны и в дашборде, а не только через RPC.
 const guiSource = fs.readFileSync("./src/gui.tsx", "utf8");

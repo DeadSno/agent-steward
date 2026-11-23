@@ -683,7 +683,7 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 | D11 Профили/workspace | `manage_profiles`, `manage_workspaces` | ✅ | ✅ табы | — | `get_profiles`, `set_profile`, `create_profile`, `delete_profile`, `get_workspaces`, `add/update/delete_workspace` |
 | D12 Шаблоны/перенос | `manage_templates`, `transfer_tasks` | ✅ | — | — | `get_templates`, `save_template`, `delete_template`, `export_tasks`, `import_tasks` |
 | D13 Наблюдаемость | `get_audit_log`, `get_dashboard_info` | ✅ аудит | ✅ health/logs | — | `get_audit`, `/api/health`, `/api/logs` |
-| D14 Интерфейсы | через RPC | ✅ | ✅ | ✅ | 57 RPC-методов |
+| D14 Интерфейсы | через RPC | ✅ | ✅ | ✅ | 59 RPC-методов |
 | D15 Данные | ⚠️ косвенно (`transfer_tasks` — только задачи) | ✅ история | ✅ экспорт БД | — | `/api/export-db` |
 | D16 Поставка | ✅ после сборки | ✅ | — | — | — |
 | D17 Обратная связь | `report_bug`, `self_analysis` | ✅ кнопка в отчёте/хуке | ✅ форма отчёта | — | `report_bug`, `self_analysis` |
@@ -833,7 +833,7 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 
 - [ ] Все 18 деталей закрыты, у каждой выполнены 3 критерия (работает / доступ агента / доступ пользователя) + все `Sxx.BP.*` подзадачи.
 - [ ] Все 30 MCP-инструментов вызываются и валидируют аргументы (D04).
-- [ ] Все 57 RPC-методов доступны GUI (D14.1, приложение A).
+- [ ] Все 59 RPC-методов доступны GUI (D14.1, приложение A).
 - [ ] Все 19 HTTP API эндпоинтов, задокументированных в Приложении C (21 уникальный маршрут в коде), отвечают корректно (D14.4).
 - [ ] Задача, созданная в GUI, видна агенту и на дашборде; и наоборот (E2E-4).
 - [ ] Каждая мутация имеет запись в аудите с правильным actor: `mcp`, `gui`, `http` (D10, D13).
@@ -992,9 +992,9 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 
 ---
 
-## Приложение A. 57 RPC-методов (пользовательский контур GUI)
+## Приложение A. 59 RPC-методов (пользовательский контур GUI)
 
-`get_tasks`, `create_task`, `delete_task`, `run_task`, `run_mission`, `pause_task`, `resume_task`, `update_task`, `get_task_logs`, `get_history`, `get_metrics`, `get_dashboard_port`, `get_platform`, `dry_run`, `dry_run_all`, `pipeline_validate`, `pipeline_apply`, `pipeline_export`, `get_matrix_results`, `cancel_matrix`, `cleanup_matrix_orphans`, `cleanup_history`, `get_analytics`, `self_analysis`, `expand_matrix_preview`, `get_workspaces`, `add_workspace`, `update_workspace`, `delete_workspace`, `get_profiles`, `set_profile`, `create_profile`, `delete_profile`, `export_tasks`, `import_tasks`, `get_settings`, `save_settings`, `get_templates`, `save_template`, `delete_template`, `emit_event`, `test_notification`, `send_digest`, `list_secrets`, `save_secret`, `delete_secret`, `get_audit`, `list_dlq`, `retry_dlq`, `discard_dlq`, `list_durable_runs`, `pause_durable_run`, `resume_durable_run`, `compare_triage`, `get_shadow_report`, `reset_shadow_report`, `test_local_ai`.
+`get_tasks`, `create_task`, `delete_task`, `run_task`, `run_mission`, `pause_task`, `resume_task`, `update_task`, `get_task_logs`, `get_history`, `get_metrics`, `get_dashboard_port`, `get_platform`, `dry_run`, `dry_run_all`, `pipeline_validate`, `pipeline_apply`, `pipeline_export`, `get_matrix_results`, `cancel_matrix`, `cleanup_matrix_orphans`, `cleanup_history`, `get_analytics`, `self_analysis`, `expand_matrix_preview`, `get_workspaces`, `add_workspace`, `update_workspace`, `delete_workspace`, `get_profiles`, `set_profile`, `create_profile`, `delete_profile`, `export_tasks`, `import_tasks`, `get_settings`, `save_settings`, `get_templates`, `save_template`, `delete_template`, `emit_event`, `test_notification`, `send_digest`, `list_secrets`, `save_secret`, `delete_secret`, `get_audit`, `list_dlq`, `retry_dlq`, `discard_dlq`, `list_durable_runs`, `pause_durable_run`, `resume_durable_run`, `list_approvals`, `decide_approval`, `compare_triage`, `get_shadow_report`, `reset_shadow_report`, `test_local_ai`.
 
 ---
 

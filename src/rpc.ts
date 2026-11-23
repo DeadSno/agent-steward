@@ -1228,6 +1228,68 @@ const ResumeDurableRunOutput = {
   additionalProperties: false,
 } as const;
 
+/** PL-95: очередь одобрений (живёт в журнале аудита, ARCH-7.1). */
+const ApprovalPanelRecordSchema = {
+  type: "object" as const,
+  properties: {
+    requestId: { type: "string" },
+    taskName: { type: "string" },
+    riskClass: { type: "string" },
+    runRef: { type: ["string", "null"] },
+    reason: { type: ["string", "null"] },
+    status: { type: "string" },
+    decision: { type: ["string", "null"] },
+    decidedBy: { type: ["string", "null"] },
+    decidedAt: { type: ["string", "null"] },
+    requestedBy: { type: ["string", "null"] },
+    createdAt: { type: "string" },
+  },
+  required: ["requestId", "taskName", "riskClass", "status", "createdAt"],
+  additionalProperties: false,
+} as const;
+
+const ListApprovalsInput = {
+  type: "object" as const,
+  properties: {
+    /** По умолчанию 50, максимум 500. */
+    limit: { type: "number" },
+  },
+  additionalProperties: false,
+} as const;
+
+const ListApprovalsOutput = {
+  type: "object" as const,
+  properties: {
+    success: { type: "boolean" },
+    approvals: { type: "array", items: ApprovalPanelRecordSchema },
+    error: { type: "string" },
+  },
+  required: ["success", "approvals"],
+  additionalProperties: false,
+} as const;
+
+const DecideApprovalInput = {
+  type: "object" as const,
+  properties: {
+    requestId: { type: "string" },
+    decision: { type: "string" },
+    decidedBy: { type: "string" },
+  },
+  required: ["requestId", "decision"],
+  additionalProperties: false,
+} as const;
+
+const DecideApprovalOutput = {
+  type: "object" as const,
+  properties: {
+    success: { type: "boolean" },
+    approval: ApprovalPanelRecordSchema,
+    error: { type: "string" },
+  },
+  required: ["success"],
+  additionalProperties: false,
+} as const;
+
 /** Сравнение триажа «до/после» (Спринт 31.5). */
 const CompareTriageInput = {
   type: "object" as const,
@@ -2096,6 +2158,9 @@ export const SchedulerRpc = Rpc.define({
     list_durable_runs: { input: ListDurableRunsInput, output: ListDurableRunsOutput },
     pause_durable_run: { input: PauseDurableRunInput, output: PauseDurableRunOutput },
     resume_durable_run: { input: ResumeDurableRunInput, output: ResumeDurableRunOutput },
+    // PL-95: очередь одобрений доступна через RPC и GUI.
+    list_approvals: { input: ListApprovalsInput, output: ListApprovalsOutput },
+    decide_approval: { input: DecideApprovalInput, output: DecideApprovalOutput },
     compare_triage: {
       input: CompareTriageInput,
       output: CompareTriageOutput,
