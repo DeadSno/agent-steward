@@ -186,8 +186,6 @@ agent-steward — execution engine с опциональной регистра�
       согласие в UI), не включая его по умолчанию.
 - [ ] PL-54 Промпт задачи с двойными кавычками проходит валидацию, но ломает запуск `opencode run`: `schedule_task` + `schtasks /Run`, ошибка `Cannot process argument because the value of argument "name" is not valid` — P1. Действие: экранировать промпт при передаче в `opencode.ps1` либо отклонять двойные кавычки при создании задачи; добавить проверку в `test-agent-tools.mjs`.
 
-- [ ] PL-59 `preFlightStatus=skipped` у всех семи задач ARCH при наличии проверяемого `qualityGate`: `get_history` и PL-25 worktree-snapshot — P1. Действие: логировать причину пропуска снимка; делать снимок обязательным для задач с `qualityGate`, если в дереве есть guarded-пути; регрессия в `test-execution-hardening.mjs`.
-
 - [ ] PL-60 Ложные `tool.blocked` с `tool: "*"` и `reason: allowedTools` для операций `task.create`/`task.update`, которые при этом успешно выполняются: `get_audit_log` (записи 1291–1309, все ARCH-задачи) и `src/core/audit.ts` — P2. Действие: не применять политику `allowedTools` задачи к внутренним вызовам рекордера/MCP; писать реальное имя инструмента; регрессия в `test-audit.mjs`.
 
 - [ ] PL-61 `list_tasks` показывает у запущенной задачи `runsError=1`, `runsSuccess=0` при `status=running` (ARCH-5 и ARCH-7 во время прогона), после завершения счётчики исправляются: `src/core/server.ts`, `get_history` — P2. Действие: считать счётчики только по завершённым записям истории, не классифицировать незавершённый прогон как error; тест вывода `list_tasks`.

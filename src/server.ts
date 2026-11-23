@@ -10,6 +10,7 @@ import {
   countRunningRecords,
 } from "./db/history-repo.js";
 import { buildAnalytics, historyToCsv } from "./core/analytics.js";
+import { decideWorktreeSnapshot } from "./core/execution.js";
 import { getSchedulerTitle } from "./core/scheduler/index.js";
 import { getPluginVersion } from "./version.js";
 import { checkpointDb, getDbFile, getDbStatus } from "./db/index.js";
@@ -1053,7 +1054,12 @@ async function handleRequest(
       const limit = Number.isFinite(limitRaw)
         ? Math.max(1, Math.min(10000, Math.floor(limitRaw)))
         : 200;
-      let records = await loadHistory();
+      // PL-59: к записям истории прикрепляем причину пропуска снимка дерева,
+      // чтобы `skipped` больше не был безмолвным.
+      let records = annotateHistoryWithSnapshotPolicy(
+        await loadHistory(),
+        await deps.getTasks(),
+      );
       if (taskFilter) {
         records = records.filter((record) => record.taskName.toLowerCase() === taskFilter);
       }
@@ -1590,6 +1596,64 @@ function sendAttachment(
  * Список задач + метрики по каждой задаче, посчитанные из history.json
  * (колонка «Метрики» в таблице дашборда).
  */
+/** Минимальный контракт задачи для PL-59 (есть и в DashboardDeps). */
+export interface SnapshotTaskLike {
+  name: string;
+  qualityGate?: string | null;
+  workingDirectory?: string | null;
+  workdir?: string | null;
+}
+
+/**
+ * PL-59: объясняет `preFlightStatus=skipped` в истории запусков.
+ * Раньше причина пропуска worktree-snapshot нигде не фиксировалась — в
+ * get_history оставался голый `skipped`. Теперь каждая запись несёт
+ * `preFlightReason` и флаг обязательности снимка.
+ */
+export function annotateHistoryWithSnapshotPolicy<
+  T extends { taskName?: string | null; preFlightStatus?: string | null },
+>(
+  records: readonly T[],
+  tasks: readonly SnapshotTaskLike[],
+  env: NodeJS.ProcessEnv = process.env,
+  exists?: (file: string) => boolean,
+): Array<T & { preFlightReason: string; gateSnapshotRequired: boolean }> {
+  const byName = new Map<string, SnapshotTaskLike>();
+  for (const task of tasks) {
+    byName.set(String(task.name ?? "").toLowerCase(), task);
+  }
+  return records.map((record) => {
+    const task = byName.get(String(record.taskName ?? "").toLowerCase());
+    let preFlightReason = "";
+    let gateSnapshotRequired = false;
+    if (task) {
+      const decision = decideWorktreeSnapshot({
+        taskName: String(task.name),
+        qualityGate: task.qualityGate ?? null,
+        workdir: task.workingDirectory ?? task.workdir ?? null,
+        env,
+        exists,
+      });
+      gateSnapshotRequired = decision.required;
+      if (record.preFlightStatus === "skipped") {
+        if (decision.skipReason) {
+          preFlightReason = decision.skipReason;
+        } else if (decision.required && decision.taken) {
+          preFlightReason =
+            "preFlight пропущен (нет BeforeScript); worktree-snapshot снят — qualityGate проверен";
+        } else {
+          preFlightReason = "preFlight пропущен (нет BeforeScript) — причина пропуска снимка неизвестна";
+        }
+      } else if (decision.required && !decision.taken) {
+        preFlightReason = decision.skipReason;
+      }
+    } else if (record.preFlightStatus === "skipped") {
+      preFlightReason = "definition задачи не найден — причина пропуска снимка неизвестна";
+    }
+    return { ...record, preFlightReason, gateSnapshotRequired };
+  });
+}
+
 async function collectTasksWithMetrics(deps: DashboardDeps) {
   const [history, tasks] = await Promise.all([loadHistory(), deps.getTasks()]);
 
@@ -2113,6 +2177,9 @@ function renderPage(nonce: string): string {
         (r.model ? '<span class="hist-model" title="Модель">🧠 ' + esc(r.model) + '</span>' : '') +
         (r.preFlightStatus && r.preFlightStatus !== 'skipped'
           ? '<span class="hist-hook ' + (r.preFlightStatus === 'success' ? 'okh' : 'errh') + '" title="Pre-flight: ' + esc(r.preFlightStatus) + '">⚡ pre: ' + (r.preFlightStatus === 'success' ? '✅' : '❌') + '</span>'
+          : '') +
+        (r.preFlightStatus === 'skipped' && r.preFlightReason
+          ? '<span class="hist-hook" title="Pre-flight: ' + esc(r.preFlightReason) + '">⚡ pre: ⏭ ' + esc(String(r.preFlightReason).slice(0, 40)) + '</span>'
           : '') +
         (r.postFlightStatus && r.postFlightStatus !== 'skipped'
           ? '<span class="hist-hook ' + (r.postFlightStatus === 'success' ? 'okh' : 'errh') + '" title="Post-flight: ' + esc(r.postFlightStatus) + '">⚡ post: ' + (r.postFlightStatus === 'success' ? '✅' : '❌') + '</span>'

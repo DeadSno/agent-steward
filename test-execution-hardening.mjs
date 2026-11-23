@@ -714,6 +714,180 @@ try {
   check("PL-58: секция не выбросила исключение", false, "section threw");
 }
 
+// --- PL-59: причина пропуска worktree-snapshot и обязательность снимка ---
+try {
+  const {
+    decideWorktreeSnapshot,
+    enforceWorktreeSnapshot,
+    worktreeSnapshotFileFor,
+    createRegisteredRunContext,
+    buildExecutionPlan,
+    executeExecutionPlan,
+  } = await import("./dist/core/execution.js");
+  const { captureWorktreeSnapshot } = await import("./dist/core/gate-integrity.js");
+  const { annotateHistoryWithSnapshotPolicy } = await import("./dist/server.js");
+
+  // Настоящий git-репозиторий с guarded-путём src/ (как у семи ARCH-задач).
+  const repo = path.join(tempRoot, "pl59-worktree");
+  fs.mkdirSync(path.join(repo, "src"), { recursive: true });
+  fs.writeFileSync(path.join(repo, "src", "pl59.ts"), "// PL-59\n", "utf8");
+  const git = (args) =>
+    spawnSync("git", args, { cwd: repo, encoding: "utf8", windowsHide: true });
+  check("PL-59: git доступен для воспроизведения", git(["init", "-q"]).status === 0);
+  git(["config", "user.email", "pl59@example.invalid"]);
+  git(["config", "user.name", "PL-59"]);
+  git(["add", "-A"]);
+  git(["commit", "-q", "-m", "baseline"]);
+
+  const env = { ...process.env, AGENT_STEWARD_GATE_GUARD_PATHS: "src" };
+  const taskName = `pl59-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const snapshotFile = worktreeSnapshotFileFor(taskName);
+  fs.rmSync(snapshotFile, { force: true });
+
+  // Без qualityGate снимок не нужен, но причина пропуска логируется.
+  const logs = [];
+  const noGate = decideWorktreeSnapshot({
+    taskName,
+    workdir: repo,
+    env,
+    log: (message) => logs.push(message),
+  });
+  check("PL-59: без qualityGate снимок не обязателен", noGate.required === false);
+  check(
+    "PL-59: причина пропуска без qualityGate записана",
+    /qualityGate не задан/.test(noGate.skipReason) && logs.some((line) => line.includes("PL-59")),
+    JSON.stringify({ reason: noGate.skipReason, logs })
+  );
+
+  // qualityGate + git-дерево с guarded-путями → снимок обязателен, но отсутствует.
+  const missing = decideWorktreeSnapshot({
+    taskName,
+    qualityGate: "node -e \"process.exit(0)\"",
+    workdir: repo,
+    env,
+    log: (message) => logs.push(message),
+  });
+  check("PL-59: qualityGate + guarded-путь делает снимок обязательным", missing.required === true);
+  check("PL-59: отсутствующий снимок не считается снятым", missing.taken === false);
+  check(
+    "PL-59: причина пропуска объясняет отсутствие снимка",
+    /обязательный worktree-snapshot отсутствует/.test(missing.skipReason),
+    missing.skipReason
+  );
+  check("PL-59: причина пропуска залогирована", logs.some((line) => line.includes("отсутствует")), logs.join(" | "));
+  let enforcedError = "";
+  try {
+    enforceWorktreeSnapshot(missing);
+  } catch (err) {
+    enforcedError = String(err?.message ?? err);
+  }
+  check(
+    "PL-59: fail-closed — гейт не стартует без обязательного снимка",
+    /обязательный worktree-snapshot отсутствует/.test(enforcedError),
+    enforcedError
+  );
+
+  // Реальный снимок дерева снимаем той же командой, что и обёртка (PL-25).
+  const snapshotPath = captureWorktreeSnapshot(repo, snapshotFile, env);
+  check("PL-59: снимок дерева реально создан", Boolean(snapshotPath) && fs.existsSync(snapshotFile));
+  const present = decideWorktreeSnapshot({
+    taskName,
+    qualityGate: "node -e \"process.exit(0)\"",
+    workdir: repo,
+    env,
+  });
+  check("PL-59: со снимком снимок обязателен и снят", present.required && present.taken);
+  check("PL-59: со снимком причина пропуска пуста", present.skipReason === "", present.skipReason);
+  let enforcedOk = true;
+  try {
+    enforceWorktreeSnapshot(present);
+  } catch {
+    enforcedOk = false;
+  }
+  check("PL-59: со снимком fail-closed не срабатывает", enforcedOk);
+
+  // Не-git дерево с guarded-путём: причина — отсутствие git, не «skipped».
+  const notRepo = path.join(tempRoot, "pl59-not-a-repo");
+  fs.mkdirSync(path.join(notRepo, "src"), { recursive: true });
+  const nonGit = decideWorktreeSnapshot({
+    taskName,
+    qualityGate: "node -e \"process.exit(0)\"",
+    workdir: notRepo,
+    env,
+  });
+  check(
+    "PL-59: не-git дерево не создаёт ложной обязательности",
+    nonGit.required === false && /git-репозиторием/.test(nonGit.skipReason),
+    JSON.stringify(nonGit)
+  );
+
+  // Интеграция с execution loop: зарегистрированная задача с qualityGate.
+  const localExecutor = { id: "pl59-test", supports: () => true, execute: async () => ({}) };
+  const noSnapName = `pl59-exec-nosnap-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  fs.rmSync(worktreeSnapshotFileFor(noSnapName), { force: true });
+  const registered = createRegisteredRunContext(
+    {
+      name: noSnapName,
+      prompt: "PL-59 execution loop",
+      workingDirectory: repo,
+      qualityGate: "node -e \"process.exit(0)\"",
+    },
+    { riskClass: "R0" }
+  );
+  const plan = await buildExecutionPlan(registered);
+  let loopError = "";
+  try {
+    await executeExecutionPlan(plan, { executors: [localExecutor] });
+  } catch (err) {
+    loopError = String(err?.message ?? err);
+  }
+  check(
+    "PL-59: execution loop отклоняет прогон без обязательного снимка",
+    /обязательный worktree-snapshot отсутствует/.test(loopError),
+    loopError
+  );
+
+  captureWorktreeSnapshot(repo, worktreeSnapshotFileFor(noSnapName), env);
+  const withSnap = await executeExecutionPlan(plan, { executors: [localExecutor] });
+  check(
+    "PL-59: execution loop допускает прогон со снимком и возвращает решение",
+    withSnap.status === "passed" &&
+      withSnap.snapshot?.required === true &&
+      withSnap.snapshot?.taken === true,
+    JSON.stringify({ status: withSnap.status, snapshot: withSnap.snapshot })
+  );
+
+  // История: причина пропуска доступна потребителям /api/history и дашборду.
+  const annotated = annotateHistoryWithSnapshotPolicy(
+    [
+      { taskName: taskName.toLowerCase(), status: "success", preFlightStatus: "skipped" },
+      { taskName: "pl59-no-definition", status: "success", preFlightStatus: "skipped" },
+      { taskName: taskName.toLowerCase(), status: "success", preFlightStatus: "success" },
+    ],
+    [{ name: taskName, qualityGate: "node -e \"process.exit(0)\"", workingDirectory: repo }],
+    env
+  );
+  check(
+    "PL-59: skipped-запись истории несёт причину пропуска",
+    /qualityGate|снимок/.test(annotated[0].preFlightReason) &&
+      annotated[0].gateSnapshotRequired === true,
+    JSON.stringify(annotated[0])
+  );
+  check(
+    "PL-59: запись без definition объясняет неизвестную причину",
+    /definition задачи не найден/.test(annotated[1].preFlightReason),
+    annotated[1].preFlightReason
+  );
+  check(
+    "PL-59: успешный pre-flight не получает лишней причины",
+    annotated[2].preFlightReason === "",
+    annotated[2].preFlightReason
+  );
+} catch (err) {
+  console.log("[diag] PL-59 section THREW:", err instanceof Error ? err.stack : String(err));
+  check("PL-59: секция не выбросила исключение", false, "section threw");
+}
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\nExecution hardening: ${results.length - failed.length}/${results.length} проверок пройдено.`);
 try {

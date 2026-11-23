@@ -13,6 +13,8 @@
  */
 
 import { createHash } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import {
   createRun,
   finishRun,
@@ -28,7 +30,9 @@ import {
   abortDeferredEffects,
   applyDeferredEffects,
   EffectSagaError,
+  gateSnapshotPath,
   recordEffectIntents,
+  worktreeGuardPaths,
   type EffectIntent,
   type EffectSagaResult,
 } from "./gate-integrity.js";
@@ -662,6 +666,114 @@ export function createCommitAttributionGate(options: CommitAttributionGateOption
   };
 }
 
+/* ------------------------------------------------------------------------- *
+ * PL-59: обязательный worktree-snapshot для задач с qualityGate.
+ *
+ * Раньше снимок дерева (PL-25) снимался обёрткой «тихо»: если каталог не был
+ * git-репозиторием, не задавался workdir или не создавался файл снимка, в
+ * курсе не оставался никто — в get_history просто висел
+ * `preFlightStatus=skipped`. Теперь решение фиксируется структурой с ясной
+ * причиной пропуска, причина логируется, а для qualityGate-задач с
+ * guarded-путями снимок становится обязательным (fail-closed).
+ * ------------------------------------------------------------------------- */
+
+/** PL-59: решение о снимке рабочего дерева для задачи с qualityGate. */
+export interface WorktreeSnapshotDecision {
+  /** qualityGate + git-дерево с guarded-путями → снимок обязателен. */
+  readonly required: boolean;
+  /** Файл снимка создан. */
+  readonly taken: boolean;
+  /** Человекочитаемая причина пропуска; пустая, если снимок снят. */
+  readonly skipReason: string;
+  readonly guardedPaths: readonly string[];
+  readonly workdir: string | null;
+  readonly snapshotFile: string;
+}
+
+/** Параметры {@link decideWorktreeSnapshot}; `exists`/`log` — инъекции для тестов. */
+export interface WorktreeSnapshotDecisionOptions {
+  readonly taskName: string;
+  readonly qualityGate?: string | null;
+  readonly workdir?: string | null;
+  readonly env?: NodeJS.ProcessEnv;
+  /** Явно заданные guarded-пути; по умолчанию из AGENT_STEWARD_GATE_GUARD_PATHS. */
+  readonly guardedPaths?: readonly string[];
+  readonly exists?: (file: string) => boolean;
+  readonly log?: (message: string) => void;
+}
+
+/** Имя файла worktree-снимка рядом со snapshot'ом входов гейта. */
+export function worktreeSnapshotFileFor(taskName: string): string {
+  const gateFile = gateSnapshotPath(taskName);
+  return path.join(path.dirname(gateFile), `${path.basename(gateFile, ".json")}.worktree.json`);
+}
+
+/**
+ * PL-59: решает, нужен ли снимок дерева, и объясняет каждый пропуск.
+ * Никаких процессов не запускается — только проверка путей и логирование.
+ */
+export function decideWorktreeSnapshot(
+  options: WorktreeSnapshotDecisionOptions,
+): WorktreeSnapshotDecision {
+  const guardedPaths = [...(options.guardedPaths ?? worktreeGuardPaths(options.env))];
+  const workdir = options.workdir?.trim() || null;
+  const snapshotFile = worktreeSnapshotFileFor(options.taskName);
+  const exists = options.exists ?? ((file: string) => fs.existsSync(file));
+  const hasGate = Boolean(options.qualityGate?.trim());
+
+  let required = false;
+  let skipReason = "";
+  if (!hasGate) {
+    skipReason = "qualityGate не задан — worktree-snapshot не требуется";
+  } else if (!workdir) {
+    skipReason = "не задан workdir задачи — снимок дерева невозможен";
+  } else if (!exists(path.join(workdir, ".git"))) {
+    // PL-25: не-git каталоги не guarding — сравнивать не с чем.
+    skipReason = "дерево не является git-репозиторием (PL-25: проверка отключена)";
+  } else if (guardedPaths.length === 0) {
+    skipReason = "не заданы guarded-пути — сравнивать нечего";
+  } else {
+    const present = guardedPaths.filter((item) => exists(path.join(workdir, item)));
+    if (present.length === 0) {
+      skipReason = `в дереве нет guarded-путей (${guardedPaths.join(", ")})`;
+    } else {
+      required = true;
+      if (!exists(snapshotFile)) {
+        skipReason = `обязательный worktree-snapshot отсутствует: ${snapshotFile}`;
+      }
+    }
+  }
+
+  const taken = required ? exists(snapshotFile) : false;
+  const decision: WorktreeSnapshotDecision = {
+    required,
+    taken,
+    skipReason: required && taken ? "" : skipReason,
+    guardedPaths,
+    workdir,
+    snapshotFile,
+  };
+  options.log?.(
+    `[agent-steward] PL-59: worktree-snapshot ${required ? "обязателен" : "пропущен"}: ` +
+      (decision.skipReason || "снят"),
+  );
+  return decision;
+}
+
+/**
+ * PL-59: fail-closed проверка перед прогоном qualityGate. Для задачи с
+ * qualityGate и guarded-путями отсутствующий снимок — ошибка, а не тихий
+ * `preFlightStatus=skipped`.
+ */
+export function enforceWorktreeSnapshot(decision: WorktreeSnapshotDecision): void {
+  if (decision.required && !decision.taken) {
+    throw new Error(
+      `Quality Gate: обязательный worktree-snapshot отсутствует (${decision.snapshotFile}). ` +
+        `guarded-пути: ${decision.guardedPaths.join(", ")}. Причина: ${decision.skipReason}`,
+    );
+  }
+}
+
 /** Результат выполнения одного шага. */
 export interface ExecutedStep {
   stepName: string;
@@ -697,6 +809,8 @@ export interface ExecutionResult {
   effects?: EffectSagaResult[];
   /** ARCH-7.2: состояние очереди одобрений, если класс риска её требует. */
   approval?: ApprovalRecord;
+  /** PL-59: решение о worktree-snapshot (только для registered + qualityGate). */
+  snapshot?: WorktreeSnapshotDecision;
 }
 
 /** Опции исполнения. */
@@ -747,6 +861,21 @@ export async function executeExecutionPlan(
 ): Promise<ExecutionResult> {
   validateRunContext(plan.context);
 
+  // PL-59: зарегистрированная задача с qualityGate обязана снимать снимок
+  // дерева, если в нём есть guarded-пути. Причину пропуска логируем, а
+  // обязательный, но отсутствующий снимок отклоняем до создания запуска.
+  let snapshotDecision: WorktreeSnapshotDecision | undefined;
+  const planGate = plan.context.metadata?.qualityGate;
+  if (plan.context.origin === "registered" && typeof planGate === "string") {
+    snapshotDecision = decideWorktreeSnapshot({
+      taskName: plan.context.taskName,
+      qualityGate: planGate,
+      workdir: plan.context.cwd,
+      log: (message) => console.warn(message),
+    });
+    enforceWorktreeSnapshot(snapshotDecision);
+  }
+
   // ARCH-7.2: гейт одобрений — ДО createRun и до применения любых эффектов.
   // Гейт включается только при явном запросе (`options.approval`):
   // обычные ad-hoc/registered прогоны с hybrid-политикой (класс R2) не должны
@@ -789,6 +918,7 @@ export async function executeExecutionPlan(
         error: message,
         plan,
         approval,
+        ...(snapshotDecision ? { snapshot: snapshotDecision } : {}),
       };
     }
   }
@@ -971,6 +1101,7 @@ export async function executeExecutionPlan(
     error: firstError,
     plan,
     ...(approval ? { approval } : {}),
+    ...(snapshotDecision ? { snapshot: snapshotDecision } : {}),
     ...(sagaResults.length > 0 ? { effects: sagaResults } : {}),
   };
 }
