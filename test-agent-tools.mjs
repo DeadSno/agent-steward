@@ -29,6 +29,8 @@ const {
   getTaskLogsSchema,
   createToolHandlers,
   createToolSpecs,
+  coreScheduleTaskSchema,
+  coreUpdateTaskSchema,
 } = await import("./dist/index.js");
 const {
   CHILD_RUN_ENV,
@@ -371,10 +373,63 @@ check(
     bashWrapper.includes("worktree-verify")
 );
 const childSpecs = createToolSpecs({}, { [CHILD_RUN_ENV]: "1" });
-const parentSpecs = createToolSpecs({}, {});
+const parentSpecs = createToolSpecs({}, { AGENT_STEWARD_TOOL_PROFILE: "all" });
+const defaultSpecs = createToolSpecs({}, {});
+const adminSpecs = createToolSpecs({}, { AGENT_STEWARD_TOOL_PROFILE: "admin" });
 check(
   `QV-8: поверхность инструментов ${parentSpecs.length} → ${childSpecs.length} в дочернем прогоне`,
-  parentSpecs.length === 30 && Array.isArray(childSpecs) && childSpecs.length === 0
+  parentSpecs.length === 32 && Array.isArray(childSpecs) && childSpecs.length === 0
+);
+const defaultNames = defaultSpecs.map((spec) => spec.name);
+const adminNames = adminSpecs.map((spec) => spec.name);
+check(
+  `T-1: дефолтный профиль core = 8 инструментов без manage_* и advanced (${defaultSpecs.length})`,
+  defaultSpecs.length === 8 &&
+    defaultNames.includes("schedule_task") &&
+    defaultNames.includes("list_tasks") &&
+    !defaultNames.some((name) => name.startsWith("manage_") || name.endsWith("_advanced"))
+);
+check(
+  `T-1/T-3: профиль admin = core + manage_* + advanced (${adminSpecs.length})`,
+  adminSpecs.length === 16 &&
+    adminNames.filter((name) => name.startsWith("manage_")).length === 6 &&
+    adminNames.includes("schedule_advanced") &&
+    adminNames.includes("update_advanced")
+);
+check(
+  "T-1: невалидное значение профиля безопасно падает в core",
+  createToolSpecs({}, { AGENT_STEWARD_TOOL_PROFILE: "bogus" }).length === 8
+);
+
+// T-2: «толстые» поля доступны только в advanced-инструментах; базовые схемы
+// их отбрасывают, а полные — сохраняют. Оба варианта идут через общий хендлер,
+// поэтому V1/V2 и RPC видят одинаковый контракт (T-2.3).
+const matrixOnly = {
+  name: "T2-probe",
+  prompt: "probe",
+  schedule: "0 7 1 * *",
+  matrix: { workspaceIds: [] },
+};
+const coreScheduleParsed = coreScheduleTaskSchema.parse(matrixOnly);
+const advancedScheduleParsed = scheduleTaskSchema.parse(matrixOnly);
+const coreUpdateParsed = coreUpdateTaskSchema.parse({ name: "T2-probe", matrix: { workspaceIds: [] } });
+const advancedUpdateParsed = updateTaskSchema.parse({ name: "T2-probe", matrix: { workspaceIds: [] } });
+check(
+  "T-2.1: базовая schedule_task не несёт matrix/DAG/retry, полная схема — несёт",
+  coreScheduleParsed.matrix === undefined && advancedScheduleParsed.matrix !== undefined
+);
+check(
+  "T-2.2: базовая update_task не несёт matrix/DAG/retry, полная схема — несёт",
+  coreUpdateParsed.matrix === undefined && advancedUpdateParsed.matrix !== undefined
+);
+const scheduleSpec = parentSpecs.find((spec) => spec.name === "schedule_advanced");
+const updateSpec = parentSpecs.find((spec) => spec.name === "update_advanced");
+check(
+  "T-2.3: паритет контракта — advanced-спеки используют общие хендлеры и полные схемы",
+  scheduleSpec?.input === scheduleTaskSchema &&
+    updateSpec?.input === updateTaskSchema &&
+    typeof createToolHandlers({}).schedule_advanced === "function" &&
+    typeof createToolHandlers({}).update_advanced === "function"
 );
 
 // PL-70: все manage_* явно описывают контракт action, чтобы агент не терял вызовы.
@@ -392,9 +447,9 @@ check(
   manageSpecs.length === manageToolNames.length &&
     manageSpecs.every(
       (spec) =>
-        spec.description.includes("Use ONLY the action values listed above") &&
-        spec.description.includes("do not guess an action") &&
-        /no get action|get \(read\)/.test(spec.description)
+        spec.description.includes("Use ONLY the actions listed above") &&
+        spec.description.includes("do not guess get") &&
+        /read action \(list or get\)/.test(spec.description)
     )
 );
 check(
@@ -658,20 +713,32 @@ check(
 const { measureToolSurface } = await import("./dist/core/usage-surface.js");
 // QV-11.1: реальный офлайн-токенайзер, без вызовов модели и без chars→tokens.
 const { encode } = await import("gpt-tokenizer");
-const surface = measureToolSurface(createToolSpecs({}, {}), {
-  countTokens: (text) => encode(text).length,
+const countTokens = (text) => encode(text).length;
+const surface = measureToolSurface(createToolSpecs({}, { AGENT_STEWARD_TOOL_PROFILE: "all" }), {
+  countTokens,
 });
+const coreSurface = measureToolSurface(defaultSpecs, { countTokens });
 console.log(
   `QV-11.1 surface: ${surface.tools} tools, ${surface.descriptionCount} descriptions, ` +
     `${surface.descriptionChars} description chars, ~${surface.estimatedTokens} tokens`,
 );
+console.log(
+  `T-1/T-2 core surface: ${coreSurface.tools} tools, ~${coreSurface.estimatedTokens} tokens`,
+);
 check(
   "QV-11.1: оценка поверхности инструментов детерминирована",
-  surface.tools === 30 &&
+  surface.tools === 32 &&
     surface.descriptionCount > 0 &&
     surface.descriptionCount <= surface.tools &&
     surface.descriptionChars > 0 &&
     surface.estimatedTokens > surface.descriptionChars / 4
+);
+check(
+  `T-1.2/T-1.4: дефолтный профиль ≤ 6k токенов (факт: ${coreSurface.estimatedTokens})`,
+  coreSurface.tools === 8 &&
+    coreSurface.estimatedTokens > 0 &&
+    coreSurface.estimatedTokens <= 6000 &&
+    coreSurface.estimatedTokens < surface.estimatedTokens / 3
 );
 
 // PL-54: промпт с двойными кавычками доходит до opencode через cmd.exe

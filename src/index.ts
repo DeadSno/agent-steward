@@ -18,6 +18,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 // QA-A2.7: безопасное приведение unknown к строке без no-base-to-string.
 import { safeStringify } from "./text.js";
+import { filterToolSpecsByProfile } from "./core/tool-profile.js";
 import { LockManager } from "./core/lock.js";
 import {
   LOCK_DIR,
@@ -1067,6 +1068,47 @@ export const updateTaskSchema = z.object({
     });
   }
 });
+
+/**
+ * T-2: «толстые» поля живут в full-схемах `schedule_advanced`/`update_advanced`.
+ * Дешёвый профиль получает те же checking-правила, но без matrix/DAG/retry/
+ * notification/триггерных блоков — экономия ~4.5k токенов на запрос.
+ */
+const ADVANCED_SCHEMA_KEYS = [
+  "matrix",
+  "guards",
+  "dependsOn",
+  "retryCount",
+  "retryDelay",
+  "nextTaskOnSuccess",
+  "nextTaskOnError",
+  "mcpEvent",
+  "watchGlobs",
+  "watchIgnore",
+  "gitPaths",
+  "gitIgnore",
+  "gitPollSeconds",
+  "activeDays",
+  "windowPolicy",
+  "runWhenLoggedOff",
+  "sessionMaxRuns",
+  "workspaceId",
+] as const;
+
+function slimTaskSchema<T extends z.ZodRawShape>(schema: z.ZodObject<T>): z.ZodTypeAny {
+  const shape: Record<string, z.ZodTypeAny> = {
+    ...(schema.shape as unknown as Record<string, z.ZodTypeAny>),
+  };
+  for (const key of ADVANCED_SCHEMA_KEYS) {
+    delete shape[key];
+  }
+  const slim = z.object(shape);
+  const checks = (schema.def as { checks?: Parameters<typeof slim.check> }).checks;
+  return checks?.length ? slim.check(...checks) : slim;
+}
+
+export const coreScheduleTaskSchema = slimTaskSchema(scheduleTaskSchema);
+export const coreUpdateTaskSchema = slimTaskSchema(updateTaskSchema);
 
 const pauseTaskSchema = z.object({
   name: z.string().describe("Task name to pause."),
@@ -4891,8 +4933,10 @@ export async function createRuntime(ctxLike: RuntimeContextLike): Promise<Schedu
  */
 export interface ToolHandlers {
   schedule_task: typeof scheduleTaskExecute;
+  schedule_advanced: typeof scheduleTaskExecute;
   list_tasks: typeof listTasksExecute;
   update_task: typeof updateTaskExecute;
+  update_advanced: typeof updateTaskExecute;
   delete_task: typeof deleteTaskExecute;
   run_task_now: typeof runTaskNowExecute;
   pause_task: typeof pauseTaskExecute;
@@ -4932,8 +4976,10 @@ export interface ToolHandlers {
 export function createToolHandlers(_runtime: SchedulerRuntime): ToolHandlers {
   return {
     schedule_task: scheduleTaskExecute,
+    schedule_advanced: scheduleTaskExecute,
     list_tasks: listTasksExecute,
     update_task: updateTaskExecute,
+    update_advanced: updateTaskExecute,
     delete_task: deleteTaskExecute,
     run_task_now: runTaskNowExecute,
     pause_task: pauseTaskExecute,
@@ -5050,7 +5096,7 @@ export interface ToolSpec {
  * Каждое описание обязано явно называть допустимые действия и read-действие.
  */
 export const MANAGE_CONTRACT_HINT =
-  " Use ONLY the action values listed above. Inspect state with the listed read action (list or get) — do not guess an action such as get when it is not listed: unknown actions are rejected by the schema before execution.";
+  " Use ONLY the actions listed above. Read state with the listed read action (list or get); do not guess get when it is absent — unknown actions are rejected by the schema.";
 
 /**
  * PL-71: OpenCode /help показывает не более 12 инструментов, хотя плагин
@@ -5079,13 +5125,14 @@ export function createToolSpecs(
     return [];
   }
   const handlers = createToolHandlers(runtime);
-  return [
+  const specs: ToolSpec[] = [
     {
       name: "schedule_task",
-      input: scheduleTaskSchema,
+      input: coreScheduleTaskSchema,
       description:
-        `Creates a task in the OS scheduler (${scheduler.title}) with a cron schedule, optional Quality Gate, DAG dependencies, retry policy and matrix fan-out. ` +
+        `Creates a task in the OS scheduler (${scheduler.title}) with a cron schedule and an optional Quality Gate. ` +
         "Every run goes through a timeout + lock-file wrapper, so overlapping runs are skipped. " +
+        "For matrix/DAG/retry/window policies use schedule_advanced in the admin profile. " +
         "Without workingDirectory the task runs in the current project folder, where opencode run picks up the project's opencode.json and MCP servers.",
       audit: (args: ScheduleArgs) => ({ action: "task.create", targetType: "task", target: args.name }),
       execute: handlers.schedule_task,
@@ -5102,12 +5149,28 @@ export function createToolSpecs(
     },
     {
       name: "update_task",
-      input: updateTaskSchema,
+      input: coreUpdateTaskSchema,
       description:
         "Partially updates an existing task: omitted fields keep their current values, empty strings/arrays clear them. " +
-        "Matrix changes are synced (clones are diffed, running clones are never touched); pass matrix: null to remove the matrix and its clones.",
+        "For matrix/DAG/retry/window changes use update_advanced in the admin profile.",
       audit: (args: UpdateArgs) => ({ action: "task.update", targetType: "task", target: args.name }),
       execute: handlers.update_task,
+    },
+    {
+      name: "schedule_advanced",
+      input: scheduleTaskSchema,
+      description:
+        "Full schedule_task schema for the admin profile: matrix fan-out, DAG dependencies, retry policy, chained tasks, launch windows and all trigger types. Same handler as schedule_task.",
+      audit: (args: ScheduleArgs) => ({ action: "task.create.advanced", targetType: "task", target: args.name }),
+      execute: handlers.schedule_advanced,
+    },
+    {
+      name: "update_advanced",
+      input: updateTaskSchema,
+      description:
+        "Full update_task schema for the admin profile: matrix, DAG, retry, chained tasks, launch windows and all trigger types. Same handler as update_task.",
+      audit: (args: UpdateArgs) => ({ action: "task.update.advanced", targetType: "task", target: args.name }),
+      execute: handlers.update_advanced,
     },
     {
       name: "delete_task",
@@ -5384,6 +5447,9 @@ export function createToolSpecs(
       execute: handlers.emit_event,
     },
   ];
+  // T-1/T-3: фильтруем уже собранный реестр. Полный список остаётся в
+  // исходнике и доступен через AGENT_STEWARD_TOOL_PROFILE=all.
+  return filterToolSpecsByProfile(specs, env);
 }
 
 /**

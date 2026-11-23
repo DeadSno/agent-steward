@@ -363,7 +363,7 @@ avg_cost / avg_time / last_10_runs`. Обучается на исходах ге
 
 | Path | Role |
 | --- | --- |
-| `src/index.ts` | Plugin lifecycle, 30 agent tools, RPC handlers, task CRUD, view assembly |
+| `src/index.ts` | Plugin lifecycle, 32 agent tools, RPC handlers, task CRUD, view assembly |
 | `src/rpc.ts` | JSON-schema contracts for every RPC method |
 | `src/gui.tsx` | OpenCode sidebar panel (SolidJS, built to `gui-experimental.cjs`) |
 | `src/server.ts` | Local web dashboard HTTP server and HTML rendering |
@@ -841,7 +841,7 @@ resume preparation, rejection of a repeated resume, end-to-end comment delivery 
 
 | Interface | Audience | Entry point |
 | --- | --- | --- |
-| Agent tools | AI agent | 30 tools registered via `ctx.tool.transform` |
+| Agent tools | AI agent | 32 tools registered via `ctx.tool.transform` |
 | Agent skill | AI agent | `skills/scheduled-job-best-practices` |
 | RPC | Sidebar GUI | `src/rpc.ts` contracts, 57 methods |
 | Sidebar GUI | Human | `gui-experimental.cjs` |

@@ -18,6 +18,9 @@ import { fileURLToPath } from "node:url";
 process.env.OPENCODE_SCHEDULER_HOME = mkdtempSync(
   join(tmpdir(), "scheduler-dual-entry-")
 );
+// V1/V2-контракт сравнивает полный реестр; дефолтный профиль core намеренно
+// сокращён до 8 инструментов (Деталь 3.10, T-1), поэтому явно включаем all.
+process.env.AGENT_STEWARD_TOOL_PROFILE = "all";
 
 const {
   default: pluginModule,

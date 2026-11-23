@@ -78,6 +78,71 @@ Legacy: `opencode-windows-scheduler@1.5.8`.
 - [ ] PL-119 pre-flight `schedule_task` отклоняет SCOPE-пути файлов, которые задача должна создать: `src/core/environment.ts`, `locales/tr.json` не существовали до запуска — `src/core/scheduler/run-now.ts` — P2. Действие: разрешить create-intent (явный список создаваемых файлов или `filesCreate`) и не требовать их существования на этапе планирования; сейчас обход — заранее создавать заглушки. Обнаружено 23.11.2026.
 - [ ] PL-120 парсер SCOPE проглатывает хвост строки с прозой: путь `docs/FEATURES.md. Файл src/core/agents.ts — заглушка...` разбирается как один несуществующий путь и задача отклоняется — `src/core/scheduler/run-now.ts` — P2. Действие: требовать, чтобы строка SCOPE заканчивалась последним путём, и/или ужесточить парсер (стоп по первому не-пути), добавить регрессию. Обнаружено 23.11.2026.
 - [ ] PL-121 параллельные задачи в одном чек-ауте падают на Quality Gate с общим сообщением «рабочее дерево изменилось во время прогона»: код написан, но afterScript не коммитит — `src/core/scheduler/run-now.ts`, `src/core/ps-wrapper.ts` — P1. Действие: делать уникальный worktree для каждой параллельной задачи или явно блокировать запуск до старта с понятной причиной; в сообщении гейта указывать конкретные изменившиеся пути. Воспроизведено 23.11.2026 одновременно в 5 задачах (PL-106 в новой форме).
+- [ ] PL-122 `dry_run` выдаёт предупреждение PL-117 о неполном SCOPE (`ROADMAP.md`, `CHANGELOG.md`) для read-only задач-зондов, которые только запускают `test-docs.mjs` в qualityGate и не меняют документацию — `src/core/dry-run.ts` — P3. Действие: предупреждать только когда манифест задачи/afterScript реально пишет в эти файлы. Обнаружено 23.11.2026 при проверке TOK-PROBE-OS/EVENT.
+- [ ] PL-123 `dry_run` возвращает `estimatedDurationSec`/`estimatedTokens`/`estimatedCostUsd = null` и «Нет успешных запусков в истории» для новой задачи, хотя в общей истории 700+ успешных прогонов — `src/core/dry-run.ts` — P3. Действие: использовать глобальную историю как фолбэк оценки с пометкой об источнике. Обнаружено 23.11.2026.
+- [ ] PL-124 история задачи остаётся `running` длительное время после того, как отчёт записан и дочерний `opencode` перестал потреблять CPU; финализация записи происходит только по таймауту 900 с — `src/core/record-history.ts`, `src/core/ps-wrapper.ts` — P2. Действие: детектировать завершение/простой дочернего процесса и финализировать запись сразу, добавить регрессию. Обнаружено 23.11.2026 на TOK-PROBE-OS/EVENT.
+
+## Деталь 3.9 — Портабельность: OpenCode → MCP / dsh / ACP (0.2.x+)
+`src/core/`, `src/adapters/`, `src/invokers/`, `src/cli.ts`
+
+> Цель: тот же функционал в Cursor, VS Code, IDEA и DeepSeek Harness без форков
+> и без потери совместимости с OpenCode V1/V2. Архитектура уже на ~70% готова:
+> всего 8 `@opencode`-импортов в `src/`, ядро не знает про инструменты/RPC.
+> Детали обоснования — [ROADMAP-STRATEGY.md](./ROADMAP-STRATEGY.md), Этап 2/3.
+
+**Задача P-1 — Изоляция ядра (Phase 0)** · P2 · ⬜
+- [ ] P-1.1 Вынести `createToolSpecs` в `src/tool-specs.ts`, `createRuntime` — в `src/runtime.ts`
+- [ ] P-1.2 Контракт-тест: снимок 30 имён/схем инструментов, паритет с RPC-поверхностью
+- [ ] P-1.3 Проверить: 130+ существующих тестов зелёные, поведение OpenCode не изменилось
+
+**Задача P-2 — MCP-адаптер (Phase 1, ~80% ценности)** · P2 · ⬜
+- [ ] P-2.1 Bin `agent-steward mcp`: `McpServer` + `StdioServerTransport`, 30 `registerTool`
+- [ ] P-2.2 SKILL.md как MCP resource/prompt (`@modelcontextprotocol/server`, zod v4)
+- [ ] P-2.3 Сниппеты конфига: `.cursor/mcp.json`, `.vscode/mcp.json`, IDEA MCP Server
+- [ ] P-2.4 Тест: та же спека инструментов, что и в OpenCode-адаптере
+
+**Задача P-3 — Agent Invoker + поле `harness` (Phase 2)** · P3 · ⬜
+- [ ] P-3.1 Порт `AgentInvoker`: `invoke`/`buildCommand`, `UsageParser`, `ToolPolicy.toHarnessConfig()`
+- [ ] P-3.2 Параметризовать `ps-wrapper`/`bash`: `$AgentCommandPath`/`$AgentArgs` вместо хардкода `opencode run`
+- [ ] P-3.3 Invoker'ы: `opencode-cli` (по умолчанию), `dsh-headless`, `acp`, `cursor-cli`
+- [ ] P-3.4 Поле `harness` в задаче, default `opencode`, полная обратная совместимость
+
+**Задача P-4 — Нативный dsh-плагин (Phase 3)** · P3 · ⬜
+- [ ] P-4.1 `defineTool` ×30 через `ctx.tools.register`, `ctx.jobs` для фоновых запусков
+- [ ] P-4.2 Копия SKILL.md в `.agents/skills/`
+- [ ] P-4.3 Зафиксировать версию dsh (developer preview — breaking changes), контракт-тест
+
+**Задача P-5 — Serve + тонкие расширения (Phase 4)** · P3 · ⬜
+- [ ] P-5.1 Bin `agent-steward serve` — дашборд без OpenCode
+- [ ] P-5.2 Опциональные VS Code / JetBrains extension только для UX
+- [ ] P-5.3 Subpath exports `./core`, `./mcp`, `./dsh` (без монорепо — 130 тестов остаются рабочими)
+
+## Деталь 3.10 — Экономика токенов: снижение затрат (0.0.7+)
+`src/core/usage-surface.ts`, `src/index.ts`, `src/core/opencode-usage.ts`, `skills/`
+
+> Замер (gpt-tokenizer): 30 инструментов ≈ **14 213 токенов/запрос** (7 628 символов
+> description + 48 229 символов схем); 48% — `schedule_task` + `update_task`.
+> SKILL.md ≈ 20 017 символов ≈ **5 005 токенов**. В `scheduler.db` (722 записи)
+> телеметрия = 0 — весь Economy v2 (бюджеты, efficiency, forecast) fail-open спит.
+> Дочерние запуски уже регистрируют 0 инструментов (QV-8) — цену платит только главный агент.
+
+**Задача T-4 — Prompt caching (P3)** · P3 · ⬜
+- [ ] T-4.1 Проверить поддержку кеша статических схем в OpenCode и провайдерах
+- [ ] T-4.2 Включить кеширование для MCP/dsh-адаптеров где поддерживается
+
+**Задача T-5 — Похудеть SKILL.md (P4)** · P3 · ⬜
+- [ ] T-5.1 20k → ~8k символов: справочные таблицы вынести в отдельные файлы
+- [ ] T-5.2 Оставить в SKILL.md только триггеры и краткий чек-лист
+
+**Задача T-6 — Починить телеметрию токенов (P5)** · P2 · ⬜
+- [ ] T-6.1 Проверить вызов `collectOpenCodeUsage` в `record-history.ts` — токены не попадают в `scheduler.db`
+- [ ] T-6.2 Fallback: офлайн-оценка через `usage-surface.ts` для моделей без usage (free-тиры)
+- [ ] T-6.3 Проверить: `budget` / `savings` / `forecastSpend` / `tokenEfficiencyScore` показывают реальные цифры
+
+**Задача T-7 — Меньше «сожжённых» токенов + роутинг моделей (P6–P7)** · P3 · ⬜
+- [ ] T-7.1 `dry_run`/валидация перед запуском — снизить долю `error`/`skipped` (сейчас 320 skipped)
+- [ ] T-7.2 Дешёвая модель для рутины, дорогая — только для сложных задач (существующий budget/router)
+- [ ] T-7.3 KPI `tokenEfficiencyScore` в дашборде
 
 ---
 

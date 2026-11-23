@@ -14,7 +14,7 @@ GUI — SolidJS + Vite; TUI — OpenTUI; SQLite `scheduler.db`, `SCHEMA_VERSION=
 
 ## Что где лежит
 
-- `src/index.ts` — `Plugin.define`, ~30 agent tools, регистрация RPC и встроенного скилла.
+- `src/index.ts` — `Plugin.define`, ~32 agent tools, регистрация RPC и встроенного скилла.
 - `src/core/*` — scheduler (Windows/POSIX/mac, cron↔schtasks, at-fallback), guard, matrix,
   worktree, execution, recovery, router/capability, notifications, triage, secrets.
 - `src/db/*` — схема/миграции, durable runs, DLQ, run journal, step idempotency.
@@ -58,5 +58,5 @@ GUI — SolidJS + Vite; TUI — OpenTUI; SQLite `scheduler.db`, `SCHEMA_VERSION=
 `Known limitations` в `docs/ARCHITECTURE.md` / `docs/EXECUTION-LOOP.md` могут отставать от
 закрытых B1.x-фиксов — при ревью проверять фактом по коду, а не верить тексту. Утверждение
 «Secrets are not encrypted» в `docs/FEATURES.md` уже исправлено: сейчас там описан
-AES-256-GCM (см. CHANGELOG). Актуальные счётчики — 30 tools / 59 RPC / 116 наборов тестов;
+AES-256-GCM (см. CHANGELOG). Актуальные счётчики — 32 tools / 59 RPC / 116 наборов тестов;
 сверять через `node test-docs.mjs`, а не копировать из соседнего файла.

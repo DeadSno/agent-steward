@@ -28,7 +28,7 @@
 
 ## Карта кода
 
-- `src/index.ts` — `Plugin.define`, ~30 agent tools, регистрация RPC и встроенного скилла.
+- `src/index.ts` — `Plugin.define`, ~32 agent tools, регистрация RPC и встроенного скилла.
 - `src/core/*` — scheduler (schtasks/cron/launchd), guard, matrix, worktree, execution, recovery.
 - `src/db/*` — схема и миграции, durable runs, DLQ, journal; `SCHEMA_VERSION=14`, миграции аддитивные и идемпотентные.
 - `src/rpc.ts` — контракт `Rpc.define` между сервером и GUI; `src/gui.tsx` — дашборд.

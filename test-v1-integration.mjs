@@ -33,6 +33,9 @@ process.env.OPENCODE_SCHEDULER_PORT = String(freePort);
 // V1-реестр проверяется на реальных инструментах; маркер дочернего прогона
 // (выставляется обёрткой планировщика) делает registration пустой.
 delete process.env.AGENT_STEWARD_CHILD_RUN;
+// Интеграция проверяет полный V1-реестр: дефолтный профиль core намеренно
+// сокращён до 8 инструментов (Деталь 3.10, T-1), поэтому явно включаем all.
+process.env.AGENT_STEWARD_TOOL_PROFILE = "all";
 
 const { default: pluginModule, createToolSpecs } = await import("./dist/index.js");
 

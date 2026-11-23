@@ -52,8 +52,8 @@ not an artifact of a paused task.
 before `opencode run` (PowerShell restores the previous value in `finally`). When the
 plugin is loaded with that marker it skips V2/V1 registration: no scheduler tools, RPC,
 skill or dashboard in the child process. A controlled check measured the tool registry at
-30 tools in the parent vs 0 in child mode. This prevents a scheduled agent from seeing
-the same 30 tools recursively and racing the parent for the dashboard port.
+32 tools in the parent vs 0 in child mode. This prevents a scheduled agent from seeing
+the same 32 tools recursively and racing the parent for the dashboard port.
 
 Do not use a 5-field cron for a one-off reminder. Do not build a pipeline with chained
 prompts inside a single task when `dependsOn` exists: a failed step would be invisible.

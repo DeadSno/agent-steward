@@ -15,7 +15,7 @@
 
 | Возможность | V1 (`>=1.18.29`) | V2 (`>=2.2.7`) | Комментарий |
 |---|---|---|---|
-| 30 инструментов агента | да, `tool()`; без `options.codemode` | да, `ctx.tool.transform`; `options: { codemode: true }` | имена, схемы и обработчики совпадают |
+| 32 инструментов агента | да, `tool()`; без `options.codemode` | да, `ctx.tool.transform`; `options: { codemode: true }` | имена, схемы и обработчики совпадают |
 | Хуки (tool / session / event / config) | да, строковые ключи в `Hooks` | да, типизированные домены `ctx.*` | API есть, но плагин его **не использует** — см. ниже |
 | TUI-панель «Планировщик» | да, `src/tui-v1.tsx`; маршрут `/scheduler` + снимок в сайдбаре | да, `src/tui.tsx`; reactive store | **обе линии**, один модуль `./tui` |
 | GUI-панель | **нет** | да | subpath `@opencode/plugin/gui` в V1 отсутствует |

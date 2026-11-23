@@ -70,7 +70,7 @@ check(`шапка: счётчик npm-скриптов = ${npmTestScripts.length
 check(`SCHEMA_VERSION в плане = ${schemaVersion} (код)`, plan.includes(`SCHEMA_VERSION = ${schemaVersion}`));
 check("D15/S15.1.2: миграция 10 → 11",
   /SCHEMA_VERSION\s*=\s*11/.test(plan) && /10\s*[→\-]+\s*11/.test(d15) && d15.includes("S15.1.2"));
-check("Приложение B: 30 MCP-инструментов", mcpCount === 30);
+check("Приложение B: 32 MCP-инструмента", mcpCount === 32);
 check("Приложение A: 59 RPC-методов", rpcCount === 59);
 check("§7.1 переименован в «Исправленные баги (реестр)»",
   plan.includes("### 7.1 Исправленные баги (реестр)") && !plan.includes("### 7.1 Найденные баги"));
