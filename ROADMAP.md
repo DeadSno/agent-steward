@@ -131,10 +131,6 @@ Legacy: `opencode-windows-scheduler@1.5.8`.
 > накопился дрейф — устаревшие счётчики, висячие ссылки на закрытые задачи
 > и одна содержательная ошибка в sequence 4.1.
 
-**Задача DS-1 — Исправить sequence 4.1 «Запуск cron-задачи»** · P1 · ⬜
-- [ ] DS-1.1 Разделить registered cron-путь (wrapper → recorder → `createRun` → `writeGateOutcome`, без execution-loop) и ad-hoc mission-путь (`buildExecutionPlan`/`routeStep`/approval/эскалация); сейчас диаграмма рисует mission-путь для cron и противоречит собственной прозе
-- [ ] DS-1.2 Убрать ложную alt-ветку «бюджет исчерпан → задача пропущена» для cron до закрытия B-1 (PL-125)
-
 **Задача DS-2 — Диаграммы состояний: недостающие переходы** · P2 · ⬜
 - [ ] DS-2.1 5.1 (run): добавить `pending→paused`, `paused→passed`, `paused→cancelled` из `RUN_TRANSITIONS` (`src/db/runs-repo.ts`)
 - [ ] DS-2.2 5.2 (step): добавить `pending→failed`; убрать self-loop `failed→failed` (DLQ — отдельная таблица, не переход состояния) или вынести в примечание
