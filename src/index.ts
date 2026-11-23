@@ -5236,7 +5236,7 @@ export interface ToolSpec {
  * Каждое описание обязано явно называть допустимые действия и read-действие.
  */
 export const MANAGE_CONTRACT_HINT =
-  " Use ONLY the actions listed above. Read state with the listed read action (list or get); do not guess get when it is absent — unknown actions are rejected by the schema.";
+  " Only listed actions; read via the listed read action (list/get), never guess get when absent — schema rejects unknown actions.";
 
 /**
  * PL-71: OpenCode /help показывает не более 12 инструментов, хотя плагин
@@ -5372,8 +5372,8 @@ export function createToolSpecs(
       name: "manage_workspaces",
       input: manageWorkspacesSchema,
       description:
-        "Manages multi-repo workspaces. Actions: list (read), add, update, delete. There is no get action — use list to inspect. " +
-        "Tasks can target a workspace by id (cwd = workspace path) or fan out to several with matrix.workspaceIds." +
+        "Multi-repo workspaces. Actions: list (read), add, update, delete; no get — use list. " +
+        "Tasks target a workspace by id (cwd) or fan out via matrix.workspaceIds." +
         MANAGE_CONTRACT_HINT,
       audit: (args: WorkspacesArgs) =>
         args.action === "list"
@@ -5428,8 +5428,8 @@ export function createToolSpecs(
       name: "manage_settings",
       input: manageSettingsSchema,
       description:
-        "Reads or updates global scheduler settings. Actions: get (read), list (alias of get), update. There is no delete action. " +
-        "Fields: maxConcurrent, winterMode, notifications (webhook, Telegram, native OS notifications, quiet hours, filters, matrix alerts, digest) and history retention. Updates are merged into the current settings." +
+        "Global scheduler settings. Actions: get (read), list (alias of get), update; no delete. " +
+        "Fields: maxConcurrent, winterMode, notifications, history retention; updates merge into current settings." +
         MANAGE_CONTRACT_HINT,
       audit: (args: SettingsArgs) =>
         args.action === "update"
@@ -5441,10 +5441,9 @@ export function createToolSpecs(
       name: "manage_local_ai",
       input: manageLocalAiSchema,
       description:
-        "Reads, updates or tests the local assistant for notification triage. Actions: get (read), update, test. There is no list or delete action. " +
-        "Fields: mode (off, rules, llm, auto), Ollama/OpenAI baseUrl, model, timeout, fallback, confidence threshold and shadow mode. " +
-        "action=test sends one synthetic notification to the model and reports latency, protocol and verdict without saving anything. " +
-        "Without a model the scheduler keeps working through rules: notifications are never blocked by a missing model." +
+        "Local assistant for notification triage. Actions: get (read), update, test; no list or delete. " +
+        "Fields: mode (off/rules/llm/auto), baseUrl, model, timeout, fallback, confidence, shadow. " +
+        "test sends a synthetic notification (latency/verdict, nothing saved); without a model the scheduler still triages by rules." +
         MANAGE_CONTRACT_HINT,
       audit: (args: LocalAiArgs) =>
         args.action === "update"
@@ -5456,8 +5455,8 @@ export function createToolSpecs(
       name: "manage_templates",
       input: manageTemplatesSchema,
       description:
-        "Manages reusable task templates. Actions: list (read), save, delete. There is no get action — use list to inspect. " +
-        "Templates carry prompt, schedule, retries, Quality Gate, chains, triggers and tool restrictions." +
+        "Reusable task templates. Actions: list (read), save, delete; no get — use list. " +
+        "Templates store prompt, schedule and task options." +
         MANAGE_CONTRACT_HINT,
       audit: (args: TemplatesArgs) =>
         args.action === "list"
@@ -5473,8 +5472,8 @@ export function createToolSpecs(
       name: "manage_profiles",
       input: manageProfilesSchema,
       description:
-        "Manages isolated scheduler profiles. Actions: list (read), create, switch, delete. There is no get action — use list to inspect. " +
-        "Profiles have a separate database, settings and dashboard port; switching requires an OpenCode restart." +
+        "Isolated scheduler profiles. Actions: list (read), create, switch, delete; no get — use list. " +
+        "Each has its own DB, settings and port; switching needs an OpenCode restart." +
         MANAGE_CONTRACT_HINT,
       audit: (args: ProfilesArgs) =>
         args.action === "list"
@@ -5531,9 +5530,9 @@ export function createToolSpecs(
       name: "manage_secrets",
       input: manageSecretsSchema,
       description:
-        "Manages the encrypted secret store. Actions: list (read — names and masked previews), set (create or replace), delete. There is no get action — use list to inspect. " +
-        "Secrets are encrypted with AES-256-GCM at rest and referenced from workspace env as ${secret:NAME}; " +
-        "values are never returned by list and are redacted from logs and audit details." +
+        "Encrypted secret store. Actions: list (read — names and masked previews), set (create or replace), delete; no get — use list. " +
+        "AES-256-GCM at rest, referenced from workspace env as ${secret:NAME}; " +
+        "values never returned by list and redacted from logs/audit." +
         MANAGE_CONTRACT_HINT,
       audit: (args: SecretsArgs) =>
         args.action === "list"

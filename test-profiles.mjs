@@ -199,6 +199,102 @@ check("deleteProfile: third удалён", (await deleteProfile("third")) === tr
 check("deleteProfile: fourth удалён", (await deleteProfile("fourth")) === true);
 check("listProfiles: остался только default", listProfiles().length === 1 && listProfiles()[0].name === "default");
 
+// --- 7. B-3.1: контракт manage_* и диета описаний admin-профиля -----------
+const crypto = await import("node:crypto");
+const { z } = await import("zod");
+const { createHash } = crypto;
+const { measureToolSurface } = await import("./dist/core/usage-surface.js");
+const { createToolSpecs } = await import("./dist/index.js");
+const { encode } = await import("gpt-tokenizer");
+const countTokens = (text) => encode(text).length;
+const digestSpecs = (specs) =>
+  createHash("sha256")
+    .update(specs.map((s) => `${s.name}\u0000${s.description}`).join("\u0001"), "utf8")
+    .digest("hex");
+
+// Замерено до правки B-3.1: measureToolSurface + gpt-tokenizer, профиль admin.
+const B31_BASELINE = {
+  adminTokens: 13671,
+  manageTokens: 3809,
+  manageChars: 2859,
+  coreDigest: "3a894fba335254925dbddd61b0992c6fab016be68dd094dcd2943c5e15f1369b",
+};
+const MANAGE_NAMES = [
+  "manage_workspaces",
+  "manage_settings",
+  "manage_local_ai",
+  "manage_templates",
+  "manage_profiles",
+  "manage_secrets",
+];
+// PL-70: имена, обязательные параметры и набор полей — неизменны.
+const MANAGE_SCHEMA_GOLDEN = {
+  manage_workspaces: ["action", "id", "name", "path", "color", "env", "envFile"],
+  manage_settings: ["action", "maxConcurrent", "locale", "winterMode", "notifications", "history", "integrations", "audit", "permissions", "budgets", "feedback"],
+  manage_local_ai: ["action", "mode", "baseUrl", "model", "timeoutMs", "fallback", "confidenceThreshold", "shadow"],
+  manage_templates: ["action", "id", "name", "prompt", "schedule", "timeoutSeconds", "model", "priority", "retryCount", "retryDelay", "qualityGate", "beforeScript", "afterScript", "nextTaskOnSuccess", "nextTaskOnError", "dependsOn", "triggerType", "mcpEvent", "watchPath", "workingDirectory", "allowedTools", "deniedTools"],
+  manage_profiles: ["action", "name", "port"],
+  manage_secrets: ["action", "name", "value"],
+};
+
+const adminSpecs = createToolSpecs({}, { AGENT_STEWARD_TOOL_PROFILE: "admin" });
+const coreSpecs = createToolSpecs({}, { AGENT_STEWARD_TOOL_PROFILE: "core" });
+const allSpecs = createToolSpecs({}, { AGENT_STEWARD_TOOL_PROFILE: "all" });
+const manageSpecs = adminSpecs.filter((s) => s.name.startsWith("manage_"));
+const manageSurface = measureToolSurface(manageSpecs, { countTokens });
+const adminSurface = measureToolSurface(adminSpecs, { countTokens });
+const manageChars = manageSpecs.reduce((sum, s) => sum + (s.description?.length ?? 0), 0);
+
+check(
+  "B-3.1: PL-70 — набор имён manage_* сохранён",
+  JSON.stringify(manageSpecs.map((s) => s.name)) === JSON.stringify(MANAGE_NAMES)
+);
+check(
+  "B-3.1: PL-70 — обязательные параметры и поля manage_* сохранены",
+  manageSpecs.every((spec) => {
+    const schema = z.toJSONSchema(spec.input);
+    const required = schema.required ?? [];
+    return (
+      required.length === 1 &&
+      required[0] === "action" &&
+      JSON.stringify(Object.keys(schema.properties ?? {})) ===
+        JSON.stringify(MANAGE_SCHEMA_GOLDEN[spec.name])
+    );
+  })
+);
+check(
+  "B-3.1: PL-70 — в описаниях остались действия и read-действие",
+  manageSpecs.every((s) =>
+    /Actions:/.test(s.description) &&
+    (/list \(read/.test(s.description) || /get \(read/.test(s.description)) &&
+    /never guess get/.test(s.description)
+  )
+);
+check(
+  `B-3.1: описания manage_* короче базовых ${B31_BASELINE.manageChars} символов (факт: ${manageChars})`,
+  manageChars < B31_BASELINE.manageChars
+);
+check(
+  `B-3.1: описания manage_* короче базовых ${B31_BASELINE.manageTokens} токенов (факт: ${manageSurface.estimatedTokens})`,
+  manageSurface.estimatedTokens < B31_BASELINE.manageTokens
+);
+check(
+  `B-3.1: поверхность admin короче базовых ${B31_BASELINE.adminTokens} токенов (факт: ${adminSurface.estimatedTokens})`,
+  adminSurface.estimatedTokens < B31_BASELINE.adminTokens
+);
+check(
+  "B-3.1: остальные профили не_changed — core описания/имена побайтово прежние",
+  coreSpecs.length === 8 && digestSpecs(coreSpecs) === B31_BASELINE.coreDigest
+);
+check(
+  "B-3.1: остальные профили не_changed — состав admin/all прежний",
+  adminSpecs.length === 16 &&
+    allSpecs.length === 32 &&
+    MANAGE_NAMES.every((name) =>
+      adminSpecs.some((s) => s.name === name) && allSpecs.some((s) => s.name === name)
+    )
+);
+
 // --- Итог ----------------------------------------------------------------
 const failures = results.filter((item) => !item.ok);
 console.log(`\nProfiles: ${results.length - failures.length}/${results.length} проверок успешно.`);
