@@ -417,6 +417,19 @@ export interface SchedulerSettings {
   feedback: FeedbackSettings;
 }
 
+/**
+ * A-6.1: Telegram-команды доступны только при включённом канале уведомлений.
+ * Чистая проверка: не читает файлы и не обращается к сети.
+ */
+export function telegramCommandsEnabled(
+  settings:
+    | { notifications?: { telegram?: { enabled?: boolean } } | null }
+    | null
+    | undefined,
+): boolean {
+  return settings?.notifications?.telegram?.enabled === true;
+}
+
 export const SETTINGS_FILE = path.join(PLUGIN_DIR, "settings.json");
 export const DEFAULT_MAX_CONCURRENT = 1;
 export const DEFAULT_WINTER_MODE = false;

@@ -90,6 +90,14 @@ const { listEffectIntents, readEffectIntentLedger } = await import(
 );
 const { readAuditLog } = await import("./dist/core/audit.js");
 const { planRuntimeIsolation } = await import("./dist/core/scheduler/run-now.js");
+// A-6: команды Telegram-бота. Никаких сетевых вызовов — только панель и БД.
+const { parseTelegramCommand, handleTelegramCommand } = await import(
+  "./dist/core/telegram.js"
+);
+const { createRun, getRun: getRunRecord } = await import("./dist/db/runs-repo.js");
+const { listRunPanel, pauseRunPanel, resumeRunPanel } = await import(
+  "./dist/core/run-panel-api.js"
+);
 
 initDb();
 await ensureWrapper();
@@ -2065,6 +2073,207 @@ try {
 } catch (err) {
   console.log("[diag] A-2/A-3 section THREW:", err instanceof Error ? err.stack : String(err));
   check("A-2.1/A-2.2/A-3.1: секция не выбросила исключение", false, "section threw");
+}
+
+// ---------------------------------------------------------------------------
+// A-6.1 / A-6.2 — команды бота pause/resume и привязка к запускам.
+// ---------------------------------------------------------------------------
+try {
+  const enabledTg = { notifications: { telegram: { enabled: true } } };
+  const disabledTg = { notifications: { telegram: { enabled: false } } };
+  const delay = (ms) =>
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+  // Парсер чистый: только тип/runId/ошибка, без сети и БД.
+  const paused = parseTelegramCommand("/pause");
+  check(
+    "A-6.1: парсер /pause без runId",
+    paused.type === "pause" && paused.runId === null && paused.error === null
+  );
+  const runIdProbe = "11111111-2222-4333-8444-555555555555";
+  const resumed = parseTelegramCommand(`  /RESUME ${runIdProbe}  `);
+  check(
+    "A-6.1: парсер /resume с runId, регистронезависимо и с пробелами",
+    resumed.type === "resume" && resumed.runId === runIdProbe && resumed.error === null
+  );
+  check(
+    "A-6.1: aliases pause и resume",
+    ["pause", "p", "hold"].every((name) => parseTelegramCommand(`/${name}`).type === "pause") &&
+      ["resume", "r", "unpause", "continue", "play"].every(
+        (name) => parseTelegramCommand(`/${name}`).type === "resume"
+      )
+  );
+  const mentioned = parseTelegramCommand("/pause@MyBot run_42");
+  check(
+    "A-6.1: синтаксис /pause@Bot <runId>",
+    mentioned.type === "pause" && mentioned.runId === "run_42" && mentioned.error === null
+  );
+  check(
+    "A-6.1: невалидный runId отвергается парсером",
+    parseTelegramCommand("/pause bad/id!").type === "pause" &&
+      parseTelegramCommand("/pause bad/id!").runId === null &&
+      parseTelegramCommand("/pause bad/id!").error !== null &&
+      parseTelegramCommand("/pause a b").error !== null
+  );
+  check(
+    "A-6.1: не-команда даёт unknown без ошибки",
+    parseTelegramCommand("pause").type === "unknown" &&
+      parseTelegramCommand("hello /pause").type === "unknown"
+  );
+
+  // Выключенный telegram: зависимости не вызываются вообще.
+  let spyCalls = 0;
+  const spyDeps = {
+    listActiveRuns: () => {
+      spyCalls += 1;
+      return [];
+    },
+    getRunStatus: () => {
+      spyCalls += 1;
+      return null;
+    },
+    pauseRun: () => {
+      spyCalls += 1;
+      return { success: true };
+    },
+    resumeRun: () => {
+      spyCalls += 1;
+      return { success: true };
+    },
+  };
+  const offline = handleTelegramCommand("/pause", disabledTg, spyDeps);
+  check(
+    "A-6.1: команда доступна только при включённом telegram",
+    offline.ok === false && spyCalls === 0 && /отключен/i.test(offline.text)
+  );
+  const unknown = handleTelegramCommand("/status", enabledTg, spyDeps);
+  check(
+    "A-6.1: неизвестная команда возвращает подсказку",
+    unknown.ok === false &&
+      unknown.type === "unknown" &&
+      /\/pause/.test(unknown.text) &&
+      /\/resume/.test(unknown.text)
+  );
+  const badId = handleTelegramCommand("/pause bad/id!", enabledTg, spyDeps);
+  check(
+    "A-6.1: невалидный runId отвергается обработчиком",
+    badId.ok === false && badId.runId === null && /runId/i.test(badId.text)
+  );
+  const missing = handleTelegramCommand(`/pause ${runIdProbe}`, enabledTg, {
+    getRunStatus: () => null,
+  });
+  check(
+    "A-6.2: несуществующий runId не создаёт действие",
+    missing.ok === false && missing.runId === runIdProbe && /не найден/i.test(missing.text)
+  );
+  const noActive = handleTelegramCommand("/pause", enabledTg, {
+    listActiveRuns: () => [],
+    getRunStatus: () => null,
+  });
+  check(
+    "A-6.2: без активных запусков команда возвращает понятный отказ",
+    noActive.ok === false && /активных запусков/i.test(noActive.text)
+  );
+
+  // Реальные запуски через существующий API паузы/возобновления.
+  let pauseCalls = 0;
+  let resumeCalls = 0;
+  const realDeps = {
+    listActiveRuns: () => {
+      const listed = listRunPanel({ filter: "active", limit: 100 });
+      return listed.success
+        ? listed.runs.map((run) => ({ id: run.id, status: run.status }))
+        : [];
+    },
+    getRunStatus: (id) => getRunRecord(id)?.status ?? null,
+    pauseRun: (id) => {
+      pauseCalls += 1;
+      return pauseRunPanel(id);
+    },
+    resumeRun: (id) => {
+      resumeCalls += 1;
+      return resumeRunPanel(id);
+    },
+  };
+  const makeRun = (suffix) =>
+    createRun({
+      taskName: `a6-${suffix}-${Date.now()}`,
+      steps: [{ stepName: "step" }],
+    });
+  const runA = makeRun("other");
+  delay(5);
+  const runB = makeRun("target");
+
+  const pausedB = handleTelegramCommand(`/pause ${runB.id}`, enabledTg, realDeps);
+  check(
+    "A-6.2: /pause <runId> меняет статус только этого запуска",
+    pausedB.ok === true &&
+      pausedB.runId === runB.id &&
+      getRunRecord(runB.id).status === "paused" &&
+      getRunRecord(runA.id).status === "pending" &&
+      pauseCalls === 1
+  );
+  check(
+    "A-6.1: результат содержит понятный текст с id запуска",
+    pausedB.text.length > 0 && pausedB.text.includes(runB.id)
+  );
+  const pausedAgain = handleTelegramCommand(`/PAUSE ${runB.id}`, enabledTg, realDeps);
+  check(
+    "A-6.2: повторный pause идемпотентен (API не вызывается)",
+    pausedAgain.ok === true &&
+      pausedAgain.status === "paused" &&
+      /уже на паузе/i.test(pausedAgain.text) &&
+      pauseCalls === 1
+  );
+  const resumedB = handleTelegramCommand(`/resume ${runB.id}`, enabledTg, realDeps);
+  check(
+    "A-6.2: /resume <runId> возвращает запуск в running",
+    resumedB.ok === true &&
+      resumedB.runId === runB.id &&
+      getRunRecord(runB.id).status === "running" &&
+      getRunRecord(runA.id).status === "pending" &&
+      resumeCalls === 1
+  );
+  const resumedAgain = handleTelegramCommand(`/resume ${runB.id}`, enabledTg, realDeps);
+  check(
+    "A-6.2: повторный resume идемпотентен (API не вызывается)",
+    resumedAgain.ok === true &&
+      resumedAgain.status === "running" &&
+      /уже запущен/i.test(resumedAgain.text) &&
+      resumeCalls === 1
+  );
+  const pendingRefusal = handleTelegramCommand(`/resume ${runA.id}`, enabledTg, realDeps);
+  check(
+    "A-6.2: resume запуска в pending отвергается без вызова API",
+    pendingRefusal.ok === false &&
+      /нельзя возобновить/i.test(pendingRefusal.text) &&
+      resumeCalls === 1
+  );
+
+  // Без runId берётся последний активный запуск.
+  const runC = makeRun("older");
+  delay(5);
+  const runD = makeRun("newest");
+  const newest = handleTelegramCommand("/p", enabledTg, realDeps);
+  check(
+    "A-6.2: без runId выбирается последний активный запуск",
+    newest.ok === true &&
+      newest.runId === runD.id &&
+      getRunRecord(runD.id).status === "paused" &&
+      getRunRecord(runC.id).status === "pending" &&
+      pauseCalls === 2
+  );
+  const newestResume = handleTelegramCommand("/r", enabledTg, realDeps);
+  check(
+    "A-6.2: /r без runId возобновляет последний активный запуск",
+    newestResume.ok === true &&
+      newestResume.runId === runD.id &&
+      getRunRecord(runD.id).status === "running" &&
+      resumeCalls === 2
+  );
+} catch (err) {
+  console.log("[diag] A-6 section THREW:", err instanceof Error ? err.stack : String(err));
+  check("A-6.1/A-6.2: секция не выбросила исключение", false, "section threw");
 }
 
 const failed = results.filter((r) => !r.ok);

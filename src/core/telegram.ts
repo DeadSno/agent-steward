@@ -1,11 +1,15 @@
 import { t } from "../i18n.js";
+import { telegramCommandsEnabled } from "../settings.js";
+import { getRun } from "../db/runs-repo.js";
+import { listRunPanel, pauseRunPanel, resumeRunPanel } from "./run-panel-api.js";
 
 /**
- * Telegram Bot API: отправка уведомлений (Спринт 25).
+ * Telegram Bot API: отправка уведомлений (Спринт 25) и команды панели (A-6).
  *
- * Модуль намеренно не зависит от настроек и сетевого слоя приложения:
- * всё, что нужно, передаётся аргументами. Это позволяет тестировать
- * экранирование и сборку запроса без реальных вызовов Telegram.
+ * Форматирование и сборка запроса намеренно не зависят от настроек и сетевого
+ * слоя приложения: всё, что нужно, передаётся аргументами. Обработка команд
+ * получает настройки и зависимости (БД/панель) аргументами, поэтому тестируется
+ * без реальных вызовов Telegram.
  */
 export type TelegramParseMode = "" | "HTML" | "Markdown" | "MarkdownV2";
 
@@ -444,4 +448,245 @@ export async function sendTelegramMessage(
       }
     }
   }
+}
+
+/* ------------------------------------------------------------------------- *
+ * A-6: команды бота pause/resume с привязкой к запускам.
+ * ------------------------------------------------------------------------- */
+
+/** Тип команды, распознанной из текста сообщения. */
+export type TelegramCommandType = "pause" | "resume" | "unknown";
+
+/** Результат чистого парсера: только тип, runId и ошибка — без сети и БД. */
+export interface TelegramCommandParseResult {
+  type: TelegramCommandType;
+  runId: string | null;
+  error: string | null;
+}
+
+/** Минимальный вид настроек, необходимый для проверки включения телеграма. */
+export interface TelegramCommandSettings {
+  notifications?: { telegram?: { enabled?: boolean } } | null;
+}
+
+/** Ответ обработчика с понятным текстом для пользователя. */
+export interface TelegramCommandResult {
+  ok: boolean;
+  type: TelegramCommandType;
+  runId: string | null;
+  status: string | null;
+  text: string;
+}
+
+/**
+ * Зависимости обработчика. По умолчанию — существующий API панели/БД;
+ * в тестах подменяются заглушками, реальные запросы к Telegram не нужны.
+ */
+export interface TelegramCommandDeps {
+  listActiveRuns: () => { id: string; status: string }[];
+  getRunStatus: (runId: string) => string | null;
+  pauseRun: (runId: string) => {
+    success: boolean;
+    error?: string;
+    stepName?: string | null;
+  };
+  resumeRun: (runId: string) => {
+    success: boolean;
+    error?: string;
+    stepName?: string | null;
+  };
+}
+
+const TELEGRAM_PAUSE_ALIASES = new Set(["pause", "p", "hold"]);
+const TELEGRAM_RESUME_ALIASES = new Set([
+  "resume",
+  "r",
+  "unpause",
+  "continue",
+  "play",
+]);
+/** UUID, короткие ID и имена запусков подходят; пробелы/кавычки — нет. */
+const TELEGRAM_RUN_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+
+/**
+ * A-6.1/A-6.2: разбор команды `/pause [runId]` / `/resume [runId]`.
+ * Чистая функция: не читает настройки, не трогает БД и не делает запросов.
+ * Поддерживаются регистронезависимые aliases и форма `/pause@BotName <runId>`.
+ */
+export function parseTelegramCommand(text: string): TelegramCommandParseResult {
+  const raw = String(text ?? "").trim();
+  if (!raw.startsWith("/")) {
+    return { type: "unknown", runId: null, error: null };
+  }
+  const body = raw.slice(1).trim();
+  if (!body) {
+    return { type: "unknown", runId: null, error: null };
+  }
+  const parts = body.split(/\s+/);
+  const name = (parts[0] ?? "").split("@")[0].toLowerCase();
+  const type: TelegramCommandType = TELEGRAM_PAUSE_ALIASES.has(name)
+    ? "pause"
+    : TELEGRAM_RESUME_ALIASES.has(name)
+      ? "resume"
+      : "unknown";
+  if (type === "unknown") {
+    return { type: "unknown", runId: null, error: null };
+  }
+  if (parts.length > 2) {
+    return {
+      type,
+      runId: null,
+      error: "Слишком много аргументов. Формат: /pause [runId] или /resume [runId].",
+    };
+  }
+  const runId = (parts[1] ?? "").trim();
+  if (!runId) {
+    return { type, runId: null, error: null };
+  }
+  if (!TELEGRAM_RUN_ID_RE.test(runId)) {
+    return { type, runId: null, error: `Некорректный runId: ${runId}` };
+  }
+  return { type, runId, error: null };
+}
+
+function defaultTelegramCommandDeps(): TelegramCommandDeps {
+  return {
+    listActiveRuns: () => {
+      const listed = listRunPanel({ filter: "active", limit: 100 });
+      return listed.success
+        ? listed.runs.map((run) => ({ id: run.id, status: String(run.status) }))
+        : [];
+    },
+    getRunStatus: (runId) => getRun(runId)?.status ?? null,
+    pauseRun: (runId) => pauseRunPanel(runId),
+    resumeRun: (runId) => resumeRunPanel(runId),
+  };
+}
+
+/**
+ * A-6.1/A-6.2: обработка команды с привязкой к запуску.
+ * Проверка включения телеграма идёт первой и не вызывает зависимости.
+ * При указанном runId меняется только он; без runId берётся последний
+ * активный запуск. Повторный pause/resume идемпотентен.
+ */
+export function handleTelegramCommand(
+  text: string,
+  settings: TelegramCommandSettings | null | undefined,
+  overrides: Partial<TelegramCommandDeps> = {},
+): TelegramCommandResult {
+  const fail = (
+    type: TelegramCommandType,
+    runId: string | null,
+    status: string | null,
+    message: string,
+  ): TelegramCommandResult => ({ ok: false, type, runId, status, text: message });
+
+  if (!telegramCommandsEnabled(settings)) {
+    return fail(
+      "unknown",
+      null,
+      null,
+      "Telegram-команды отключены: включите notifications.telegram.enabled в настройках.",
+    );
+  }
+
+  const parsed = parseTelegramCommand(text);
+  if (parsed.type === "unknown") {
+    return fail(
+      "unknown",
+      null,
+      null,
+      "Неизвестная команда. Доступны: /pause [runId], /resume [runId].",
+    );
+  }
+  if (parsed.error) {
+    return fail(parsed.type, null, null, parsed.error);
+  }
+
+  const defaults = defaultTelegramCommandDeps();
+  const deps: TelegramCommandDeps = {
+    listActiveRuns: overrides.listActiveRuns ?? defaults.listActiveRuns,
+    getRunStatus: overrides.getRunStatus ?? defaults.getRunStatus,
+    pauseRun: overrides.pauseRun ?? defaults.pauseRun,
+    resumeRun: overrides.resumeRun ?? defaults.resumeRun,
+  };
+
+  let runId = parsed.runId;
+  let status: string | null = null;
+  if (runId) {
+    status = deps.getRunStatus(runId);
+    if (!status) {
+      return fail(parsed.type, runId, null, `Запуск не найден: ${runId}`);
+    }
+  } else {
+    const active = deps.listActiveRuns();
+    if (active.length === 0) {
+      return fail(
+        parsed.type,
+        null,
+        null,
+        "Активных запусков нет. Укажите runId: /pause <runId> или /resume <runId>.",
+      );
+    }
+    runId = active[0].id;
+    status = active[0].status || deps.getRunStatus(runId);
+  }
+
+  if (parsed.type === "pause" && status === "paused") {
+    return {
+      ok: true,
+      type: "pause",
+      runId,
+      status,
+      text: `Запуск ${runId} уже на паузе.`,
+    };
+  }
+  if (parsed.type === "resume" && status === "running") {
+    return {
+      ok: true,
+      type: "resume",
+      runId,
+      status,
+      text: `Запуск ${runId} уже запущен.`,
+    };
+  }
+  if (
+    parsed.type === "resume" &&
+    status !== "paused" &&
+    status !== "failed"
+  ) {
+    return fail(
+      "resume",
+      runId,
+      status,
+      `Запуск ${runId} в статусе ${status ?? "unknown"} нельзя возобновить.`,
+    );
+  }
+
+  const action =
+    parsed.type === "pause" ? deps.pauseRun(runId) : deps.resumeRun(runId);
+  if (!action.success) {
+    const detail = action.error ?? "неизвестная ошибка";
+    return fail(
+      parsed.type,
+      runId,
+      status,
+      parsed.type === "pause"
+        ? `Не удалось поставить запуск ${runId} на паузу: ${detail}`
+        : `Не удалось возобновить запуск ${runId}: ${detail}`,
+    );
+  }
+
+  const nextStatus = deps.getRunStatus(runId) ?? status;
+  const step = action.stepName ? ` Шаг: ${action.stepName}.` : "";
+  return {
+    ok: true,
+    type: parsed.type,
+    runId,
+    status: nextStatus,
+    text:
+      parsed.type === "pause"
+        ? `Запуск ${runId} поставлен на паузу.${step}`
+        : `Запуск ${runId} возобновлён.${step}`,
+  };
 }
