@@ -6,6 +6,7 @@
  * Никогда не исполняет команды — только анализ определений.
  */
 import fs from "node:fs";
+import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { loadTaskDefinitions } from "../task-transfer.js";
 import { getHistory } from "../db/history-repo.js";
@@ -306,6 +307,64 @@ export function qualityGateLintWarning(
     "Добавьте `npm run lint && npm run lint:baseline` в qualityGate (и в подсказки dry_run), " +
     "иначе ESLint-error дойдёт до GitHub Actions, как @typescript-eslint/array-type в run #312."
   );
+}
+
+/**
+ * PL-117: гейт, вызывающий `test-docs.mjs`, проверяет документы — значит SCOPE
+ * задачи обязан включать все проверяемые им файлы. PL-117: батч гонял
+ * `test-docs.mjs` без `ROADMAP.md`/`test-docs.mjs` в SCOPE и упал из-за дублей
+ * ID, заведённых удалённым коммитом; агент не видел ни файлов, ни причины.
+ * Поддерживаются обе формы записи: `node test-docs.mjs` и `npm run test:docs`.
+ */
+const TEST_DOCS_GATE_RE = /test-docs\.mjs|test:docs/i;
+
+/** PL-117: файлы, проверяемые `test-docs.mjs`, которые обязаны быть в SCOPE. */
+const DOCS_SCOPE_FILES = ["ROADMAP.md", "CHANGELOG.md"] as const;
+
+/**
+ * PL-117: чистая функция — возвращает уникальные ID подзадач ROADMAP (строки
+ * `- [ ] <ID>`), встречающиеся более одного раза. Порядок — по первому появлению
+ * дубля, без ФС/БД/часов. Fail-open: пустой или невалидный текст — пустой список.
+ */
+export function roadmapDuplicateIds(text: string | null | undefined): string[] {
+  if (typeof text !== "string" || !text) return [];
+  const ids = [...text.matchAll(/^- \[ \] ([A-Z]+-\d+(?:\.\d+)?)/gm)].map((m) => m[1]);
+  return [...new Set(ids.filter((id, i) => ids.indexOf(id) !== i))];
+}
+
+/**
+ * PL-117: возвращает предупреждение, если `qualityGate` вызывает `test-docs.mjs`,
+ * а SCOPE не содержит `ROADMAP.md`/`CHANGELOG.md`; дополнительно сообщает о
+ * дублях ID в переданном тексте ROADMAP (если он доступен). Fail-open: гейт без
+ * `test-docs.mjs` — тишина; само предупреждение не делает симуляцию провальной.
+ */
+export function qualityGateDocsScopeWarning(
+  qualityGate: string | null | undefined,
+  scopeText: string | null | undefined,
+  roadmapText?: string | null,
+): string | null {
+  if (!TEST_DOCS_GATE_RE.test(qualityGate ?? "")) return null;
+  const scope = typeof scopeText === "string" ? scopeText.toLowerCase() : "";
+  const missing = DOCS_SCOPE_FILES.filter(
+    (file) => !scope.includes(file.toLowerCase()),
+  );
+  const duplicates = roadmapDuplicateIds(roadmapText);
+  if (missing.length === 0 && duplicates.length === 0) return null;
+
+  const parts: string[] = [];
+  if (missing.length > 0) {
+    parts.push(
+      `SCOPE не содержит ${missing.join(", ")} — добавьте их в SCOPE задачи, ` +
+        "иначе гейт упадёт на чужих правках, которые агент не видел",
+    );
+  }
+  if (duplicates.length > 0) {
+    parts.push(
+      `в ROADMAP.md найдены дубли ID: ${duplicates.join(", ")} — ` +
+        "уберите дубли до запуска дочернего агента",
+    );
+  }
+  return "PL-117: qualityGate вызывает test-docs.mjs, но " + `${parts.join("; ")}.`;
 }
 
 /** Опасные паттерны, о которых обязательно предупреждаем (ключи каталога). */
@@ -856,6 +915,33 @@ export async function simulatePipeline(taskName: string): Promise<DryRunReport> 
     // в гейте — тот же путь, которым array-type error дошёл до CI run #312.
     const lintWarning = qualityGateLintWarning(def.qualityGate, changedModules);
     if (lintWarning) taskWarnings.push(lintWarning);
+
+    // PL-117: гейт с test-docs.mjs обязан иметь в SCOPE проверяемые им файлы;
+    // дубли ID в доступной ROADMAP ловим до запуска дочернего агента. Читаем
+    // ROADMAP только когда гейт действительно гоняет test-docs, и fail-open по
+    // отсутствию/ошибке чтения файла — симуляция никогда не прерывается.
+    if (TEST_DOCS_GATE_RE.test(def.qualityGate ?? "")) {
+      const scopeText = [def.prompt, def.beforeScript, def.afterScript]
+        .filter((s): s is string => typeof s === "string")
+        .join("\n");
+      let roadmapText: string | null = null;
+      if (cwd) {
+        try {
+          const roadmapPath = path.join(cwd, "ROADMAP.md");
+          if (fs.existsSync(roadmapPath)) {
+            roadmapText = fs.readFileSync(roadmapPath, "utf8");
+          }
+        } catch {
+          roadmapText = null;
+        }
+      }
+      const docsScopeWarning = qualityGateDocsScopeWarning(
+        def.qualityGate,
+        scopeText,
+        roadmapText,
+      );
+      if (docsScopeWarning) taskWarnings.push(docsScopeWarning);
+    }
 
     // QV-9: частый cron + тяжёлый промпт (`opencode run`) — антипаттерн из
     // SKILL.md: каждый тик поднимает полную сессию агента и сжигает квоту.

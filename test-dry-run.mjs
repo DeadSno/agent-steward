@@ -19,6 +19,7 @@ const {
   simulatePipeline, workingDirectoryDriftWarning, isFrequentCron, minimumCronIntervalMinutes,
   scopeModulesFromText, qualityGateCoverageWarning, MODULE_REQUIRED_TEST_SUITES,
   qualityGateLintWarning, REQUIRED_LINT_CHECKS,
+  qualityGateDocsScopeWarning, roadmapDuplicateIds,
 } = await import("./dist/core/dry-run.js");
 const {
   modelAvailabilityWarning,
@@ -383,6 +384,68 @@ try {
       process.env.OPENCODE_SCHEDULER_AVAILABLE_MODELS = previousOverride;
     }
   }
+
+  // 18. PL-117: гейт с test-docs.mjs требует SCOPE с проверяемыми файлами и
+  //     детерминированную проверку дублей ID в ROADMAP (fail-open).
+  const hasDocsGateWarning = (warnings) => warnings.some((w) => w.includes("PL-117:"));
+  check("PL-117: чистые функции экспортированы",
+    typeof qualityGateDocsScopeWarning === "function" && typeof roadmapDuplicateIds === "function");
+
+  const dupText = "- [ ] PL-9 - a\n- [ ] PL-9 - b\n- [ ] PL-7 - c\n- [ ] PL-7 - d\n";
+  check("PL-117: дубли ID в переданном ROADMAP детектируются (чистая функция)",
+    JSON.stringify(roadmapDuplicateIds(dupText)) === JSON.stringify(["PL-9", "PL-7"]));
+  check("PL-117: уникальные ID, пустой и невалидный текст не дают дублей (fail-open)",
+    roadmapDuplicateIds("- [ ] PL-1 - a\n- [ ] PL-2 - b").length === 0 &&
+    roadmapDuplicateIds("").length === 0 &&
+    Array.isArray(roadmapDuplicateIds(null)) && roadmapDuplicateIds(null).length === 0);
+  check("PL-117: детерминизм чистой функции (один текст — один результат)",
+    JSON.stringify(roadmapDuplicateIds(dupText)) === JSON.stringify(roadmapDuplicateIds(dupText)));
+
+  check("PL-117: fail-open — гейт без test-docs.mjs не предупреждает",
+    qualityGateDocsScopeWarning("npm run build && npm run lint", "SCOPE: нет файлов") === null &&
+    qualityGateDocsScopeWarning(null, "SCOPE: нет файлов") === null);
+  check("PL-117: предупреждение при отсутствии файлов в SCOPE",
+    qualityGateDocsScopeWarning("node test-docs.mjs", "SCOPE: src/core/dry-run.ts")?.includes("ROADMAP.md") === true &&
+    qualityGateDocsScopeWarning("node test-docs.mjs", "SCOPE: src/core/dry-run.ts")?.includes("CHANGELOG.md") === true);
+  check("PL-117: нет предупреждения, когда оба файла есть в SCOPE",
+    qualityGateDocsScopeWarning("node test-docs.mjs", "SCOPE: ROADMAP.md; CHANGELOG.md; src/core/dry-run.ts") === null);
+  check("PL-117: npm-алиас test:docs тоже детектируется",
+    typeof qualityGateDocsScopeWarning("npm run test:docs", "SCOPE: src/core/dry-run.ts") === "string");
+  check("PL-117: детерминизм функции предупреждения",
+    qualityGateDocsScopeWarning("node test-docs.mjs", "SCOPE: x") ===
+    qualityGateDocsScopeWarning("node test-docs.mjs", "SCOPE: x"));
+
+  const docsScopeDir = fs.mkdtempSync(path.join(os.tmpdir(), "ws-scheduler-docs-"));
+  await saveTask({
+    name: "DocsScopeMissing", schedule: "0 9 * * *",
+    prompt: "SCOPE: src/core/dry-run.ts; test-dry-run.mjs",
+    qualityGate: "node test-docs.mjs", workingDirectory: docsScopeDir,
+  });
+  const missingScope = await simulatePipeline("DocsScopeMissing");
+  check("PL-117: dry_run предупреждает, когда SCOPE не содержит ROADMAP.md и CHANGELOG.md",
+    hasDocsGateWarning(missingScope.warnings) &&
+    missingScope.warnings.some((w) => w.includes("ROADMAP.md") && w.includes("CHANGELOG.md")));
+  check("PL-117: предупреждение не делает отчёт провальным", missingScope.success === true);
+
+  await saveTask({
+    name: "DocsScopeFull", schedule: "0 9 * * *",
+    prompt: "SCOPE: ROADMAP.md; CHANGELOG.md; src/core/dry-run.ts; test-dry-run.mjs",
+    qualityGate: "node test-docs.mjs", workingDirectory: docsScopeDir,
+  });
+  const fullScope = await simulatePipeline("DocsScopeFull");
+  check("PL-117: при полном SCOPE предупреждения нет", !hasDocsGateWarning(fullScope.warnings));
+
+  fs.writeFileSync(path.join(docsScopeDir, "ROADMAP.md"),
+    "- [ ] PL-1 - a\n- [ ] PL-1 - b\n- [ ] PL-2 - c\n");
+  await saveTask({
+    name: "DocsScopeDupIds", schedule: "0 9 * * *",
+    prompt: "SCOPE: src/core/dry-run.ts",
+    qualityGate: "npm run test:docs", workingDirectory: docsScopeDir,
+  });
+  const dupIds = await simulatePipeline("DocsScopeDupIds");
+  check("PL-117: дубли ID в доступной ROADMAP задачи попадают в предупреждение",
+    hasDocsGateWarning(dupIds.warnings) &&
+    dupIds.warnings.some((w) => w.includes("дубли ID") && w.includes("PL-1")));
 } finally {
   closeDb();
 }
