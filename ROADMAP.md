@@ -108,7 +108,6 @@ Legacy: `opencode-windows-scheduler@1.5.8`.
 
 **Задача DS-3 — Счётчики, локали и висячие ссылки** · P2 · ⬜
 - [ ] DS-3.1 `docs/ARCHITECTURE.md`: «30-tool registry» → 32, RPC «57 methods» → 59, добавить локаль `tr` в Localization и settings
-- [ ] DS-3.3 `ROADMAP-STRATEGY.md`: метрики 30/57 → 32/59, локали {ru,en,zh} → 4 каталога с tr, убрать ссылку на закрытую Деталь 3.10 и «телеметрия нулевая», обновить статусы Этапа 2 (approvals закрыты)
 - [ ] DS-3.4 `docs/CONCEPT.md` §12: hash-chain реализован (`verifyGateOutcomeChain`) — обновить статус 🔄; `docs/EXECUTION-LOOP.md`: §1 отметить закрытие durable-run (ARCH-1.1), §3 DDL пометить как целевую схему (economy-колонок в `gate_outcomes` пока нет)
 
 **Задача DS-4 — Описать функционал 3.10/3.11 в ARCHITECTURE.md** · P2 · ⬜
