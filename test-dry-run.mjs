@@ -20,7 +20,7 @@ const {
   scopeModulesFromText, qualityGateCoverageWarning, MODULE_REQUIRED_TEST_SUITES,
   qualityGateLintWarning, REQUIRED_LINT_CHECKS,
   qualityGateDocsScopeWarning, roadmapDuplicateIds,
-  recommendModelForTask, preflightSkipRiskWarnings,
+  recommendModelForTask, applyModelRecommendation, preflightSkipRiskWarnings,
 } = await import("./dist/core/dry-run.js");
 const {
   modelAvailabilityWarning,
@@ -514,6 +514,40 @@ try {
       { name: "A", worktree: true, workingDirectory: sharedCwd },
       { name: "B", workingDirectory: path.join(sharedCwd, "b") },
     ]).length === 0);
+
+  // B-2: actionable model routing — чистая функция применения рекомендации.
+  const explicitModel = "opencode/hy4-flash-free";
+  check("B-2.2: явная модель не переопределяется и не даёт предупреждение",
+    (() => {
+      const noFlag = applyModelRecommendation("Проведи аудит безопасности", explicitModel, false);
+      const withFlag = applyModelRecommendation("Собери отчёт", explicitModel, true);
+      return noFlag.model === explicitModel && noFlag.autoSelected === false &&
+        noFlag.warning === null && withFlag.model === explicitModel &&
+        withFlag.autoSelected === false && withFlag.warning === null;
+    })());
+  check("B-2.1: без явной модели warning содержит рекомендацию и подсказку",
+    (() => {
+      const advice = applyModelRecommendation("Проведи аудит безопасности", null, false);
+      return advice.model === null && advice.autoSelected === false &&
+        typeof advice.warning === "string" && advice.warning.includes("B-2.1:") &&
+        advice.warning.includes("anthropic/claude-3-5-sonnet") &&
+        advice.warning.includes("autoSelectModel");
+    })());
+  check("B-2.1: автоселект работает только при явном флаге",
+    (() => {
+      const complex = applyModelRecommendation("Проведи аудит безопасности", null, true);
+      const routine = applyModelRecommendation("Собери отчёт", null, true);
+      return complex.model === "anthropic/claude-3-5-sonnet" &&
+        complex.autoSelected === true && complex.warning === null &&
+        routine.model === "opencode/hy4-flash-free" && routine.autoSelected === true &&
+        routine.warning === null;
+    })());
+  check("B-2.2: dry_run-совет по-прежнему рекомендует автоподбор",
+    (() => {
+      const advice = recommendModelForTask("Проведи аудит безопасности", null);
+      return advice.recommended === true &&
+        advice.model === "anthropic/claude-3-5-sonnet";
+    })());
 
   // 20. PL-123: детерминированные регрессии фолбэка оценки.
   // (а) задача без прогонов, но глобальная история непуста (2 успешных Lint

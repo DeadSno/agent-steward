@@ -223,6 +223,47 @@ export function recommendModelForTask(prompt: string, currentModel?: string | nu
 }
 
 /**
+ * B-2: применяет рекомендацию модели на write-пути (`schedule_task`/`update_task`).
+ *
+ * Чистая функция: ничего не сохраняет и не меняет definition задачи.
+ * Инвариант B-2.2 — явно заданная модель возвращается как есть: ни автоселект,
+ * ни предупреждение не могут её подменить. Без явной модели и без флага
+ * возвращается только предупреждение (решение остаётся за пользователем);
+ * автоселект включается исключительно явным `autoSelectModel: true`.
+ */
+export interface AppliedModelRecommendation {
+  /** Модель, которую реально использует задача (null — оставить настройку по умолчанию). */
+  model: string | null;
+  /** true — модель выбрана эвристикой по флагу autoSelectModel. */
+  autoSelected: boolean;
+  /** Текст предупреждения для результата инструмента (null — предупреждения нет). */
+  warning: string | null;
+}
+
+export function applyModelRecommendation(
+  prompt: string,
+  explicitModel?: string | null,
+  autoSelectModel = false,
+): AppliedModelRecommendation {
+  const explicit = typeof explicitModel === "string" && explicitModel.trim().length > 0;
+  if (explicit) {
+    return { model: explicitModel.trim(), autoSelected: false, warning: null };
+  }
+  const advice = recommendModelForTask(prompt, null);
+  if (autoSelectModel !== true) {
+    return {
+      model: null,
+      autoSelected: false,
+      warning:
+        `B-2.1: модель явно не задана. Рекомендация: ${advice.model} ` +
+        `(${advice.tier}; ${advice.reason}) Задайте model явно или ` +
+        "добавьте autoSelectModel: true для автоподбора.",
+    };
+  }
+  return { model: advice.model, autoSelected: true, warning: null };
+}
+
+/**
  * T-7.1: preflight-риски пропусков до реального запуска.
  *
  * Параллельные запуски в одном чек-ауте упираются в PL-106 guard:

@@ -847,6 +847,109 @@ check(
   }
 }
 
+// B-2: actionable model routing в schedule_task / update_task.
+{
+  const { getSchedulerBackend } = await import("./dist/core/scheduler/index.js");
+  const backend = getSchedulerBackend();
+  const originalBackend = {
+    createTask: backend.createTask,
+    listTasks: backend.listTasks,
+    deleteTask: backend.deleteTask,
+  };
+  const created = new Set();
+  backend.createTask = async ({ name }) => { created.add(name); };
+  backend.listTasks = async () => [...created].map((taskName) => ({ taskName }));
+  backend.deleteTask = async (name) => { created.delete(name); };
+
+  check(
+    "B-2.1: обе core/full-схемы принимают autoSelectModel и отвергают не-boolean",
+    Object.keys(scheduleTaskSchema.shape).includes("autoSelectModel") &&
+      Object.keys(coreScheduleTaskSchema.shape).includes("autoSelectModel") &&
+      Object.keys(updateTaskSchema.shape).includes("autoSelectModel") &&
+      Object.keys(coreUpdateTaskSchema.shape).includes("autoSelectModel") &&
+      scheduleTaskSchema.safeParse({
+      name: "B2-Schema", schedule: "0 9 * * *", prompt: "x", autoSelectModel: true,
+    }).success &&
+      coreScheduleTaskSchema.safeParse({
+        name: "B2-Schema", schedule: "0 9 * * *", prompt: "x", autoSelectModel: true,
+      }).success &&
+      updateTaskSchema.safeParse({ name: "B2-Schema", autoSelectModel: false }).success &&
+      coreUpdateTaskSchema.safeParse({ name: "B2-Schema", autoSelectModel: true }).success &&
+      rejects(scheduleTaskSchema, {
+        name: "B2-Schema", schedule: "0 9 * * *", prompt: "x", autoSelectModel: "yes",
+      })
+  );
+
+  try {
+    const noModel = JSON.parse((await handlers.schedule_task({
+      name: "B2-NoModel", schedule: "0 9 * * *",
+      prompt: "Проведи аудит безопасности и рефакторинг ядра",
+    })).content);
+    check(
+      "B-2.1: schedule_task без явной модели возвращает предупреждение в результате",
+      noModel.success === true && Array.isArray(noModel.warnings) &&
+        noModel.warnings.some((w) => w.includes("B-2.1:") &&
+          w.includes("anthropic/claude-3-5-sonnet")) &&
+        noModel.task.model === null && noModel.autoSelected === false
+    );
+
+    const auto = JSON.parse((await handlers.schedule_task({
+      name: "B2-AutoComplex", schedule: "0 9 * * *",
+      prompt: "Проведи аудит безопасности", autoSelectModel: true,
+    })).content);
+    check(
+      "B-2.1: schedule_task с autoSelectModel подбирает модель без предупреждения",
+      auto.success === true && auto.task.model === "anthropic/claude-3-5-sonnet" &&
+        auto.autoSelected === true && (auto.warnings ?? []).length === 0
+    );
+
+    const explicit = JSON.parse((await handlers.schedule_task({
+      name: "B2-Explicit", schedule: "0 9 * * *",
+      prompt: "Проведи аудит безопасности",
+      model: "opencode/hy4-flash-free", autoSelectModel: true,
+    })).content);
+    check(
+      "B-2.2: schedule_task не переопределяет явную модель даже с autoSelectModel",
+      explicit.success === true && explicit.task.model === "opencode/hy4-flash-free" &&
+        explicit.autoSelected === false && (explicit.warnings ?? []).length === 0
+    );
+
+    const updAuto = JSON.parse((await handlers.update_task({
+      name: "B2-AutoComplex", prompt: "Собери отчёт о статусе задач", autoSelectModel: true,
+    })).content);
+    check(
+      "B-2.1: update_task пересчитывает автоподобранную модель по новому промпту",
+      updAuto.success === true && updAuto.model === "opencode/hy4-flash-free" &&
+        updAuto.autoSelected === true && (updAuto.warnings ?? []).length === 0
+    );
+
+    const updWarn = JSON.parse((await handlers.update_task({
+      name: "B2-NoModel", prompt: "Собери отчёт о статусе задач", autoSelectModel: false,
+    })).content);
+    check(
+      "B-2.1: update_task без модели и без автоподбора возвращает предупреждение",
+      updWarn.success === true && Array.isArray(updWarn.warnings) &&
+        updWarn.warnings.some((w) => w.includes("B-2.1:")) &&
+        updWarn.model === null && updWarn.autoSelected === false
+    );
+
+    const updExplicit = JSON.parse((await handlers.update_task({
+      name: "B2-Explicit", prompt: "Проведи аудит безопасности",
+      model: "anthropic/claude-3-5-sonnet", autoSelectModel: true,
+    })).content);
+    check(
+      "B-2.2: update_task не переопределяет явную модель даже с autoSelectModel",
+      updExplicit.success === true &&
+        updExplicit.model === "anthropic/claude-3-5-sonnet" &&
+        updExplicit.autoSelected === false && (updExplicit.warnings ?? []).length === 0
+    );
+  } finally {
+    backend.createTask = originalBackend.createTask;
+    backend.listTasks = originalBackend.listTasks;
+    backend.deleteTask = originalBackend.deleteTask;
+  }
+}
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\nAgent tools: ${results.length - failed.length}/${results.length} проверок пройдено.`);
 process.exit(failed.length > 0 ? 1 : 0);

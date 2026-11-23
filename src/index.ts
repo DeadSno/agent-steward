@@ -19,6 +19,7 @@ import path from "node:path";
 // QA-A2.7: безопасное приведение unknown к строке без no-base-to-string.
 import { safeStringify } from "./text.js";
 import { filterToolSpecsByProfile } from "./core/tool-profile.js";
+import { applyModelRecommendation } from "./core/dry-run.js";
 import { LockManager } from "./core/lock.js";
 import {
   LOCK_DIR,
@@ -570,6 +571,12 @@ export const scheduleTaskSchema = z.object({
     .describe(
       "LLM model in OpenCode format provider/model, e.g. opencode/hy4-flash-free or anthropic/claude-3-5-sonnet. A model without a provider/ prefix is rejected. Empty value uses the OpenCode default model.",
     ),
+  autoSelectModel: z
+    .boolean()
+    .optional()
+    .describe(
+      "B-2.1: when true and no explicit model is set, automatically pick the recommended model (free for routine tasks, paid for complex ones). An explicitly provided model is never overridden.",
+    ),
   priority: z
     .number()
     .int()
@@ -938,6 +945,12 @@ export const updateTaskSchema = z.object({
     .describe(
       "New model in OpenCode format provider/model (e.g. opencode/hy4-flash-free). Empty string clears it (default model).",
     ),
+  autoSelectModel: z
+    .boolean()
+    .optional()
+    .describe(
+      "B-2.1: enable or disable automatic model selection when no explicit model is set. false disables, true re-picks the model for the new prompt. An explicitly provided model always wins.",
+    ),
   priority: z
     .number()
     .int()
@@ -1124,6 +1137,7 @@ const CORE_FIELD_DESCRIPTIONS: Record<string, string> = {
   filesCreate: "Files the task will create; these SCOPE paths skip the existence check.",
   timeoutSeconds: "Run timeout in seconds (default 3600).",
   model: "provider/model, e.g. opencode/hy4-flash-free. Empty = OpenCode default.",
+  autoSelectModel: "true: auto-pick a model when none is set. Explicit model always wins.",
   priority: "0..10 (10 highest). Default 5.",
   beforeScript: "Shell command before the run; non-zero exit cancels it.",
   afterScript: "Shell command after the run; runs even on failure.",
@@ -1811,6 +1825,7 @@ const scheduleTaskExecute = wrapExecute<ScheduleArgs>(async (args) => {
     filesCreate,
     timeoutSeconds,
     model,
+    autoSelectModel,
     priority,
     beforeScript,
     afterScript,
@@ -1848,6 +1863,10 @@ const scheduleTaskExecute = wrapExecute<ScheduleArgs>(async (args) => {
     tokenBudget,
   } = args;
 
+  // B-2: модель рекомендуется на write-пути, но явная модель всегда побеждает.
+  const modelChoice = applyModelRecommendation(prompt, model ?? null, autoSelectModel === true);
+  const effectiveModel = modelChoice.model ?? undefined;
+
   let effectiveRunAt: string | undefined;
   if ((triggerType ?? "cron") === "once") {
     const normalized = normalizeOneShotRunAt({ runAt, delaySeconds });
@@ -1881,7 +1900,7 @@ const scheduleTaskExecute = wrapExecute<ScheduleArgs>(async (args) => {
       triggerType,
       watchPath,
       dependsOn,
-      model,
+      effectiveModel,
       priority,
       beforeScript,
       afterScript,
@@ -1919,6 +1938,8 @@ const scheduleTaskExecute = wrapExecute<ScheduleArgs>(async (args) => {
       tokenBudget,
       undefined, // avoidCatchUp — только при пересоздании cron-задачи
       filesCreate,
+      autoSelectModel === true,
+      modelChoice.autoSelected,
     );
   } catch (err) {
     return {
@@ -1955,6 +1976,10 @@ const scheduleTaskExecute = wrapExecute<ScheduleArgs>(async (args) => {
       nextRun,
       runWhenLoggedOff: runWhenLoggedOff === true,
       message: t("tool.task.created", { name }),
+      // B-2.1: предупреждение о неявной модели попадает в результат инструмента.
+      warnings: modelChoice.warning ? [modelChoice.warning] : [],
+      model: effectiveModel ?? null,
+      autoSelected: modelChoice.autoSelected,
       task: {
         name,
         schedule,
@@ -1962,7 +1987,7 @@ const scheduleTaskExecute = wrapExecute<ScheduleArgs>(async (args) => {
         paused: false,
         runWhenLoggedOff: runWhenLoggedOff === true,
         timeoutSeconds: timeoutSeconds ?? 3600,
-        model: model?.trim() || null,
+        model: effectiveModel ?? null,
         priority: priority ?? 5,
         beforeScript: beforeScript?.trim() || null,
         afterScript: afterScript?.trim() || null,
@@ -2433,6 +2458,12 @@ async function updateTaskFromInput(
    * версию задачи в планировщике (true — старая версия на месте).
    */
   restored?: boolean;
+  /** B-2.1: предупреждения о неявной модели. */
+  warnings?: string[];
+  /** Эффективная модель задачи (null — OpenCode default). */
+  model?: string | null;
+  /** B-2.2: true — модель выбрана эвристикой по autoSelectModel. */
+  autoSelected?: boolean;
 }> {
   const name = input.name?.trim();
   if (!name) {
@@ -2572,14 +2603,27 @@ async function updateTaskFromInput(
       (previous.pausedUntil && Date.parse(previous.pausedUntil) > Date.now()),
   );
 
-  const nextModel = clearableString(input.model, previous.model);
-  if (nextModel) {
-    const modelError = validateModelReference(nextModel);
+  // B-2: флаг наследуется от задачи, если явно не передан в обновлении.
+  const autoSelectModel = input.autoSelectModel ?? (previous.autoSelectModel === true);
+  let nextModel = clearableString(input.model, previous.model);
+  // Ранее автоподобранную модель пересчитываем под новый промпт, но только
+  // если пользователь не задал model явно в этом обновлении (B-2.2).
+  if (
+    autoSelectModel === true &&
+    input.model === undefined &&
+    previous.autoSelectedModel === true
+  ) {
+    nextModel = undefined;
+  }
+  const modelChoice = applyModelRecommendation(prompt, nextModel ?? null, autoSelectModel === true);
+  const effectiveModel = modelChoice.model ?? undefined;
+  if (effectiveModel) {
+    const modelError = validateModelReference(effectiveModel);
     if (modelError) {
       return {
         success: false,
         message: t("tool.error.modelInvalid", {
-          model: nextModel,
+          model: effectiveModel,
           error: modelError,
         }),
       };
@@ -2605,7 +2649,7 @@ async function updateTaskFromInput(
       triggerType,
       clearableString(input.watchPath, previous.watchPath),
       clearableList(input.dependsOn, previous.dependsOn),
-      nextModel,
+      effectiveModel,
       input.priority ?? previous.priority,
       clearableString(input.beforeScript, previous.beforeScript),
       clearableString(input.afterScript, previous.afterScript),
@@ -2637,6 +2681,9 @@ async function updateTaskFromInput(
       // PL-75: cron-задача при update пересоздаётся с будущей /sd, чтобы
       // прошедшая start boundary не вызывала catch-up.
       triggerType === "cron",
+      undefined, // filesCreate — в update не меняется
+      autoSelectModel === true,
+      modelChoice.autoSelected,
     );
 
     // Матрица отключена при обновлении — убираем клонов и агрегатор.
@@ -2689,6 +2736,10 @@ async function updateTaskFromInput(
       paused,
       nextRun: computeTaskNextRun(updated, { paused }),
       message: t("tool.task.updated", { name }),
+      // B-2.1: предупреждение о неявной модели приходит и при обновлении.
+      warnings: modelChoice.warning ? [modelChoice.warning] : [],
+      model: effectiveModel ?? null,
+      autoSelected: modelChoice.autoSelected,
     };
   } catch (err) {
     const cause = err instanceof Error ? err.message : String(err);
@@ -7255,6 +7306,10 @@ export async function schedulerCreateTask(
   avoidCatchUp?: boolean,
   /** PL-119: создаваемые задачей файлы — их SCOPE-пути не требуют существования. */
   filesCreate?: string[],
+  /** B-2.1: явно включённый автоподбор модели (сохраняется в definition). */
+  autoSelectModel?: boolean,
+  /** B-2.2: модель выбрана эвристикой, а не задана пользователем. */
+  autoSelectedModel?: boolean,
 ): Promise<void> {
   // Спринт 27.5 (hotfix 1.5.1): проверяем имя до создания wrapper/prompt и записи
   // в БД. Недопустимые символы отклоняются с понятным сообщением, а не ошибкой
@@ -7886,6 +7941,8 @@ export async function schedulerCreateTask(
     prompt,
     timeoutSeconds,
     model: normalizedModel,
+    ...(autoSelectModel === true ? { autoSelectModel: true } : {}),
+    ...(autoSelectedModel === true ? { autoSelectedModel: true } : {}),
     priority: normalizedPriority,
     beforeScript: normalizedBefore,
     afterScript: normalizedAfter,
