@@ -1847,6 +1847,53 @@ check(
   );
 }
 
+// --- PL-118: CLIXML/ANSI-шум stderr дочернего powershell.exe ---
+// Реальный powershell здесь НЕ вызывается: фикс проверяется на синтетическом
+// потоке, какого раньше было достаточно, чтобы PS 5.1 выдал «Не удалось
+// обработать XML ... 0x1B ... недопустимым знаком».
+{
+  const { sanitizeChildStderr } = await import("./dist/core/ps-wrapper.js");
+  const synthetic = [
+    "#< CLIXML",
+    '<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04">',
+    `  <S S="Error">\u001b[31mНе удалось обработать XML в потоке "Error" файла powershell.exe: 0x1B, шестнадцатеричное значение 0x1B, является недопустимым знаком., строка 1, позиция 1.\u001b[0m_x000D__x000A_</S>`,
+    `  <S S="Error">Cannot find path 'C:\\missing' because it does not exist.</S>`,
+    "</Objs>",
+  ].join("\r\n");
+
+  const cleaned = sanitizeChildStderr(synthetic);
+  check(
+    "PL-118: ошибка десериализации XML вырезана из stderr",
+    !cleaned.includes("Не удалось обработать XML"),
+    cleaned
+  );
+  check(
+    "PL-118: ANSI ESC и CLIXML-преамбула вырезаны",
+    !cleaned.includes("\u001b") &&
+      !cleaned.includes("#< CLIXML") &&
+      !cleaned.includes("<Objs") &&
+      !cleaned.includes("_x001B_"),
+    JSON.stringify(cleaned)
+  );
+  check(
+    "PL-118: нормальное сообщение об ошибке сохранено",
+    cleaned.includes("Cannot find path") && cleaned.includes("does not exist"),
+    cleaned
+  );
+  check(
+    "PL-118: очистка идемпотентна и безопасна на пустом вводе",
+    sanitizeChildStderr(cleaned) === cleaned && sanitizeChildStderr("") === "",
+    JSON.stringify(sanitizeChildStderr(cleaned))
+  );
+  check(
+    "PL-118: обёртка гасит CLIXML до десериализации (2>&1 в ребёнке и фильтр лога)",
+    psWrapperScript.includes("@a 2>&1; exit $LASTEXITCODE") &&
+      psWrapperScript.includes("#< CLIXML") &&
+      psWrapperScript.includes("PL-118:"),
+    "Invoke-ChildWithArgs/Format-LogLine не содержат фикс"
+  );
+}
+
 // --- PL-115: Windows PowerShell 5.1 parser regression ---
 try {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "steward-pl115-"));

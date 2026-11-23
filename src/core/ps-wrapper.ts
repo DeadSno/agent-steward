@@ -411,12 +411,16 @@ function Write-HookStructuredOutput {
 # многоточием) больше не передаются в командной строке. Сериализуем массив в
 # JSON-файл, а сам вызов - в EncodedCommand: дочерний процесс разворачивает
 # аргументы из JSON через @a и не переразбирает cmdline оболочки.
+# PL-118: ребёнок сливает свой stderr в stdout ДО выхода из процесса (2>&1).
+# Иначе родительский PowerShell 5.1 видит в потоке Error CLIXML и пытается его
+# десериализовать; ANSI ESC (0x1B) в этом XML ломает разбор и в лог задачи
+# падает «Не удалось обработать XML ... 0x1B ... недопустимым знаком».
 function Invoke-ChildWithArgs {
     param([string]$CommandPath, [string[]]$Arguments, [string]$LogFile)
     $argsFile = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "sched-args-" + [guid]::NewGuid().ToString("N") + ".json")
     try {
         ConvertTo-Json -InputObject @($Arguments) -Compress -Depth 32 | Set-Content -LiteralPath $argsFile -Encoding UTF8
-        $childCode = '$a = Get-Content -LiteralPath ''{0}'' -Raw -Encoding UTF8 | ConvertFrom-Json; & ''{1}'' @a; exit $LASTEXITCODE' -f $argsFile.Replace("'", "''"), $CommandPath.Replace("'", "''")
+        $childCode = '$a = Get-Content -LiteralPath ''{0}'' -Raw -Encoding UTF8 | ConvertFrom-Json; & ''{1}'' @a 2>&1; exit $LASTEXITCODE' -f $argsFile.Replace("'", "''"), $CommandPath.Replace("'", "''")
         $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($childCode))
         if ($LogFile) {
             & powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand $encodedCommand *>&1 | ForEach-Object { Format-LogLine $_ } | Out-File -FilePath $LogFile -Append -Encoding utf8
@@ -621,6 +625,13 @@ $serviceTag = '<\\s*/?\\s*(?:dcp-)?system[-_](?:reminder|update)\\b[^>]*>'
 function Format-LogLine {
     param($Line)
     $text = "$Line"
+
+    # PL-118: CLIXML-преамбула и ошибки десериализации дочернего powershell.exe
+    # (ANSI ESC 0x1B не является допустимым XML-символом) — технический шум,
+    # а не сообщение задачи. Нормальные строки ошибок остаются в логе.
+    if ($text -match "#< CLIXML|Не удалось обработать XML|Failed to process XML|недопустимым знаком|is an invalid character") { return }
+    $text = [regex]::Replace($text, "</?(?:Objs|Obj|TN|T|MS|I\\d+|S|B|DT|Nil)\\b[^>]*>", "")
+    $text = $text.Replace("_x000D_", " ").Replace("_x000A_", " ").Replace("_x001B_", "")
 
     # ANSI-последовательности (цвета, управление курсором), например ESC[0m.
     $text = $text -replace "$esc\\[[0-9;?]*[A-Za-z]", ""
@@ -1721,4 +1732,41 @@ export function normalizeQuotaReason(raw: string): string {
   return /free usage limit|insufficient balance/i.test(short)
     ? "Free quota exhausted: " + short
     : short;
+}
+
+/**
+ * PL-118: a child powershell.exe serializes its error stream as CLIXML. When
+ * that payload carries ANSI ESC (0x1B), Windows PowerShell 5.1 fails to
+ * deserialize it and writes "Не удалось обработать XML ... 0x1B ...
+ * недопустимым знаком" into the task log. The wrapper suppresses that at the
+ * source (`2>&1` inside the child) and filters residual noise in
+ * `Format-LogLine`; this pure helper mirrors the same rules so the regression
+ * is deterministic and never spawns a real PowerShell.
+ */
+export function sanitizeChildStderr(raw: string): string {
+  return String(raw ?? "")
+    .replace(/\r\n?/g, "\n")
+    .replace(/^#< CLIXML\s*/gm, "")
+    // CLIXML escapes control chars as _xHHHH_; decode them before stripping ANSI.
+    .replace(/_x([0-9A-Fa-f]{4})_/g, (_match, hex: string) => {
+      const code = parseInt(hex, 16);
+      return code === 0x0a || code === 0x0d
+        ? "\n"
+        : code < 0x20 || code === 0x7f
+          ? " "
+          : String.fromCharCode(code);
+    })
+    .replace(/\u001b\[[0-9;?]*[A-Za-z]/g, "")
+    .replace(/\u001b/g, "")
+    .replace(/<\/?(?:Objs|Obj|TN|T|MS|I\d+|S|B|DT|Nil)\b[^>]*>/g, "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(
+      (line) =>
+        line &&
+        !/Не удалось обработать XML|Failed to process XML|недопустимым знаком|is an invalid character/i.test(
+          line
+        )
+    )
+    .join("\n");
 }
