@@ -1,7 +1,7 @@
 # EXECUTION-LOOP — цикл v2.1 (спринты 38–43)
 
 > Спека исполнительного цикла. North star: [CONCEPT.md](./CONCEPT.md) §6, §11.
-> Безопасность: [SAFETY.md](./SAFETY.md). Статус компонентов: [ROADMAP.md](../ROADMAP.md) §1.
+> Безопасность: [SAFETY.md](./SAFETY.md). Статус компонентов: [CHANGELOG.md](../CHANGELOG.md).
 
 ## 1. Разрыв, который закрываем
 

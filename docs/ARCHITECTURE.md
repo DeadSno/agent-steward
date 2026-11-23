@@ -996,7 +996,7 @@ after the agent with the user's privileges and are not filtered by tool policy.
 
 ## Mission runtime и гибридные входы (план 38–40)
 
-> Статус: ad-hoc вход реализован (AB-8); internal-оркестрация и `gate_outcomes` — план 40. Что уже в коде — [ROADMAP.md](../ROADMAP.md) §1.
+> Статус: ad-hoc вход реализован (AB-8); internal-оркестрация и `gate_outcomes` — план 40. Что уже в коде — [CHANGELOG.md](../CHANGELOG.md).
 
 Система гибридная: ядро (**mission runtime**) не знает про планировщик ОС.
 Планировщик — адаптер входа, регистрация опциональна.
