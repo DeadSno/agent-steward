@@ -8,10 +8,13 @@ import { notifyTaskCompletion } from "../notifications.js";
 import {
   finishRun,
   getLatestHistoryByTask,
+  listRunningRecords,
   normalizeErrorText,
   recordRun,
   startRun,
 } from "../db/history-repo.js";
+import { getDb, withTransaction } from "../db/index.js";
+import { markInterruptedRunWithPartialEdits } from "../db/run-journal.js";
 import { deleteSetting, decrementCounterSetting } from "../db/settings-repo.js";
 import { getTask, listTasks } from "../db/tasks-repo.js";
 import {
@@ -67,6 +70,126 @@ function logRecorderEvent(
     reason: details.reason,
     nextTask: details.nextTask,
   });
+}
+
+/* ------------------------------------------------------------------------- *
+ * PL-63: закрытие осиротевших запусков на старте рекордера.
+ *
+ * Crash recovery плагина (recoverInterruptedRuns) срабатывает при setup() и
+ * при выдаче истории, но если плагин перезагрузили, а рекордер уже успел
+ * создать --start-запись, она может сутки оставаться `running` (ARCH-7 ~49 ч).
+ * Поэтому перед созданием новой записи рекордер сам закрывает просроченные
+ * running-записи как interrupted и помечает возможные частичные правки.
+ * ------------------------------------------------------------------------- */
+
+/** Порог по умолчанию, если у задачи нет собственного timeoutSeconds. */
+export const DEFAULT_RUN_TIMEOUT_SECONDS = 3600;
+
+export interface RecoverStaleRunningOptions {
+  /** Текущий момент (для тестов). */
+  now?: Date;
+  /** Порог для задач без timeoutSeconds. */
+  defaultTimeoutSeconds?: number;
+  /** Источник определения задачи (для тестов). */
+  getDefinition?: (name: string) => TaskDefinition | undefined;
+}
+
+export interface InterruptedRunningRecord {
+  historyRunId: number;
+  taskName: string;
+  timeoutSeconds: number;
+  durableRunId: string | null;
+  partialWorktreeEdits: boolean;
+  error: string;
+}
+
+export interface RecoverStaleRunningResult {
+  /** Сколько незавершённых записей проверено. */
+  scanned: number;
+  /** Сколько закрыто как interrupted. */
+  recovered: number;
+  /** Сколько оставлено running (порог не истёк). */
+  keptAlive: number;
+  interrupted: InterruptedRunningRecord[];
+}
+
+/**
+ * На старте рекордера находит `running`-записи старше timeoutSeconds задачи,
+ * закрывает их как `interrupted` и помечает частичные правки в worktree.
+ * Повтор не запускается автоматически — нужен явный ре-ран задачи.
+ */
+export function recoverStaleRunningOnRecorderStart(
+  options: RecoverStaleRunningOptions = {},
+): RecoverStaleRunningResult {
+  const now = options.now ?? new Date();
+  const timestamp = now.toISOString();
+  const configuredDefault = options.defaultTimeoutSeconds;
+  const defaultSeconds =
+    typeof configuredDefault === "number" &&
+    Number.isFinite(configuredDefault) &&
+    configuredDefault > 0
+      ? Math.floor(configuredDefault)
+      : DEFAULT_RUN_TIMEOUT_SECONDS;
+  const definitionOf = options.getDefinition ?? getTask;
+  const running = listRunningRecords();
+  const result: RecoverStaleRunningResult = {
+    scanned: running.length,
+    recovered: 0,
+    keptAlive: 0,
+    interrupted: [],
+  };
+  if (running.length === 0) return result;
+
+  const close = getDb().prepare(
+    `UPDATE history SET status = 'interrupted', error = ?, finished_at = ?,
+       duration_ms = ? WHERE id = ? AND finished_at IS NULL`,
+  );
+
+  withTransaction(() => {
+    for (const record of running) {
+      const taskTimeout = definitionOf(record.taskName)?.timeoutSeconds;
+      const seconds =
+        typeof taskTimeout === "number" && Number.isFinite(taskTimeout) && taskTimeout > 0
+          ? Math.floor(taskTimeout)
+          : defaultSeconds;
+      const started = Date.parse(record.startedAt);
+      const ageMs = Number.isFinite(started) ? Math.max(0, now.getTime() - started) : 0;
+      if (ageMs < seconds * 1000) {
+        result.keptAlive += 1;
+        continue;
+      }
+
+      const error = `Прервано: запуск старше timeoutSeconds=${seconds}с; возможны частичные правки в worktree; требуется явный повтор`;
+      close.run(error, timestamp, ageMs, record.id);
+      const durable = findRunByMetadata("registeredHistoryId", record.id);
+      result.recovered += 1;
+      result.interrupted.push({
+        historyRunId: record.id,
+        taskName: record.taskName,
+        timeoutSeconds: seconds,
+        durableRunId: durable?.id ?? null,
+        partialWorktreeEdits: true,
+        error,
+      });
+      logRecorderEvent("run.interrupted_partial", record.taskName, {
+        runId: record.id,
+        status: "interrupted",
+        reason: `timeoutSeconds=${seconds}; durableRunId=${durable?.id ?? "none"}; explicitRetryRequired=true`,
+      });
+    }
+  });
+
+  // Durable-слой закрываем отдельно: сбой журнала не должен откатывать историю.
+  for (const item of result.interrupted) {
+    if (!item.durableRunId) continue;
+    markInterruptedRunWithPartialEdits(item.durableRunId, {
+      error: item.error,
+      now: timestamp,
+      partialWorktreeEdits: item.partialWorktreeEdits,
+    });
+  }
+
+  return result;
 }
 
 /* ------------------------------------------------------------------------- *
@@ -649,6 +772,14 @@ async function main() {
   if (first === "--start") {
     const taskName = second;
     if (!taskName) process.exit(1);
+    // PL-63: до создания новой записи закрываем осиротевшие running-запуски.
+    // Иначе прерванный прогон висит до принудительного recover (~49 ч у ARCH-7).
+    const staleRecovery = recoverStaleRunningOnRecorderStart();
+    if (staleRecovery.recovered > 0) {
+      logRecorderEvent("recorder.start_recovery", taskName, {
+        reason: `interrupted=${staleRecovery.recovered}; keptAlive=${staleRecovery.keptAlive}`,
+      });
+    }
     const startedAt = third ?? new Date().toISOString();
     const definition = getTask(taskName);
     // Владелец — процесс-обёртка, запустивший recorder. Он живёт дольше

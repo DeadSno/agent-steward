@@ -226,5 +226,107 @@ assert(finished.tokens === 42, "после --finish сохранены токе�
 const task = getTask("Finish Task");
 assert(task?.name === "Finish Task", "задача доступна после завершения записи");
 
+// --- 5. PL-63: рекордер закрывает осиротевшие running-запуски -------------
+// До правки просроченная запись оставалась running после --start (ARCH-7
+// висел ~49 ч) и не несла меток partial/явного повтора.
+const { createRun, getRun, getStep } = await import("./dist/db/runs-repo.js");
+const { recoverStaleRunningOnRecorderStart } = await import("./dist/core/record-history.js");
+
+const pl63Now = new Date();
+const pl63StaleIso = new Date(pl63Now.getTime() - 3 * 60 * 60 * 1000).toISOString();
+const pl63FreshIso = new Date(pl63Now.getTime() - 60_000).toISOString();
+saveTask({ name: "PL-63 Short", schedule: "* * * * *", prompt: "x", timeoutSeconds: 60 });
+saveTask({ name: "PL-63 Long", schedule: "* * * * *", prompt: "x", timeoutSeconds: 14400 });
+
+const pl63InsertRunning = getDb().prepare(
+  "INSERT INTO history (task_name, status, started_at, finished_at) VALUES (?, 'running', ?, NULL)",
+);
+pl63InsertRunning.run("PL-63 Stale", pl63StaleIso);
+pl63InsertRunning.run("PL-63 Fresh", pl63FreshIso);
+pl63InsertRunning.run("PL-63 Short", pl63StaleIso);
+pl63InsertRunning.run("PL-63 Long", pl63StaleIso);
+const pl63HistoryId = getHistory("PL-63 Stale", 1)[0].id;
+const pl63Durable = createRun({
+  taskName: "PL-63 Stale",
+  status: "running",
+  startedAt: pl63StaleIso,
+  steps: [{ stepName: "PL-63 Stale", status: "running" }],
+  metadata: { origin: "registered", registeredHistoryId: pl63HistoryId },
+});
+
+const pl63Start = runRecorder(["--start", "PL-63 Trigger", pl63Now.toISOString()]);
+assert(pl63Start.status === 0, "PL-63: --start после просроченного запуска завершился успешно");
+
+const pl63StaleRecord = getHistory("PL-63 Stale", 1)[0];
+assert(
+  pl63StaleRecord?.status === "interrupted",
+  `PL-63: просроченный запуск закрыт как interrupted (фактически ${pl63StaleRecord?.status})`,
+);
+assert(
+  typeof pl63StaleRecord?.error === "string" &&
+    pl63StaleRecord.error.includes("Прервано") &&
+    pl63StaleRecord.error.includes("частичные правки") &&
+    pl63StaleRecord.error.includes("явный повтор"),
+  "PL-63: причина помечает частичные правки и требует явный повтор",
+);
+assert(pl63StaleRecord?.finishedAt != null, "PL-63: заполнен finished_at прерванной записи");
+assert(
+  typeof pl63StaleRecord?.durationMs === "number" &&
+    pl63StaleRecord.durationMs >= 3 * 60 * 60 * 1000,
+  "PL-63: duration_ms посчитан от фактического времени старта",
+);
+
+// Порог — timeoutSeconds конкретной задачи, а не только значение по умолчанию.
+assert(
+  getHistory("PL-63 Fresh", 1)[0]?.status === "running",
+  "PL-63: свежая запись (< timeoutSeconds по умолчанию) осталась running",
+);
+assert(
+  getHistory("PL-63 Short", 1)[0]?.status === "interrupted",
+  "PL-63: timeoutSeconds=60 задачи применён вместо порога по умолчанию",
+);
+assert(
+  getHistory("PL-63 Long", 1)[0]?.status === "running",
+  "PL-63: timeoutSeconds=14400 задачи защитил трёхчасовой запуск",
+);
+
+// Durable-слой: шаг прерван, запуск закрыт, metadata несёт пометки partial/повтора.
+const pl63DurableRun = getRun(pl63Durable.id);
+assert(pl63DurableRun?.status === "failed", "PL-63: durable-run закрыт как failed");
+assert(
+  typeof pl63DurableRun?.error === "string" && pl63DurableRun.error.includes("явный повтор"),
+  "PL-63: причина durable-run требует явный повтор",
+);
+const pl63Meta = pl63DurableRun?.metadata;
+assert(
+  pl63Meta &&
+    pl63Meta.interrupted === true &&
+    pl63Meta.partialWorktreeEdits === true &&
+    pl63Meta.explicitRetryRequired === true,
+  "PL-63: metadata помечает interrupted/partial/явный повтор",
+);
+const pl63Step = getStep(pl63Durable.id, "PL-63 Stale");
+assert(
+  pl63Step?.status === "failed" && pl63Step.error === "Прервано падением процесса",
+  "PL-63: осиротевший шаг журнала помечен прерванным",
+);
+assert(
+  getHistory("PL-63 Stale", 10).length === 1,
+  "PL-63: повтор не запущен автоматически — нужна явная повторная задача",
+);
+
+// Идемпотентность: второй вызов не перезакрывает уже завершённые записи.
+const pl63Second = recoverStaleRunningOnRecorderStart({ now: pl63Now });
+assert(
+  pl63Second.recovered === 0 && pl63Second.keptAlive >= 2,
+  `PL-63: повторный вызов ничего не закрыл (${JSON.stringify(pl63Second.recovered)}/${pl63Second.keptAlive})`,
+);
+
+const pl63Log = fs.readFileSync(path.join(pluginDir, "logs", "runs.jsonl"), "utf8");
+assert(
+  pl63Log.includes('"event":"run.interrupted_partial"'),
+  "PL-63: событие partial-правки записано в runs.jsonl",
+);
+
 closeDb();
 console.log("\nCrash Recovery test completed.");

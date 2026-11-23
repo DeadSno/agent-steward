@@ -1,6 +1,7 @@
 import os from "node:os";
 import { getDb, withTransaction } from "./index.js";
 import {
+  finishRun,
   finishStep,
   getRun,
   getStep,
@@ -32,6 +33,14 @@ export const STEP_INTERRUPTED_ERROR = "Прервано падением про�
  * recovery финализирует шаг только после истечения этого срока.
  */
 export const STEP_LEASE_MS = 60_000;
+
+/**
+ * PL-63: текст ошибки, которым помечается запуск, прерванный с возможными
+ * частичными правками в worktree. Слово «Прервано» сохраняет совместимость
+ * со счётчиком `interrupted` в метриках (см. metrics-repo).
+ */
+export const RUN_INTERRUPTED_ERROR =
+  "Прервано: запуск старше timeoutSeconds; возможны частичные правки в worktree; требуется явный повтор";
 
 let cachedOwnerId: string | null = null;
 
@@ -296,4 +305,96 @@ function completeStep(
     );
   }
   finishStep(step.id, status, options);
+}
+
+/* ------------------------------------------------------------------------- *
+ * PL-63: финализация запуска, прерванного до записи вердикта.
+ *
+ * История и durable-run закрываются одной операцией: шаги, оставшиеся в
+ * `running`, получают STEP_INTERRUPTED_ERROR, сам запуск — терминальный статус
+ * с причиной, а в metadata пишутся пометки о возможных частичных правках и
+ * обязательном явном повторе. Auto-retry здесь намеренно не запускается.
+ * ------------------------------------------------------------------------- */
+
+export interface MarkInterruptedRunOptions {
+  /** Причина; по умолчанию {@link RUN_INTERRUPTED_ERROR}. */
+  error?: string;
+  /** Момент фиксации (для тестов). */
+  now?: string | Date;
+  /** Пометка о частичных правках в worktree (по умолчанию true). */
+  partialWorktreeEdits?: boolean;
+}
+
+export interface InterruptedRunMark {
+  runId: string;
+  /** Терминальный статус запуска; null — запуск уже был завершён. */
+  status: "failed" | "cancelled" | null;
+  /** Число осиротевших шагов, помеченных прерванными. */
+  stepsRecovered: number;
+  partialWorktreeEdits: boolean;
+  explicitRetryRequired: boolean;
+  error: string;
+}
+
+function metadataObject(value: unknown): Record<string, unknown> {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return { ...(value as Record<string, unknown>) };
+  }
+  if (typeof value === "string") {
+    try {
+      const parsed: unknown = JSON.parse(value);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return { ...(parsed as Record<string, unknown>) };
+      }
+    } catch {
+      // Битый JSON в metadata — сохраняем запись, не ломая финализацию.
+    }
+  }
+  return {};
+}
+
+/** Закрывает прерванный запуск и помечает возможные частичные правки. */
+export function markInterruptedRunWithPartialEdits(
+  runId: string,
+  options: MarkInterruptedRunOptions = {},
+): InterruptedRunMark | null {
+  const run = getRun(runId);
+  if (!run || run.status === "passed" || run.status === "failed" || run.status === "cancelled") {
+    return null;
+  }
+  const error = options.error?.trim() || RUN_INTERRUPTED_ERROR;
+  const timestamp = options.now ? new Date(options.now).toISOString() : nowIso();
+  const partial = options.partialWorktreeEdits !== false;
+  const stepsRecovered = recoverInterruptedSteps(runId, { now: timestamp }).length;
+  // pending/paused не имеют перехода в failed — фиксируем отмену.
+  const status: "failed" | "cancelled" =
+    run.status === "running" ? "failed" : "cancelled";
+  finishRun(runId, status, { error });
+
+  withTransaction(() => {
+    const current = getRun(runId);
+    if (!current) return;
+    getDb()
+      .prepare("UPDATE runs SET metadata_json = ?, updated_at = ? WHERE id = ?")
+      .run(
+        JSON.stringify({
+          ...metadataObject(current.metadata),
+          interrupted: true,
+          interruptedAt: timestamp,
+          partialWorktreeEdits: partial,
+          explicitRetryRequired: true,
+        }),
+        timestamp,
+        runId,
+      );
+  });
+
+  return {
+    runId,
+    status,
+    stepsRecovered,
+    partialWorktreeEdits: partial,
+    explicitRetryRequired: true,
+    error,
+  };
 }
