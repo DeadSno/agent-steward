@@ -451,6 +451,53 @@ check("QV-11.2: findOpenCodeDb уважает OPENCODE_USAGE_DB", () => {
   });
 }
 
+// --- T-4.2: учёт попаданий в prompt-cache статических схем ---
+{
+  const dbPath = path.join(tmpDir, "opencode-cache.db");
+  const db = new DatabaseSync(dbPath);
+  db.exec(
+    "CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT)",
+  );
+  const now = Date.now();
+  const insert = db.prepare(
+    "INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?)",
+  );
+  insert.run(
+    "cache-native",
+    "ses_cache",
+    now - 2000,
+    now - 2000,
+    JSON.stringify({
+      role: "assistant",
+      providerID: "anthropic",
+      cost: 0.01,
+      tokens: { total: 1000, cache: { read: 400, write: 100 } },
+    }),
+  );
+  insert.run(
+    "cache-normalized",
+    "ses_cache",
+    now - 1000,
+    now - 1000,
+    JSON.stringify({
+      role: "assistant",
+      providerID: "opencode",
+      cost: 0,
+      tokens: { total: 500 },
+      usage: { cacheReadInputTokens: 250, cacheWriteInputTokens: 50 },
+    }),
+  );
+  db.close();
+
+  check("T-4.2: collectOpenCodeUsage считает cache read/write в обеих форматах БД", () => {
+    const usage = collectOpenCodeUsage({ dbPath, since: now - 5000, until: now + 1000 });
+    assert.ok(usage);
+    assert.strictEqual(usage.tokens, 1500);
+    assert.strictEqual(usage.cacheReadTokens, 650);
+    assert.strictEqual(usage.cacheWriteTokens, 150);
+  });
+}
+
 try {
   const { closeDb } = await import("./dist/db/index.js");
   closeDb();

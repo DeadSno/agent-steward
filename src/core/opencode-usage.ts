@@ -18,6 +18,10 @@ export interface OpenCodeUsage {
   costUsd: number;
   messages: number;
   providers: Record<string, number>;
+  /** T-4.2: токены, прочитанные из prompt-cache провайдера. */
+  cacheReadTokens: number;
+  /** T-4.2: токены, записанные в prompt-cache провайдера. */
+  cacheWriteTokens: number;
 }
 
 export interface CollectOpenCodeUsageOptions {
@@ -81,11 +85,34 @@ function asFiniteNumber(value: unknown): number {
   return Number.isFinite(num) ? num : 0;
 }
 
+/**
+ * T-4.2: OpenCode нормализует cache-статистику разных провайдеров в
+ * `usage.cacheReadInputTokens` / `cacheWriteInputTokens`, а в части БД ещё
+ * встречается родная форма `tokens.cache.{read,write}`. Поддерживаем обе.
+ */
+function parseCacheTokens(
+  data: Record<string, unknown>,
+  tokensObj: Record<string, unknown>,
+): { read: number; write: number } {
+  const cache = tokensObj.cache && typeof tokensObj.cache === "object" && !Array.isArray(tokensObj.cache)
+    ? (tokensObj.cache as Record<string, unknown>)
+    : {};
+  const normalized = data.usage && typeof data.usage === "object" && !Array.isArray(data.usage)
+    ? (data.usage as Record<string, unknown>)
+    : {};
+  return {
+    read: asFiniteNumber(cache.read) || asFiniteNumber(normalized.cacheReadInputTokens),
+    write: asFiniteNumber(cache.write) || asFiniteNumber(normalized.cacheWriteInputTokens),
+  };
+}
+
 function parseMessageData(raw: unknown): {
   tokens: number;
   costUsd: number;
   provider: string;
   cwd: string;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
 } | null {
   if (typeof raw !== "string") return null;
   let data: Record<string, unknown>;
@@ -99,21 +126,18 @@ function parseMessageData(raw: unknown): {
   if (data.role !== "assistant") return null;
 
   const tokensRaw = data.tokens;
-  let tokens = 0;
-  if (tokensRaw && typeof tokensRaw === "object" && !Array.isArray(tokensRaw)) {
-    const tokensObj = tokensRaw as Record<string, unknown>;
-    // OpenCode иногда пишет только total, иногда input/output/reasoning.
-    const cache = tokensObj.cache && typeof tokensObj.cache === "object"
-      ? (tokensObj.cache as Record<string, unknown>)
-      : {};
-    tokens =
-      asFiniteNumber(tokensObj.total) ||
-      asFiniteNumber(tokensObj.input) +
-        asFiniteNumber(tokensObj.output) +
-        asFiniteNumber(tokensObj.reasoning) +
-        asFiniteNumber(cache.read) +
-        asFiniteNumber(cache.write);
-  }
+  const tokensObj = tokensRaw && typeof tokensRaw === "object" && !Array.isArray(tokensRaw)
+    ? (tokensRaw as Record<string, unknown>)
+    : {};
+  const cacheTokens = parseCacheTokens(data, tokensObj);
+  // OpenCode иногда пишет только total, иногда input/output/reasoning.
+  const tokens =
+    asFiniteNumber(tokensObj.total) ||
+    asFiniteNumber(tokensObj.input) +
+      asFiniteNumber(tokensObj.output) +
+      asFiniteNumber(tokensObj.reasoning) +
+      cacheTokens.read +
+      cacheTokens.write;
 
   const messagePath = data.path && typeof data.path === "object" && !Array.isArray(data.path)
     ? (data.path as Record<string, unknown>)
@@ -124,6 +148,8 @@ function parseMessageData(raw: unknown): {
     costUsd: asFiniteNumber(data.cost),
     provider: typeof data.providerID === "string" ? data.providerID : "unknown",
     cwd: typeof messagePath.cwd === "string" ? messagePath.cwd : "",
+    cacheReadTokens: cacheTokens.read,
+    cacheWriteTokens: cacheTokens.write,
   };
 }
 
@@ -149,7 +175,14 @@ export function collectOpenCodeUsage(
       )
       .all(since, until);
 
-    const result: OpenCodeUsage = { tokens: 0, costUsd: 0, messages: 0, providers: {} };
+    const result: OpenCodeUsage = {
+      tokens: 0,
+      costUsd: 0,
+      messages: 0,
+      providers: {},
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+    };
     const wantedCwd = options.cwd?.trim().toLowerCase();
     for (const row of rows) {
       const raw = (row as { data?: unknown }).data;
@@ -164,6 +197,8 @@ export function collectOpenCodeUsage(
       }
       result.tokens += message.tokens;
       result.costUsd += message.costUsd;
+      result.cacheReadTokens += message.cacheReadTokens;
+      result.cacheWriteTokens += message.cacheWriteTokens;
       result.messages += 1;
       result.providers[message.provider] =
         (result.providers[message.provider] ?? 0) + message.tokens;
