@@ -1444,6 +1444,79 @@ try {
       b4Verdict.diverged === true,
     JSON.stringify(b4Verdict)
   );
+
+  // PL-128: вердикт записи вычисляется в одном месте и проверяется без powershell.
+  const { resolveWrapperRecordVerdict } = await import("./dist/core/ps-wrapper.js");
+  const pl128Verdict = resolveWrapperRecordVerdict({
+    timedOut: true,
+    exitCode: 124,
+    gatePassed: true,
+  });
+  check(
+    "PL-128: gate=pass + watchdog exit=124 — success, причина PL-128, exit 0",
+    pl128Verdict.status === "success" &&
+      pl128Verdict.reason === "PL-128: завершено watchdog по таймауту, gate=pass" &&
+      pl128Verdict.normalizedExitCode === 0,
+    JSON.stringify(pl128Verdict)
+  );
+  const pl81CompatibleVerdict = resolveWrapperRecordVerdict({
+    timedOut: false,
+    exitCode: 1,
+    gatePassed: true,
+  });
+  check(
+    "PL-128: gate=pass + exit=1 остаётся success (PL-81)",
+    pl81CompatibleVerdict.status === "success" &&
+      pl81CompatibleVerdict.normalizedExitCode === 0,
+    JSON.stringify(pl81CompatibleVerdict)
+  );
+  const noGateVerdict = resolveWrapperRecordVerdict({
+    timedOut: true,
+    exitCode: 124,
+    gatePassed: false,
+  });
+  check(
+    "PL-128: таймаут без гейта остаётся timeout",
+    noGateVerdict.status === "timeout" && noGateVerdict.normalizedExitCode === 124,
+    JSON.stringify(noGateVerdict)
+  );
+  const noGateSuccess = resolveWrapperRecordVerdict({
+    timedOut: false,
+    exitCode: 0,
+    gatePassed: false,
+    gateEvaluated: false,
+  });
+  check(
+    "PL-128: exit=0 без гейта остаётся success",
+    noGateSuccess.status === "success" && noGateSuccess.normalizedExitCode === 0,
+    JSON.stringify(noGateSuccess)
+  );
+  const quotaVerdict = resolveWrapperRecordVerdict({
+    timedOut: true,
+    exitCode: 126,
+    gatePassed: false,
+    quotaDetected: true,
+  });
+  check(
+    "PL-114: квота имеет приоритет над watchdog",
+    quotaVerdict.status === "error" && quotaVerdict.normalizedExitCode === 126,
+    JSON.stringify(quotaVerdict)
+  );
+  check(
+    "PL-128: Get-RecordVerdict — единственное место вердикта в finally",
+    psWrapperScript.includes("function Get-RecordVerdict") &&
+      psWrapperScript.includes("Get-RecordVerdict -TimedOut") &&
+      psWrapperScript.includes("PL-128: завершено watchdog по таймауту, gate=pass") &&
+      !psWrapperScript.includes("elseif ($script:timedOut)")
+  );
+  check(
+    "PL-124: completion/idle-watcher снимает дерево, --finish вызывается сразу",
+    psWrapperScript.includes("AGENT_STEWARD_COMPLETION_IDLE_SEC") &&
+      psWrapperScript.includes("$completionMarker") &&
+      psWrapperScript.includes("PL-124: дочерний агент завершён/простаивает") &&
+      psWrapperScript.includes('--finish "$script:runId"')
+  );
+
   const wrapperAbs = path.join(tempRoot, "wrapper-parse-check.ps1");
   // ensureWrapper() пишет BOM — без него PS 5.1 читает кириллицу как ANSI.
   fs.writeFileSync(wrapperAbs, "\uFEFF" + psWrapperScript, "utf8");

@@ -328,5 +328,50 @@ assert(
   "PL-63: событие partial-правки записано в runs.jsonl",
 );
 
+// --- 6. PL-124: подметка running-записи с мёртвым владельцем -------------
+// Запись свежая (порог таймаута не истёк), но владелец уже завершился:
+// старая age-логика PL-63 оставила бы её running. Проверяем, что рекордер
+// закрывает её сразу и не трогает living-владельца на том же хосте.
+const pl124DeadPid = Number(dead.pid);
+const pl124Insert = getDb().prepare(
+  "INSERT INTO history (task_name, status, started_at, finished_at, owner_pid, owner_host, owner_started_at) VALUES (?, 'running', ?, NULL, ?, ?, ?)",
+);
+pl124Insert.run("PL-124 Dead Owner", pl63FreshIso, pl124DeadPid, os.hostname(), pl63FreshIso);
+pl124Insert.run("PL-124 Live Owner", pl63FreshIso, process.pid, os.hostname(), pl63FreshIso);
+
+const pl124Result = recoverStaleRunningOnRecorderStart({
+  now: pl63Now,
+  isAlive: (pid) => pid === process.pid,
+  hostname: os.hostname(),
+});
+assert(
+  pl124Result.deadOwner === 1 && pl124Result.recovered === 1,
+  `PL-124: мёртвый владелец подметён сразу (${JSON.stringify(pl124Result)})`,
+);
+assert(
+  pl124Result.interrupted.some((item) => item.cause === "deadOwner"),
+  "PL-124: причина закрытия помечена как deadOwner",
+);
+const pl124DeadRecord = getHistory("PL-124 Dead Owner", 1)[0];
+assert(
+  pl124DeadRecord?.status === "interrupted" && pl124DeadRecord.finishedAt != null,
+  "PL-124: запись мёртвого владельца закрыта как interrupted",
+);
+assert(
+  typeof pl124DeadRecord?.error === "string" &&
+    pl124DeadRecord.error.includes("PL-124") &&
+    pl124DeadRecord.error.includes("владелец завершён"),
+  `PL-124: причина указывает на завершившегося владельца (${pl124DeadRecord?.error})`,
+);
+assert(
+  getHistory("PL-124 Live Owner", 1)[0]?.status === "running",
+  "PL-124: живой владелец с тем же хостом остался running (PL-63 не сломан)",
+);
+const pl124Log = fs.readFileSync(path.join(pluginDir, "logs", "runs.jsonl"), "utf8");
+assert(
+  pl124Log.includes('"event":"run.interrupted_dead_owner"'),
+  "PL-124: событие подметки записано в runs.jsonl",
+);
+
 closeDb();
 console.log("\nCrash Recovery test completed.");

@@ -528,6 +528,52 @@ function Invoke-ChildWithArgs {
         Remove-Item -LiteralPath $argsFile -Force -ErrorAction SilentlyContinue
     }
 }
+# PL-128: единое место вердикта записи (эквивалент resolveWrapperRecordVerdict()
+# в TypeScript). Статус и причина history-записи определяются только здесь.
+function Get-RecordVerdict {
+    param(
+        [bool]$TimedOut,
+        [int]$ExitCode,
+        [bool]$GatePassed,
+        [bool]$GateEvaluated = $true,
+        [int]$WatchdogExitCode = 124
+    )
+    $killedByWatchdog = $TimedOut -or ($ExitCode -eq $WatchdogExitCode)
+    if ($GatePassed -and $killedByWatchdog) {
+        return [pscustomobject]@{
+            Status = "success"
+            Reason = "PL-128: завершено watchdog по таймауту, gate=pass"
+            NormalizedExitCode = 0
+        }
+    }
+    if ($GatePassed) {
+        return [pscustomobject]@{
+            Status = "success"
+            Reason = "PL-81: quality gate passed"
+            NormalizedExitCode = 0
+        }
+    }
+    if (-not $GateEvaluated -and $ExitCode -eq 0) {
+        return [pscustomobject]@{
+            Status = "success"
+            Reason = "PL-81: успешное завершение без quality gate"
+            NormalizedExitCode = 0
+        }
+    }
+    if ($killedByWatchdog) {
+        return [pscustomobject]@{
+            Status = "timeout"
+            Reason = "Таймаут: превышен лимит времени, quality gate не пройден"
+            NormalizedExitCode = $ExitCode
+        }
+    }
+    return [pscustomobject]@{
+        Status = "error"
+        Reason = "Код возврата $ExitCode"
+        NormalizedExitCode = $ExitCode
+    }
+}
+
 function Invoke-OpenCodeOnce {
     param([string]$CommandPath, [string[]]$Arguments)
 
@@ -537,6 +583,11 @@ function Invoke-OpenCodeOnce {
     $healthWatch = $null
     $healthMarker = ""
     $healthFailure = ""
+    # PL-124: completion/idle-watcher — снимает дерево, когда агент записал
+    # отчёт, но держит конвейер открытым и перестал потреблять CPU.
+    $idleWatch = $null
+    $completionMarker = ""
+    $script:childIdleCompleted = $false
     if ($TimeoutSeconds -gt 0) {
         $timeoutMarker = Join-Path ([System.IO.Path]::GetTempPath()) ("sched-timeout-" + [guid]::NewGuid().ToString("N") + ".flag")
         $watch = Start-Job -ScriptBlock {
@@ -635,6 +686,65 @@ function Invoke-OpenCodeOnce {
         } -ArgumentList $PID, $healthMarker, $LogFile, $healthInterval, $healthThreshold, $healthTail
     }
 
+    # PL-124: консервативный сторож простоя. Watchdog (124) и health-check (125)
+    # сохраняют приоритет: окно простоя по умолчанию 60 с, опрос каждые 5 с,
+    # поэтому короткие timeout-прогоны (например, 2 с в регрессии) не затрагиваются.
+    # Окно настраивается через AGENT_STEWARD_COMPLETION_IDLE_SEC / _POLL_SEC.
+    if ($env:AGENT_STEWARD_COMPLETION_WATCH -ne "0") {
+        $idlePoll = 5
+        $idleWindow = 60
+        try {
+            if ($env:AGENT_STEWARD_COMPLETION_POLL_SEC -match '^\d+$') { $idlePoll = [Math]::Max(1, [int]$env:AGENT_STEWARD_COMPLETION_POLL_SEC) }
+            if ($env:AGENT_STEWARD_COMPLETION_IDLE_SEC -match '^\d+$') { $idleWindow = [Math]::Max(30, [int]$env:AGENT_STEWARD_COMPLETION_IDLE_SEC) }
+        } catch {}
+        $completionMarker = Join-Path ([System.IO.Path]::GetTempPath()) ("sched-idle-" + [guid]::NewGuid().ToString("N") + ".flag")
+        $idleWatch = Start-Job -ScriptBlock {
+            param([int]$RootId, [string]$Marker, [int]$PollSec, [int]$IdleSec)
+            $lastCpu = -1.0
+            $idleTicks = 0
+            $maxIdle = [Math]::Ceiling($IdleSec / [double]$PollSec)
+            while ($true) {
+                Start-Sleep -Seconds $PollSec
+                $all = @()
+                try { $all = @(Get-CimInstance Win32_Process -Property ProcessId, ParentProcessId, KernelModeTime, UserModeTime -ErrorAction Stop) } catch { continue }
+                $targets = New-Object System.Collections.Generic.List[int]
+                $queue = New-Object System.Collections.Generic.Queue[int]
+                $queue.Enqueue($RootId)
+                $guard = 0
+                while ($queue.Count -gt 0 -and $guard -lt 2000) {
+                    $guard++
+                    $current = $queue.Dequeue()
+                    foreach ($p in $all) {
+                        $childId = [int]$p.ProcessId
+                        if ([int]$p.ParentProcessId -eq $current -and $childId -ne $PID -and -not $targets.Contains($childId)) {
+                            $targets.Add($childId)
+                            $queue.Enqueue($childId)
+                        }
+                    }
+                }
+                if ($targets.Count -eq 0) { continue }
+                $cpu = 0.0
+                foreach ($targetId in @($targets)) {
+                    foreach ($p in $all) {
+                        if ([int]$p.ProcessId -eq $targetId) {
+                            $cpu += ([double]$p.KernelModeTime) + ([double]$p.UserModeTime)
+                            break
+                        }
+                    }
+                }
+                if ($lastCpu -ge 0 -and $cpu -le $lastCpu) { $idleTicks++ } else { $idleTicks = 0 }
+                $lastCpu = $cpu
+                if ($idleTicks -ge $maxIdle) {
+                    try { Set-Content -Path $Marker -Value "idle" -Encoding UTF8 } catch {}
+                    foreach ($targetId in @($targets)) {
+                        try { & taskkill.exe /F /T /PID $targetId 2>$null | Out-Null } catch {}
+                    }
+                    break
+                }
+            }
+        } -ArgumentList $PID, $completionMarker, $idlePoll, $idleWindow
+    }
+
     # QV-8: дочерний opencode run не должен загружать инструменты планировщика
     # (иначе ребёнок видит все 32 инструмента и может рекурсивно создавать задачи).
     # Маркер живёт только время запуска ИИ и восстанавливается в finally.
@@ -677,6 +787,9 @@ function Invoke-OpenCodeOnce {
         if ($healthMarker -and (Test-Path -LiteralPath $healthMarker)) {
             try { $healthFailure = (Get-Content -LiteralPath $healthMarker -Raw -ErrorAction Stop).Trim() } catch { $healthFailure = "модель повторяет ошибку подряд" }
         }
+        if ($completionMarker -and (Test-Path -LiteralPath $completionMarker)) {
+            $script:childIdleCompleted = $true
+        }
         if ($watch) {
             Stop-Job -Job $watch -ErrorAction SilentlyContinue
             Remove-Job -Job $watch -Force -ErrorAction SilentlyContinue
@@ -685,11 +798,18 @@ function Invoke-OpenCodeOnce {
             Stop-Job -Job $healthWatch -ErrorAction SilentlyContinue
             Remove-Job -Job $healthWatch -Force -ErrorAction SilentlyContinue
         }
+        if ($idleWatch) {
+            Stop-Job -Job $idleWatch -ErrorAction SilentlyContinue
+            Remove-Job -Job $idleWatch -Force -ErrorAction SilentlyContinue
+        }
         if ($timeoutMarker) {
             Remove-Item -LiteralPath $timeoutMarker -Force -ErrorAction SilentlyContinue
         }
         if ($healthMarker) {
             Remove-Item -LiteralPath $healthMarker -Force -ErrorAction SilentlyContinue
+        }
+        if ($completionMarker) {
+            Remove-Item -LiteralPath $completionMarker -Force -ErrorAction SilentlyContinue
         }
     }
 
@@ -702,6 +822,12 @@ function Invoke-OpenCodeOnce {
         Write-Log "[agent-steward] PL-51: задача '$TaskName' остановлена health-check: $healthFailure"
         $script:errorMessage = "Ошибка модели при запуске: $healthFailure"
         return 125
+    }
+    if ($script:childIdleCompleted) {
+        # PL-124: отчёт уже записан, дерево снято по простою — освобождаем
+        # конвейер и даём outer finally сразу вызвать quality gate/post-flight/--finish.
+        Write-Log "[agent-steward] PL-124: дочерний агент завершён/простаивает, дерево снято; история финализируется сразу."
+        return 0
     }
     return $script:attemptExitCode
 }
@@ -1301,14 +1427,24 @@ try {
     $durationMs = [int](($endTime - $startTime).TotalMilliseconds)
     # Hotfix 1.5.3.1: статус timeout теперь реально выставляется (см. Invoke-OpenCodeOnce).
     # PL-114: quota is the root cause even when the watchdog also fired.
+    # PL-128: статус/причину записи считает Get-RecordVerdict — одно место для
+    # PL-81, PL-114 и watchdog; --finish вызывается сразу после разблокировки
+    # конвейера completion/idle-watcher'ом, без ожидания 900 с.
+    $gateEvaluated = $null -ne $gatePassed
+    $recordVerdict = Get-RecordVerdict -TimedOut ([bool]$script:timedOut) -ExitCode ([int]$script:exitCode) -GatePassed ([bool]$gatePassed) -GateEvaluated $gateEvaluated
     if ($quotaDetected) {
         $status = "error"
-    } elseif ($script:timedOut) {
-        $status = "timeout"
-    } elseif ($script:exitCode -eq 0) {
-        $status = "success"
     } else {
-        $status = "error"
+        $status = $recordVerdict.Status
+        if ($recordVerdict.Reason -and ($recordVerdict.Status -ne "error" -or -not $script:errorMessage)) {
+            $script:errorMessage = $recordVerdict.Reason
+        }
+        if ($recordVerdict.Status -eq "success" -and $recordVerdict.NormalizedExitCode -ne $script:exitCode) {
+            $script:exitCode = $recordVerdict.NormalizedExitCode
+        }
+    }
+    if ($recordVerdict.Reason -like "PL-128:*") {
+        Write-Log "[agent-steward] $($recordVerdict.Reason)"
     }
     $usage = Get-UsageFromLog -File $LogFile
     $tokensArg = "-"
@@ -1864,6 +2000,86 @@ export function normalizeQuotaReason(raw: string): string {
   return /free usage limit|insufficient balance/i.test(short)
     ? "Free quota exhausted: " + short
     : short;
+}
+
+/** Вход канонического вердикта записи ( PL-81 / PL-114 / PL-128 ). */
+export interface WrapperRecordVerdictInput {
+  /** Watchdog остановил дерево процесса. */
+  timedOut: boolean;
+  /** Код возврата агента/обёртки. */
+  exitCode: number;
+  /** Quality Gate пройден. */
+  gatePassed: boolean;
+  /** Гейт действительно запускался; false — гейта не было, решает exit-код. */
+  gateEvaluated?: boolean;
+  /** Квота/is balance — корневая причина (PL-114), имеет приоритет. */
+  quotaDetected?: boolean;
+  /** Код watchdog, по умолчанию 124. */
+  watchdogExitCode?: number;
+}
+
+/** Результат вердикта записи: статус, причина и итоговый exit-код обёртки. */
+export interface WrapperRecordVerdict {
+  status: "success" | "timeout" | "error";
+  reason: string;
+  normalizedExitCode: number;
+}
+
+/**
+ * PL-128: единственная спецификация вердикта записи. PowerShell-обёртка
+ * использует тот же порядок правил через Get-RecordVerdict; эта чистая функция
+ * позволяет тестировать вердикт детерминированно, без запуска powershell.exe.
+ *
+ * Порядок приоритетов: quota (PL-114) > gate=pass + watchdog (PL-128) >
+ * gate=pass (PL-81) > таймаут без гейта > ошибка.
+ */
+export function resolveWrapperRecordVerdict(
+  input: WrapperRecordVerdictInput,
+): WrapperRecordVerdict {
+  const watchdogExitCode = input.watchdogExitCode ?? 124;
+  const killedByWatchdog =
+    input.timedOut ||
+    (Number.isFinite(input.exitCode) && input.exitCode === watchdogExitCode);
+  if (input.quotaDetected) {
+    return {
+      status: "error",
+      reason: "PL-114: quota is the root cause",
+      normalizedExitCode: input.exitCode,
+    };
+  }
+  if (input.gatePassed && killedByWatchdog) {
+    return {
+      status: "success",
+      reason: "PL-128: завершено watchdog по таймауту, gate=pass",
+      normalizedExitCode: 0,
+    };
+  }
+  if (input.gatePassed) {
+    return {
+      status: "success",
+      reason: "PL-81: quality gate passed",
+      normalizedExitCode: 0,
+    };
+  }
+  if (input.gateEvaluated === false && input.exitCode === 0) {
+    return {
+      status: "success",
+      reason: "PL-81: успешное завершение без quality gate",
+      normalizedExitCode: 0,
+    };
+  }
+  if (killedByWatchdog) {
+    return {
+      status: "timeout",
+      reason: "Таймаут: превышен лимит времени, quality gate не пройден",
+      normalizedExitCode: input.exitCode,
+    };
+  }
+  return {
+    status: "error",
+    reason: `Код возврата ${input.exitCode}`,
+    normalizedExitCode: input.exitCode,
+  };
 }
 
 /**

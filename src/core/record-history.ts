@@ -9,6 +9,7 @@ import {
   finishRun,
   getHistoryForBudget,
   getLatestHistoryByTask,
+  isProcessAlive,
   listRunningRecords,
   normalizeErrorText,
   recordRun,
@@ -101,6 +102,10 @@ export interface RecoverStaleRunningOptions {
   defaultTimeoutSeconds?: number;
   /** Источник определения задачи (для тестов). */
   getDefinition?: (name: string) => TaskDefinition | undefined;
+  /** Проверка жив ли владелец запуска (для тестов). */
+  isAlive?: (pid: number) => boolean;
+  /** Имя хоста, с которым сравнивается owner_host (для тестов). */
+  hostname?: string;
 }
 
 export interface InterruptedRunningRecord {
@@ -110,6 +115,8 @@ export interface InterruptedRunningRecord {
   durableRunId: string | null;
   partialWorktreeEdits: boolean;
   error: string;
+  /** Причина закрытия: истёк таймаут или владелец завершён (PL-124). */
+  cause: "timeout" | "deadOwner";
 }
 
 export interface RecoverStaleRunningResult {
@@ -119,6 +126,8 @@ export interface RecoverStaleRunningResult {
   recovered: number;
   /** Сколько оставлено running (порог не истёк). */
   keptAlive: number;
+  /** Сколько закрыто по мёртвому владельцу (PL-124). */
+  deadOwner: number;
   interrupted: InterruptedRunningRecord[];
 }
 
@@ -140,11 +149,14 @@ export function recoverStaleRunningOnRecorderStart(
       ? Math.floor(configuredDefault)
       : DEFAULT_RUN_TIMEOUT_SECONDS;
   const definitionOf = options.getDefinition ?? getTask;
+  const isAlive = options.isAlive ?? isProcessAlive;
+  const hostname = options.hostname ?? os.hostname();
   const running = listRunningRecords();
   const result: RecoverStaleRunningResult = {
     scanned: running.length,
     recovered: 0,
     keptAlive: 0,
+    deadOwner: 0,
     interrupted: [],
   };
   if (running.length === 0) return result;
@@ -152,6 +164,9 @@ export function recoverStaleRunningOnRecorderStart(
   const close = getDb().prepare(
     `UPDATE history SET status = 'interrupted', error = ?, finished_at = ?,
        duration_ms = ? WHERE id = ? AND finished_at IS NULL`,
+  );
+  const ownerOf = getDb().prepare(
+    `SELECT owner_pid, owner_host FROM history WHERE id = ?`,
   );
 
   withTransaction(() => {
@@ -163,6 +178,43 @@ export function recoverStaleRunningOnRecorderStart(
           : defaultSeconds;
       const started = Date.parse(record.startedAt);
       const ageMs = Number.isFinite(started) ? Math.max(0, now.getTime() - started) : 0;
+
+      // PL-124: живой владелец с истёкшим таймаутом закрывается по старой
+      // age-логике (PL-63), но мёртвый владелец того же хоста закрывается сразу —
+      // иначе запись висит running до следующего запуска рекордера/плагина.
+      const owner = ownerOf.get(record.id) as
+        | { owner_pid: number | bigint | null; owner_host: string | null }
+        | undefined;
+      const ownerPid = owner?.owner_pid == null ? null : Number(owner.owner_pid);
+      const ownerHost = owner?.owner_host == null ? null : String(owner.owner_host);
+      const verifiableOwner =
+        ownerPid != null &&
+        Number.isFinite(ownerPid) &&
+        ownerPid > 0 &&
+        ownerHost === hostname;
+      if (verifiableOwner && !isAlive(ownerPid!)) {
+        const error = `PL-124: владелец завершён (pid=${ownerPid}), запуск оставался running; возможны частичные правки в worktree; требуется явный повтор`;
+        close.run(error, timestamp, ageMs, record.id);
+        const durable = findRunByMetadata("registeredHistoryId", record.id);
+        result.recovered += 1;
+        result.deadOwner += 1;
+        result.interrupted.push({
+          historyRunId: record.id,
+          taskName: record.taskName,
+          timeoutSeconds: seconds,
+          durableRunId: durable?.id ?? null,
+          partialWorktreeEdits: true,
+          error,
+          cause: "deadOwner",
+        });
+        logRecorderEvent("run.interrupted_dead_owner", record.taskName, {
+          runId: record.id,
+          status: "interrupted",
+          reason: `PL-124; pid=${ownerPid}; durableRunId=${durable?.id ?? "none"}; explicitRetryRequired=true`,
+        });
+        continue;
+      }
+
       if (ageMs < seconds * 1000) {
         result.keptAlive += 1;
         continue;
@@ -179,6 +231,7 @@ export function recoverStaleRunningOnRecorderStart(
         durableRunId: durable?.id ?? null,
         partialWorktreeEdits: true,
         error,
+        cause: "timeout",
       });
       logRecorderEvent("run.interrupted_partial", record.taskName, {
         runId: record.id,
