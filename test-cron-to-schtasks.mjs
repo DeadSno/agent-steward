@@ -9,6 +9,7 @@ import assert from "node:assert/strict";
 import {
   convertCronToSchTasks,
   buildScheduleFlags,
+  nextMonthlyStartBoundary,
 } from "./dist/core/cron-to-schtasks.js";
 import { isNativeSchtasksExpr, needsPollMode } from "./dist/core/schedule-v2.js";
 
@@ -64,9 +65,10 @@ check("0 9 * * * -> DAILY /st 09:00", daily.sc === "DAILY" && daily.startTime ==
 // --- QV-10: годовой cron -> нативный schtasks MONTHLY вместо минутного опроса ---
 const yearly = convertCronToSchTasks("0 4 1 1 *");
 check("QV-10: '0 4 1 1 *' -> MONTHLY", yearly.sc === "MONTHLY");
+const yearlyFlags = buildScheduleFlags(yearly);
 check(
   "QV-10: yearly flags /d 1 /m 1 /st 04:00",
-  JSON.stringify(buildScheduleFlags(yearly)) ===
+  JSON.stringify(yearlyFlags.slice(0, 8)) ===
     JSON.stringify(["/sc", "MONTHLY", "/st", "04:00", "/d", "1", "/m", "1"]),
 );
 check("QV-10: yearly is native (no poll)", isNativeSchtasksExpr("0 4 1 1 *") === true);
@@ -74,7 +76,10 @@ check("QV-10: yearly needsPollMode=false", needsPollMode("0 4 1 1 *") === false)
 const monthly = convertCronToSchTasks("30 12 15 * *");
 check(
   "QV-10: '30 12 15 * *' -> MONTHLY /d 15 без /m",
-  monthly.sc === "MONTHLY" && JSON.stringify(monthly.extraFlags) === JSON.stringify(["/d", "15"]),
+  monthly.sc === "MONTHLY" &&
+    monthly.extraFlags[0] === "/d" &&
+    monthly.extraFlags[1] === "15" &&
+    !monthly.extraFlags.includes("/m"),
 );
 let badMonth = false;
 try {
@@ -114,6 +119,55 @@ for (let n = 1; n <= 12; n++) {
   }
 }
 check("PL-56: месяцы 1..12 -> числовой /m 1..12 без английских имён", pl56AllNumeric);
+
+// --- PL-57: стартовая граница MONTHLY-задач (без самопроизвольного catch-up) ---
+// Дефект воспроизведён реальным вызовом конвертера до правки:
+// buildScheduleFlags(convertCronToSchTasks("0 5 1 * *")) давал
+// ["/sc","MONTHLY","/st","05:00","/d","1"] — без /sd. schtasks принимал дату
+// создания как start boundary, и «Run task as soon as possible after a
+// scheduled start is missed» догонял пропущенный старт через несколько минут.
+
+// 23.11.2026 07:37 — момент создания задач из находки PL-57.
+const pl57Now = new Date(2026, 10, 23, 7, 37, 0, 0);
+check(
+  "PL-57: '0 5 1 * *' -> /sd 01.12.2026 (следующий допустимый день)",
+  nextMonthlyStartBoundary(1, null, pl57Now) === "01.12.2026",
+);
+check(
+  "PL-57: годовое '0 4 1 1 *' -> /sd 01.01.2027 (следующий допустимый месяц)",
+  nextMonthlyStartBoundary(1, 1, pl57Now) === "01.01.2027",
+);
+check(
+  "PL-57: граница строго в будущем (ровно в момент старта -> следующий период)",
+  nextMonthlyStartBoundary(1, null, new Date(2026, 10, 1, 5, 0, 0, 0)) === "01.12.2026",
+);
+check(
+  "PL-57: несуществующее число месяца пропускается (31.02 -> 31.03.2026)",
+  nextMonthlyStartBoundary(31, null, new Date(2026, 0, 31, 5, 0, 0, 0)) === "31.03.2026",
+);
+
+const pl57Before = Date.now();
+const pl57Flags = buildScheduleFlags(convertCronToSchTasks("0 5 1 * *"));
+const pl57SdIndex = pl57Flags.indexOf("/sd");
+const pl57Boundary = pl57Flags[pl57SdIndex + 1];
+check("PL-57: флаги MONTHLY содержат /sd", pl57SdIndex !== -1);
+check(
+  "PL-57: /sd — числовая дата DD.MM.YYYY (совместима с RU-локалью)",
+  /^\d{2}\.\d{2}\.\d{4}$/.test(pl57Boundary ?? ""),
+);
+if (pl57Boundary) {
+  const [pl57D, pl57M, pl57Y] = pl57Boundary.split(".").map(Number);
+  check(
+    "PL-57: /sd строго в будущем относительно момента создания",
+    new Date(pl57Y, pl57M - 1, pl57D, 5, 0, 0, 0).getTime() > pl57Before,
+  );
+} else {
+  check("PL-57: /sd строго в будущем относительно момента создания", false);
+}
+check(
+  "PL-57: /sd добавляется только к MONTHLY, не к DAILY",
+  !buildScheduleFlags(convertCronToSchTasks("0 9 * * *")).includes("/sd"),
+);
 
 console.log(`\n${passed}/${passed + failed} проверок пройдено`);
 process.exit(failed > 0 ? 1 : 0);

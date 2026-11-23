@@ -61,6 +61,64 @@ const MONTH_MAP: Record<string, string> = {
 };
 
 /**
+ * PL-57: форматирует стартовую границу schtasks в числовом формате DD.MM.YYYY,
+ * совместимом с русской локалью Windows (ShortDatePattern = dd.MM.yyyy).
+ *
+ * schtasks /sd разбирает дату по локали ОС, поэтому единая ISO-строка не подходит
+ * для всех локалей: на ANSI-сценарии «2026-12-01» может быть прочитано неверно. Явный формат
+ * DD.MM.YYYY — числовой и однозначный для RU; для других локалей потребовался бы
+ * XML-импорт с <StartBoundary> (там же можно выставить
+ * <StartWhenAvailable>false</StartWhenAvailable> — schtasks CLI такого флага не
+ * имеет). Сама по себе будущая /SD убирает условие «пропущенного старта», из-за
+ * которого включённый catch-up («Run task as soon as possible...») догонял
+ * задачу через несколько минут после создания.
+ */
+function formatStartBoundary(date: Date): string {
+  return (
+    String(date.getDate()).padStart(2, "0") +
+    "." +
+    String(date.getMonth() + 1).padStart(2, "0") +
+    "." +
+    String(date.getFullYear())
+  );
+}
+
+/**
+ * PL-57: ближайшая строго будущая дата первого срабатывания MONTHLY-задачи.
+ *
+ * @param dayOfMonth — день месяца 1..31 из cron-поля дня месяца.
+ * @param month — номер месяца 1..12 для годового расписания, null — каждый месяц.
+ * @param now — момент создания задачи (локальное время ОС).
+ * @returns дата DD.MM.YYYY для флага `/sd` schtasks.
+ */
+export function nextMonthlyStartBoundary(
+  dayOfMonth: number,
+  month: number | null,
+  now: Date = new Date(),
+): string {
+  const maxYear = now.getFullYear() + 2;
+  for (let year = now.getFullYear(); year <= maxYear; year++) {
+    const firstMonth = year === now.getFullYear() && month === null ? now.getMonth() : 0;
+    const lastMonth = month === null ? 11 : month - 1;
+    for (let monthIndex = firstMonth; monthIndex <= lastMonth; monthIndex++) {
+      const candidate = new Date(year, monthIndex, dayOfMonth, 0, 0, 0, 0);
+      // new Date(year, m, 31) перетекает в следующий месяц — такие месяцы
+      // не подходят: schtasks просто не сработает 31-го в 30-дневном месяце.
+      if (
+        candidate.getDate() !== dayOfMonth ||
+        candidate.getMonth() !== monthIndex ||
+        candidate.getTime() <= now.getTime()
+      ) {
+        continue;
+      }
+      return formatStartBoundary(candidate);
+    }
+  }
+  // Для dayOfMonth 1..31 и любого месяца подходящий кандидат есть всегда.
+  throw new Error("Не удалось вычислить стартовую границу для MONTHLY-задачи.");
+}
+
+/**
  * Проверяет, является ли строка звездочкой "*".
  */
 function isStar(value: string): boolean {
@@ -220,21 +278,27 @@ export function convertCronToSchTasks(cron: string): CronConversion {
   // фиксирует месяц, а /d — день, поэтому тик один раз в год без пустых опросов.
   // PL-56: /m передаётся числом 1..12 (не английским именем), иначе локализованная
   // Windows (в т.ч. русская) отклоняет задачу как неверное значение параметра /M.
+  // PL-57: MONTHLY-задачи получают явную будущую стартовую границу /SD. Без неё
+  // schtasks берёт дату создания как start boundary и «догоняет» пропущенный
+  // старт — задача стартует через минуты после создания, хотя nextRun в будущем.
   const dom = parseIntInRange(dayOfMonth, 1, 31);
   if (m !== undefined && h !== undefined && dom !== undefined && isStar(dayOfWeek)) {
     const startTime = String(h).padStart(2, "0") + ":" + String(m).padStart(2, "0");
     const extraFlags: string[] = ["/d", String(dom)];
+    let monthNumber: number | null = null;
     if (!isStar(month)) {
-      const monthNumber = MONTH_MAP[month];
-      if (!monthNumber) {
+      const mappedMonth = MONTH_MAP[month];
+      if (!mappedMonth) {
         throw new Error(
           "Неподдерживаемое поле месяца: " + month + ".\n\n" + UNSUPPORTED_ERROR,
         );
       }
       // PL-56: числовой месяц 1..12 работает на любой локали ОС, в отличие от
       // английского имени месяца, которое русская Windows не принимает в /m.
-      extraFlags.push("/m", monthNumber);
+      extraFlags.push("/m", mappedMonth);
+      monthNumber = Number(mappedMonth);
     }
+    extraFlags.push("/sd", nextMonthlyStartBoundary(dom, monthNumber));
     return {
       sc: "MONTHLY",
       extraFlags,
