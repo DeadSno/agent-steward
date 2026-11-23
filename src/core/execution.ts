@@ -1788,5 +1788,36 @@ export type {
   StepResultLike,
 } from "./agents.js";
 
+/* ------------------------------------------------------------------------- *
+ * M-5..M-8: расширенные примитивы (турнир, CEP, память, рецепты) живут в
+ * ./agents-advanced.js и реэкспортируются здесь для единого пути исполнения.
+ * Поведение execution loop не меняется: это чистые функции без сети и БД.
+ * ------------------------------------------------------------------------- */
+export {
+  DEFAULT_MEMORY_LIMIT,
+  DEFAULT_RECIPE,
+  MEMORY_DECAY_FACTOR,
+  MEMORY_METRIC_KEYS,
+  matchEventPattern,
+  rememberRun,
+  suggestRecipe,
+  tournament,
+} from "./agents-advanced.js";
+export type {
+  EventInput,
+  EventPattern,
+  EventPatternKind,
+  EventPatternResult,
+  RecipeConfig,
+  RecipeHistoryEntry,
+  RunMemory,
+  RunMemoryEntry,
+  RunMemoryRecord,
+  TournamentCandidate,
+  TournamentResult,
+  TournamentRow,
+  TournamentScoreFn,
+} from "./agents-advanced.js";
+
 /* A-2.1/A-2.2/A-3.1: env-профили и артефакты доступны из единого пути исполнения. */
 export * from "./environment.js";

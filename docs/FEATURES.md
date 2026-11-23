@@ -401,6 +401,20 @@ can be composed around a pipeline step:
   drops below a threshold, and fails open to the primary model when no
   fallback is available.
 
+### Advanced orchestration helpers
+
+Pure helpers in `src/core/agents-advanced.ts` (also re-exported from
+`src/core/execution.ts`) extend the orchestration primitives:
+
+- `tournament` ranks candidate models or prompts by an externally supplied
+  scoring function and returns the winner plus a deterministic results table.
+- `matchEventPattern` matches event sequences, bounded windows or numeric
+  aggregates in memory — no background timers or external services.
+- `rememberRun` keeps a capped, decaying cross-run memory of anonymized
+  identifiers and numeric metrics; free-form text and secrets are discarded.
+- `suggestRecipe` derives a deterministic pipeline configuration from past
+  run metrics and falls back to a balanced default on empty history.
+
 ## Multi-repository workspaces
 
 A workspace is a named directory: id, name, path, optional git remote and color.
@@ -666,6 +680,19 @@ and native OS notifications — configurable in settings and testable with
 - **Test button:** sends a test message to `all`, `webhook`, `telegram` or `native`
   and reports per-channel success/failure. Failures in one channel never block the
   others and never throw into the task run.
+
+### Telegram bot commands
+
+When `notifications.telegram.enabled` is on, the bot accepts pause/resume commands in the chat. Every command returns a short plain-text reply with the run id and the resulting status.
+
+| Command | Aliases | Action |
+| --- | --- | --- |
+| `/pause [runId]` | `/p`, `/hold` | Pause the given run, or the newest active run when the id is omitted. |
+| `/resume [runId]` | `/r`, `/unpause`, `/continue`, `/play` | Resume a paused/failed run, or the newest active run when the id is omitted. |
+
+- Commands are case-insensitive and also accept the `/pause@BotName <runId>` form. The run id is optional, may be a UUID and must contain only letters, digits, `_` or `-` (up to 128 characters); malformed ids are rejected.
+- Only the addressed run changes status, other runs stay untouched. Pausing an already paused run or resuming an already running run is a no-op with a confirmation reply.
+- Rejections (telegram disabled, unknown command, unknown run id, no active runs, wrong status) return a readable reply instead of throwing. The handler performs no Telegram API calls and reuses the existing run-panel pause/resume API.
 
 ### Secrets (Sprint 26)
 

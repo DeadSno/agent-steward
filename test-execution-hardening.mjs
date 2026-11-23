@@ -2276,6 +2276,242 @@ try {
   check("A-6.1/A-6.2: секция не выбросила исключение", false, "section threw");
 }
 
+// --- M-5.1..M-8.1: расширенная мульти-агентная оркестрация ---
+try {
+  const advanced = await import("./dist/core/agents-advanced.js");
+  const execAdvanced = await import("./dist/core/execution.js");
+  const {
+    tournament,
+    matchEventPattern,
+    rememberRun,
+    suggestRecipe,
+    DEFAULT_MEMORY_LIMIT,
+    MEMORY_DECAY_FACTOR,
+    DEFAULT_RECIPE,
+  } = advanced;
+
+  // M-5.1: турнир моделей/промптов.
+  const candidates = ["model-a", "model-b", "model-c"];
+  const byScore = { "model-a": 0.4, "model-b": 0.9, "model-c": 0.7 };
+  const duel = tournament(candidates, (candidate) => byScore[candidate]);
+  check(
+    "M-5.1: победитель определяется внешней оценкой",
+    duel.winner === "model-b",
+    JSON.stringify(duel)
+  );
+  check(
+    "M-5.1: таблица результатов отсортирована и проранжирована",
+    JSON.stringify(duel.results) ===
+      JSON.stringify([
+        { id: "model-b", score: 0.9, rank: 1 },
+        { id: "model-c", score: 0.7, rank: 2 },
+        { id: "model-a", score: 0.4, rank: 3 },
+      ]),
+    JSON.stringify(duel.results)
+  );
+  check(
+    "M-5.1: повторный турнир байт-в-байт одинаков",
+    JSON.stringify(tournament(candidates, (c) => byScore[c])) === JSON.stringify(duel)
+  );
+  check(
+    "M-5.1: equal-score разрешается лексикографически",
+    tournament(["zeta", "alpha"], () => 1).winner === "alpha"
+  );
+  check(
+    "M-5.1: пустые входы и отсутствие scoreFn дают пустой результат",
+    tournament([], () => 1).winner === null &&
+      JSON.stringify(tournament(null, () => 1).results) === "[]" &&
+      JSON.stringify(tournament(candidates, null).results) === "[]"
+  );
+  check(
+    "M-5.1: нечисловая оценка и исключение scoreFn не ломают турнир",
+    tournament(["bad", "ok"], (c) => (c === "bad" ? Number.NaN : 1)).winner === "ok" &&
+      tournament(["x", "y"], () => {
+        throw new Error("score failed");
+      }).results.every((row) => row.score === 0)
+  );
+  check(
+    "M-5.1: объекты-кандидаты и дубликаты обрабатываются детерминированно",
+    JSON.stringify(
+      tournament([{ id: "b" }, { id: "a" }, { id: "b" }], (c) => (c.id === "a" ? 5 : 1)).results
+    ) === JSON.stringify([
+      { id: "a", score: 5, rank: 1 },
+      { id: "b", score: 1, rank: 2 },
+    ])
+  );
+
+  // M-6.1: минимальный CEP.
+  const events = [
+    { type: "start", value: 1 },
+    { type: "cpu", value: 10 },
+    { type: "cpu", value: 20 },
+    { type: "finish", value: 3 },
+  ];
+  const seq = matchEventPattern(events, { kind: "sequence", sequence: ["cpu", "finish"] });
+  check(
+    "M-6.1: последовательность находится по подряд идущим типам",
+    seq.matched === true && JSON.stringify(seq.indices) === "[2,3]" && seq.aggregate === null,
+    JSON.stringify(seq)
+  );
+  check(
+    "M-6.1: отсутствующая последовательность не совпадает",
+    matchEventPattern(events, { kind: "sequence", sequence: ["finish", "cpu"] }).matched === false
+  );
+  const windowHit = matchEventPattern(events, {
+    kind: "window",
+    sequence: ["start", "cpu"],
+    window: 2,
+  });
+  check(
+    "M-6.1: окно находит типы с разрывом в пределах лимита",
+    windowHit.matched === true && JSON.stringify(windowHit.indices) === "[0,1]",
+    JSON.stringify(windowHit)
+  );
+  check(
+    "M-6.1: окно отклоняет слишком далёкие события",
+    matchEventPattern(events, { kind: "window", sequence: ["start", "finish"], window: 2 }).matched ===
+      false
+  );
+  const sum = matchEventPattern(events, {
+    kind: "aggregate",
+    types: ["cpu"],
+    field: "value",
+    aggregate: "sum",
+    min: 25,
+  });
+  check(
+    "M-6.1: агрегат sum с порогом считается по отфильтрованным событиям",
+    sum.matched === true && sum.aggregate === 30 && JSON.stringify(sum.indices) === "[1,2]",
+    JSON.stringify(sum)
+  );
+  check(
+    "M-6.1: агрегат с порогом выше значения не совпадает",
+    matchEventPattern(events, {
+      kind: "aggregate",
+      types: ["cpu"],
+      aggregate: "sum",
+      min: 100,
+    }).matched === false
+  );
+  check(
+    "M-6.1: пустые входы и шаблон fail-open",
+    matchEventPattern([], { sequence: ["cpu"] }).matched === false &&
+      matchEventPattern(null, { sequence: ["cpu"] }).matched === false &&
+      matchEventPattern(events, null).matched === false &&
+      matchEventPattern(events, { kind: "aggregate", types: ["cpu"], aggregate: "avg" }).aggregate ===
+        15
+  );
+
+  // M-7.1: память между прогонами.
+  let memory = null;
+  for (const id of ["run-a", "run-b", "run-c"]) {
+    memory = rememberRun(memory, { runId: id, metrics: { score: 0.5, retries: 1 } });
+  }
+  check(
+    "M-7.1: записи упорядочены по свежести и содержат только хеш и метрики",
+    memory.entries.length === 3 &&
+      memory.entries[0].runsAgo === 0 &&
+      /^h[0-9a-f]{8}$/.test(memory.entries[0].hash) &&
+      memory.entries[0].hash !== "run-c" &&
+      JSON.stringify(memory.entries[0].metrics) === JSON.stringify({ retries: 1, score: 0.5 }),
+    JSON.stringify(memory)
+  );
+  check(
+    "M-7.1: затухание по числу прогонов детерминировано",
+    MEMORY_DECAY_FACTOR === 0.5 &&
+      memory.entries[1].runsAgo === 1 &&
+      memory.entries[1].weight === 0.5 &&
+      memory.entries[2].runsAgo === 2 &&
+      memory.entries[2].weight === 0.25,
+    JSON.stringify(memory.entries)
+  );
+  let bounded = null;
+  for (const id of ["1", "2", "3"]) bounded = rememberRun(bounded, { runId: id }, 2);
+  check(
+    "M-7.1: лимит отбрасывает старые записи, totalRuns растёт",
+    bounded.entries.length === 2 &&
+      bounded.limit === 2 &&
+      bounded.totalRuns === 3 &&
+      bounded.entries[1].runsAgo === 1,
+    JSON.stringify(bounded)
+  );
+  const secretRun = rememberRun(null, {
+    runId: "run with API_KEY=sk-secret12345",
+    metrics: { password: "hunter2", score: 0.9, success: true },
+  });
+  const secretJson = JSON.stringify(secretRun);
+  check(
+    "M-7.1: секреты и произвольные поля в память не попадают",
+    !/sk-secret12345|hunter2|API_KEY|password/.test(secretJson) &&
+      secretRun.entries[0].metrics.success === 1,
+    secretJson
+  );
+  check(
+    "M-7.1: повторный вызов на тех же входах идентичен и не мутирует вход",
+    JSON.stringify(rememberRun(memory, { runId: "run-d", metrics: { score: 0.5 } })) ===
+      JSON.stringify(rememberRun(memory, { runId: "run-d", metrics: { score: 0.5 } })) &&
+      memory.entries.length === 3 &&
+      DEFAULT_MEMORY_LIMIT === 8
+  );
+
+  // M-8.1: само настраивающиеся конвейеры.
+  check(
+    "M-8.1: пустая и невалидная история fail-open",
+    JSON.stringify(suggestRecipe([])) === JSON.stringify(DEFAULT_RECIPE) &&
+      JSON.stringify(suggestRecipe(null)) === JSON.stringify(DEFAULT_RECIPE) &&
+      JSON.stringify(suggestRecipe(undefined)) === JSON.stringify(DEFAULT_RECIPE)
+  );
+  const badHistory = [
+    { metrics: { success: false, retries: 3, errors: 2, score: 0.1, durationMs: 9000 } },
+    { metrics: { success: false, retries: 2, score: 0.2, durationMs: 8000 } },
+  ];
+  check(
+    "M-8.1: высокая аварийность даёт thorough-конфиг",
+    JSON.stringify(suggestRecipe(badHistory)) ===
+      JSON.stringify({
+        strategy: "thorough",
+        model: "fallback",
+        maxAttempts: 4,
+        confidenceThreshold: 0.75,
+        parallelism: 1,
+      }),
+    JSON.stringify(suggestRecipe(badHistory))
+  );
+  const goodHistory = [
+    { metrics: { success: true, score: 0.95, durationMs: 1200 } },
+    { metrics: { success: true, score: 0.85, durationMs: 1800 } },
+  ];
+  check(
+    "M-8.1: быстрые успешные прогоны дают fast-конфиг",
+    suggestRecipe(goodHistory).strategy === "fast" &&
+      suggestRecipe(goodHistory).maxAttempts === 2 &&
+      suggestRecipe(goodHistory).parallelism === 2
+  );
+  check(
+    "M-8.1: средние метрики оставляют сбалансированный конфиг",
+    JSON.stringify(
+      suggestRecipe([{ metrics: { success: true, score: 0.6, durationMs: 2000 } }])
+    ) === JSON.stringify(DEFAULT_RECIPE)
+  );
+  check(
+    "M-8.1: рецепт детерминирован и принимает RunMemory",
+    JSON.stringify(suggestRecipe(goodHistory)) === JSON.stringify(suggestRecipe(goodHistory)) &&
+      suggestRecipe(rememberRun(null, { metrics: { success: true, score: 0.9 } })).strategy ===
+        "fast"
+  );
+  check(
+    "M-5..M-8: execution.ts реэкспортирует все новые функции",
+    ["tournament", "matchEventPattern", "rememberRun", "suggestRecipe"].every(
+      (name) => typeof execAdvanced[name] === "function"
+    ) &&
+      execAdvanced.DEFAULT_MEMORY_LIMIT === DEFAULT_MEMORY_LIMIT &&
+      JSON.stringify(execAdvanced.DEFAULT_RECIPE) === JSON.stringify(DEFAULT_RECIPE)
+  );
+} catch (err) {
+  console.log("[diag] M-5..M-8 section THREW:", err instanceof Error ? err.stack : String(err));
+  check("M-5..M-8: секция не выбросила исключение", false, "section threw");
+}
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\nExecution hardening: ${results.length - failed.length}/${results.length} проверок пройдено.`);
 try {
