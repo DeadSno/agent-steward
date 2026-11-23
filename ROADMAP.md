@@ -106,6 +106,8 @@ Legacy: `opencode-windows-scheduler@1.5.8`.
 
 ### QA-находки, найденные при проверке работоспособности плагина
 
+- [ ] PL-118 В логах дочерних запусков появляется сообщение `Не удалось обработать XML в потоке "Error" файла powershell.exe: 0x1B ...`: PowerShell 5.1 не десериализует CLIXML-поток stderr с ANSI ESC — `src/core/ps-wrapper.ts` — P3. Действие: вырезать ESC до десериализации или подавлять шум CLIXML, добавить регрессию в `test-execution-hardening.mjs`. Обнаружено 23.11.2026 при запуске задач QA.
+
 
 
 ---
