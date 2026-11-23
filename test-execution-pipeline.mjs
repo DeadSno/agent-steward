@@ -626,6 +626,22 @@ check(
   audit.listApprovals().every((item) => item.taskName !== "arch7-r0" && item.taskName !== "arch7-r1"),
 );
 
+// ARCH-7.3: гейт одобрений включается только явным options.approval.
+const r2NoApprovalPlan = await makeApprovalPlan("arch7-r2-no-request", "R2");
+const r2NoApprovalRun = await ac1.executeExecutionPlan(r2NoApprovalPlan, {
+  executors: [approvalExecutor],
+});
+check(
+  "ARCH-7.3: R2 без options.approval проходит как обычный запуск",
+  r2NoApprovalRun.status === "passed" &&
+    typeof r2NoApprovalRun.runId === "string" &&
+    r2NoApprovalRun.approval === undefined,
+);
+check(
+  "ARCH-7.3: R2 без options.approval не создаёт запрос в очереди",
+  audit.listApprovals().every((item) => item.taskName !== "arch7-r2-no-request"),
+);
+
 // R2: пока нет одобрения — нет ни run, ни эффектов; повтор запроса не дублируется.
 const r2Plan = await makeApprovalPlan("arch7-r2", "R2");
 let r2Effects = 0;

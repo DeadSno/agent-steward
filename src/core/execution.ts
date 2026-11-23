@@ -634,7 +634,11 @@ export interface ExecutePlanOptions {
   effects?: readonly EffectIntent[];
   /** Эффекты конкретных шагов (имеют приоритет над общими `effects`). */
   effectsByStep?: Readonly<Record<string, readonly EffectIntent[]>>;
-  /** ARCH-7.2: гейт ручных одобрений для R2/R3. */
+  /**
+   * ARCH-7.2: явный запрос ручного одобрения для R2/R3. Без этого поля
+   * execution loop работает как раньше, даже если класс риска требует
+   * одобрения для привилегированных операций.
+   */
   approval?: ApprovalGateOptions;
 }
 
@@ -660,10 +664,13 @@ export async function executeExecutionPlan(
   validateRunContext(plan.context);
 
   // ARCH-7.2: гейт одобрений — ДО createRun и до применения любых эффектов.
-  // При отсутствии approve run не создаётся, эффекты не объявляются и не
-  // применяются, а статус/аудит показывают ожидание (или отказ).
+  // Гейт включается только при явном запросе (`options.approval`):
+  // обычные ad-hoc/registered прогоны с hybrid-политикой (класс R2) не должны
+  // внезапно требовать ручного одобрения. При отсутствии approve run не
+  // создаётся, эффекты не объявляются и не применяются, а статус/аудит
+  // показывают ожидание (или отказ).
   let approval: ApprovalRecord | null = null;
-  if (requiresApproval(plan.context.riskClass)) {
+  if (options.approval && requiresApproval(plan.context.riskClass)) {
     const requestId = approvalKeyFor(plan.context, options);
     const runRef = options.approval?.runRef ?? requestId;
     approval = requestApproval({

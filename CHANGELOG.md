@@ -34,6 +34,8 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 - **ARCH-7.2 — гейт одобрений до `createRun`.** `executeExecutionPlan` вызывает очередь до создания запуска и до объявления/применения эффектов: без approve возвращает `status="awaiting_approval"|"rejected"`, `runId=null` и пустые шаги, в аудит пишется `run.awaiting_approval`/`run.approval_rejected`; после approve run создаётся с `approvalRequestId` в metadata. R0/R1 проходят без одобрения. Проверено: `node test-execution-pipeline.mjs` (exit 0, тесты блокировки run/эффектов, approve/reject и отсутствия дублей), `npm run build`, `node test-docs.mjs`;
 
+- **ARCH-7.3 — одобрение только по явному запросу.** Гейт ARCH-7.2 включается лишь при передаче `options.approval` в `executeExecutionPlan`: обычные ad-hoc/registered прогоны с риск-классом R2 и hybrid-политикой больше не блокируются и не создают записи в очереди. Регрессия `test-mission-run.mjs` (63/63) устранена; добавлены проверки R2 без `options.approval` в `test-execution-pipeline.mjs`. Проверено: `npm run build`, `node test-mission-run.mjs`, `node test-execution-pipeline.mjs`, `node test-execution-hardening.mjs`, `node test-audit.mjs`, `node test-docs.mjs` — все exit 0.
+
 ## [0.0.6] - 2026-11-20
 
 ### Added

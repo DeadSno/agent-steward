@@ -203,6 +203,8 @@ agent-steward — execution engine с опциональной регистра�
 
 - [ ] PL-64 В промпт ARCH-6 («报告和 run статус...») попал китайский текст в русскоязычную задачу — P3. Действие: добавить в `dry_run` проверку на смешанные скрипты CJK/кириллица в промпте и предупреждать до запуска; регрессия в `test-dry-run.mjs`.
 
+- [ ] PL-65 Quality Gate ARCH-7 не включал `test-mission-run.mjs`, поэтому регрессия ARCH-7.2 (обычный ad-hoc-запуск R2 блокировался без одобрения, `test-mission-run.mjs` падал) прошла незамеченной и была найдена только итоговой проверкой: `qualityGate` задачи ARCH-7 и `test-mission-run.mjs` — P1. Действие: требовать в `dry_run`/`qualityGate` полного набора сюит, затронутых изменёнными модулями (`src/core/execution.ts` → `test-mission-run.mjs`, `test-execution-pipeline.mjs`, `test-execution-hardening.mjs`), и добавить проверку покрытия в `test-dry-run.mjs`.
+
 ---
 
 # 4. Правила работы (канбан)
