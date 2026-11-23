@@ -105,9 +105,9 @@ src/db/tasks-repo.ts
 src/db/templates-repo.ts
 ```
 
-**Что видно:** 71 модуль в `src/core/` (из них 4 — `router/`, 9 — `scheduler/`, 1 — `wrappers/`) и 18 модулей в `src/db/`. Дurable-слой вынесен в `src/db/`, оркестрация — в `src/core/`.
+**Что видно:** 71 модуль в `src/core/` (из них 4 — `router/`, 10 — `scheduler/`, 1 — `wrappers/`) и 17 модулей в `src/db/`. Durable-слой вынесен в `src/db/`, оркестрация — в `src/core/`.
 
-**Ключевые выводы:** Принцип «ядро не зависит от транспорта» реализован через [`execution.ts`](src/core/execution.ts): исполнитель (`StepExecutor`) передаётся в `executeExecutionPlan` снаружи. Отдельного `gate-repo.ts` не существует — операции с `gate_outcomes` распределены между [`runs-repo.ts`](src/db/runs-repo.ts) и [`capability-repo.ts`](src/db/capability-repo.ts).
+**Ключевые выводы:** Принцип «ядро не зависит от транспорта» реализован через [`execution.ts`](src/core/execution.ts): исполнитель (`StepExecutor`) передаётся в `executeExecutionPlan` снаружи. Отдельного `gate-repo.ts` не существует — операции с `gate_outcomes` распределены между [`execution.ts`](src/core/execution.ts), [`runs-repo.ts`](src/db/runs-repo.ts) и [`capability-repo.ts`](src/db/capability-repo.ts).
 
 ---
 
