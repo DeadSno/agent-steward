@@ -72,9 +72,9 @@ stateDiagram-v2
     end note
 ```
 
-**Что видно:** `running` — единственное состояние с само-переходом (`renewStepLease`). Истёкший lease переводит шаг в `failed`, откуда два выхода: `retryStep` (обычный ретрай) или DLQ после исчерпания попыток.
+**Что видно:** `running` — единственное состояние с само-переходом (`renewStepLease`). Истёкший lease переводит шаг в `failed`, откуда два выхода: `retryStep` (обычный ретрай) или DLQ после исчерпания попыток. Есть и второй вход в `failed`: на старте рекордера `recoverStaleRunningOnRecorderStart` ([record-history.ts](src/core/record-history.ts:121)) закрывает просроченные `running`-записи как `interrupted`, а `markInterruptedRunWithPartialEdits` ([run-journal.ts](src/db/run-journal.ts:357)) помечает durable-run как `failed` с метками `partialWorktreeEdits`/`explicitRetryRequired` — автоповтора нет.
 
-**Ключевые выводы:** `STEP_LEASE_MS = 60_000` и `STEP_INTERRUPTED_ERROR` определены в [run-journal.ts](src/db/run-journal.ts:27). Идемпотентность шага обеспечивают `findStepByIdempotencyKey` и `finishStep` в [runs-repo.ts](src/db/runs-repo.ts), а запись/перезапуск DLQ — `enqueueDeadLetter`/`retryDeadLetter`/`discardDeadLetter` в [run-dlq.ts](src/db/run-dlq.ts). Verdict гейта `flake`/`infra_fail` не меняет статус capability map — см. [capability-repo.ts](src/db/capability-repo.ts:503).
+**Ключевые выводы:** `STEP_LEASE_MS = 60_000` ([run-journal.ts](src/db/run-journal.ts:35)) и `STEP_INTERRUPTED_ERROR` ([run-journal.ts](src/db/run-journal.ts:28)) определены в journal. Идемпотентность шага обеспечивают `findStepByIdempotencyKey` и `finishStep` в [runs-repo.ts](src/db/runs-repo.ts), а запись/перезапуск DLQ — `enqueueDeadLetter`/`retryDeadLetter`/`discardDeadLetter` в [run-dlq.ts](src/db/run-dlq.ts). Verdict гейта `flake`/`infra_fail` не меняет статус capability map — см. [capability-repo.ts](src/db/capability-repo.ts:503).
 
 ---
 

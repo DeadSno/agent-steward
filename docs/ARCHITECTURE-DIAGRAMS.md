@@ -245,7 +245,7 @@ flowchart TB
 
     subgraph run["Исполнение"]
         EXEC["executeExecutionPlan — execution.ts:1029"]
-        JOUR["runStepStatefullyAsync — run-journal.ts:172"]
+        JOUR["runStepStatefullyAsync — run-journal.ts:181"]
         WG["writeGateOutcome — execution.ts:395"]
         GATE["runGateWithRetry — router/escalation.ts:184"]
         EFFECT["recordEffectIntents / applyDeferredEffects — gate-integrity.ts:503 / :549"]
@@ -284,7 +284,7 @@ flowchart TB
 
 **Что видно:** замыкание «исполнение → ledger → capability map → роутинг» — это и есть самообучающийся роутинг. `writeGateOutcome` — единственная точка записи вердикта, откуда данные расходятся в ledger и в обучение карты.
 
-**Ключевые выводы:** Правило «flake/infra_fail не обновляют capability_map» реализовано в `recordGateVerdict`: карту трогает только `recordCapabilityOutcome` для стабильных `pass`/`fail`. Lease шага (`renewStepLease` в [runs-repo.ts](src/db/runs-repo.ts:553) и [run-journal.ts](src/db/run-journal.ts:110)) — основа safe-resume: живой процесс не даёт recovery финализировать чужой шаг.
+**Ключевые выводы:** Правило «flake/infra_fail не обновляют capability_map» реализовано в `recordGateVerdict`: карту трогает только `recordCapabilityOutcome` для стабильных `pass`/`fail`. Lease шага (`renewStepLease` в [runs-repo.ts](src/db/runs-repo.ts:553) и [run-journal.ts](src/db/run-journal.ts:119)) — основа safe-resume: живой процесс не даёт recovery финализировать чужой шаг.
 
 ### 6. Модель данных (ER-диаграмма)
 
@@ -400,7 +400,7 @@ erDiagram
 | Возможность | Где | Ключевые символы |
 |---|---|---|
 | Durable execution | [runs-repo.ts](src/db/runs-repo.ts), [run-journal.ts](src/db/run-journal.ts) | `createRun`, `finishStep`, `renewStepLease`, `runStepStatefullyAsync` |
-| Lease + recovery | [run-resume.ts](src/db/run-resume.ts), [recovery.ts](src/db/recovery.ts) | `findResumeStep`, `resumeRun`, `recoverInterruptedSteps` |
+| Lease + recovery | [run-resume.ts](src/db/run-resume.ts), [run-journal.ts](src/db/run-journal.ts), [record-history.ts](src/core/record-history.ts) | `findResumeStep`, `resumeRun`, `recoverInterruptedSteps`, `recoverStaleRunningOnRecorderStart` (PL-63), `markInterruptedRunWithPartialEdits` |
 | Tamper-evident ledger | [runs-repo.ts](src/db/runs-repo.ts) | `recordGateOutcome`, `readGateOutcomeLedger`, `verifyGateOutcomeChain` |
 | Capability map (самообучение) | [capability-repo.ts](src/db/capability-repo.ts), [dispatch.ts](src/core/router/dispatch.ts) | `recordCapabilityOutcome`, `decideCapabilityRoute`, `routeStep` |
 | Flake-aware verdict + карантин | [escalation.ts](src/core/router/escalation.ts), [capability-repo.ts](src/db/capability-repo.ts) | `runGateWithRetry`, `resolveGateOutcome`, `recordGateVerdict`, `isGateQuarantined` |
@@ -416,8 +416,8 @@ erDiagram
 
 ### Чего не хватает / неоднозначно
 
-1. **`src/db/gate-repo.ts` отсутствует.** Ledger и обучение карты разнесены по двум модулям. Это не баг, но диаграммы, assumptions которые «gate-repo.ts есть», будут неверны. Зафиксировано в таблице проверки выше.
-2. **Webhook-триггер есть на HTTP-уровне, но отсутствует в `RunTrigger`.** В [execution.ts](src/core/execution.ts:65) перечислены `manual | cron | file | git | mcp-event | once`, а `triggerKindFor` (:365) превращает `mcp-event` → `mcp`. Ветка webhook попадает в scheduled run через `server.ts`/`integrations.ts`, но как отдельный `trigger_kind` в ledger не попадает → в отчётах webhook-запуски неотличимы от cron. Кандидат в ROADMAP.
+1. **`src/db/gate-repo.ts` отсутствует.** Ledger и обучение карты разнесены по трём модулям (`execution.ts`, `runs-repo.ts`, `capability-repo.ts`). Это не баг, но диаграммы, предполагающие наличие `gate-repo.ts`, будут неверны. Зафиксировано в таблице проверки выше.
+2. **Webhook-триггер есть на HTTP-уровне, но отсутствует в `RunTrigger`.** В [execution.ts](src/core/execution.ts:65) перечислены `manual | cron | file | git | mcp-event | once`, а `triggerKindFor` (:365) превращает `mcp-event` → `mcp`. Ветка webhook попадает в scheduled run через `server.ts`/`integrations.ts`, но как отдельный `trigger_kind` в ledger не попадает → в отчётах webhook-запуски неотличимы от cron. Зафиксировано как PL-91 в `ROADMAP.md`.
 3. **Approval UI/RPC не интегрирован.** Ядро очереди одобрений есть (`requestApproval`/`decideApproval` в [audit.ts](src/core/audit.ts), гейт в `executeExecutionPlan`), но открытая задача A-1 §3 ROADMAP ещё не закрыта: GUI/RPC-экрана подтверждения нет.
 4. **Docker/SSH runner отсутствует** — открытые задачи D-1/D-2/D-3 (§3 ROADMAP). Исполнители сейчас: OpenCode CLI, shell, локальная модель.
 5. **Экономика v2 частична** — `budget.ts` считает day/week/per-task гейты, но E-3 (token efficiency), E-4 (прогноз/Grafana), E-5 (local vs cloud) открыты.
