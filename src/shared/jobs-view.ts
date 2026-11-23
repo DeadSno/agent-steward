@@ -135,6 +135,60 @@ function historyStatus(record: HistoryRecord | undefined): JobStatus {
 }
 
 /**
+ * PL-61: `running` — начатый, но ещё не завершённый прогон. Такая запись
+ * не является ни ошибкой, ни успешным запуском.
+ */
+export function isFinishedRun(status: string | undefined | null): boolean {
+  return status != null && status !== "running";
+}
+
+/** Счётчики запусков по одной задаче. */
+export interface RunCounts {
+  /** Только завершённые запуски. */
+  total: number;
+  success: number;
+  error: number;
+  partial: number;
+  /** Запуски в процессе: в total не входят и error не считаются. */
+  running: number;
+}
+
+/**
+ * Считает счётчики только по завершённым записям истории (PL-61).
+ *
+ * Раньше ветка `else` относила незавершённую запись `running` к `error`,
+ * поэтому во время прогона задача выглядела как «1 ошибка, 0 успехов», а
+ * после перезаписи записи результатом счётчики «сами исправлялись». Теперь
+ * незавершённый прогон учитывается отдельным полем `running`.
+ */
+export function countRunsFromHistory(
+  records: readonly Pick<HistoryRecord, "taskName" | "status">[],
+): Map<string, RunCounts> {
+  const byTask = new Map<string, RunCounts>();
+  for (const record of records) {
+    const key = String(record.taskName ?? "").toLowerCase();
+    if (!key) continue;
+    const counts = byTask.get(key) ?? {
+      total: 0,
+      success: 0,
+      error: 0,
+      partial: 0,
+      running: 0,
+    };
+    if (!isFinishedRun(record.status)) {
+      counts.running += 1;
+    } else {
+      counts.total += 1;
+      if (record.status === "success") counts.success += 1;
+      else if (record.status === "partial") counts.partial += 1;
+      else counts.error += 1;
+    }
+    byTask.set(key, counts);
+  }
+  return byTask;
+}
+
+/**
  * Собирает панельное представление из уже прочитанных данных.
  * Вынесено отдельно, чтобы логику статусов и матричных связей можно было
  * проверить без реального планировщика.

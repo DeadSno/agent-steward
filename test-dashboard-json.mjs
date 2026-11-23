@@ -278,6 +278,58 @@ assert(zombieGone && zombieGone.ok === true, "на освобождённом п
 await closeDashboardServer();
 if (!zombie.killed) zombie.kill();
 
+// --- 5. PL-61: счётчики во время незавершённого прогона ------------------
+// list_tasks/get_tasks во время прогона отдавали runsError=1, runsSuccess=0:
+// запись `running` попадала в history-fallback как error. Проверяем JSON
+// вывода задач: незавершённый запуск не считается ошибкой.
+{
+  insertHistory({
+    taskName: "json-task",
+    status: "running",
+    startedAt: new Date().toISOString(),
+    finishedAt: null,
+    durationMs: 0,
+  });
+
+  const pl61Deps = {
+    ...normalDeps,
+    getTasks: async () => [
+      {
+        name: "json-task",
+        schedule: "* * * * *",
+        status: "running",
+        nextRun: null,
+        // Такой счётчик отдавал list_tasks во время прогона (PL-61).
+        runsTotal: 1,
+        runsSuccess: 0,
+        runsError: 1,
+        runsPartial: 0,
+      },
+    ],
+  };
+  const pl61 = await startDashboardServer(pl61Deps, { preferred: 4370, fallback: 4371 });
+  assert(pl61 && pl61.port === 4370, "PL-61: сервер стартовал на тестовом порту 4370");
+  const pl61Api = await readJsonResponse(
+    await fetch("http://127.0.0.1:" + pl61.port + "/api/tasks")
+  );
+  const pl61Task = pl61Api.body.tasks.find((t) => t.name === "json-task");
+  assert(
+    pl61Task?.status === "running",
+    "PL-61: задача во время прогона остаётся running"
+  );
+  assert(
+    pl61Task?.runsError === 0 && pl61Task?.runsSuccess === 0 && pl61Task?.runsTotal === 0,
+    "PL-61: незавершённый прогон не классифицируется как error (runsError=0)"
+  );
+  assert(
+    pl61Task?.metrics?.running === 1 &&
+      pl61Task?.metrics?.error === 0 &&
+      pl61Task?.metrics?.total === 0,
+    "PL-61: running учитывается отдельно и не входит в total/error"
+  );
+  await closeDashboardServer();
+}
+
 assert(isDashboardRunning() === false && getDashboardPort() === null, "после тестов сервер закрыт");
 
 // Уборка временных файлов (с backoff: дочерние процесса могут ещё держать файлы).

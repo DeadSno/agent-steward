@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { loadHistory, loadMetrics } from "./history.js";
+import { countRunsFromHistory } from "./shared/jobs-view.js";
 import {
   getHistory,
   getHistoryForAnalytics,
@@ -1657,29 +1658,33 @@ export function annotateHistoryWithSnapshotPolicy<
 async function collectTasksWithMetrics(deps: DashboardDeps) {
   const [history, tasks] = await Promise.all([loadHistory(), deps.getTasks()]);
 
-  const byTask = new Map<string, TaskMetrics>();
-  for (const r of history) {
-    const key = String(r.taskName || "").toLowerCase();
-    if (!key) continue;
-    const m = byTask.get(key) ?? { total: 0, success: 0, error: 0, partial: 0, running: 0 };
-    m.total += 1;
-    if (r.status === "success") m.success += 1;
-    else if (r.status === "partial") m.partial += 1;
-    else if (r.status === "running") m.running += 1;
-    else m.error += 1;
-    byTask.set(key, m);
-  }
+  // PL-61: общий helper считает только завершённые записи; `running` живёт
+  // отдельно и больше не попадает в error (раньше его ловил ветка `else`).
+  const byTask = countRunsFromHistory(history);
+  const emptyMetrics: TaskMetrics = {
+    total: 0,
+    success: 0,
+    error: 0,
+    partial: 0,
+    running: 0,
+  };
 
-  return tasks.map((t) => ({
-    ...t,
-    metrics: byTask.get(String(t.name).toLowerCase()) ?? {
-      total: 0,
-      success: 0,
-      error: 0,
-      partial: 0,
-      running: 0,
-    },
-  }));
+  return tasks.map((t) => {
+    const counts = byTask.get(String(t.name ?? "").toLowerCase()) ?? emptyMetrics;
+    const metrics: TaskMetrics = { ...counts };
+    // get_tasks/list_tasks во время прогона могли отдать runsError=1 для
+    // незавершённой записи (её ещё нет в таблице метрик, а history-fallback
+    // считал её ошибкой). Пока есть незавершённый запуск, пересчитываем
+    // счётчики по завершённым записям — задача не выглядит упавшей.
+    const runningPatch: Record<string, number> = {};
+    if (counts.running > 0) {
+      runningPatch.runsTotal = counts.total;
+      runningPatch.runsSuccess = counts.success;
+      runningPatch.runsError = counts.error;
+      runningPatch.runsPartial = counts.partial;
+    }
+    return { ...t, ...runningPatch, metrics };
+  });
 }
 
 /**
