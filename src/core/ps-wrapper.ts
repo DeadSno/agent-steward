@@ -1012,6 +1012,10 @@ try {
         } catch {}
         if ($quotaLine.Count -gt 0) {
             $quotaReason = [string]$quotaLine[0]
+            # PL-114: strip ANSI/control noise and cap the length.
+            $quotaReason = [regex]::Replace($quotaReason, "$esc\\[[0-9;?]*[A-Za-z]", "")
+            $quotaReason = ($quotaReason -replace '[^\x20-\x7EА-Яа-яЁё]', '').Trim()
+            if ($quotaReason.Length -gt 160) { $quotaReason = $quotaReason.Substring(0, 160) + '...' }
             $quotaSlug = $TaskName -replace '[^a-zA-Z0-9_-]', '-'
             $quotaDiff = ""
             try {
@@ -1175,7 +1179,10 @@ try {
     $endTime = Get-Date
     $durationMs = [int](($endTime - $startTime).TotalMilliseconds)
     # Hotfix 1.5.3.1: статус timeout теперь реально выставляется (см. Invoke-OpenCodeOnce).
-    if ($script:timedOut) {
+    # PL-114: quota is the root cause even when the watchdog also fired.
+    if ($quotaDetected) {
+        $status = "error"
+    } elseif ($script:timedOut) {
         $status = "timeout"
     } elseif ($script:exitCode -eq 0) {
         $status = "success"
@@ -1696,3 +1703,22 @@ export async function requestImmediateRun(taskName: string): Promise<string> {
   return file;
 }
 
+
+/**
+ * PL-114: quota errors arrive as long, ANSI-stained, sometimes double-decoded
+ * lines. Turn them into one short ASCII/Cyrillic message so the dashboard and
+ * the run history show "quota exhausted", not a timeout or a mojibake blob.
+ */
+export function normalizeQuotaReason(raw: string): string {
+  const text = String(raw ?? "")
+    .replace(/\u001b\[[0-9;?]*[A-Za-z]/g, "")
+    .replace(/[\x00-\x1F]/g, " ") // PL-114: control chars become separators
+    .replace(/[^\x20-\x7EА-Яа-яЁё]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const short = text.length > 160 ? text.slice(0, 160) + "..." : text;
+  if (!short) return "Model quota error (details in task log)";
+  return /free usage limit|insufficient balance/i.test(short)
+    ? "Free quota exhausted: " + short
+    : short;
+}

@@ -663,7 +663,7 @@ export function buildBashWrapperScript(options: BashWrapperOptions): string {
     // PL-83: квота/баланс модели — отдельный класс ошибки (код 126 + явная
     // подсказка и partial-diff), а не безликий «Код возврата 1».
     'elif [ "$EXIT_CODE" -ne 0 ] && [ -f "$LOG_FILE" ] && grep -qE \'Free usage limit reached|Insufficient Balance|free usage limit\' "$LOG_FILE"; then',
-    '  QUOTA_REASON=$(grep -E \'Free usage limit reached|Insufficient Balance|free usage limit\' "$LOG_FILE" | tail -n 1)',
+    '  QUOTA_REASON=$(grep -E \'Free usage limit reached|Insufficient Balance|free usage limit\' "$LOG_FILE" | tail -n 1 | cut -c1-160)',
     '  SAFE_NAME=$(printf \'%s\' "$TASK_NAME" | tr -c \'[:alnum:]_-\' \'-\')',
     '  QUOTA_DIFF="$WORKDIR/reports/quota-$SAFE_NAME.diff"',
     '  mkdir -p "$WORKDIR/reports" 2>/dev/null || true',

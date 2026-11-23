@@ -1447,6 +1447,34 @@ check(
   );
 }
 
+// --- PL-114: quota reason normalization ---
+{
+  const { normalizeQuotaReason } = await import("./dist/core/ps-wrapper.js");
+  const wrapperSrc = fs.readFileSync(path.resolve("src/core/ps-wrapper.ts"), "utf8");
+  const bashSrc = fs.readFileSync(path.resolve("src/core/wrappers/bash.ts"), "utf8");
+  check(
+    "PL-114 ANSI and mojibake stripped",
+    normalizeQuotaReason("\u001b[31mÐ¡Ð²Ð¾Ð±Ð¾Ð´Ð½Ñ‹Ð¹ Free usage limit reached\u001b[0m").startsWith("Free quota exhausted:")
+  );
+  check(
+    "PL-114 long reason truncated",
+    normalizeQuotaReason("x".repeat(500)).length <= 164
+  );
+  check(
+    "PL-114 unknown reason stays readable",
+    normalizeQuotaReason("ECONNRESET\nretry") === "ECONNRESET retry"
+  );
+  check(
+    "PL-114 quota wins over timeout status",
+    wrapperSrc.includes("PL-114: quota is the root cause") &&
+      /if \(\$quotaDetected\) \{[\s\S]{0,80}\$status = "error"/.test(wrapperSrc)
+  );
+  check(
+    "PL-114 bash reason capped",
+    bashSrc.includes("cut -c1-160")
+  );
+}
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\nExecution hardening: ${results.length - failed.length}/${results.length} проверок пройдено.`);
 try {
