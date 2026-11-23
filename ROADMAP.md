@@ -52,6 +52,7 @@ Legacy: `opencode-windows-scheduler@1.5.8`.
 - [ ] PL-127 `scripts/pl-commit.ps1` не делает rebase при non-fast-forward push: при параллельном пуше в ту же ветку три попытки (`push`, `push#2`, `push#3`) получают reject, после чего helper пишет `FAIL push`, хотя коммит и quality gate зелёные; в `scripts/steward-commit.ps1` такой путь есть (PL-104) — `scripts/pl-commit.ps1` — P2. Действие: fetch + `rebase --autostash origin/dev` перед повторным push, как в steward-commit.ps1. Воспроизведено 23.11.2026 на QA-PL118-CLIXML когда параллельный агент запушил S3-D36.
 - [ ] PL-128 дочерний процесс убит watchdog по таймауту (exit 124), но quality gate пройден: история получает статус `timeout`, post-flight помечается `error`, хотя PL-81 считает задачу успешной по вердикту гейта — `src/core/record-history.ts`, `src/core/ps-wrapper.ts` — P2. Действие: при gate=pass и exit=124 финализировать запись как success с причиной таймаута, не invalidating post-flight. Воспроизведено 23.11.2026 на QA-PL118-CLIXML.
 - [ ] PL-129 `schedule_task` в core-профиле плагина не пробрасывает поля `mcpEvent` и `nextTaskOnSuccess` (а также остальные 18 «толстых» ключей `ADVANCED_SCHEMA_KEYS`): попытка создать MCP-event-зонд через `schedule_task` падает с «Для MCP-триггера нужно указать имя события», хотя `mcpEvent:{server,event}` передан; цепочки `nextTaskOnSuccess` из `.opencode/skills/roadmap-plugin-workflow/SKILL.md` в core-профиле невозможны — `src/core/tool-profile.ts`, `src/index.ts` — P2. Действие: либо документировать обязательный `schedule_advanced`/профиль `all` для event/chain, либо пробрасывать минимальные поля в core-схему; проверить в `test-agent-tools.mjs`. Обнаружено 23.11.2026 при проверке зондов Детали 3.13.
+- [ ] PL-130 file-триггер срабатывает на каждую запись в наблюдаемый файл, включая собственные правки агента: зонд `DS313-FILE-PROBE` (watchPath — `ROADMAP.md`) за один сеанс получил 12 запусков (1 success, 11 error «Код возврата 1»), при этом `get_task_logs` содержит только общую строку об ошибке без причины падения агента — `src/core/file-watcher.ts`, `src/core/scheduler/run-now.ts`, `src/core/ps-wrapper.ts` — P3. Действие: дебаунс/игнорирование изменений, вызванных самим агентом, и логирование причины ошибки (например, лимита тарифа) вместо «Код возврата 1». Обнаружено 23.11.2026 при проверке зондов Детали 3.13.
 
 ## Деталь 3.9 — Портабельность: OpenCode → MCP / dsh / ACP (0.2.x+)
 `src/core/`, `src/adapters/`, `src/invokers/`, `src/cli.ts`
@@ -105,14 +106,9 @@ Legacy: `opencode-windows-scheduler@1.5.8`.
 **Задача B-3 — Диета описаний manage_* (admin-профиль)** · P3 · ⬜
 - [ ] B-3.1 Сократить описания manage_* без потери PL-70-контракта; замер `measureToolSurface` + gpt-tokenizer до/после (admin сейчас ≈13.4k токенов)
 
-## Деталь 3.13 — Синхронизация документации и диаграмм после 3.10/3.11 (0.0.7+)
-`docs/ARCHITECTURE.md`, `docs/ARCHITECTURE-DIAGRAMS.md`, `docs/ARCHITECTURE-DIAGRAMS-SEQUENCES.md`, `docs/ARCHITECTURE-DIAGRAMS-STATES.md`, `ROADMAP-STRATEGY.md`, `docs/CONCEPT.md`, `docs/EXECUTION-LOOP.md`
-
-> Аудит 23.11.2026: каркас документов корректен, но после быстрых итераций
-> накопился дрейф — устаревшие счётчики, висячие ссылки на закрытые задачи
-> и одна содержательная ошибка в sequence 4.1.
-
-**Задача DS-5 — Структура и устойчивость документов** · P3 · ⬜
+> Деталь 3.13 — синхронизация документации и диаграмм после 3.10/3.11 — закрыта
+> 23.11.2026: счётчики 32/59, четыре локали, список модулей и якоря сверены с кодом,
+> DS-1…DS-5 перенесены в CHANGELOG. Актуальные находки проверки плагина — PL-129/PL-130.
 
 ---
 
