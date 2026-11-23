@@ -1475,6 +1475,42 @@ check(
   );
 }
 
+// --- PL-115: Windows PowerShell 5.1 parser regression ---
+try {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "steward-pl115-"));
+  const writePs = (name, body) => {
+    const file = path.join(tmpDir, name);
+    fs.writeFileSync(file, body, "utf8");
+    return file;
+  };
+  const parsePsFile = (abs) => {
+    const escaped = abs.replace(/'/g, "''");
+    const command =
+      "$t=$null;$e=$null;" +
+      `[void][System.Management.Automation.Language.Parser]::ParseFile('${escaped}',[ref]$t,[ref]$e);` +
+      "exit $e.Count";
+    return spawnSync("powershell.exe", ["-NoProfile", "-Command", command], {
+      encoding: "utf8",
+      windowsHide: true,
+    });
+  };
+  const commaFile = writePs("trailing-comma.ps1", "$a = @('x',)\nWrite-Output 'ok'\n");
+  const cleanFile = writePs("clean.ps1", "$a = @('x')\nWrite-Output 'ok'\n");
+  const cyrillicFile = writePs("cyrillic-no-bom.ps1", "# кириллица\nWrite-Output 'ok'\n");
+  check("PL-115: trailing comma rejected by PS 5.1 parser", parsePsFile(commaFile).status !== 0);
+  check("PL-115: clean ASCII helper parses", parsePsFile(cleanFile).status === 0);
+  check(
+    "PL-115: Cyrillic without BOM parses (premise refined empirically)",
+    parsePsFile(cyrillicFile).status === 0
+  );
+  for (const rel of ["scripts/pl-commit.ps1", "scripts/steward-commit.ps1"]) {
+    const bytes = fs.readFileSync(path.resolve(rel));
+    check(`PL-115: ${rel} ASCII-only`, [...bytes].every((b) => b < 128));
+  }
+} catch (err) {
+  check("PL-115: секция не выбросила исключение", false, String(err));
+}
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\nExecution hardening: ${results.length - failed.length}/${results.length} проверок пройдено.`);
 try {

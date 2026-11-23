@@ -107,7 +107,6 @@ Legacy: `opencode-windows-scheduler@1.5.8`.
 ### QA-находки, найденные при проверке работоспособности плагина
 
 
-- [ ] PL-115 Windows PowerShell 5.1 не парсит `.ps1` с кириллицей без BOM и с trailing comma в массиве: `test-execution-hardening.mjs`, проверка `Parser::ParseFile` через `powershell.exe` — P2. Действие: держать коммит-хелперы в ASCII и проверять парсинг сгенерированного `run-task.ps1` в регрессии; `scripts/pl-commit.ps1` и `scripts/steward-commit.ps1` уже переведены в ASCII. Обнаружено при выполнении STEWARD-B4 23.11.2026.
 
 ---
 
