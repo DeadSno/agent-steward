@@ -339,6 +339,67 @@ export function formatTaskTokenBudgetSkipMessage(
   return `Task token budget exceeded: "${decision.taskName}" used ${decision.maxRunTokens} tokens in one run (${period} limit ${decision.tokenBudget}) — run skipped.`;
 }
 
+/**
+ * PL-125/B-1.1: код возврата recorder'а, означающий «запуск пропущен гейтом».
+ * Только этот код трактуется .cmd-обёрткой как штатный skip (exit /b 0).
+ */
+export const BUDGET_GATE_SKIP_EXIT_CODE = 3;
+
+/**
+ * B-1.1: единое решение о запуске — глобальный бюджет И токен-бюджет задачи.
+ *
+ * Одна чистая функция для всех входов: MCP/RPC/manual (src/index.ts) и
+ * registered-путь ОС-планировщика (recorder, `--budget-gate`). Проверяет оба
+ * гейта на одной и той же выборке истории, чтобы обойти и суточный/недельный
+ * лимит USD, и лимит токенов на один прогон конкретной задачи. Fail-open
+ * полностью сохраняется: выключенный бюджет и лимит 0/undefined не блокируют.
+ */
+export interface RunBudgetGateDecision {
+  allowed: boolean;
+  /** Причина суммарного решения; `task_*` — сработал токен-бюджет задачи. */
+  reason: BudgetGateReason | "task_day_exceeded" | "task_week_exceeded";
+  /** Готовая причина пропуска для лога и истории; пустая, если запуск разрешён. */
+  message: string;
+  global: BudgetGateDecision;
+  task: TaskTokenBudgetDecision;
+}
+
+export function evaluateRunBudgetGate(
+  records: AnalyticsRecord[],
+  settings: BudgetSettings = DEFAULT_BUDGET_SETTINGS,
+  taskName = "",
+  tokenBudget: number | undefined = undefined,
+  now: Date = new Date(),
+): RunBudgetGateDecision {
+  const global = evaluateBudgetGate(records, settings, now);
+  const task = evaluateTaskTokenBudgetGate(records, taskName, tokenBudget, now);
+  if (!global.allowed) {
+    return {
+      allowed: false,
+      reason: global.reason,
+      message: formatBudgetSkipMessage(global),
+      global,
+      task,
+    };
+  }
+  if (!task.allowed) {
+    return {
+      allowed: false,
+      reason: task.period === "week" ? "task_week_exceeded" : "task_day_exceeded",
+      message: formatTaskTokenBudgetSkipMessage(task),
+      global,
+      task,
+    };
+  }
+  return {
+    allowed: true,
+    reason: global.reason,
+    message: "",
+    global,
+    task,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Экономика v2, Деталь 3.3: E-3.1 (token efficiency) и E-4.1 (forecast).
 // Обе функции чистые: только уже загруженная история, без БД/HTTP/ОС.

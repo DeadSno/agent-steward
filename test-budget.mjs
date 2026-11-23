@@ -6,11 +6,16 @@
  * Чистые функции: никаких БД, HTTP или ОС — только история и лимиты.
  */
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import {
+  BUDGET_GATE_SKIP_EXIT_CODE,
   buildBudgetReport,
   defaultBudgetSettings,
   evaluateBudgetGate,
+  evaluateRunBudgetGate,
   evaluateTaskTokenBudgetGate,
   formatBudgetAlertMessage,
   formatBudgetSkipMessage,
@@ -223,13 +228,14 @@ check(
 );
 
 // 7b. Гейт запуска не должен зависеть от окна в 20000 записей.
+// B-1.1: источник теперь общий для всех входов — checkRunBudgetGate.
 const gateSource = fs.readFileSync("./src/index.ts", "utf8");
 const gateBody = gateSource.slice(
-  gateSource.indexOf("async function checkBudgetGate"),
+  gateSource.indexOf("async function checkRunBudgetGate"),
   gateSource.indexOf("async function runTaskEntry"),
 );
 check(
-  "checkBudgetGate: использует getHistoryForBudget, а не getHistory(null, 20000)",
+  "checkRunBudgetGate: использует getHistoryForBudget, а не getHistory(null, 20000)",
   gateBody.includes("getHistoryForBudget(") &&
     !gateBody.includes("getHistory(null, 20000)") &&
     gateBody.includes("startOfUtcWeek(")
@@ -402,9 +408,10 @@ check("E-2.2: сумма двух прогонов ниже лимита не б
 check("E-2.2: сообщение о пропуске содержит имя задачи и 'run skipped'", formatTaskTokenBudgetSkipMessage(dayGate).includes("limited") && formatTaskTokenBudgetSkipMessage(dayGate).includes("run skipped"));
 check("E-2.2: для разрешённого запуска сообщение пустое", formatTaskTokenBudgetSkipMessage(withinGate) === "");
 
-// E-2.2: гейт подключён ко всем входам запуска задачи в index.ts.
+// E-2.2/B-1.1: все ручные/MCP/RPC-входы идут через общий гейт, тот же самый,
+// что использует registered-путь рекордера.
 const pluginSource = fs.readFileSync(new URL("./src/index.ts", import.meta.url), "utf8");
-check("E-2.2: index.ts подключает гейт в runTaskEntry и run_task", (pluginSource.match(/checkTaskTokenBudgetGate\(/g) ?? []).length >= 3 && pluginSource.includes("evaluateTaskTokenBudgetGate"));
+check("E-2.2: index.ts подключает общий гейт в runTaskEntry и run_task", (pluginSource.match(/checkRunBudgetGate\(/g) ?? []).length >= 3 && pluginSource.includes("evaluateRunBudgetGate") && !pluginSource.includes("checkTaskTokenBudgetGate"));
 
 // --- 13. E-3.1: token efficiency score -------------------------------------
 const efficiencyRecords = [
@@ -584,6 +591,184 @@ check(
     );
   })()
 );
+
+// --- PL-125 / B-1.1 / B-1.2: registered-путь cron/once ---------------------
+// Гейт ОС-планировщика обязан проверять те же два лимита, что и ручной вход,
+// до старта opencode, и оставлять видимый пропуск (skipped + причина).
+const registeredNow = new Date("2026-06-17T12:00:00Z");
+const spentToday = day("2026-06-17T09:00:00Z", {
+  taskName: "cron-task",
+  costUsd: 2,
+  tokens: 300,
+});
+const tokenOver = day("2026-06-17T10:00:00Z", {
+  taskName: "limited-task",
+  tokens: 1200,
+});
+
+const overDay = evaluateRunBudgetGate(
+  [spentToday],
+  { enabled: true, dailyUsd: 1, weeklyUsd: 0 },
+  "cron-task",
+  undefined,
+  registeredNow,
+);
+check(
+  "B-1.1(a): дневной USD-лимит блокирует общий гейт с причиной",
+  !overDay.allowed && overDay.reason === "day_exceeded" && overDay.message.includes("run skipped"),
+);
+const overWeek = evaluateRunBudgetGate(
+  [spentToday],
+  { enabled: true, dailyUsd: 0, weeklyUsd: 1 },
+  "cron-task",
+  undefined,
+  registeredNow,
+);
+check(
+  "B-1.1(a): недельный USD-лимит блокирует общий гейт",
+  !overWeek.allowed && overWeek.reason === "week_exceeded" && overWeek.message.includes("weekly spend"),
+);
+const overTaskGate = evaluateRunBudgetGate(
+  [tokenOver],
+  { enabled: false, dailyUsd: 0, weeklyUsd: 0 },
+  "limited-task",
+  1000,
+  registeredNow,
+);
+check(
+  "B-1.1(b): tokenBudget задачи блокирует даже при выключенном USD-бюджете",
+  !overTaskGate.allowed &&
+    overTaskGate.reason === "task_day_exceeded" &&
+    overTaskGate.message.includes("limited-task"),
+);
+const disabledGate = evaluateRunBudgetGate(
+  [spentToday, tokenOver],
+  { enabled: false, dailyUsd: 5, weeklyUsd: 5 },
+  "limited-task",
+  undefined,
+  registeredNow,
+);
+check(
+  "B-1.1(c): fail-open, когда бюджет отключён и лимит токенов не задан",
+  disabledGate.allowed && disabledGate.message === "",
+);
+const zeroGate = evaluateRunBudgetGate(
+  [spentToday, tokenOver],
+  { enabled: true, dailyUsd: 0, weeklyUsd: 0 },
+  "limited-task",
+  0,
+  registeredNow,
+);
+check("B-1.1(c): fail-open при нулевых лимитах USD и токенов", zeroGate.allowed);
+check("B-1.1: exit-код пропуска зафиксирован в контракте", BUDGET_GATE_SKIP_EXIT_CODE === 3);
+
+check(
+  "B-1.1(d): ручные/MCP/RPC-входы идут через тот же общий гейт",
+  pluginSource.includes("const budgetGate = await checkRunBudgetGate(name, definition?.tokenBudget)") &&
+    pluginSource.includes("const budgetGate = await checkRunBudgetGate(trimmed, definition?.tokenBudget)") &&
+    pluginSource.includes("async function checkBudgetGate") &&
+    pluginSource.includes("formatBudgetSkipMessage"),
+);
+
+// Реальная .cmd-обёртка и реальный recorder в изолированном окружении.
+const gateRoot = fs.mkdtempSync(path.join(os.tmpdir(), "budget-gate-test-"));
+process.env.APPDATA = gateRoot;
+process.env.OPENCODE_SCHEDULER_HOME = path.join(gateRoot, "opencode", "windows-scheduler");
+const pluginDir = path.join(gateRoot, "opencode", "windows-scheduler");
+fs.mkdirSync(pluginDir, { recursive: true });
+const recorder = path.resolve("dist/core/record-history.js");
+const logFile = path.join(pluginDir, "gate.log");
+const settingsFile = path.join(pluginDir, "settings.json");
+const writeGateSettings = (budgets) =>
+  fs.writeFileSync(settingsFile, JSON.stringify({ budgets }), "utf8");
+const runGate = (task) =>
+  spawnSync(process.execPath, [recorder, "--budget-gate", task, logFile], {
+    encoding: "utf8",
+    env: { ...process.env },
+    timeout: 30000,
+  });
+
+const { writeWrapperCmd } = await import("./dist/core/ps-wrapper.js");
+const cmdPath = await writeWrapperCmd(
+  "cron-task",
+  "cron-task",
+  path.join(gateRoot, "prompt.txt"),
+  60,
+  path.join(gateRoot, "cron-task.lock"),
+  gateRoot,
+  logFile,
+  recorder,
+);
+const cmd = fs.readFileSync(cmdPath, "utf8");
+const gateAt = cmd.indexOf("--budget-gate");
+check(
+  "B-1.1(a): .cmd проверяет бюджет ДО powershell/opencode run",
+  gateAt !== -1 &&
+    cmd.indexOf("run-task.ps1") > gateAt &&
+    cmd.includes('if "%errorlevel%"=="3" exit /b 0'),
+);
+check(
+  "B-1.1(a): гейт вызывается тем же recorder'ом, что пишет историю",
+  cmd.includes(`node "${recorder}" --budget-gate "cron-task"`),
+);
+
+const { initDb, closeDb } = await import("./dist/db/index.js");
+const { getHistory, recordRun } = await import("./dist/db/history-repo.js");
+const { saveTask } = await import("./dist/db/tasks-repo.js");
+initDb();
+saveTask({ name: "cron-task", schedule: "* * * * *", prompt: "cron" });
+saveTask({ name: "limited-task", schedule: "* * * * *", prompt: "limited", tokenBudget: 1000 });
+
+// Fail-open: выключенный бюджет не должен ни блокировать, ни писать skip.
+writeGateSettings({ enabled: false, dailyUsd: 0, weeklyUsd: 0 });
+let gateResult = runGate("cron-task");
+check(
+  "B-1.1(c): recorder не блокирует при выключенном бюджете",
+  gateResult.status === 0,
+  `status=${gateResult.status} ${gateResult.stderr}`,
+);
+check(
+  "B-1.1(c): fail-open не оставляет записей skipped",
+  !getHistory("cron-task", 50).some((r) => r.status === "skipped"),
+);
+
+// (a) исчерпанный дневной бюджет на cron-пути.
+writeGateSettings({ enabled: true, dailyUsd: 1, weeklyUsd: 0 });
+recordRun("cron-task", "success", new Date().toISOString(), 1000, null, null, 100, 2);
+gateResult = runGate("cron-task");
+check(
+  "B-1.1(a): recorder возвращает код 3 при исчерпанном дневном бюджете",
+  gateResult.status === BUDGET_GATE_SKIP_EXIT_CODE,
+  `status=${gateResult.status} ${gateResult.stderr}`,
+);
+const skippedUsd = getHistory("cron-task", 50).find((r) => r.status === "skipped");
+check(
+  "B-1.1(a): пропуск виден в истории со статусом skipped и причиной",
+  Boolean(skippedUsd) && /Budget limit exceeded/.test(skippedUsd?.error ?? ""),
+  JSON.stringify(skippedUsd?.error),
+);
+check(
+  "B-1.1(a): причина пропуска записана в лог задачи",
+  fs.existsSync(logFile) && fs.readFileSync(logFile, "utf8").includes("budget gate skipped"),
+);
+
+// (b) персональный tokenBudget задачи на cron-пути.
+writeGateSettings({ enabled: false, dailyUsd: 0, weeklyUsd: 0 });
+recordRun("limited-task", "success", new Date().toISOString(), 1000, null, null, 1200, 0);
+gateResult = runGate("limited-task");
+check(
+  "B-1.1(b): recorder возвращает код 3 при превышении tokenBudget задачи",
+  gateResult.status === BUDGET_GATE_SKIP_EXIT_CODE,
+  `status=${gateResult.status} ${gateResult.stderr}`,
+);
+const skippedTokens = getHistory("limited-task", 50).find((r) => r.status === "skipped");
+check(
+  "B-1.1(b): причина токен-бюджета сохранена в истории",
+  Boolean(skippedTokens) && /Task token budget exceeded/.test(skippedTokens?.error ?? ""),
+  JSON.stringify(skippedTokens?.error),
+);
+closeDb();
+fs.rmSync(gateRoot, { recursive: true, force: true });
 
 console.log(`\nBudget: ${passed}/${passed + failed} проверок прошли.`);
 assert.equal(failed, 0, `${failed} проверок не прошли`);

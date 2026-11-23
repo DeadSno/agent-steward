@@ -7,6 +7,7 @@ import { createSchedulerBackend } from "./scheduler/index.js";
 import { notifyTaskCompletion } from "../notifications.js";
 import {
   finishRun,
+  getHistoryForBudget,
   getLatestHistoryByTask,
   listRunningRecords,
   normalizeErrorText,
@@ -17,6 +18,12 @@ import { getDb, withTransaction } from "../db/index.js";
 import { markInterruptedRunWithPartialEdits } from "../db/run-journal.js";
 import { deleteSetting, decrementCounterSetting } from "../db/settings-repo.js";
 import { getTask, listTasks } from "../db/tasks-repo.js";
+import { loadSettings } from "../settings.js";
+import {
+  BUDGET_GATE_SKIP_EXIT_CODE,
+  evaluateRunBudgetGate,
+  startOfUtcWeek,
+} from "./budget.js";
 import {
   createRun,
   finishRun as finishDurableRun,
@@ -721,6 +728,67 @@ export function selectDependentsToTrigger(
   );
 }
 
+/**
+ * B-1.1: общая запись пропуска и в историю, и в durable-слой. Используется
+ * guard-пропуском (`--skip`) и бюджетным гейтом registered-пути
+ * (`--budget-gate`), чтобы причина была видна в get_history в обоих случаях.
+ */
+async function recordSkippedRun(
+  taskName: string,
+  reason: string,
+  evidencePath?: string,
+  durationMs = 0,
+): Promise<void> {
+  const safeDuration = Math.max(0, durationMs);
+  const finishedAt = new Date().toISOString();
+  const startedAt = new Date(Date.now() - safeDuration).toISOString();
+  const definition = getTask(taskName);
+  recordRun(
+    taskName,
+    "skipped",
+    startedAt,
+    safeDuration,
+    reason,
+    null,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    finishedAt,
+    definition?.workspaceId ?? null,
+    definition?.allowedTools ?? null,
+    definition?.deniedTools ?? null,
+  );
+  const skipContext = buildRegisteredContext(taskName);
+  if (skipContext) {
+    recordRegisteredRun(skipContext, {
+      status: "skipped",
+      error: reason,
+      evidencePath,
+    });
+  }
+  await handleCompletion(taskName, "skipped", null, reason, safeDuration);
+}
+
+/** Причину пропуска пишем и в лог задачи, и в историю (см. recordSkippedRun). */
+function writeBudgetGateReason(
+  taskName: string,
+  reason: string,
+  logFile?: string,
+): void {
+  const line = `[agent-steward] B-1.1: budget gate skipped '${taskName}': ${reason}`;
+  if (logFile?.trim()) {
+    try {
+      fs.appendFileSync(logFile.trim(), `${line}\r\n`, "utf8");
+      return;
+    } catch {
+      // Лог недоступен — причина всё равно попадёт в историю запусков.
+    }
+  }
+  console.log(line);
+}
+
 async function main() {
   const [
     ,
@@ -765,36 +833,48 @@ async function main() {
       }
     }
     const durationMs = Math.max(0, Number(fifth) || 0);
-    const finishedAt = new Date().toISOString();
-    const startedAt = new Date(Date.now() - durationMs).toISOString();
-    const definition = getTask(taskName);
-    recordRun(
-      taskName,
-      "skipped",
-      startedAt,
-      durationMs,
-      reason,
-      null,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      finishedAt,
-      definition?.workspaceId ?? null,
-      definition?.allowedTools ?? null,
-      definition?.deniedTools ?? null,
-    );
-    const skipContext = buildRegisteredContext(taskName);
-    if (skipContext) {
-      recordRegisteredRun(skipContext, {
-        status: "skipped",
-        error: reason,
-        evidencePath: fourth,
-      });
-    }
-    await handleCompletion(taskName, "skipped", null, reason, durationMs);
+    await recordSkippedRun(taskName, reason, fourth, durationMs);
     return;
+  }
+
+  /**
+   * PL-125/B-1.1: жёсткий бюджетный гейт на registered-пути. Вызывается .cmd-
+   * обёрткой ДО PowerShell/opencode run. Код 3 = штатный пропуск (записываем
+   * skipped + причину), любые ошибки проверки — fail-open (запуск идёт).
+   *
+   * node record-history.js --budget-gate "<task>" "<logFile>"
+   */
+  if (first === "--budget-gate") {
+    const taskName = second;
+    if (!taskName) process.exit(1);
+    try {
+      const settings = await loadSettings();
+      const now = new Date();
+      // Неделя — widest период; тот же источник, что и в index.ts.
+      const records = getHistoryForBudget(startOfUtcWeek(now).toISOString());
+      const definition = getTask(taskName);
+      const decision = evaluateRunBudgetGate(
+        records,
+        settings.budgets,
+        taskName,
+        definition?.tokenBudget,
+        now,
+      );
+      if (decision.allowed) return;
+      const reason = decision.message || "budget limit exceeded";
+      writeBudgetGateReason(taskName, reason, third);
+      await recordSkippedRun(taskName, reason, third);
+      process.exitCode = BUDGET_GATE_SKIP_EXIT_CODE;
+      return;
+    } catch (err) {
+      // Fail-open: сбой чтения настроек/БД не должен блокировать cron-запуск.
+      console.error(
+        `[agent-steward] budget gate недоступен, запуск разрешён: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return;
+    }
   }
 
   const parseOptionalNumber = (value?: string): number | undefined => {

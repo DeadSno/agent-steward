@@ -118,15 +118,13 @@ import { runHistoryRetention, maybeRunHistoryRetention } from "./core/retention.
 import { buildAnalytics } from "./core/analytics.js";
 import {
   buildBudgetReport,
-  evaluateBudgetGate,
-  evaluateTaskTokenBudgetGate,
+  evaluateRunBudgetGate,
   formatBudgetSkipMessage,
-  formatTaskTokenBudgetSkipMessage,
   tokenEfficiencyScore,
   startOfUtcWeek,
   type BudgetGateDecision,
   type BudgetSettings,
-  type TaskTokenBudgetDecision,
+  type RunBudgetGateDecision,
 } from "./core/budget.js";
 import { generateSelfAnalysisReport } from "./core/self-analysis.js";
 import {
@@ -5869,30 +5867,19 @@ const v2Plugin = Plugin.define({
       run_task: async (input: unknown) => {
         const { name } = input as { name: string };
         try {
-          const budgetGate = await checkBudgetGate();
-          if (!budgetGate.allowed) {
-            return {
-              success: false,
-              message: formatBudgetSkipMessage(budgetGate),
-            };
-          }
-          // Matrix-родитель не выполняется сам: запускаем его клоны (fan-out).
+          // B-1.1: один общий гейт (глобальный бюджет + tokenBudget задачи),
+          // тот же самый, что проверяет registered-путь ОС-планировщика.
           const definition = (await loadTaskDefinitions()).find(
             (def) => def.name.toLowerCase() === name.trim().toLowerCase(),
           );
-          // E-2.2: тот же персональный токен-гейт, что и в runTaskEntry.
-          if (definition?.tokenBudget) {
-            const taskGate = checkTaskTokenBudgetGate(
-              name,
-              definition.tokenBudget,
-            );
-            if (!taskGate.allowed) {
-              return {
-                success: false,
-                message: formatTaskTokenBudgetSkipMessage(taskGate),
-              };
-            }
+          const budgetGate = await checkRunBudgetGate(name, definition?.tokenBudget);
+          if (!budgetGate.allowed) {
+            return {
+              success: false,
+              message: budgetGate.message,
+            };
           }
+          // Matrix-родитель не выполняется сам: запускаем его клоны (fan-out).
           if (definition?.matrix) {
             const matrixResult = await runMatrix(definition);
             const total = definition.matrix.workspaceIds.length;
@@ -8258,16 +8245,32 @@ async function recreateTaskFromDefinition(definition: TaskDefinition): Promise<v
  * Запуск задачи «как есть», но с учётом матрицы: родитель раскладывается
  * на клоны, а не выполняет свой промпт.
  */
-/** E-1.2: общий гейт бюджета для всех входов запуска задач. */
-async function checkBudgetGate(now: Date = new Date()): Promise<BudgetGateDecision> {
+/**
+ * B-1.1/PL-125: единая проверка обоих бюджетных гейтов для всех входов.
+ *
+ * Использует ту же чистую функцию `evaluateRunBudgetGate`, что и registered-
+ * путь рекордера (`--budget-gate`), поэтому ручные/MCP/RPC-запуски и запуски
+ * ОС-планировщика не могут разойтись в решении. Fail-open сохраняется.
+ */
+async function checkRunBudgetGate(
+  taskName: string,
+  tokenBudget: number | undefined,
+  now: Date = new Date(),
+): Promise<RunBudgetGateDecision> {
   const settings = await loadSettings();
   // Неделя — widest период бюджетов. Выбираем записи по моменту завершения
   // (см. getHistoryForBudget), чтобы не зависеть от окна в 20000 запусков.
   const records = getHistoryForBudget(startOfUtcWeek(now).toISOString());
-  const decision = evaluateBudgetGate(records, settings.budgets, now);
+  const decision = evaluateRunBudgetGate(
+    records,
+    settings.budgets,
+    taskName,
+    tokenBudget,
+    now,
+  );
   if (!decision.allowed) {
     // E-1.3: алерт не должен задерживать или ломать запуск.
-    void notifyBudgetExceeded(decision).catch((err: unknown) => {
+    void notifyBudgetExceeded(decision.global).catch((err: unknown) => {
       console.error(
         `[agent-steward] Ошибка бюджетного алерта: ${
           err instanceof Error ? err.message : String(err)
@@ -8278,19 +8281,9 @@ async function checkBudgetGate(now: Date = new Date()): Promise<BudgetGateDecisi
   return decision;
 }
 
-/**
- * E-2.2: гейт персонального токен-бюджета задачи.
- *
- * Зеркалит общий бюджетный гейт E-1.2, но читает лимит из определения задачи
- * и фильтрует историю по её имени. Fail-open: без лимита запуск не блокируется.
- */
-function checkTaskTokenBudgetGate(
-  taskName: string,
-  tokenBudget: number | undefined,
-  now: Date = new Date(),
-): TaskTokenBudgetDecision {
-  const records = getHistoryForBudget(startOfUtcWeek(now).toISOString());
-  return evaluateTaskTokenBudgetGate(records, taskName, tokenBudget, now);
+/** E-1.2: общий гейт бюджета (для входов без задачи, например run_mission). */
+async function checkBudgetGate(now: Date = new Date()): Promise<BudgetGateDecision> {
+  return (await checkRunBudgetGate("", undefined, now)).global;
 }
 
 /**
@@ -8326,27 +8319,19 @@ async function runTaskEntry(name: string): Promise<{ alreadyRunning: boolean }> 
     );
   }
 
-  const budgetGate = await checkBudgetGate();
+  const trimmed = name.trim();
+  const definition = (await loadTaskDefinitions()).find(
+    (def) => def.name.toLowerCase() === trimmed.toLowerCase(),
+  );
+
+  // B-1.1/PL-125: тот же общий гейт, что и у ОС-планировщика: глобальный
+  // бюджет + персональный tokenBudget задачи. Fail-open сохраняется.
+  const budgetGate = await checkRunBudgetGate(trimmed, definition?.tokenBudget);
   if (!budgetGate.allowed) {
-    throw new Error(formatBudgetSkipMessage(budgetGate));
+    throw new Error(budgetGate.message);
   }
 
   const run = (async () => {
-    const trimmed = name.trim();
-    const definition = (await loadTaskDefinitions()).find(
-      (def) => def.name.toLowerCase() === trimmed.toLowerCase(),
-    );
-
-    // E-2.2: остановка задачи при превышении её персонального токен-бюджета.
-    // Пропускаем новые запуски, если завершённый прогон за текущий UTC-день
-    // или неделю уже превысил tokenBudget (fail-open, как и E-1.2).
-    if (definition?.tokenBudget) {
-      const taskGate = checkTaskTokenBudgetGate(trimmed, definition.tokenBudget);
-      if (!taskGate.allowed) {
-        throw new Error(formatTaskTokenBudgetSkipMessage(taskGate));
-      }
-    }
-
     if (definition?.matrix) {
       await runMatrix(definition);
       return { alreadyRunning: false };

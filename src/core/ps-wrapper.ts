@@ -1704,6 +1704,21 @@ export async function writeWrapperCmd(
     lines.push("if \"%errorlevel%\"==\"3\" exit /b 0");
   }
 
+  // PL-125/B-1.1: жёсткий бюджетный гейт ДО старта PowerShell/opencode.
+  // Recorder проверяет и глобальный USD-бюджет, и tokenBudget задачи по той же
+  // истории, что и ручные/MCP/RPC-входы, и пишет причину в лог + историю.
+  // Exit 3 — штатный пропуск (запуск не стартует); любой иной код — fail-open.
+  if (recorderFile) {
+    const budgetRecorder = recorderFile.replace(/[\r\n"]+/g, "").trim();
+    const budgetTask = taskName.replace(/[\r\n"]+/g, "").trim();
+    const budgetArgs = [`node "${budgetRecorder}" --budget-gate "${budgetTask}"`];
+    if (logFile?.trim()) {
+      budgetArgs.push(`>> "${logFile.trim()}" 2>&1`);
+    }
+    lines.push(budgetArgs.join(" "));
+    lines.push("if \"%errorlevel%\"==\"3\" exit /b 0");
+  }
+
   // W-1 (0.0.6): одноразовый git worktree. Создаётся после гейта расписания,
   // чтобы пропущенный тик не плодил рабочие копии. Ошибка создания — fail-closed:
   // задача не должна молча работать в основном дереве.
@@ -1882,8 +1897,8 @@ export function sanitizeChildStderr(raw: string): string {
       (line) =>
         line &&
         !/Не удалось обработать XML|Failed to process XML|недопустимым знаком|is an invalid character/i.test(
-          line
-        )
+          line,
+        ),
     )
     .join("\n");
 }
