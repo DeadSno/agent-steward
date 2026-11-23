@@ -12,6 +12,10 @@ import {
   nextMonthlyStartBoundary,
 } from "./dist/core/cron-to-schtasks.js";
 import { isNativeSchtasksExpr, needsPollMode } from "./dist/core/schedule-v2.js";
+import {
+  cronStartBoundary,
+  shouldDeferCronTriggerRecreation,
+} from "./dist/core/scheduler/windows.js";
 
 const results = [];
 let passed = 0;
@@ -167,6 +171,44 @@ if (pl57Boundary) {
 check(
   "PL-57: /sd добавляется только к MONTHLY, не к DAILY",
   !buildScheduleFlags(convertCronToSchTasks("0 9 * * *")).includes("/sd"),
+);
+
+// --- PL-75: update_task cron не должен пересоздавать OS-триггер с прошедшей границей ---
+// update_task = delete + create. Без явной будущей /sd schtasks берёт дату
+// создания и догоняет пропущенный старт (корень PL-57). Граница считается
+// заново при каждом пересоздании и всегда строго в будущем.
+check(
+  "PL-75: MONTHLY-граница совпадает с PL-57",
+  cronStartBoundary("0 5 1 * *", pl57Now) === nextMonthlyStartBoundary(1, null, pl57Now),
+);
+check(
+  "PL-75: годовая MONTHLY-граница — 01.01.2027",
+  cronStartBoundary("0 4 1 1 *", pl57Now) === "01.01.2027",
+);
+check(
+  "PL-75: DAILY-граница — завтра (24.11.2026)",
+  cronStartBoundary("0 9 * * *", pl57Now) === "24.11.2026",
+);
+{
+  const boundary = cronStartBoundary("*/15 * * * *", pl57Now);
+  const match = /^(\d{2})\.(\d{2})\.(\d{4})$/.exec(boundary);
+  const future = match
+    ? new Date(Number(match[3]), Number(match[2]) - 1, Number(match[1])).getTime() >
+      new Date(pl57Now.getFullYear(), pl57Now.getMonth(), pl57Now.getDate()).getTime()
+    : false;
+  check("PL-75: /sd для MINUTE — DD.MM.YYYY строго в будущем", future);
+}
+check(
+  "PL-75: прошедший previousNextRun требует отложить пересоздание триггера",
+  shouldDeferCronTriggerRecreation("2026-11-22T09:00:00", pl57Now) === true,
+);
+check(
+  "PL-75: будущий previousNextRun не блокирует пересоздание",
+  shouldDeferCronTriggerRecreation("2026-11-24T09:00:00", pl57Now) === false,
+);
+check(
+  "PL-75: неизвестный previousNextRun не блокирует пересоздание",
+  shouldDeferCronTriggerRecreation(undefined, pl57Now) === false,
 );
 
 console.log(`\n${passed}/${passed + failed} проверок пройдено`);

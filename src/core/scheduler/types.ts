@@ -44,6 +44,11 @@ export interface CreateTaskOptions {
    * На Linux/macOS не используется: cron и так работает без входа, launchd-агент — только при входе.
    */
   runWhenLoggedOff?: boolean;
+  /**
+   * PL-75: при пересоздании cron-задачи добавить явную будущую /sd, чтобы
+   * schtasks не включил catch-up для прошедшей start boundary.
+   */
+  avoidCatchUp?: boolean;
   /** Аргументы schedule-gate для обёртки (расширенный cron / окно). */
   scheduleGate?: {
     cron?: string;
@@ -59,6 +64,10 @@ export interface CreateTaskOptions {
 export interface RunTaskResult {
   /** true — задача уже выполняется, повторный запуск не потребовался. */
   alreadyRunning: boolean;
+  /** PL-99: запуск пропущен, потому что находка уже закрыта. */
+  skipped?: boolean;
+  /** PL-99: причина пропуска. */
+  reason?: string;
 }
 
 /**

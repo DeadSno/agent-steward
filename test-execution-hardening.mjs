@@ -1074,6 +1074,158 @@ try {
   check("PL-62: секция не выбросила исключение", false, "section threw");
 }
 
+// --- PL-77 / PL-79 / PL-82 / PL-86 / PL-87 / PL-99: pre-flight guards ---
+try {
+  const {
+    extractScopePaths,
+    validateScopePaths,
+    preflightScope,
+    planParallelExecution,
+    detectStaleTask,
+  } = await import("./dist/core/scheduler/run-now.js");
+
+  // PL-79 / PL-82: весь список SCOPE проверяется до создания/обновления задачи.
+  const scopePrompt = [
+    "GOAL: проверка pre-flight",
+    "SCOPE: src/index.ts, src/core/ps-wrapper.ts, reports/new-report.md",
+  ].join("\n");
+  const extracted = extractScopePaths(scopePrompt);
+  check(
+    "PL-79: extractScopePaths забирает весь список SCOPE",
+    JSON.stringify(extracted) ===
+      JSON.stringify(["src/index.ts", "src/core/ps-wrapper.ts", "reports/new-report.md"]),
+    JSON.stringify(extracted),
+  );
+  const missingCheck = validateScopePaths(
+    ["src/index.ts", "test-not-exists-marker.zzz"],
+    process.cwd(),
+  );
+  check(
+    "PL-79: validateScopePaths ловит несуществующий путь",
+    !missingCheck.ok && missingCheck.missing.includes("test-not-exists-marker.zzz"),
+    JSON.stringify(missingCheck),
+  );
+  const okCheck = validateScopePaths(["src/index.ts", "package.json"], process.cwd());
+  check(
+    "PL-82: реальные SCOPE-пути проходят pre-flight",
+    okCheck.ok && okCheck.missing.length === 0,
+    JSON.stringify(okCheck),
+  );
+  check(
+    "PL-82: preflightScope читает SCOPE из промпта",
+    preflightScope("SCOPE: src/index.ts", process.cwd()).ok === true,
+  );
+  check(
+    "PL-79: glob-путь SCOPE нормализуется до директории",
+    JSON.stringify(extractScopePaths("SCOPE: src/core/scheduler/*")) ===
+      JSON.stringify(["src/core/scheduler"]),
+  );
+
+  // PL-77: параллельные агенты не делят worktree, maxConcurrent не нарушается.
+  const sequential = planParallelExecution({ maxConcurrent: 1, taskName: "Agent One" });
+  check(
+    "PL-77: maxConcurrent=1 не форсирует worktree",
+    sequential.allowed === true && sequential.worktree === false,
+    JSON.stringify(sequential),
+  );
+  const parallel = planParallelExecution({ maxConcurrent: 4, taskName: "Agent Two" });
+  check(
+    "PL-77: параллель форсирует уникальный worktree",
+    parallel.allowed === true && parallel.worktree === true,
+    JSON.stringify(parallel),
+  );
+  const limited = planParallelExecution({
+    maxConcurrent: 2,
+    runningCount: 2,
+    taskName: "Agent Three",
+    worktree: true,
+  });
+  check(
+    "PL-77: guard maxConcurrent блокирует новый запуск",
+    limited.allowed === false && /maxConcurrent/.test(limited.reason ?? ""),
+    JSON.stringify(limited),
+  );
+  check(
+    "PL-77: ключ worktree уникален на задачу",
+    parallel.worktreeKey !==
+      planParallelExecution({ maxConcurrent: 4, taskName: "Agent Four" }).worktreeKey,
+  );
+
+  // PL-86/87: .cmd передаёт -Workdir, PS-обёртка не падает на Path-ошибке квоты.
+  const spacedWorkdir = path.join(tempRoot, "workdir with spaces");
+  fs.mkdirSync(spacedWorkdir, { recursive: true });
+  const pl86Name = `pl86-${Date.now()}`;
+  const pl86Prompt = await writePromptFile(pl86Name, "PL-86 probe");
+  const pl86Wrapper = await writeWrapperCmd(
+    pl86Name.replace(/[^a-zA-Z0-9_-]/g, "-"),
+    pl86Name,
+    pl86Prompt,
+    60,
+    lockFilePath(pl86Name),
+    spacedWorkdir,
+    path.join(pluginDir, "logs", `${pl86Name}.log`),
+    recorder,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    "new",
+    undefined,
+  );
+  const pl86Cmd = fs.readFileSync(pl86Wrapper, "utf8");
+  check(
+    "PL-86: сгенерированный .cmd содержит -Workdir с путём задачи",
+    pl86Cmd.includes("-Workdir") && pl86Cmd.includes(spacedWorkdir),
+    pl86Cmd.slice(0, 400),
+  );
+  check(
+    "PL-87: PS-обёртка подставляет Workdir, если старый .cmd его не передал",
+    psWrapperScript.includes("if (-not $Workdir) { $Workdir = (Get-Location).Path }"),
+  );
+  check(
+    "PL-87: формирование quota-diff точки обёрнуто в try/catch с фолбэком",
+    psWrapperScript.includes("$quotaDiff = \"\"") &&
+      psWrapperScript.includes("[System.IO.Path]::GetTempPath()"),
+  );
+  check(
+    "PL-87: сообщение о квоте содержит путь diff и подсказку по модели",
+    psWrapperScript.includes("Частичные правки сохранены в $quotaDiff") &&
+      psWrapperScript.includes("$modelHint"),
+  );
+
+  // PL-99: закрытая находка отсекается до запуска задачи.
+  const openFinding = detectStaleTask({
+    id: "PL-73",
+    roadmap: "- [ ] PL-73: ретраи логов",
+    changelog: "- **PL-73 — исправлено.**",
+    gitDiff: "+PL-73",
+  });
+  check(
+    "PL-99: открытая в ROADMAP находка не считается stale",
+    openFinding.stale === false,
+    JSON.stringify(openFinding),
+  );
+  const closedFinding = detectStaleTask({
+    id: "PL-73",
+    roadmap: "- [ ] PL-99: другая находка",
+    changelog: "- **PL-73 — уже исправлено коммитом 9f6c1c5.**",
+    gitDiff: "+PL-73",
+  });
+  check(
+    "PL-99: закрытая находка отключается до запуска",
+    closedFinding.stale === true && closedFinding.action === "disable",
+    JSON.stringify(closedFinding),
+  );
+} catch (err) {
+  console.log("[diag] PL-77/79/82/86/87/99 section THREW:", err instanceof Error ? err.stack : String(err));
+  check("PL-77/79/82/86/87/99: секция не выбросила исключение", false, "section threw");
+}
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\nExecution hardening: ${results.length - failed.length}/${results.length} проверок пройдено.`);
 try {

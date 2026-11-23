@@ -4,7 +4,11 @@ import iconv from "iconv-lite";
 import type { ScheduledTaskInfo } from "../../types.js";
 import { TASK_FOLDER, TASK_FOLDER_NAME, LEGACY_TASK_FOLDER_NAME, taskFolderNameForProfile, legacyTaskFolderNameForProfile } from "../../types.js";
 import { getProfileName } from "../../profiles.js";
-import { buildScheduleFlags, convertCronToSchTasks } from "../cron-to-schtasks.js";
+import {
+  buildScheduleFlags,
+  convertCronToSchTasks,
+  nextMonthlyStartBoundary,
+} from "../cron-to-schtasks.js";
 import { buildWindowsOneShotFlags } from "../one-shot.js";
 import { needsPollMode } from "../schedule-v2.js";
 import type {
@@ -44,6 +48,70 @@ async function getWindowsDateFormat(): Promise<string> {
 async function buildNeverDate(format: string): Promise<string> {
   const { formatDateByLocalePattern } = await import("../one-shot.js");
   return formatDateByLocalePattern(new Date("2099-12-31T00:00:00Z"), format);
+}
+
+/**
+ * PL-75: форматирует дату стартовой границы в DD.MM.YYYY — тот же числовой
+ * формат, что и в PL-57 (однозначен для русской локали Windows).
+ */
+function formatCronBoundary(date: Date): string {
+  return (
+    String(date.getDate()).padStart(2, "0") +
+    "." +
+    String(date.getMonth() + 1).padStart(2, "0") +
+    "." +
+    String(date.getFullYear())
+  );
+}
+
+/**
+ * PL-75: строго будущая стартовая граница `/sd` для cron-триггера.
+ *
+ * При пересоздании задачи (update_task = delete + create) schtasks берёт дату
+ * создания как start boundary и «догоняет» пропущенный старт. Для MONTHLY
+ * границу уже считает nextMonthlyStartBoundary (PL-57); для остальных
+ * нативных выражений возвращаем завтрашний день — это убирает catch-up ценой
+ * отложенного первого тика. Возвращаемая дата всегда строго позже `now`.
+ */
+export function cronStartBoundary(schedule: string, now: Date = new Date()): string {
+  const fields = schedule.trim().split(/\s+/);
+  if (fields.length === 5) {
+    const [minute, hour, dayOfMonth, month, dayOfWeek] = fields;
+    if (
+      /^\d+$/.test(minute) &&
+      /^\d+$/.test(hour) &&
+      /^\d+$/.test(dayOfMonth) &&
+      dayOfWeek === "*"
+    ) {
+      const monthNumber = month === "*" ? null : Number(month);
+      if (
+        monthNumber === null ||
+        (Number.isInteger(monthNumber) && monthNumber >= 1 && monthNumber <= 12)
+      ) {
+        try {
+          return nextMonthlyStartBoundary(Number(dayOfMonth), monthNumber, now);
+        } catch {
+          // 31-е число в коротком месяце и т.п. — fallback на общую дату ниже.
+        }
+      }
+    }
+  }
+  const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+  return formatCronBoundary(tomorrow);
+}
+
+/**
+ * PL-75: проверка «прошедшей» границы ранее запланированного запуска.
+ * Используется вызывающим кодом, чтобы не пересоздавать OS-триггер с датой
+ * из прошлого (такой триггер сразу уходит в catch-up).
+ */
+export function shouldDeferCronTriggerRecreation(
+  previousNextRun: string | null | undefined,
+  now: Date = new Date(),
+): boolean {
+  if (!previousNextRun) return false;
+  const timestamp = Date.parse(previousNextRun);
+  return Number.isFinite(timestamp) && timestamp <= now.getTime();
 }
 
 /** Максимальный размер вывода schtasks (обычно хватает с большим запасом). */
@@ -429,6 +497,19 @@ export class WindowsScheduler implements SchedulerBackend {
         const native = convertCronToSchTasks(schedule);
         scheduleFlags = buildScheduleFlags(native);
       }
+    }
+
+    // PL-75: пересоздание cron-задачи (update_task) не должно наследовать
+    // прошедшую start boundary — иначе schtasks включает catch-up и запускает
+    // задачу сразу после зелёного гейта. Добавляем явную будущую /sd, если
+    // конвертер её ещё не выставил (MONTHLY получает её сам, см. PL-57).
+    if (
+      triggerType !== "once" &&
+      (!triggerType || triggerType === "cron") &&
+      options.avoidCatchUp &&
+      !scheduleFlags.includes("/sd")
+    ) {
+      scheduleFlags.push("/sd", cronStartBoundary(schedule));
     }
 
     // Создаём всегда в новой папке, даже если передано полное legacy-имя.
