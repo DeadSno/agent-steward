@@ -50,7 +50,7 @@ import {
 } from "./audit.js";
 import { createMissionWrapperExecutor } from "./mission.js";
 import { runOpencode } from "./opencode-cli.js";
-import { buildSessionArgs, type SessionMode } from "./session.js";
+import { buildSessionArgs } from "./session.js";
 
 /** Фильтр панели: конкретный статус, все записи или активные. */
 export type RunPanelFilter = RunStatus | "all" | "active";
@@ -321,12 +321,11 @@ function durableExecutionFromRun(run: RunRecord): DurableExecutionDescriptor | n
   const value = (metadata as Record<string, unknown>).durableExecution;
   if (!value || typeof value !== "object") return null;
   const candidate = value as Partial<DurableExecutionDescriptor>;
-  const plan = candidate.plan as ExecutionPlan | undefined;
+  const plan = candidate.plan;
   if (
     candidate.schema !== 1 ||
     !candidate.executor ||
-    !plan ||
-    !plan.context ||
+    !plan?.context ||
     !Array.isArray(plan.steps)
   ) {
     return null;
@@ -346,7 +345,7 @@ function durableExecutionFromRun(run: RunRecord): DurableExecutionDescriptor | n
 export async function invokeOpenCodeCli(input: OpenCodeInvocation): Promise<string> {
   const args = [
     "run",
-    ...buildSessionArgs(input.session as SessionMode, input.sessionId ?? undefined),
+    ...buildSessionArgs(input.session!, input.sessionId ?? undefined),
   ];
   if (input.model) args.push("--model", input.model);
   args.push("--", input.prompt);

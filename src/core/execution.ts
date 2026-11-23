@@ -511,12 +511,12 @@ export async function buildExecutionPlan(
     const baseRoute = routeStep(step.taskType, options.thresholds);
     const route: StepRoute = quarantined
       ? {
-          ...baseRoute,
-          target: "review",
-          executor: null,
-          transport: null,
-          reason: `gate-quarantined:${qualityGate}`,
-        }
+        ...baseRoute,
+        target: "review",
+        executor: null,
+        transport: null,
+        reason: `gate-quarantined:${qualityGate}`,
+      }
       : baseRoute;
     if (route.target === "review" || route.target === "explore") {
       warnings.push(
@@ -828,7 +828,7 @@ export function resolveAgentExitVerdict(input: AgentExitVerdictInput): AgentExit
         : `Quality Gate провален (код возврата агента ${code})`;
     if (code === 0) {
       emit(
-        `[agent-steward] PL-62: расхождение: код выхода 0, qualityGate=fail — статус error по вердикту гейта`,
+        "[agent-steward] PL-62: расхождение: код выхода 0, qualityGate=fail — статус error по вердикту гейта",
       );
     }
     return {
@@ -1311,7 +1311,7 @@ async function executeStepWithEscalation(
       // PL-102: обёртка миссии поддерживает и local, и cloud маршрут одним и
       // тем же исполнителем. Повторно дёргать его под другим target — это
       // дублирование дорогого прогона без смены модели/возможностей.
-      if (nextExecutor && nextExecutor.id === executor.id) {
+      if (nextExecutor?.id === executor.id) {
         throw new Error(
           `GATE: ${gateResult.reason ?? "шаг отклонён гейтом"} ` +
             `(PL-102: эскалация на ${decision.next} не выполнена — исполнитель ` +
@@ -1458,13 +1458,13 @@ export async function executeExecutionPlan(
         : {}),
       ...(durableDescriptor
         ? {
-            durableExecution: {
-              schema: 1,
-              plan,
-              executor: durableDescriptor,
-              evidencePath: options.evidencePath ?? null,
-            } satisfies DurableExecutionDescriptor,
-          }
+          durableExecution: {
+            schema: 1,
+            plan,
+            executor: durableDescriptor,
+            evidencePath: options.evidencePath ?? null,
+          } satisfies DurableExecutionDescriptor,
+        }
         : {}),
     },
   });

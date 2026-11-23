@@ -12,7 +12,6 @@ import {
   hasApprovalExecutionStarted,
   listApprovals,
   readApprovalPendingExecution,
-  type ApprovalDecision,
   type ApprovalRecord,
 } from "./audit.js";
 import { executeApprovedPlan, type ResumeDurableExecutionOptions } from "./run-panel-api.js";
@@ -83,7 +82,7 @@ export async function decideApprovalPanel(
     if (!before) {
       return { success: false, error: "approval request not found" };
     }
-    const approval = decideApproval(id, decision as ApprovalDecision, {
+    const approval = decideApproval(id, decision, {
       actor: typeof decidedBy === "string" && decidedBy.trim() ? decidedBy.trim() : "gui",
       source: "approval-panel",
     });

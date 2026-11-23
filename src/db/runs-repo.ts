@@ -871,8 +871,8 @@ export function readGateOutcomeLedger(
     options.verify === false
       ? { ok: true, length: rows.length, brokenAt: null }
       : // PL-96: отчёт ограничен, но цепочка проверяется по ВСЕМ записям —
-        // иначе подмена за пределами `limit` останется незамеченной.
-        verifyGateOutcomeChain();
+    // иначе подмена за пределами `limit` останется незамеченной.
+      verifyGateOutcomeChain();
   return { rows, chain };
 }
 
