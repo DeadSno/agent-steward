@@ -794,6 +794,68 @@ check(
   !/\[[xX]\]\s/.test(roadmapText) && !/QA-A2\.[56]/.test(roadmapText)
 );
 
+// DS-5.3: счётчики инструментов/RPC и список модулей в ARCHITECTURE.md и
+// диаграмме сверяются с кодом, чтобы дрейф ловился в CI (без ручного аудита).
+const listTsModules = (dir, prefix) => {
+  const out = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const rel = prefix + "/" + entry.name;
+    if (entry.isDirectory()) out.push(...listTsModules(path.join(dir, entry.name), rel));
+    else if (entry.name.endsWith(".ts")) out.push(rel);
+  }
+  return out.sort();
+};
+const coreModules = listTsModules(path.join(root, "src/core"), "src/core");
+const dbModules = listTsModules(path.join(root, "src/db"), "src/db");
+const diagramsDoc = fs.readFileSync(path.join(docs, "ARCHITECTURE-DIAGRAMS.md"), "utf8");
+const diagramModuleLines = new Set(diagramsDoc.split(/\r?\n/).map((line) => line.trim()));
+const missingInDiagram = [...coreModules, ...dbModules].filter((p) => !diagramModuleLines.has(p));
+check(
+  `DS-5.3: диаграмма содержит все модули src/core (${coreModules.length}) и src/db (${dbModules.length}); пропущено ${missingInDiagram.length}`,
+  coreModules.length > 0 && dbModules.length > 0 && missingInDiagram.length === 0
+);
+check(
+  `DS-5.3: диаграмма: счётчики ${coreModules.length}/${dbModules.length} модулей совпадают с кодом`,
+  diagramsDoc.includes(`${coreModules.length} модулей в \`src/core/\``) &&
+    diagramsDoc.includes(`${dbModules.length} модулей в \`src/db/\``)
+);
+check(
+  `DS-5.3: ARCHITECTURE/STRATEGY: RPC-методы ${rpcCountForSkills} совпадают с кодом`,
+  rpcCountForSkills > 0 &&
+    arch.includes(`${rpcCountForSkills} methods`) &&
+    strategyDoc.includes(`${rpcCountForSkills} RPC-методов`)
+);
+const requiredModules = [
+  "agents.ts",
+  "agents-advanced.ts",
+  "approval-api.ts",
+  "environment.ts",
+  "runner.ts",
+  "runner-docker.ts",
+  "runner-ssh.ts",
+  "tool-profile.ts",
+  "usage-surface.ts",
+  "opencode-usage.ts",
+  "budget.ts",
+  "savings.ts",
+  "execution.ts",
+  "mission.ts",
+];
+const missingInArchitecture = requiredModules.filter(
+  (m) => !arch.includes("src/core/" + m) && !arch.includes("core/" + m)
+);
+check(
+  `DS-5.3: ARCHITECTURE: обязательные модули 3.10/3.11/DS-4.2 (пропущено ${missingInArchitecture.length})`,
+  missingInArchitecture.length === 0
+);
+check(
+  "DS-5.3: регрессия — устаревшие счётчики 30/57 и 71 модулей детектируются",
+  !arch.includes("30-tool registry") &&
+    !arch.includes("57 methods") &&
+    !diagramsDoc.includes("71 модулей") &&
+    /30-tool registry|57 methods|71 модулей/.test("ARCHITECTURE: 30-tool registry, 57 methods; diagram: 71 модулей")
+);
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\nDocs: ${results.length - failed.length}/${results.length} проверок пройдено.`);
 process.exit(failed.length > 0 ? 1 : 0);
