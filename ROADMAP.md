@@ -193,7 +193,15 @@ agent-steward — execution engine с опциональной регистра�
 
 - [ ] PL-66 Ни один из Quality Gate ARCH-задач не включал `npm run lint`/`lint:baseline`, поэтому error `@typescript-eslint/array-type` в `src/db/capability-repo.ts:635` (Agents ARCH-3) дошёл до GitHub Actions: CI run #312 на `d9e7e8d` — Build и Test зелёные на всех 6 матрицах, но шаг «Lint (informational)» упал везде, а «ESLint baseline» был пропущен — P1. Действие: добавить `npm run lint && npm run lint:baseline` в обязательные проверки `qualityGate` и в подсказки `dry_run`; предупреждать о пропущенной линтер-проверке; регрессия в `test-dry-run.mjs`.
 
+## Деталь 1.9 — Полная проверка документации через планировщик (23.11.2026)
 
+**Задача DOC-1 — Аудит документации движком agent-steward** · P2 · 🔄
+
+> Сессия проверки работоспособности плагина: один и тот же аудит документации прогоняется двумя входами — с реальной OS-привязкой (cron → schtasks) и без неё (mcp-event + workspace binding). Результат каждого прогона — отдельный отчёт в `reports/`.
+
+- [ ] DOC-1.1 Прогон аудита документации задачей с OS-триггером (cron), отчёт `reports/DOC-1A-os-bound.md`
+- [ ] DOC-1.2 Тот же аудит через mcp-event без OS-расписания, отчёт `reports/DOC-1B-event-driven.md`
+- [ ] DOC-1.3 Свести результаты найденных багов в роадмап, закрыть DOC-1 и перенести в CHANGELOG
 
 ---
 
