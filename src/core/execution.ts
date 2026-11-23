@@ -72,9 +72,19 @@ import {
 import {
   recordApprovalGateBlock,
   recordApprovalPendingExecution,
+  recordAudit,
   requestApproval,
   type ApprovalRecord,
 } from "./audit.js";
+import {
+  checkEnvironmentCompatibility,
+  registerRunArtifacts,
+  resolveEnvironmentName,
+  type ArtifactEntries,
+  type EnvironmentName,
+  type EnvironmentVerdict,
+  type RunArtifactRecord,
+} from "./environment.js";
 
 /** Откуда пришёл запуск. Оба источника идут одним путём. */
 export type RunOrigin = "registered" | "ad-hoc";
@@ -121,6 +131,10 @@ export interface RunContext {
   riskClass: RiskClass;
   /** ARCH-2.2: детерминированная компиляция политики для этого класса. */
   compiledPolicy: CompiledPermissionPolicy;
+  /** A-2.2: профиль среды задачи (для registered — из её определения). */
+  taskEnvironment?: EnvironmentName;
+  /** A-2.2: профиль среды запуска (явный выбор; по умолчанию — задачи/dev). */
+  environment?: EnvironmentName;
   /** Свободные метаданные: родительский запуск, матрица, источник. */
   metadata?: Record<string, unknown>;
 }
@@ -144,6 +158,8 @@ export interface RegisteredTaskLike {
   qualityGate?: string;
   beforeScript?: string;
   afterScript?: string;
+  /** A-2.2: профиль среды задачи; запуск обязан использовать тот же профиль. */
+  environment?: EnvironmentName;
 }
 
 /** Опции фабрик контекста. */
@@ -155,6 +171,8 @@ export interface RunContextOverrides {
   policy?: RunPermissionPolicy;
   /** ARCH-2.1: явно заданный класс риска; иначе выводится из scope. */
   riskClass?: RiskClass;
+  /** A-2.2: явный профиль среды запуска; несовпадение с задачей блокируется. */
+  environment?: EnvironmentName;
   profile?: Partial<RunProfile>;
   safety?: Partial<RunSafety>;
   metadata?: Record<string, unknown>;
@@ -232,6 +250,11 @@ export function createRegisteredRunContext(
     overrides,
     definition.qualityGate,
   );
+  // A-2.2: профиль задачи фиксируется её определением; профиль запуска по
+  // умолчанию наследует его, а явный overrides.environment может не совпасть —
+  // тогда execution loop заблокирует прогон.
+  const taskEnvironment = resolveEnvironmentName(definition.environment);
+  const environment = resolveEnvironmentName(overrides.environment ?? definition.environment);
   return {
     origin: "registered",
     trigger: overrides.trigger ?? definition.triggerType ?? "manual",
@@ -251,6 +274,8 @@ export function createRegisteredRunContext(
     safety,
     riskClass,
     compiledPolicy,
+    taskEnvironment,
+    environment,
     metadata: {
       ...(overrides.metadata ?? {}),
       schedule: definition.schedule ?? null,
@@ -280,6 +305,9 @@ export function createAdHocRunContext(
     overrides,
     overrides.metadata?.gate,
   );
+  // A-2.2: у ad-hoc миссии нет отдельного определения задачи, поэтому её
+  // профиль задачи совпадает с профилем запуска (по умолчанию — dev).
+  const environment = resolveEnvironmentName(overrides.environment);
   return {
     origin: "ad-hoc",
     trigger: overrides.trigger ?? "manual",
@@ -297,6 +325,8 @@ export function createAdHocRunContext(
     safety,
     riskClass,
     compiledPolicy,
+    taskEnvironment: environment,
+    environment,
     metadata: overrides.metadata,
   };
 }
@@ -1083,12 +1113,16 @@ export interface ApprovalGateOptions {
 
 /** Результат выполнения плана. */
 export interface ExecutionResult {
-  /** null, если запуск не создан (ARCH-7.2: нет одобрения). */
+  /** null, если запуск не создан (ARCH-7.2: нет одобрения, A-2.2: mismatch). */
   runId: string | null;
-  status: "passed" | "failed" | "awaiting_approval" | "rejected";
+  status: "passed" | "failed" | "awaiting_approval" | "rejected" | "blocked";
   steps: ExecutedStep[];
   error: string | null;
   plan: ExecutionPlan;
+  /** A-2.2: вердикт профилей задачи и запуска (всегда содержит env). */
+  environment?: EnvironmentVerdict;
+  /** A-3.1: зарегистрированные артефакты запуска. */
+  artifacts?: RunArtifactRecord[];
   /** ARCH-4: результаты саг отложенных эффектов по шагам. */
   effects?: EffectSagaResult[];
   /** ARCH-7.2: состояние очереди одобрений, если класс риска её требует. */
@@ -1135,6 +1169,11 @@ export interface ExecutePlanOptions {
   approval?: ApprovalGateOptions;
   /** PL-93: retry гейта и эскалация local → cloud → review. */
   escalation?: ExecutionEscalationOptions;
+  /**
+   * A-3.1: отчёты/coverage запуска как пары «путь → содержимое». Реальные
+   * файлы не читаются: регистратор чистит пути, считает SHA-256 и размер.
+   */
+  artifacts?: ArtifactEntries;
 }
 
 function pickExecutor(step: PlannedStep, executors: StepExecutor[]): StepExecutor | undefined {
@@ -1344,6 +1383,37 @@ export async function executeExecutionPlan(
 ): Promise<ExecutionResult> {
   validateRunContext(plan.context);
 
+  // A-2.2: профиль задачи обязан совпадать с профилем запуска. Вердикт с обоими
+  // env-профилями пишется в аудит и возвращается вызывающему; запись запуска не
+  // создаётся и ни один executor не вызывается.
+  const environmentVerdict = checkEnvironmentCompatibility(
+    plan.context.taskEnvironment,
+    plan.context.environment,
+  );
+  if (!environmentVerdict.ok) {
+    recordAudit({
+      action: "execution.environment.mismatch",
+      targetType: "run",
+      target: plan.context.taskName,
+      actor: "execution-loop",
+      source: "executeExecutionPlan",
+      details: {
+        reason: environmentVerdict.reason,
+        taskEnvironment: environmentVerdict.taskEnvironment,
+        runEnvironment: environmentVerdict.runEnvironment,
+        env: environmentVerdict.env,
+      },
+    });
+    return {
+      runId: null,
+      status: "blocked",
+      steps: [],
+      error: environmentVerdict.reason,
+      plan,
+      environment: environmentVerdict,
+    };
+  }
+
   // PL-59: зарегистрированная задача с qualityGate обязана снимать снимок
   // дерева, если в нём есть guarded-пути. Причину пропуска логируем, а
   // обязательный, но отсутствующий снимок отклоняем до создания запуска.
@@ -1434,6 +1504,8 @@ export async function executeExecutionPlan(
   }
 
   // PL-92: дескриптор уже вычислен до гейта и сохраняется в metadata run.
+  // A-3.1: артефакты регистрируются один раз — чистая функция без чтения часов.
+  const artifacts = registerRunArtifacts(options.artifacts ?? {});
 
   const run = createRun({
     taskName: plan.context.taskName,
@@ -1466,6 +1538,13 @@ export async function executeExecutionPlan(
           } satisfies DurableExecutionDescriptor,
         }
         : {}),
+      // A-2.2/A-3.1: env и детерминированный список артефактов — в записи запуска.
+      environment: {
+        task: environmentVerdict.taskEnvironment,
+        run: environmentVerdict.runEnvironment,
+        verdict: environmentVerdict.ok,
+      },
+      artifacts,
     },
   });
   startRun(run.id);
@@ -1673,6 +1752,8 @@ export async function executeExecutionPlan(
     steps: executed,
     error: firstError,
     plan,
+    environment: environmentVerdict,
+    artifacts,
     ...(approval ? { approval } : {}),
     ...(snapshotDecision ? { snapshot: snapshotDecision } : {}),
     ...(sagaResults.length > 0 ? { effects: sagaResults } : {}),
@@ -1706,3 +1787,6 @@ export type {
   RoleStep,
   StepResultLike,
 } from "./agents.js";
+
+/* A-2.1/A-2.2/A-3.1: env-профили и артефакты доступны из единого пути исполнения. */
+export * from "./environment.js";

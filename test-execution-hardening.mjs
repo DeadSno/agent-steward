@@ -12,6 +12,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 
 // T-05 (CI): тест построен на cmd.exe/батниках и schtasks — на Linux/macOS
@@ -1872,6 +1873,198 @@ try {
   }
 } catch (err) {
   check("PL-115: секция не выбросила исключение", false, String(err));
+}
+
+// --- A-2.1/A-2.2/A-3.1: env-профили, изоляция и артефакты запуска ---
+// Все проверки чистые: файлы не создаются, пути приходят вместе с содержимым.
+try {
+  const envMod = await import("./dist/core/environment.js");
+  const execMod = await import("./dist/core/execution.js");
+  const { getRun } = await import("./dist/db/runs-repo.js");
+  const { readAuditLog } = await import("./dist/core/audit.js");
+  const {
+    ENVIRONMENT_PROFILES,
+    DEFAULT_ENVIRONMENT,
+    CROSS_ENV_DENY,
+    resolveEnvironmentName,
+    environmentVariables,
+    crossEnvViolations,
+    checkEnvironmentCompatibility,
+    isRunArtifactPath,
+    registerRunArtifacts,
+  } = envMod;
+
+  // A-2.1: ровно три профиля с собственными переменными.
+  check(
+    "A-2.1: определены ровно профили dev/staging/prod",
+    Object.keys(ENVIRONMENT_PROFILES).sort().join(",") === "dev,prod,staging"
+  );
+  check(
+    "A-2.1: без явного выбора используется dev",
+    DEFAULT_ENVIRONMENT === "dev" &&
+      resolveEnvironmentName() === "dev" &&
+      resolveEnvironmentName(null) === "dev" &&
+      resolveEnvironmentName("unknown") === "dev"
+  );
+  check(
+    "A-2.1: профили изолированы (свои APP_ENV и уникальные ключи)",
+    ENVIRONMENT_PROFILES.dev.variables.APP_ENV === "dev" &&
+      ENVIRONMENT_PROFILES.staging.variables.APP_ENV === "staging" &&
+      ENVIRONMENT_PROFILES.prod.variables.APP_ENV === "prod" &&
+      "DEV_HOT_RELOAD" in ENVIRONMENT_PROFILES.dev.variables &&
+      "STAGING_GATEWAY" in ENVIRONMENT_PROFILES.staging.variables &&
+      "PROD_REGION" in ENVIRONMENT_PROFILES.prod.variables &&
+      !("STAGING_GATEWAY" in ENVIRONMENT_PROFILES.dev.variables)
+  );
+  check(
+    "A-2.1: environmentVariables возвращает только переменные выбранного профиля",
+    JSON.stringify(environmentVariables("dev")) ===
+      JSON.stringify(ENVIRONMENT_PROFILES.dev.variables) &&
+      !("PROD_REGION" in environmentVariables("dev"))
+  );
+  check(
+    "A-2.1: CROSS-ENV deny-список обязателен для каждого профиля",
+    CROSS_ENV_DENY.length > 0 &&
+      ["dev", "staging", "prod"].every(
+        (name) => ENVIRONMENT_PROFILES[name].deny.join("|") === CROSS_ENV_DENY.join("|")
+      )
+  );
+  check(
+    "A-2.1: deny-ключ и чужой ключ отклоняются, свои — принимаются",
+    crossEnvViolations("prod", { DEV_HOT_RELOAD: "true" }).length > 0 &&
+      crossEnvViolations("dev", { API_TOKEN: "x" }).some((line) => line.includes("deny")) &&
+      crossEnvViolations("dev", { APP_ENV: "dev" }).length === 0
+  );
+
+  // A-2.2: вердикт несовпадения содержит причину и оба env-профиля.
+  const sameEnv = checkEnvironmentCompatibility("prod", "prod");
+  const mismatchEnv = checkEnvironmentCompatibility("prod", "dev");
+  check("A-2.2: совпадение профилей разрешено", sameEnv.ok === true && sameEnv.reason === "");
+  check(
+    "A-2.2: несовпадение блокируется, вердикт содержит env и причину",
+    mismatchEnv.ok === false &&
+      mismatchEnv.reason.includes("prod") &&
+      mismatchEnv.reason.includes("dev") &&
+      mismatchEnv.env.task.name === "prod" &&
+      mismatchEnv.env.run.name === "dev" &&
+      mismatchEnv.env.task.variables.APP_ENV === "prod"
+  );
+  check(
+    "A-2.2: без явного выбора задача и запуск оба в dev",
+    checkEnvironmentCompatibility(undefined, undefined).ok === true
+  );
+
+  // A-2.2: execution loop блокирует прогон до создания запуска и пишет аудит.
+  const mismatchName = `a2-mismatch-${Date.now()}`;
+  const mismatchContext = execMod.createRegisteredRunContext(
+    { name: mismatchName, prompt: "A-2.2 probe", environment: "prod" },
+    { environment: "dev", riskClass: "R0", taskType: "mission" }
+  );
+  let mismatchCalls = 0;
+  const mismatchExecutor = {
+    id: "a2-mismatch",
+    supports: () => true,
+    execute: async () => {
+      mismatchCalls += 1;
+      return { output: "must not run" };
+    },
+  };
+  const mismatchResult = await execMod.executeExecutionPlan(
+    await execMod.buildExecutionPlan(mismatchContext),
+    { executors: [mismatchExecutor] }
+  );
+  check(
+    "A-2.2: execution loop блокирует прогон при несовпадении профилей",
+    mismatchResult.status === "blocked" &&
+      mismatchResult.runId === null &&
+      mismatchCalls === 0 &&
+      /Профиль задачи/.test(mismatchResult.error ?? "")
+  );
+  check(
+    "A-2.2: вердикт blocked-результата содержит оба env",
+    mismatchResult.environment?.taskEnvironment === "prod" &&
+      mismatchResult.environment?.runEnvironment === "dev" &&
+      mismatchResult.environment?.env?.run?.name === "dev"
+  );
+  const envAudit = readAuditLog({ action: "execution.environment.mismatch" });
+  const envAuditDetails = JSON.stringify(envAudit.records[0]?.details ?? {});
+  check(
+    "A-2.2: аудит блокировки содержит env и причину",
+    envAudit.total > 0 &&
+      envAuditDetails.includes("prod") &&
+      envAuditDetails.includes("dev") &&
+      envAuditDetails.includes("заблокировано")
+  );
+
+  // A-3.1: артефакты без реальных файлов — путь и содержимое приходят вместе.
+  const artifactInputs = [
+    { path: "reports\\A2-final.md", content: "hello" },
+    { path: "./coverage/lcov.info", content: "TK:1" },
+    { path: "reports/A2-final.md", content: "hello" },
+  ];
+  const artifacts = registerRunArtifacts(artifactInputs);
+  check(
+    "A-3.1: список артефактов детерминированно отсортирован и дедуплицирован",
+    artifacts.map((item) => item.path).join(",") === "coverage/lcov.info,reports/A2-final.md"
+  );
+  check(
+    "A-3.1: хэш — SHA-256 содержимого, размер — байты UTF-8",
+    artifacts[1].sha256 === createHash("sha256").update("hello").digest("hex") &&
+      artifacts[1].size === 5 &&
+      artifacts[0].size === 4
+  );
+  check(
+    "A-3.1: кириллица считается в байтах, а не в символах",
+    registerRunArtifacts([{ path: "reports/ю.md", content: "привет" }])[0].size ===
+      Buffer.byteLength("привет", "utf8")
+  );
+  check(
+    "A-3.1: повторный вызов байт-в-байт одинаков",
+    JSON.stringify(registerRunArtifacts(artifactInputs)) === JSON.stringify(artifacts)
+  );
+  check(
+    "A-3.1: report/coverage-пути распознаются, исходные — нет",
+    isRunArtifactPath("reports/x.md") &&
+      isRunArtifactPath("coverage/lcov.info") &&
+      isRunArtifactPath("src/x.ts") === false
+  );
+  const envSource = fs.readFileSync(path.join("src", "core", "environment.ts"), "utf8");
+  check(
+    "A-3.1: регистратор артефактов не читает часы и файлы",
+    !/Date\.now|new Date\(|performance\.now|Math\.random|readFileSync|writeFileSync/.test(envSource)
+  );
+
+  // A-3.1: артефакты и env попадают в запись запуска.
+  const artifactName = `a3-artifacts-${Date.now()}`;
+  const artifactContext = execMod.createAdHocRunContext(`A-3.1 ${artifactName}`, {
+    taskName: artifactName,
+    taskType: "mission",
+    riskClass: "R0",
+  });
+  const artifactResult = await execMod.executeExecutionPlan(
+    await execMod.buildExecutionPlan(artifactContext),
+    {
+      executors: [{ id: "a3-test", supports: () => true, execute: async () => ({}) }],
+      artifacts: artifactInputs,
+    }
+  );
+  const runRecord = artifactResult.runId ? getRun(artifactResult.runId) : undefined;
+  check(
+    "A-3.1: запуск создан и вернул те же артефакты",
+    artifactResult.status === "passed" &&
+      JSON.stringify(artifactResult.artifacts) === JSON.stringify(artifacts)
+  );
+  check(
+    "A-3.1: артефакты и env записаны в запись запуска",
+    Boolean(runRecord) &&
+      JSON.stringify(runRecord.metadata.artifacts) === JSON.stringify(artifacts) &&
+      runRecord.metadata.environment.task === "dev" &&
+      runRecord.metadata.environment.run === "dev" &&
+      runRecord.metadata.environment.verdict === true
+  );
+} catch (err) {
+  console.log("[diag] A-2/A-3 section THREW:", err instanceof Error ? err.stack : String(err));
+  check("A-2.1/A-2.2/A-3.1: секция не выбросила исключение", false, "section threw");
 }
 
 const failed = results.filter((r) => !r.ok);

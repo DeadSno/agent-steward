@@ -26,13 +26,6 @@ Legacy: `opencode-windows-scheduler@1.5.8`.
 ## Деталь 3.5 — Approvals и окружения (0.1.0)
 `src/core/approval*`, `src/core/environment*`
 
-**Задача A-2 — dev/staging/prod** · P2 · ⬜
-- [ ] A-2.1 Изоляция сред
-- [ ] A-2.2 Привязка задач к среде
-
-**Задача A-3 — Артефакты запуска** · P3 · ⬜
-- [ ] A-3.1 Отчёты/coverage как артефакты
-
 **Задача A-6 — Telegram pause/resume** · P3 · ⬜
 - [ ] A-6.1 Команды бота
 - [ ] A-6.2 Привязка к запускам

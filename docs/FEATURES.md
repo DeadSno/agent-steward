@@ -456,6 +456,22 @@ workspace:
   worktree checks in `test-execution-pipeline.mjs`. Gate suites must therefore clear
   inherited gate/child variables explicitly; do not rely on a clean interactive shell.
 
+### Environment profiles and run artifacts
+
+Task and run specs carry an explicit environment profile: `dev`, `staging` or `prod`.
+Profiles are hard-isolated — each exposes only its own variables, plus a shared
+cross-environment deny-list (tokens, credentials, database URLs). With no explicit
+selection both task and run default to `dev`; a mismatch blocks execution before a run
+is created, writes an `execution.environment.mismatch` audit record, and returns a
+verdict containing both profiles and the reason.
+
+Run artifacts are registered as a deterministic list of `{path, sha256, size}` entries
+for report/coverage outputs (`reports/`, `coverage/`, `*.lcov`, `*.info`, coverage JSON/XML).
+Registration is a pure function over supplied paths and contents: entries are normalized,
+sorted and deduplicated, hashes are SHA-256 of UTF-8 bytes, and no filesystem clock or
+file reads are involved. The list is stored in the run record metadata and returned in
+the execution result, so tests can exercise it without creating real files.
+
 ## Observability
 
 ### History
@@ -717,7 +733,7 @@ the `cleanup_history` RPC and the GUI's **Clear now** button. Aggregates in
 
 ## Agent interface
 
-Thirty tools: `schedule_task`, `list_tasks`, `update_task`, `delete_task`,
+Thirty-two tools: `schedule_task`, `list_tasks`, `update_task`, `schedule_advanced`, `update_advanced`, `delete_task`,
 `run_task_now`, `pause_task`, `resume_task`, `get_history`, `get_task_logs`, `dry_run`,
 `manage_workspaces`, `matrix_control` (results/cancel/cleanup/preview), `get_metrics`,
 `get_analytics`, `self_analysis` (health score, anomalies, trends), `manage_settings`,
