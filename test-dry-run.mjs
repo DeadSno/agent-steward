@@ -416,6 +416,20 @@ try {
     qualityGateDocsScopeWarning("node test-docs.mjs", "SCOPE: x") ===
     qualityGateDocsScopeWarning("node test-docs.mjs", "SCOPE: x"));
 
+  // PL-122: предупреждение о SCOPE выдаётся только тогда, когда манифест -Files
+  // в afterScript реально пишет ROADMAP.md/CHANGELOG.md.
+  const afterScriptNoDocs = 'powershell.exe -File pl-commit.ps1 -Files "src/core/dry-run.ts;test-dry-run.mjs" -Marker "m"';
+  const afterScriptDocs = 'powershell.exe -File pl-commit.ps1 -Files "ROADMAP.md;CHANGELOG.md" -Marker "m"';
+  check("PL-122: afterScript без docs — предупреждения PL-117 о SCOPE нет",
+    qualityGateDocsScopeWarning("node test-docs.mjs", "SCOPE: src/core/dry-run.ts", null, afterScriptNoDocs) === null);
+  check("PL-122: afterScript с -Files ROADMAP.md;CHANGELOG.md — предупреждение есть",
+    (qualityGateDocsScopeWarning("node test-docs.mjs", "SCOPE: src/core/dry-run.ts", null, afterScriptDocs) ?? "").includes("ROADMAP.md") &&
+    (qualityGateDocsScopeWarning("node test-docs.mjs", "SCOPE: src/core/dry-run.ts", null, afterScriptDocs) ?? "").includes("CHANGELOG.md"));
+  check("PL-122: без afterScript сохраняется прежнее предупреждение",
+    (qualityGateDocsScopeWarning("node test-docs.mjs", "SCOPE: src/core/dry-run.ts") ?? "").includes("ROADMAP.md"));
+  check("PL-122: дубли ID сообщаются независимо от afterScript",
+    (qualityGateDocsScopeWarning("node test-docs.mjs", "SCOPE: ROADMAP.md; CHANGELOG.md", dupText, afterScriptNoDocs) ?? "").includes("дубли ID"));
+
   const docsScopeDir = fs.mkdtempSync(path.join(os.tmpdir(), "ws-scheduler-docs-"));
   await saveTask({
     name: "DocsScopeMissing", schedule: "0 9 * * *",
@@ -436,6 +450,18 @@ try {
   const fullScope = await simulatePipeline("DocsScopeFull");
   check("PL-117: при полном SCOPE предупреждения нет", !hasDocsGateWarning(fullScope.warnings));
 
+  // PL-122: read-only зонд с afterScript, чей -Files не содержит docs, больше
+  // не получает ложное PL-117 про неполный SCOPE.
+  await saveTask({
+    name: "DocsReadOnlyProbe", schedule: "0 9 * * *",
+    prompt: "SCOPE: src/core/dry-run.ts; test-dry-run.mjs",
+    qualityGate: "node test-docs.mjs",
+    afterScript: afterScriptNoDocs, workingDirectory: docsScopeDir,
+  });
+  const readOnlyProbe = await simulatePipeline("DocsReadOnlyProbe");
+  check("PL-122: read-only зонд с afterScript без docs — PL-117 в dry_run не выдаётся",
+    !hasDocsGateWarning(readOnlyProbe.warnings) && readOnlyProbe.success === true);
+
   fs.writeFileSync(path.join(docsScopeDir, "ROADMAP.md"),
     "- [ ] PL-1 - a\n- [ ] PL-1 - b\n- [ ] PL-2 - c\n");
   await saveTask({
@@ -447,6 +473,18 @@ try {
   check("PL-117: дубли ID в доступной ROADMAP задачи попадают в предупреждение",
     hasDocsGateWarning(dupIds.warnings) &&
     dupIds.warnings.some((w) => w.includes("дубли ID") && w.includes("PL-1")));
+
+  // PL-122: подавление SCOPE-предупреждения не скрывает дубли ID в ROADMAP.
+  await saveTask({
+    name: "DocsProbeDupIds", schedule: "0 9 * * *",
+    prompt: "SCOPE: src/core/dry-run.ts; test-dry-run.mjs",
+    qualityGate: "node test-docs.mjs",
+    afterScript: afterScriptNoDocs, workingDirectory: docsScopeDir,
+  });
+  const probeDupIds = await simulatePipeline("DocsProbeDupIds");
+  check("PL-122: дубли ID сообщаются и при afterScript без docs",
+    hasDocsGateWarning(probeDupIds.warnings) &&
+    probeDupIds.warnings.some((w) => w.includes("дубли ID") && w.includes("PL-1")));
 
   // 19. T-7.1/T-7.2: preflight рисков пропуска и рекомендация модели.
   const sharedCwd = fs.mkdtempSync(path.join(os.tmpdir(), "ws-scheduler-preflight-"));

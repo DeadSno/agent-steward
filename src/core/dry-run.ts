@@ -15,6 +15,7 @@ import { expandMatrixTask } from "./matrix.js";
 import { nextRun, activeWindowState, assessCronWindowFeasibility, needsPollMode, windowFeasibilityReasonText } from "./schedule-v2.js";
 import { checkGitTrigger } from "./git-trigger.js";
 import { catalogPricePerMillion } from "./opencode-models.js";
+import { gateAllowPathsFromAfterScript } from "./ps-wrapper.js";
 import { t } from "../i18n.js";
 import type { TaskDefinition } from "../task-transfer.js";
 
@@ -399,6 +400,25 @@ const TEST_DOCS_GATE_RE = /test-docs\.mjs|test:docs/i;
 const DOCS_SCOPE_FILES = ["ROADMAP.md", "CHANGELOG.md"] as const;
 
 /**
+ * PL-122: манифест `-Files` из afterScript — это список файлов, которые задача
+ * действительно коммитит. Возвращает true, только если среди них есть
+ * `ROADMAP.md`/`CHANGELOG.md`; пустой список (нет `-Files`) означает, что
+ * документация не меняется (read-only зонд гейта `test-docs.mjs`).
+ */
+function afterScriptWritesDocs(afterScript: string): boolean {
+  const allowPaths = gateAllowPathsFromAfterScript(afterScript)
+    .split("|")
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean);
+  return allowPaths.some((item) =>
+    DOCS_SCOPE_FILES.some((file) => {
+      const name = file.toLowerCase();
+      return item === name || item.endsWith("/" + name);
+    }),
+  );
+}
+
+/**
  * PL-117: чистая функция — возвращает уникальные ID подзадач ROADMAP (строки
  * `- [ ] <ID>`), встречающиеся более одного раза. Порядок — по первому появлению
  * дубля, без ФС/БД/часов. Fail-open: пустой или невалидный текст — пустой список.
@@ -412,20 +432,29 @@ export function roadmapDuplicateIds(text: string | null | undefined): string[] {
 /**
  * PL-117: возвращает предупреждение, если `qualityGate` вызывает `test-docs.mjs`,
  * а SCOPE не содержит `ROADMAP.md`/`CHANGELOG.md`; дополнительно сообщает о
- * дублях ID в переданном тексте ROADMAP (если он доступен). Fail-open: гейт без
- * `test-docs.mjs` — тишина; само предупреждение не делает симуляцию провальной.
+ * дублях ID в переданном тексте ROADMAP (если он доступен). PL-122: предупреждение
+ * о SCOPE выдаётся, только если afterScript отсутствует (старые фикстуры) либо его
+ * манифест `-Files` реально пишет эти файлы; read-only зондам с afterScript без
+ * docs эти файлы в SCOPE не нужны. Дубли ID сообщаются независимо от afterScript.
+ * Fail-open: гейт без `test-docs.mjs` — тишина; само предупреждение не делает
+ * симуляцию провальной.
  */
 export function qualityGateDocsScopeWarning(
   qualityGate: string | null | undefined,
   scopeText: string | null | undefined,
   roadmapText?: string | null,
+  afterScript?: string | null,
 ): string | null {
   if (!TEST_DOCS_GATE_RE.test(qualityGate ?? "")) return null;
-  const scope = typeof scopeText === "string" ? scopeText.toLowerCase() : "";
-  const missing = DOCS_SCOPE_FILES.filter(
-    (file) => !scope.includes(file.toLowerCase()),
-  );
   const duplicates = roadmapDuplicateIds(roadmapText);
+  const hasAfterScript = typeof afterScript === "string" && afterScript.trim().length > 0;
+  let missing: string[] = [];
+  if (!hasAfterScript || afterScriptWritesDocs(afterScript ?? "")) {
+    const scope = typeof scopeText === "string" ? scopeText.toLowerCase() : "";
+    missing = DOCS_SCOPE_FILES.filter(
+      (file) => !scope.includes(file.toLowerCase()),
+    );
+  }
   if (missing.length === 0 && duplicates.length === 0) return null;
 
   const parts: string[] = [];
@@ -994,8 +1023,10 @@ export async function simulatePipeline(taskName: string): Promise<DryRunReport> 
     if (lintWarning) taskWarnings.push(lintWarning);
 
     // PL-117: гейт с test-docs.mjs обязан иметь в SCOPE проверяемые им файлы;
-    // дубли ID в доступной ROADMAP ловим до запуска дочернего агента. Читаем
-    // ROADMAP только когда гейт действительно гоняет test-docs, и fail-open по
+    // дубли ID в доступной ROADMAP ловим до запуска дочернего агента. PL-122:
+    // неполный SCOPE проверяем только если afterScript отсутствует (старые
+    // фикстуры) либо его манифест -Files реально пишет docs. Читаем ROADMAP
+    // только когда гейт действительно гоняет test-docs, и fail-open по
     // отсутствию/ошибке чтения файла — симуляция никогда не прерывается.
     if (TEST_DOCS_GATE_RE.test(def.qualityGate ?? "")) {
       const scopeText = [def.prompt, def.beforeScript, def.afterScript]
@@ -1016,6 +1047,7 @@ export async function simulatePipeline(taskName: string): Promise<DryRunReport> 
         def.qualityGate,
         scopeText,
         roadmapText,
+        def.afterScript,
       );
       if (docsScopeWarning) taskWarnings.push(docsScopeWarning);
     }
