@@ -18,6 +18,7 @@ const { recordRun } = await import("./dist/db/history-repo.js");
 const {
   simulatePipeline, workingDirectoryDriftWarning, isFrequentCron, minimumCronIntervalMinutes,
   scopeModulesFromText, qualityGateCoverageWarning, MODULE_REQUIRED_TEST_SUITES,
+  qualityGateLintWarning, REQUIRED_LINT_CHECKS,
 } = await import("./dist/core/dry-run.js");
 const { t } = await import("./dist/i18n.js");
 
@@ -286,6 +287,47 @@ try {
   const noGate = await simulatePipeline("PL-65-NoGate");
   check("PL-65: отсутствие qualityGate тоже даёт предупреждение",
     hasCoverageWarning(noGate.warnings));
+
+  // 16. PL-66: гейт задачи, меняющей модули src/**/*.ts, обязан включать
+  //     npm run lint и npm run lint:baseline — иначе ESLint-error доходит до CI.
+  //     Имена задач нейтральные: warnings имеют префикс [taskName], поэтому
+  //     совпадение «PL-66» в имени дало бы ложное срабатывание проверки.
+  const hasLintWarning = (warnings) => warnings.some((w) => w.includes("PL-66:"));
+  const tsModule = ["src/core/dry-run.ts"];
+  check("PL-66: реестр обязательных проверок содержит lint и lint:baseline",
+    JSON.stringify(REQUIRED_LINT_CHECKS) ===
+    JSON.stringify(["npm run lint", "npm run lint:baseline"]));
+  check("PL-66: пустой SCOPE не даёт предупреждения (fail-open)",
+    qualityGateLintWarning("npm run build", []) === null &&
+    qualityGateLintWarning("npm run build", undefined) === null);
+  check("PL-66: полный гейт с обеими проверками не даёт предупреждения",
+    qualityGateLintWarning("npm run lint && npm run lint:baseline && npm run build", tsModule) === null);
+  check("PL-66: только lint:baseline не засчитывается как обычный lint",
+    qualityGateLintWarning("npm run lint:baseline", tsModule)?.includes("npm run lint") === true);
+  check("PL-66: только lint не засчитывается как baseline",
+    qualityGateLintWarning("npm run lint", tsModule)?.includes("npm run lint:baseline") === true);
+  check("PL-66: lint-job не подменяет обязательную проверку",
+    qualityGateLintWarning("npm run lint-job", tsModule)?.includes("npm run lint,") === true);
+
+  await saveTask({
+    name: "PL-66-NoLint", schedule: "0 9 * * *",
+    prompt: "SCOPE: src/core/dry-run.ts; test-dry-run.mjs",
+    qualityGate: "npm run build && node test-dry-run.mjs",
+  });
+  const noLint = await simulatePipeline("PL-66-NoLint");
+  check("PL-66: гейт без линтера предупреждает о пропущенной проверке",
+    hasLintWarning(noLint.warnings) &&
+    noLint.warnings.some((w) => w.includes("npm run lint:baseline")));
+  check("PL-66: предупреждение не делает отчёт провальным", noLint.success === true);
+
+  await saveTask({
+    name: "PL-66-FullLint", schedule: "0 9 * * *",
+    prompt: "SCOPE: src/core/dry-run.ts; test-dry-run.mjs",
+    qualityGate: "npm run lint && npm run lint:baseline && npm run build",
+  });
+  const fullLint = await simulatePipeline("PL-66-FullLint");
+  check("PL-66: полный qualityGate проходит без предупреждения",
+    !hasLintWarning(fullLint.warnings));
 } finally {
   closeDb();
 }

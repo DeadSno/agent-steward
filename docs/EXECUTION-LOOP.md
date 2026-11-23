@@ -147,6 +147,22 @@ SHA-256 в `PLUGIN_DIR/gate-snapshots/`, вне write-scope задачи. Пер
 адаптеров (49). Подмена самих тестов агентом текущей мерой не детектируется —
 защита ограничена целостностью определения гейта.
 
+### 4.1 Обязательная линтер-проверка (PL-66)
+
+`qualityGate` задачи, меняющей TypeScript-исходники (`src/**/*.ts` в SCOPE
+промпта/afterScript), обязан включать **обе** команды —
+`npm run lint && npm run lint:baseline`. Одна `lint:baseline` не заменяет
+обычный `lint` (и наоборот): это разные проверки. История — ARCH-3 гейтил
+только сборку/тесты, поэтому `@typescript-eslint/array-type` дошёл до GitHub
+Actions (run #312): Build/Test зелёные, «Lint (informational)» красный.
+
+Подсказка в `dry_run` строится по тем же SCOPE-путям, что и PL-65:
+`scopeModulesFromText()` → `qualityGateLintWarning()` добавляет в отчёт
+предупреждение с префиксом `PL-66:` и явным списком пропущенных команд. Как и
+PL-65, это warning, а не error: симуляция остаётся успешной. Fail-open — если
+SCOPE не содержит `.ts`-модулей, предупреждения нет. Реестр ожидаемых команд —
+`REQUIRED_LINT_CHECKS` в `src/core/dry-run.ts`; регрессия — `test-dry-run.mjs`.
+
 ## 5. Отложенные внешние эффекты
 
 Worktree не защищает от сети/API/БД. Поэтому:

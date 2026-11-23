@@ -269,6 +269,45 @@ export function qualityGateCoverageWarning(
   );
 }
 
+/**
+ * PL-66: линтер-проверки, обязательные в `qualityGate` задачи, меняющей
+ * TypeScript-исходники. ARCH-задачи гейтили только сборку/тесты, поэтому
+ * error `@typescript-eslint/array-type` доходил до GitHub Actions (run #312).
+ */
+export const REQUIRED_LINT_CHECKS: readonly string[] = [
+  "npm run lint",
+  "npm run lint:baseline",
+];
+
+// PL-66: `npm run lint` ищется отдельно от `lint:baseline`, чтобы последний
+// сам по себе не засчитывался как обычный lint (отрицательный lookahead на
+// `:`/`-`). Регистр и пробелы между токенами не важны.
+const PLAIN_LINT_RE = /\bnpm\s+run\s+lint(?![\w:-])/i;
+const LINT_BASELINE_RE = /\bnpm\s+run\s+lint:baseline(?![\w:-])/i;
+
+/**
+ * PL-66: возвращает предупреждение, если `qualityGate` не содержит обе
+ * обязательные линтер-проверки. Fail-open: SCOPE без `.ts`-модулей — тишина
+ * (линтер нужен именно при правке исходников, как в ARCH-3).
+ */
+export function qualityGateLintWarning(
+  qualityGate: string | null | undefined,
+  changedModules: readonly string[],
+): string | null {
+  if (!changedModules || changedModules.length === 0) return null;
+  const gate = typeof qualityGate === "string" ? qualityGate : "";
+  const missing = REQUIRED_LINT_CHECKS.filter((check) =>
+    check === "npm run lint" ? !PLAIN_LINT_RE.test(gate) : !LINT_BASELINE_RE.test(gate),
+  );
+  if (missing.length === 0) return null;
+  return (
+    "PL-66: qualityGate не содержит обязательную линтер-проверку — " +
+    `${missing.join(", ")}. ` +
+    "Добавьте `npm run lint && npm run lint:baseline` в qualityGate (и в подсказки dry_run), " +
+    "иначе ESLint-error дойдёт до GitHub Actions, как @typescript-eslint/array-type в run #312."
+  );
+}
+
 /** Опасные паттерны, о которых обязательно предупреждаем (ключи каталога). */
 const DANGEROUS_PATTERNS: { test: RegExp; messageKey: string }[] = [
   { test: /rm\s+-rf\s+\/(?:\s|$)/, messageKey: "dryRun.danger.rmRoot" },
@@ -812,6 +851,11 @@ export async function simulatePipeline(taskName: string): Promise<DryRunReport> 
     );
     const coverageWarning = qualityGateCoverageWarning(def.qualityGate, changedModules);
     if (coverageWarning) taskWarnings.push(coverageWarning);
+
+    // PL-66: правка .ts-модулей без `npm run lint && npm run lint:baseline`
+    // в гейте — тот же путь, которым array-type error дошёл до CI run #312.
+    const lintWarning = qualityGateLintWarning(def.qualityGate, changedModules);
+    if (lintWarning) taskWarnings.push(lintWarning);
 
     // QV-9: частый cron + тяжёлый промпт (`opencode run`) — антипаттерн из
     // SKILL.md: каждый тик поднимает полную сессию агента и сжигает квоту.
