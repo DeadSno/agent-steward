@@ -43,6 +43,8 @@ import {
   type StepExecutorDescriptor,
 } from "./execution.js";
 import { createMissionWrapperExecutor } from "./mission.js";
+import { runOpencode } from "./opencode-cli.js";
+import { buildSessionArgs, type SessionMode } from "./session.js";
 
 /** Фильтр панели: конкретный статус, все записи или активные. */
 export type RunPanelFilter = RunStatus | "all" | "active";
@@ -326,6 +328,35 @@ function durableExecutionFromRun(run: RunRecord): DurableExecutionDescriptor | n
   return candidate as DurableExecutionDescriptor;
 }
 
+/**
+ * PL-97: транспорт OpenCode по умолчанию для возобновлённых/DLQ-шагов.
+ *
+ * Раньше `resumeDurableRunExecution` требовал `invokeOpenCode` от вызывающего,
+ * поэтому RPC/GUI-путь не мог доиграть opencode-шаг. Теперь дескриптор
+ * `{ kind: "opencode" }` исполняется через реальный CLI с сохранёнными cwd,
+ * моделью и режимом сессии; явный `invokeOpenCode` всё ещё имеет приоритет
+ * (используется тестами и альтернативными транспортами).
+ */
+export async function invokeOpenCodeCli(input: OpenCodeInvocation): Promise<string> {
+  const args = [
+    "run",
+    ...buildSessionArgs(input.session as SessionMode, input.sessionId ?? undefined),
+  ];
+  if (input.model) args.push("--model", input.model);
+  args.push("--", input.prompt);
+  const result = await runOpencode(args, 120_000, input.cwd);
+  if (!result.ok) {
+    throw new Error(result.error || result.stderr || "OpenCode завершился ошибкой");
+  }
+  return result.stdout;
+}
+
+/** Есть ли у запуска дескриптор исполнения (для префлайта DLQ-retry). */
+export function hasDurableExecution(runId: string): boolean {
+  const run = getRun(runId);
+  return Boolean(run && durableExecutionFromRun(run));
+}
+
 /** Восстанавливаем исполнителя по сохранённому дескриптору. */
 function executorForDescriptor(
   descriptor: StepExecutorDescriptor,
@@ -337,12 +368,7 @@ function executorForDescriptor(
   if (explicit) return explicit;
 
   if (descriptor.kind === "opencode") {
-    if (!options.invokeOpenCode) {
-      throw new Error(
-        "Для возобновления opencode-шага нужен invokeOpenCode (или явный executors)",
-      );
-    }
-    return createOpenCodeExecutor(options.invokeOpenCode);
+    return createOpenCodeExecutor(options.invokeOpenCode ?? invokeOpenCodeCli);
   }
   if (descriptor.kind === "mission-wrapper") {
     return createMissionWrapperExecutor(descriptor.wrapperPath, {

@@ -125,7 +125,7 @@ import {
 } from "./db/history-repo.js";
 import { appendStructuredLog } from "./core/structured-log.js";
 import { getAllMetrics } from "./db/metrics-repo.js";
-import { discardDlq, listDlq, retryDlq } from "./core/dlq-api.js";
+import { discardDlq, listDlq, retryDlqExecution } from "./core/dlq-api.js";
 import {
   listRunPanel,
   pauseRunPanel,
@@ -6457,7 +6457,7 @@ const v2Plugin = Plugin.define({
       retry_dlq: async (input: unknown) => {
         const source = (input ?? {}) as { id?: string };
         if (!source.id) return { success: false, error: "id is required" };
-        return retryDlq(source.id);
+        return retryDlqExecution(source.id);
       },
       discard_dlq: async (input: unknown) => {
         const source = (input ?? {}) as { id?: string; resolution?: string };

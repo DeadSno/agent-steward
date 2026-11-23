@@ -231,13 +231,18 @@ export function countDeadLetters(status: DlqStatus = "open"): number {
 /**
  * Ручной retry из DLQ.
  *
- * Готовит шаг к повторному выполнению: переоткрывает упавший запуск, переводит
- * шаг в `running` с `attempt + 1` и закрывает запись DLQ как `retried`.
- * Сам обработчик не вызывается — дальше шаг подхватывает `resumeRun`.
+ * По умолчанию готовит шаг к повторному выполнению: переоткрывает упавший
+ * запуск, переводит шаг в `running` с `attempt + 1` и закрывает запись DLQ как
+ * `retried`. Сам обработчик не вызывается — дальше шаг подхватывает `resumeRun`.
+ *
+ * PL-97: `deferStepStart: true` закрывает запись и переоткрывает запуск, но
+ * оставляет шаг `failed`. Этот режим нужен фасаду, который сразу передаёт
+ * запуск в `resumeDurableRunExecution` — иначе `retryStep` и journal сделали бы
+ * два увеличения `attempt` для одного повтора.
  */
 export function retryDeadLetter(
   id: string,
-  options: { startedAt?: string } = {},
+  options: { startedAt?: string; deferStepStart?: boolean } = {},
 ): RetryDeadLetterResult {
   return withTransaction(() => {
     const entry = getDeadLetter(id);
@@ -265,7 +270,7 @@ export function retryDeadLetter(
       throw new Error(`Запуск ${run.id} в статусе ${run.status}, повтор невозможен`);
     }
 
-    retryStep(step.id, options.startedAt);
+    if (!options.deferStepStart) retryStep(step.id, options.startedAt);
 
     const timestamp = nowIso();
     getDb()

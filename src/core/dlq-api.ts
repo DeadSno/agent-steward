@@ -6,19 +6,27 @@
  * возвращает единый `{ success, error }`-контракт. Логика очереди (идемпотентный
  * enqueue, retry через reopenRun, discard) остаётся в БД-слое.
  *
- * Retry здесь только готовит шаг к повторному выполнению: переоткрывает запуск,
- * переводит шаг в `running` и закрывает запись DLQ. Сам обработчик шага
- * запускает resume (Спринт 36.7), поэтому фасад не притворяется, что шаг уже
- * выполнен.
+ * `retryDlq` (легаси) только готовит шаг к повторному выполнению: переоткрывает
+ * запуск, переводит шаг в `running` и закрывает запись DLQ. PL-97 добавляет
+ * `retryDlqExecution`: он закрывает запись, не трогая шаг, и сразу передаёт
+ * запуск в `resumeDurableRunExecution`, который доигрывает шаг по сохранённому
+ * дескриптору. Без дескриптора возвращается явная диагностика, а запись
+ * остаётся открытой — подготовка по-прежнему доступна через `retryDlq`.
  */
 import {
   countDeadLetters,
   discardDeadLetter,
+  getDeadLetter,
   listDeadLetters,
   retryDeadLetter,
   type DlqEntry,
   type DlqStatus,
 } from "../db/run-dlq.js";
+import {
+  hasDurableExecution,
+  resumeDurableRunExecution,
+  type ResumeDurableExecutionOptions,
+} from "./run-panel-api.js";
 
 /** Фильтр списка: конкретный статус или все записи. */
 export type DlqFilter = DlqStatus | "all";
@@ -82,6 +90,59 @@ export function retryDlq(id: string): DlqActionResult {
       runId: result.run.id,
       stepName: result.step.stepName,
       runReopened: result.runReopened,
+    };
+  } catch (err) {
+    return { success: false, error: errorText(err) };
+  }
+}
+
+export interface DlqExecutionResult extends DlqActionResult {
+  /** Шаг, с которого resume продолжил цепочку. */
+  resumedFrom?: string | null;
+  /** Реально выполненные шаги. */
+  executed?: string[];
+  /** Первый упавший шаг, если доигрывание остановилось. */
+  failedStep?: string | null;
+}
+
+/**
+ * PL-97: retry из DLQ с немедленным выполнением шага.
+ *
+ * Дескриптор исполнения проверяется до мутаций: если его нет, запись остаётся
+ * открытой и вызывающий получает понятную причину вместо «успешного» retry,
+ * который ничего не 실행ит. При наличии дескриптора запись закрывается как
+ * `retried`, шаг остаётся `failed` ровно до `beginStepAttempt`, чтобы attempt
+ * увеличился один раз за повтор.
+ */
+export async function retryDlqExecution(
+  id: string,
+  options: ResumeDurableExecutionOptions = {},
+): Promise<DlqExecutionResult> {
+  try {
+    const entry = getDeadLetter(id);
+    if (!entry) return { success: false, error: `Запись DLQ не найдена: ${id}` };
+    if (entry.status !== "open") {
+      return { success: false, error: `Запись DLQ уже обработана: ${entry.status}` };
+    }
+    if (!hasDurableExecution(entry.runId)) {
+      return {
+        success: false,
+        error: `У запуска ${entry.runId} нет metadata.durableExecution: автоматическое выполнение невозможно. Доступна подготовка через retryDlq.`,
+      };
+    }
+
+    const prepared = retryDeadLetter(id, { deferStepStart: true });
+    const resumed = await resumeDurableRunExecution(prepared.run.id, options);
+    return {
+      success: resumed.success,
+      ...(resumed.error ? { error: resumed.error } : {}),
+      entry: prepared.entry,
+      runId: prepared.run.id,
+      stepName: prepared.step.stepName,
+      runReopened: prepared.runReopened,
+      resumedFrom: resumed.resumedFrom,
+      executed: resumed.executed,
+      failedStep: resumed.failedStep,
     };
   } catch (err) {
     return { success: false, error: errorText(err) };

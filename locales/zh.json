@@ -136,7 +136,7 @@
   "gui.dlqReasonAttempts": "尝试次数耗尽",
   "gui.dlqReasonManual": "手动",
   "gui.dlqRetried": "步骤已返回运行",
-  "gui.dlqRetriedDescription": "步骤“{step}”已准备好执行（attempt + 1）。",
+  "gui.dlqRetriedDescription": "步骤“{step}”已重试并由执行器完成（attempt + 1）。",
   "gui.dlqRetry": "重试",
   "gui.dlqRetryConfirm": "重试运行 {run} 中的步骤“{step}”？运行将被重新打开。",
   "gui.dlqRetryFailed": "无法重试该步骤",

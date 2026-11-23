@@ -5,6 +5,8 @@
 //  - список отдаёт открытые записи и счётчик, фильтры open/retried/discarded/all;
 //  - retry переоткрывает запуск, делает attempt + 1 и закрывает запись;
 //  - повторная обработка закрытой записи возвращает success: false, а не падает;
+//  - PL-97: retry с дескриптором сразу доигрывает шаг через resume;
+//  - PL-97: без дескриптора запись остаётся открытой и возвращается диагностика;
 //  - discard закрывает запись, не трогая статус шага;
 //  - локали ru/en/zh содержат одинаковый набор ключей gui.dlq*;
 //  - GUI использует только объявленные ключи.
@@ -44,6 +46,10 @@ for (const method of ["list_dlq", "retry_dlq", "discard_dlq"]) {
 assert(
   /import\s*\{[^}]*listDlq[^}]*\}\s*from\s*"\.\/core\/dlq-api\.js"/.test(indexSrc),
   "index.ts использует RPC-фасад dlq-api",
+);
+assert(
+  indexSrc.includes("retryDlqExecution(source.id)"),
+  "PL-97: RPC retry_dlq вызывает исполняющий retryDlqExecution",
 );
 
 for (const method of ["list_dlq", "retry_dlq", "discard_dlq"]) {
@@ -140,6 +146,74 @@ const missing = api.retryDlq("dlq_missing");
 assert(missing.success === false, "retry несуществующей записи возвращает ошибку");
 const missingDiscard = api.discardDlq("dlq_missing");
 assert(missingDiscard.success === false, "discard несуществующей записи возвращает ошибку");
+
+// --- 4. PL-97: DLQ → retry → finishStep --------------------------------------
+const execution = await import("./dist/core/execution.js");
+const execContext = execution.createAdHocRunContext("PL-97 dlq", {
+  taskName: "pl97-dlq",
+  cwd: tempRoot,
+  taskType: "apply_diff",
+});
+const execPlan = await execution.buildExecutionPlan(execContext);
+assert(execPlan.steps.length === 1, "PL-97: план состоит из одного шага");
+const stepName = execPlan.steps[0].stepName;
+const runC = repo.createRun({
+  taskName: "pl97-dlq",
+  steps: [{ stepName }],
+  metadata: {
+    durableExecution: {
+      schema: 1,
+      plan: execPlan,
+      executor: { kind: "opencode" },
+      evidencePath: null,
+    },
+  },
+});
+repo.startRun(runC.id);
+failStepN(runC.id, stepName, 3);
+repo.finishRun(runC.id, "failed", { error: "pl97 boom" });
+const [entryC] = dlq.scanDeadLetters({ runId: runC.id });
+assert(Boolean(entryC), "PL-97: упавший шаг попал в DLQ");
+
+let pl97Invocations = 0;
+const executedRetry = await api.retryDlqExecution(entryC.id, {
+  invokeOpenCode: (input) => {
+    pl97Invocations += 1;
+    assert(input.prompt === execContext.prompt, "PL-97: исполнитель получил промпт из дескриптора");
+    return "pl97 done";
+  },
+});
+assert(executedRetry.success, "PL-97: retry сразу доиграл шаг");
+assert(executedRetry.stepName === stepName, "PL-97: retry вернул имя шага");
+assert(executedRetry.entry?.status === "retried", "PL-97: запись закрыта как retried");
+assert(pl97Invocations === 1, "PL-97: исполнитель вызван один раз");
+assert(repo.getStep(runC.id, stepName).status === "passed", "PL-97: шаг закрыт через finishStep");
+assert(repo.getStep(runC.id, stepName).attempt === 4, "PL-97: attempt увеличен один раз (было 3)");
+assert(repo.getRun(runC.id).status === "passed", "PL-97: запуск закрыт как passed");
+assert(executedRetry.executed?.length === 1, "PL-97: executed содержит доигранный шаг");
+const pl97Ledger = repo.listGateOutcomes(10000).filter((row) => row.runId === runC.id);
+assert(pl97Ledger.length >= 1 && pl97Ledger.every((row) => row.verdict === "pass"), "PL-97: вердикт записан в ledger");
+assert(
+  (await api.retryDlqExecution(entryC.id)).success === false,
+  "PL-97: повторный retry закрытой записи отклоняется",
+);
+
+// Без дескриптора: честный отказ, запись остаётся открытой для подготовительного retryDlq.
+const runD = repo.createRun({ taskName: "pl97-no-descriptor", steps: [{ stepName: "build" }] });
+repo.startRun(runD.id);
+failStepN(runD.id, "build", 3);
+repo.finishRun(runD.id, "failed", { error: "no descriptor" });
+const [entryD] = dlq.scanDeadLetters({ runId: runD.id });
+const noDescriptor = await api.retryDlqExecution(entryD.id);
+assert(!noDescriptor.success, "PL-97: запуск без дескриптора отклоняется");
+assert(
+  String(noDescriptor.error).includes("durableExecution"),
+  "PL-97: ошибка указывает на отсутствующий дескриптор",
+);
+assert(
+  dlq.getDeadLetter(entryD.id).status === "open",
+  "PL-97: запись без дескриптора остаётся открытой",
+);
 
 closeDb();
 fs.rmSync(tempRoot, { recursive: true, force: true });

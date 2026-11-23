@@ -87,10 +87,13 @@ export function opencodeCommand(args: string[]): OpencodeCommand {
 /**
  * Запускает OpenCode CLI и ждёт завершения. Никогда не бросает.
  * `timeoutMs` защищает от зависшего процесса: CLI не должен держать ротацию.
+ * `cwd` (PL-97) нужен возобновлённым шагам: агент должен стартовать в том же
+ * рабочем каталоге, что и исходный прогон.
  */
 export function runOpencode(
   args: string[],
   timeoutMs = 30_000,
+  cwd?: string,
 ): Promise<RunOpencodeResult> {
   let command: OpencodeCommand;
   try {
@@ -110,6 +113,7 @@ export function runOpencode(
       command.args,
       {
         timeout: timeoutMs,
+        ...(cwd ? { cwd } : {}),
         windowsHide: true,
         encoding: "utf8",
         maxBuffer: 4 * 1024 * 1024,

@@ -136,7 +136,7 @@
   "gui.dlqReasonAttempts": "исчерпаны попытки",
   "gui.dlqReasonManual": "вручную",
   "gui.dlqRetried": "Шаг возвращён в запуск",
-  "gui.dlqRetriedDescription": "Шаг \"{step}\" готов к выполнению (attempt + 1).",
+  "gui.dlqRetriedDescription": "Шаг \"{step}\" перезапущен и доигран исполнителем (attempt + 1).",
   "gui.dlqRetry": "Retry",
   "gui.dlqRetryConfirm": "Повторить шаг \"{step}\" из запуска {run}? Запуск будет переоткрыт.",
   "gui.dlqRetryFailed": "Не удалось повторить шаг",

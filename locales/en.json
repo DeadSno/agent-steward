@@ -136,7 +136,7 @@
   "gui.dlqReasonAttempts": "attempts exhausted",
   "gui.dlqReasonManual": "manual",
   "gui.dlqRetried": "Step returned to the run",
-  "gui.dlqRetriedDescription": "Step \"{step}\" is ready to run (attempt + 1).",
+  "gui.dlqRetriedDescription": "Step \"{step}\" was retried and executed (attempt + 1).",
   "gui.dlqRetry": "Retry",
   "gui.dlqRetryConfirm": "Retry step \"{step}\" from run {run}? The run will be reopened.",
   "gui.dlqRetryFailed": "Could not retry the step",

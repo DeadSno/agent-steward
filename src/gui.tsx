@@ -1324,7 +1324,7 @@ export default Plugin.define({
       }
     }
 
-    /** Ручной retry записи DLQ: шаг вернётся в запуск, выполнение подхватит resume. */
+    /** Ручной retry записи DLQ: шаг сразу доигрывается по дескриптору исполнения (PL-97). */
     async function handleRetryDlq(entry: DlqEntry) {
       if (!window.confirm(gt("gui.dlqRetryConfirm", { step: entry.stepName, run: entry.runId }))) return
       setDlqBusy(true)
