@@ -10,6 +10,10 @@
 # staged in the meantime (or left staged before this run) would be swept into the
 # commit. The `--` pathspec restricts the commit to the task's own file list
 # regardless of what else sits in the index.
+# PL-58: with parallel tasks in one worktree the commit file list is derived
+# from the actual task diff (git diff --name-only), not from every change in the
+# shared tree. Files outside the task manifest (-Files) are foreign: they are
+# excluded from the commit and reported as a WARN.
 param(
   [Parameter(Mandatory = $true)][string]$Message,
   [Parameter(Mandatory = $true)][string]$Files,
@@ -59,20 +63,61 @@ try {
     exit 0
   }
 
+  # Task manifest is the only source of file ownership. Normalize separators
+  # to forward slashes so comparison is stable on Windows.
+  $manifest = @{}
+  foreach ($item in $fileList) {
+    $key = ([string]$item).Trim() -replace '\\', '/'
+    if ($key) { $manifest[$key] = $true }
+  }
+
+  # PL-58: stage only our files, then read the actual diff of the shared
+  # worktree. The commit list comes from the task diff, not the whole tree.
   if ((Invoke-Git 'add' (@('add', '--') + $fileList)) -ne 0) {
     Log "FAIL add: $Message"
     exit 1
   }
+
   $old = $ErrorActionPreference
   $ErrorActionPreference = 'Continue'
-  try { $nothing = git diff --cached --quiet; $cleanCode = $LASTEXITCODE }
+  try {
+    $changedRaw = & git diff --name-only HEAD 2>$null
+    $changedCode = $LASTEXITCODE
+    $stagedRaw = & git diff --cached --name-only 2>$null
+    $stagedCode = $LASTEXITCODE
+  }
   finally { $ErrorActionPreference = $old }
-  if ($cleanCode -eq 0) {
+  if ($changedCode -ne 0 -or $stagedCode -ne 0) {
+    Log "FAIL diff: $Message"
+    exit 1
+  }
+
+  $changedSet = @{}
+  foreach ($raw in @($changedRaw) + @($stagedRaw)) {
+    $key = ([string]$raw).Trim() -replace '\\', '/'
+    if ($key) { $changedSet[$key] = $true }
+  }
+
+  # Foreign files (ARCH-1/ARCH-2 in PL-58) never enter the commit, but their
+  # presence in the shared worktree is always logged as a warning.
+  $foreign = @($changedSet.Keys | Where-Object { -not $manifest.ContainsKey($_) } | Sort-Object)
+  if ($foreign.Count -gt 0) {
+    $foreignJoined = $foreign -join '; '
+    Log "WARN PL-58: files outside task manifest are excluded from commit: $foreignJoined"
+  }
+
+  # Commit list = our files that actually changed (from the real diff).
+  $commitFiles = @()
+  foreach ($item in $fileList) {
+    $key = ([string]$item).Trim() -replace '\\', '/'
+    if ($changedSet.ContainsKey($key)) { $commitFiles += $item }
+  }
+  if ($commitFiles.Count -eq 0) {
     Log "SKIP (nothing to commit): $Message"
     exit 0
   }
 
-  if ((Invoke-Git 'commit' (@('commit', '-m', $Message, '--') + $fileList)) -ne 0) {
+  if ((Invoke-Git 'commit' (@('commit', '-m', $Message, '--') + $commitFiles)) -ne 0) {
     Log "FAIL commit: $Message"
     exit 1
   }

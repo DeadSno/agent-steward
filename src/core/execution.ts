@@ -578,6 +578,90 @@ export class GateRejectedError extends Error {
   }
 }
 
+/* ------------------------------------------------------------------------- *
+ * PL-58: атрибуция файлов коммита (фактический diff задачи vs manifest)
+ * ------------------------------------------------------------------------- */
+
+/** Приводит путь из `git diff --name-only` / `-Files` к одному виду. */
+function normalizeCommitPath(value: unknown): string {
+  return String(value ?? "")
+    .trim()
+    .replace(/^"|"$/g, "")
+    .replace(/\\/g, "/")
+    .replace(/^\.\//, "");
+}
+
+/**
+ * PL-58: парсит вывод `git diff --name-only` в нормализованный список путей
+ * (без пустых строк и дублей, с прямыми слешами).
+ */
+export function commitFilesFromDiff(diffOutput: string): string[] {
+  const seen = new Set<string>();
+  const files: string[] = [];
+  for (const line of String(diffOutput ?? "").split(/\r?\n/)) {
+    const file = normalizeCommitPath(line);
+    if (file && !seen.has(file)) {
+      seen.add(file);
+      files.push(file);
+    }
+  }
+  return files;
+}
+
+/** PL-58: результат сопоставления фактического diff задачи с её manifest. */
+export interface CommitFileAttribution {
+  /** Изменённые файлы из manifest — их задача вправе коммитить. */
+  commitFiles: string[];
+  /** Изменённые файлы вне manifest — чужие, от параллельных задач. */
+  foreignFiles: string[];
+}
+
+/**
+ * PL-58: вычисляет список файлов коммита из фактического diff задачи
+ * (`git diff --name-only`) и отделяет чужие файлы, которых нет в manifest.
+ */
+export function commitFilesForTask(
+  diffOutput: string,
+  manifest: readonly string[],
+): CommitFileAttribution {
+  const changed = commitFilesFromDiff(diffOutput);
+  const allowed = new Set(manifest.map(normalizeCommitPath).filter(Boolean));
+  return {
+    commitFiles: changed.filter((file) => allowed.has(file)),
+    foreignFiles: changed.filter((file) => !allowed.has(file)),
+  };
+}
+
+/** Параметры qualityGate атрибуции коммита (PL-58). */
+export interface CommitAttributionGateOptions {
+  /** Manifest задачи — файлы, которые она вправе коммитить (`-Files`). */
+  manifest: readonly string[];
+  /**
+   * Источник вывода `git diff --name-only`. Инъекция: ядро исполнения не
+   * запускает процессы само — транспорт/процессы передаются снаружи.
+   */
+  diff: () => string | Promise<string>;
+}
+
+/**
+ * PL-58: qualityGate, который отклоняет коммит с чужими файлами. Возвращает
+ * `ok: false`, если фактический diff задачи содержит пути вне её manifest —
+ * типичное следствие параллельных задач в одном worktree (ARCH-3 утащил
+ * файлы ARCH-1/ARCH-2, а ARCH-1 остался почти пустым).
+ */
+export function createCommitAttributionGate(options: CommitAttributionGateOptions): Gate {
+  return async () => {
+    const attribution = commitFilesForTask(await options.diff(), options.manifest);
+    if (attribution.foreignFiles.length > 0) {
+      return {
+        ok: false,
+        reason: `PL-58: коммит содержит чужие файлы вне manifest: ${attribution.foreignFiles.join(", ")}`,
+      };
+    }
+    return { ok: true };
+  };
+}
+
 /** Результат выполнения одного шага. */
 export interface ExecutedStep {
   stepName: string;

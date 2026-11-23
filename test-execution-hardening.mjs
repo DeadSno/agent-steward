@@ -612,6 +612,108 @@ try {
   check("ARCH-4: секция не выбросила исключение", false, "section threw");
 }
 
+// --- PL-58: атрибуция файлов коммита при параллельных задачах в одном worktree ---
+try {
+  const {
+    commitFilesFromDiff,
+    commitFilesForTask,
+    createCommitAttributionGate,
+  } = await import("./dist/core/execution.js");
+
+  // Реальный diff: «параллельные задачи» меняют файлы в одном worktree.
+  const sharedRepo = path.join(tempRoot, "pl58-shared-worktree");
+  fs.mkdirSync(sharedRepo, { recursive: true });
+  const git = (args) =>
+    spawnSync("git", args, { cwd: sharedRepo, encoding: "utf8", windowsHide: true });
+  check("PL-58: git доступен для воспроизведения", git(["init", "-q"]).status === 0);
+  git(["config", "user.email", "pl58@example.invalid"]);
+  git(["config", "user.name", "PL-58"]);
+  fs.writeFileSync(path.join(sharedRepo, "baseline.txt"), "base\n", "utf8");
+  git(["add", "-A"]);
+  git(["commit", "-q", "-m", "baseline"]);
+
+  const arch1 = "src/arch1.ts";
+  const arch2 = "src/arch2.ts";
+  const arch3 = "src/arch3.ts";
+  for (const file of [arch1, arch2, arch3]) {
+    const absolute = path.join(sharedRepo, file);
+    fs.mkdirSync(path.dirname(absolute), { recursive: true });
+    fs.writeFileSync(absolute, `// ${file}\n`, "utf8");
+  }
+  git(["add", "-A"]);
+  const diffOutput = git(["diff", "--name-only", "HEAD"]).stdout;
+  check(
+    "PL-58: реальный diff содержит файлы трёх задач",
+    [arch1, arch2, arch3].every((file) => diffOutput.includes(file)),
+    diffOutput
+  );
+
+  // ARCH-3 не должен коммитить файлы ARCH-1/ARCH-2 (14 чужих файлов в находке).
+  const attribution = commitFilesForTask(diffOutput, [arch3]);
+  check(
+    "PL-58: список файлов коммита вычислен из фактического diff",
+    attribution.commitFiles.join(",") === arch3,
+    JSON.stringify(attribution)
+  );
+  check(
+    "PL-58: чужие файлы ARCH-1/ARCH-2 обнаружены",
+    [...attribution.foreignFiles].sort().join(",") === [arch1, arch2].sort().join(","),
+    JSON.stringify(attribution.foreignFiles)
+  );
+  check(
+    "PL-58: парсер diff нормализует CRLF/пустые строки/дубли",
+    commitFilesFromDiff(`${arch3}\r\n\r\n${arch3}\n`).join(",") === arch3
+  );
+
+  // qualityGate: коммит с чужими файлами отклоняется, чистый — проходит.
+  const makePlan = async (suffix) =>
+    buildExecutionPlan(
+      createAdHocRunContext(`PL-58 ${suffix} миссия`, {
+        taskName: `pl58-${suffix}-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        taskType: "mission",
+        riskClass: "R0",
+      })
+    );
+  const localExecutor = { id: "pl58-test", supports: () => true, execute: async () => ({}) };
+
+  const badResult = await executeExecutionPlan(await makePlan("bad"), {
+    executors: [localExecutor],
+    gate: createCommitAttributionGate({ manifest: [arch3], diff: () => diffOutput }),
+  });
+  check(
+    "PL-58: qualityGate отклоняет коммит с чужими файлами",
+    badResult.status === "failed" && /arch1|arch2/.test(badResult.error ?? ""),
+    `status=${badResult.status}, error=${badResult.error}`
+  );
+
+  const goodResult = await executeExecutionPlan(await makePlan("good"), {
+    executors: [localExecutor],
+    gate: createCommitAttributionGate({
+      manifest: [arch1, arch2, arch3],
+      diff: () => diffOutput,
+    }),
+  });
+  check(
+    "PL-58: qualityGate пропускает коммит только со своими файлами",
+    goodResult.status === "passed",
+    `status=${goodResult.status}, error=${goodResult.error}`
+  );
+
+  // Усиление post-flight: список файлов берётся из diff, чужие — предупреждаются.
+  const commitScript = fs.readFileSync(path.join("scripts", "pl-commit.ps1"), "utf8");
+  check(
+    "PL-58: pl-commit.ps1 вычисляет файлы коммита через git diff --name-only",
+    /diff\s+--name-only/.test(commitScript)
+  );
+  check(
+    "PL-58: pl-commit.ps1 предупреждает о файлах вне manifest",
+    /PL-58/.test(commitScript) && /WARN/.test(commitScript)
+  );
+} catch (err) {
+  console.log("[diag] PL-58 section THREW:", err instanceof Error ? err.stack : String(err));
+  check("PL-58: секция не выбросила исключение", false, "section threw");
+}
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\nExecution hardening: ${results.length - failed.length}/${results.length} проверок пройдено.`);
 try {
