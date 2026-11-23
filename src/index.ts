@@ -26,7 +26,6 @@ import {
   STALE_LOCK_MAX_AGE_MS,
   WRAPPER_DIR,
   sanitizeName,
-  validateModelId,
   validateTaskName,
 } from "./types.js";
 import { parseCron, buildScheduleGate, isValidIanaTimeZone, validateLaunchWindow, prevRun, nextRun as cronNextRun, normalizeActiveDays, activeWindowState, nextWindowOpenDelayMs, assessCronWindowFeasibility, windowFeasibilityReasonText } from "./core/schedule-v2.js";
@@ -45,7 +44,14 @@ import { ensureWrapper, writePromptFile, writeWrapperCmd, lockFilePath, requestI
 import { getSchedulerBackend, LinuxScheduler } from "./core/scheduler/index.js";
 import { SCHEDULER_SKILL_ID, loadSchedulerSkill } from "./skill.js";
 import { getTaskLogs } from "./core/scheduler/logs.js";
-import { findSanitizedNameConflict, sanitizedConflictMessage } from "./core/task-name.js";
+import { planParallelExecution, preflightScope } from "./core/scheduler/run-now.js";
+import {
+  findSanitizedNameConflict,
+  sanitizedConflictMessage,
+  validateModelReference,
+} from "./core/task-name.js";
+import { modelAvailabilityWarning } from "./core/opencode-cli.js";
+import { listAvailableModels } from "./core/opencode-models.js";
 import { writeBashWrapper } from "./core/wrappers/bash.js";
 import { normalizeTaskGuards, type TaskGuards } from "./core/guard.js";
 import {
@@ -542,8 +548,12 @@ export const scheduleTaskSchema = z.object({
   model: z
     .string()
     .optional()
+    .refine((value) => validateModelReference(value) === null, {
+      message:
+        'Модель должна быть в формате "provider/model" (например, opencode/hy4-flash-free, anthropic/claude-3-5-sonnet, openai/gpt-4o). Модель без префикса провайдера отклоняется; доступные модели: `opencode models`.',
+    })
     .describe(
-      "LLM model in OpenCode format, e.g. anthropic/claude-3-5-sonnet. Defaults to the OpenCode default model.",
+      "LLM model in OpenCode format provider/model, e.g. opencode/hy4-flash-free or anthropic/claude-3-5-sonnet. A model without a provider/ prefix is rejected. Empty value uses the OpenCode default model.",
     ),
   priority: z
     .number()
@@ -906,7 +916,13 @@ export const updateTaskSchema = z.object({
   model: z
     .string()
     .optional()
-    .describe("New model in OpenCode format. Empty string clears it (default model)."),
+    .refine((value) => validateModelReference(value) === null, {
+      message:
+        'Модель должна быть в формате "provider/model" (например, opencode/hy4-flash-free, anthropic/claude-3-5-sonnet, openai/gpt-4o). Модель без префикса провайдера отклоняется; доступные модели: `opencode models`.',
+    })
+    .describe(
+      "New model in OpenCode format provider/model (e.g. opencode/hy4-flash-free). Empty string clears it (default model).",
+    ),
   priority: z
     .number()
     .int()
@@ -2458,7 +2474,7 @@ async function updateTaskFromInput(
 
   const nextModel = clearableString(input.model, previous.model);
   if (nextModel) {
-    const modelError = validateModelId(nextModel);
+    const modelError = validateModelReference(nextModel);
     if (modelError) {
       return {
         success: false,
@@ -2518,6 +2534,9 @@ async function updateTaskFromInput(
       input.guards ?? previous.guards,
       // QA-P0.1 (E-2.1): budget переживает пересоздание задачи. 0 очищает лимит.
       input.tokenBudget ?? previous.tokenBudget,
+      // PL-75: cron-задача при update пересоздаётся с будущей /sd, чтобы
+      // прошедшая start boundary не вызывала catch-up.
+      triggerType === "cron",
     );
 
     // Матрица отключена при обновлении — убираем клонов и агрегатор.
@@ -2920,18 +2939,61 @@ const getTaskLogsExecute = wrapExecute<TaskLogsArgs>(async (args) => {
 });
 
 /** dry_run — симуляция пайплайна без выполнения. */
+/**
+ * PL-76: список доступных моделей для проверки в `dry_run`.
+ * `OPENCODE_SCHEDULER_AVAILABLE_MODELS` — явный список через запятую (тесты/CI,
+ * чтобы не дёргать CLI); иначе `opencode models` с кэшем в opencode-models.ts.
+ */
+async function availableModelsForDryRun(definitions: Awaited<ReturnType<typeof loadTaskDefinitions>>): Promise<string[]> {
+  if (!definitions.some((definition) => definition.model?.trim())) return [];
+  const override = (process.env.OPENCODE_SCHEDULER_AVAILABLE_MODELS ?? "")
+    .split(",")
+    .map((model) => model.trim())
+    .filter(Boolean);
+  if (override.length > 0) return override;
+  try {
+    return await listAvailableModels();
+  } catch {
+    return [];
+  }
+}
+
+/** PL-74/PL-76/PL-88: проверить формат и доступность модели каждой задачи отчёта. */
+function annotateDryRunModelWarnings(
+  report: DryRunReport & { error?: string },
+  definitions: Awaited<ReturnType<typeof loadTaskDefinitions>>,
+  available: readonly string[],
+): void {
+  const byName = new Map(
+    definitions.map((definition) => [definition.name.toLowerCase(), definition]),
+  );
+  for (const item of report.tasks) {
+    const definition = byName.get(item.name.toLowerCase());
+    const model = definition?.model?.trim();
+    if (!model) continue;
+    const warning = modelAvailabilityWarning(model, available, item.qualityGate ?? definition?.qualityGate);
+    if (!warning || report.warnings.some((existing) => existing.includes(warning))) continue;
+    report.warnings.push(`[${item.name}] ${warning}`);
+  }
+}
+
 const dryRunExecute = wrapExecute<DryRunArgs>(async (args) => {
   const name = args.name?.trim();
+  const definitions = await loadTaskDefinitions();
+  const available = await availableModelsForDryRun(definitions);
+
   if (name) {
     const report = await simulatePipeline(name);
+    annotateDryRunModelWarnings(report, definitions, available);
     return { content: JSON.stringify(report) };
   }
 
-  const definitions = await loadTaskDefinitions();
   const reports: (DryRunReport & { error?: string })[] = [];
   for (const definition of definitions) {
     try {
-      reports.push(await simulatePipeline(definition.name));
+      const report = await simulatePipeline(definition.name);
+      annotateDryRunModelWarnings(report, definitions, available);
+      reports.push(report);
     } catch (err) {
       reports.push({
         success: false,
@@ -4979,6 +5041,22 @@ export interface ToolSpec {
 }
 
 /**
+ * PL-70: единый контракт для всех manage_* инструментов. Агент теряет вызовы,
+ * когда guessing действие `get` там, где схема объявляет только `list`.
+ * Каждое описание обязано явно называть допустимые действия и read-действие.
+ */
+export const MANAGE_CONTRACT_HINT =
+  " Use ONLY the action values listed above. Inspect state with the listed read action (list or get) — do not guess an action such as get when it is not listed: unknown actions are rejected by the schema before execution.";
+
+/**
+ * PL-71: OpenCode /help показывает не более 12 инструментов, хотя плагин
+ * регистрирует больше. Пометка в описаниях убирает расхождение со справкой.
+ */
+export const PLUGIN_HELP_VISIBLE_TOOL_LIMIT = 12;
+export const PLUGIN_HELP_NOTE =
+  ` OpenCode /help displays at most ${PLUGIN_HELP_VISIBLE_TOOL_LIMIT} tool entries; this plugin registers more tools than that — every registered tool stays callable by name.`;
+
+/**
  * Собирает полный список инструментов для конкретного ядра.
  *
  * V2-адаптер (`ctx.tool.transform`) и V1-адаптер (`createV1Tools`) получают
@@ -5014,7 +5092,8 @@ export function createToolSpecs(
       output: listTasksOutputSchema,
       description:
         `Lists plugin tasks from the scheduler (${scheduler.title}) with schedule, status, next chained task and working directory. ` +
-        "Matrix parents include a per-clone summary. Returns structured output in Code Mode; content remains a JSON string for V1 compatibility.",
+        "Matrix parents include a per-clone summary. Returns structured output in Code Mode; content remains a JSON string for V1 compatibility." +
+        PLUGIN_HELP_NOTE,
       execute: handlers.list_tasks,
     },
     {
@@ -5086,7 +5165,9 @@ export function createToolSpecs(
       name: "manage_workspaces",
       input: manageWorkspacesSchema,
       description:
-        "Manages multi-repo workspaces: list, add, update or delete. Tasks can target a workspace by id (cwd = workspace path) or fan out to several with matrix.workspaceIds.",
+        "Manages multi-repo workspaces. Actions: list (read), add, update, delete. There is no get action — use list to inspect. " +
+        "Tasks can target a workspace by id (cwd = workspace path) or fan out to several with matrix.workspaceIds." +
+        MANAGE_CONTRACT_HINT,
       audit: (args: WorkspacesArgs) =>
         args.action === "list"
           ? null
@@ -5140,7 +5221,9 @@ export function createToolSpecs(
       name: "manage_settings",
       input: manageSettingsSchema,
       description:
-        "Reads or updates global scheduler settings: maxConcurrent, winterMode, notifications (webhook, Telegram, native OS notifications, quiet hours, filters, matrix alerts, digest) and history retention. Updates are merged into the current settings.",
+        "Reads or updates global scheduler settings. Actions: get (read), list (alias of get), update. There is no delete action. " +
+        "Fields: maxConcurrent, winterMode, notifications (webhook, Telegram, native OS notifications, quiet hours, filters, matrix alerts, digest) and history retention. Updates are merged into the current settings." +
+        MANAGE_CONTRACT_HINT,
       audit: (args: SettingsArgs) =>
         args.action === "update"
           ? { action: "settings.update", targetType: "settings", target: "global" }
@@ -5151,9 +5234,11 @@ export function createToolSpecs(
       name: "manage_local_ai",
       input: manageLocalAiSchema,
       description:
-        "Reads, updates or tests the local assistant for notification triage: mode (off, rules, llm, auto), Ollama/OpenAI baseUrl, model, timeout, fallback, confidence threshold and shadow mode. " +
+        "Reads, updates or tests the local assistant for notification triage. Actions: get (read), update, test. There is no list or delete action. " +
+        "Fields: mode (off, rules, llm, auto), Ollama/OpenAI baseUrl, model, timeout, fallback, confidence threshold and shadow mode. " +
         "action=test sends one synthetic notification to the model and reports latency, protocol and verdict without saving anything. " +
-        "Without a model the scheduler keeps working through rules: notifications are never blocked by a missing model.",
+        "Without a model the scheduler keeps working through rules: notifications are never blocked by a missing model." +
+        MANAGE_CONTRACT_HINT,
       audit: (args: LocalAiArgs) =>
         args.action === "update"
           ? { action: "localAi.update", targetType: "settings", target: "triage" }
@@ -5164,7 +5249,9 @@ export function createToolSpecs(
       name: "manage_templates",
       input: manageTemplatesSchema,
       description:
-        "Lists, saves or deletes reusable task templates (prompt, schedule, retries, Quality Gate, chains, triggers, tool restrictions).",
+        "Manages reusable task templates. Actions: list (read), save, delete. There is no get action — use list to inspect. " +
+        "Templates carry prompt, schedule, retries, Quality Gate, chains, triggers and tool restrictions." +
+        MANAGE_CONTRACT_HINT,
       audit: (args: TemplatesArgs) =>
         args.action === "list"
           ? null
@@ -5179,7 +5266,9 @@ export function createToolSpecs(
       name: "manage_profiles",
       input: manageProfilesSchema,
       description:
-        "Lists, creates, switches or deletes isolated scheduler profiles (separate database, settings and dashboard port). Switching requires an OpenCode restart.",
+        "Manages isolated scheduler profiles. Actions: list (read), create, switch, delete. There is no get action — use list to inspect. " +
+        "Profiles have a separate database, settings and dashboard port; switching requires an OpenCode restart." +
+        MANAGE_CONTRACT_HINT,
       audit: (args: ProfilesArgs) =>
         args.action === "list"
           ? null
@@ -5219,7 +5308,8 @@ export function createToolSpecs(
       name: "get_dashboard_info",
       input: getDashboardInfoSchema,
       description:
-        "Returns dashboard port and URL, OS platform, scheduler title and the active profile.",
+        "Returns dashboard port and URL, OS platform, scheduler title and the active profile." +
+        PLUGIN_HELP_NOTE,
       execute: handlers.get_dashboard_info,
     },
     {
@@ -5234,9 +5324,10 @@ export function createToolSpecs(
       name: "manage_secrets",
       input: manageSecretsSchema,
       description:
-        "Manages the encrypted secret store: list (names and masked previews), set (create or replace) or delete. " +
+        "Manages the encrypted secret store. Actions: list (read — names and masked previews), set (create or replace), delete. There is no get action — use list to inspect. " +
         "Secrets are encrypted with AES-256-GCM at rest and referenced from workspace env as ${secret:NAME}; " +
-        "values are never returned by list and are redacted from logs and audit details.",
+        "values are never returned by list and are redacted from logs and audit details." +
+        MANAGE_CONTRACT_HINT,
       audit: (args: SecretsArgs) =>
         args.action === "list"
           ? null
@@ -6879,7 +6970,7 @@ function resolveMatrixExtraConfig(
         if (typeof raw === "string" && raw.trim()) {
           const trimmed = raw.trim();
           if (field === "model") {
-            const modelError = validateModelId(trimmed);
+            const modelError = validateModelReference(trimmed);
             if (modelError) {
               throw new Error(
                 t("tool.error.modelInvalid", {
@@ -7012,6 +7103,8 @@ export async function schedulerCreateTask(
   guards?: TaskGuards,
   /** Economics v2 (E-2): per-run token budget. 0/omitted = no limit (fail-open). */
   tokenBudget?: number,
+  /** PL-75: при пересоздании cron-задачи добавить будущую /sd (без catch-up). */
+  avoidCatchUp?: boolean,
 ): Promise<void> {
   // Спринт 27.5 (hotfix 1.5.1): проверяем имя до создания wrapper/prompt и записи
   // в БД. Недопустимые символы отклоняются с понятным сообщением, а не ошибкой
@@ -7059,7 +7152,7 @@ export async function schedulerCreateTask(
 
   const normalizedModel = model?.trim() || undefined;
   if (normalizedModel) {
-    const modelError = validateModelId(normalizedModel);
+    const modelError = validateModelReference(normalizedModel);
     if (modelError) {
       throw new Error(
         t("tool.error.modelInvalid", { model: normalizedModel, error: modelError }),
@@ -7077,8 +7170,24 @@ export async function schedulerCreateTask(
   const normalizedRunWhenLoggedOff = runWhenLoggedOff === true ? true : undefined;
   // Спринт 27.5.8: пауза сохраняется при пересоздании задачи.
   const normalizedPaused = paused === true ? true : undefined;
-  // W-1: изоляция запуска в одноразовом git worktree.
-  const normalizedWorktree = worktree === true ? true : undefined;
+  // PL-77: при параллельном выполнении агенты не должны делить worktree.
+  // maxConcurrent !== 1 означает, что параллель возможна — включаем
+  // уникальный worktree на задачу принудительно.
+  let maxConcurrentSetting: number | undefined;
+  try {
+    maxConcurrentSetting = (await loadSettings()).maxConcurrent;
+  } catch {
+    // Настройки могут быть ещё не инициализированы — не ломаем создание.
+  }
+  const parallelPlan = planParallelExecution({
+    maxConcurrent: maxConcurrentSetting,
+    taskName: normalizedName,
+    worktree: worktree === true,
+  });
+  if (!parallelPlan.allowed) {
+    throw new Error(parallelPlan.reason ?? "PL-77: превышен maxConcurrent.");
+  }
+  const normalizedWorktree = parallelPlan.worktree ? true : undefined;
   // W-3: guard-условия. Ошибка нормализации — явная ошибка создания задачи,
   // чтобы опечатка в конфигурации не превратилась в молчаливый пропуск.
   const guardsResult = normalizeTaskGuards(guards);
@@ -7387,6 +7496,17 @@ export async function schedulerCreateTask(
   const effectiveWorkingDirectory =
     workspace?.path || workingDirectory?.trim() || projectDirectory || process.cwd();
 
+  // PL-79 / PL-82: pre-flight проверяем ВЕСЬ список SCOPE-путей до записи
+  // обёртки и регистрации в ОС. Иначе post-flight `git add` падает уже после
+  // зелёного quality gate из-за пути, которого никогда не было на диске.
+  const scopeCheck = preflightScope(prompt, effectiveWorkingDirectory);
+  if (!scopeCheck.ok) {
+    throw new Error(
+      `PL-79/PL-82: SCOPE задачи "${normalizedName}" содержит несуществующие пути: ` +
+        `${scopeCheck.missing.join(", ")}. Исправьте список путей до создания задачи.`,
+    );
+  }
+
   // Файловые триггеры: относительный watchPath не должен выходить за рабочую
   // директорию задачи, а glob-маски — за пределы watchPath (path traversal).
   let effectiveWatchPath = watchPath?.trim() || undefined;
@@ -7555,6 +7675,7 @@ export async function schedulerCreateTask(
       notBefore: normalizedNotBefore,
       notAfter: normalizedNotAfter,
       runWhenLoggedOff: normalizedRunWhenLoggedOff,
+      avoidCatchUp,
     });
   } catch (err) {
     await rollbackArtifacts();

@@ -36,7 +36,10 @@ const {
 } = await import("./dist/core/run-mode.js");
 const { getTaskLogs } = await import("./dist/core/scheduler/logs.js");
 const { runOpencode, quoteCmdArg, opencodeCommandFor } = await import("./dist/core/opencode-cli.js");
-const { validateCmdLineText } = await import("./dist/core/task-name.js");
+const {
+  validateCmdLineText,
+  validateModelReference,
+} = await import("./dist/core/task-name.js");
 const { readStructuredLogs } = await import("./dist/core/structured-log.js");
 const { LOG_DIR, sanitizeName } = await import("./dist/types.js");
 const { loadTemplates, saveTemplate, deleteTemplate } = await import("./dist/templates.js");
@@ -170,6 +173,40 @@ check(
   updateTaskSchema.safeParse({ name: "deploy", model: "" }).success
 );
 
+// PL-74/PL-88: единая валидация формата provider/model в схемах и в write-пути.
+const badModel = "hy4-flash-free";
+const noPrefixSchedule = scheduleTaskSchema.safeParse({
+  name: "no-prefix", schedule: "0 3 * * *", prompt: "p", model: badModel,
+});
+check(
+  "PL-74/PL-88: schedule_task отвергает модель без provider/",
+  !noPrefixSchedule.success &&
+    /provider\/model/.test(noPrefixSchedule.error.issues[0].message) &&
+    /opencode models/.test(noPrefixSchedule.error.issues[0].message)
+);
+check(
+  "PL-74/PL-88: schedule_task принимает opencode/hy4-flash-free",
+  scheduleTaskSchema.safeParse({
+    name: "prefixed", schedule: "0 3 * * *", prompt: "p",
+    model: "opencode/hy4-flash-free",
+  }).success
+);
+const noPrefixUpdate = updateTaskSchema.safeParse({ name: "deploy", model: badModel });
+check(
+  "PL-74/PL-88: update_task отвергает модель без provider/",
+  !noPrefixUpdate.success &&
+    /provider\/model/.test(noPrefixUpdate.error.issues[0].message)
+);
+check(
+  "PL-74/PL-88: update_task принимает модель с префиксом и пустую строку",
+  updateTaskSchema.safeParse({ name: "deploy", model: "opencode/hy4-flash-free" }).success &&
+    updateTaskSchema.safeParse({ name: "deploy", model: "" }).success
+);
+check(
+  "PL-74/PL-88: общая валидация доступна как validateModelReference",
+  validateModelReference(badModel)?.includes("provider/model") === true &&
+    validateModelReference("opencode/hy4-flash-free") === null
+);
 // 9. matrix_control: cleanup без name.
 check(
   "matrix_control: cleanup без имени валиден",
@@ -271,6 +308,15 @@ check(
   psWrapper.includes("exit 0") && bashWrapper.includes("exit 0")
 );
 
+// PL-69: в журнале должна быть реальная причина падения beforeScript.
+check(
+  "PL-69: pre-flight лог содержит команду, код выхода и stderr",
+  psWrapper.includes("Pre-flight причина: command=$BeforeScript; exitCode=$preCode") &&
+    psWrapper.includes("Pre-flight stderr: $line") &&
+    psWrapper.includes("Pre-flight stdout: $line") &&
+    psWrapper.includes("stderr=$preStderrText")
+);
+
 // PL-7.2: обе обёртки пишут разделённые stdout/stderr через hook-output.js.
 const hookHelper = fs.readFileSync(new URL("./dist/hook-output.js", import.meta.url), "utf8");
 check(
@@ -329,6 +375,33 @@ const parentSpecs = createToolSpecs({}, {});
 check(
   `QV-8: поверхность инструментов ${parentSpecs.length} → ${childSpecs.length} в дочернем прогоне`,
   parentSpecs.length === 30 && Array.isArray(childSpecs) && childSpecs.length === 0
+);
+
+// PL-70: все manage_* явно описывают контракт action, чтобы агент не терял вызовы.
+const manageToolNames = [
+  "manage_workspaces",
+  "manage_settings",
+  "manage_local_ai",
+  "manage_templates",
+  "manage_profiles",
+  "manage_secrets",
+];
+const manageSpecs = parentSpecs.filter((spec) => manageToolNames.includes(spec.name));
+check(
+  `PL-70: все ${manageToolNames.length} manage_* описали доступные действия и read-действие`,
+  manageSpecs.length === manageToolNames.length &&
+    manageSpecs.every(
+      (spec) =>
+        spec.description.includes("Use ONLY the action values listed above") &&
+        spec.description.includes("do not guess an action") &&
+        /no get action|get \(read\)/.test(spec.description)
+    )
+);
+check(
+  "PL-70: action=get отвергается там, где объявлен только list",
+  !manageTemplatesSchema.safeParse({ action: "get" }).success &&
+    !manageProfilesSchema.safeParse({ action: "get" }).success &&
+    manageSettingsSchema.safeParse({ action: "get" }).success
 );
 
 // 13. Описания инструментов переведены на английский.
@@ -403,6 +476,23 @@ check(
   "PL-32: manage_templates delete по имени через MCP-обработчик",
   mcpDelete.success === true &&
     !(await loadTemplates()).some((template) => template.name === mcpProbe.name)
+);
+
+// PL-74/PL-88: write-путь (RPC-вызов без Zod) тоже отклоняет модель без provider/.
+const pl74Handler = JSON.parse(
+  (
+    await handlers.schedule_task({
+      name: "pl74-no-prefix",
+      schedule: "0 3 * * *",
+      prompt: "probe",
+      model: "mimo-v2.6-flash-free",
+    })
+  ).content
+);
+check(
+  "PL-74/PL-88: write-путь schedule_task тоже отклоняет модель без префикса",
+  pl74Handler.success === false &&
+    /provider\/model|Invalid model/.test(JSON.stringify(pl74Handler))
 );
 
 // PL-19: get_task_logs принимает name и taskName.

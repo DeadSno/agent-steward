@@ -707,6 +707,86 @@ check(
 // ROADMAP: закрытые подзадачи удаляются отсюда, остаются только открытые.
 // QA-A2.5/A2.6 закрыты по факту (QV-7) и больше не должны встречаться в роадмапе.
 const roadmapText = fs.readFileSync(path.join(root, "ROADMAP.md"), "utf8");
+
+// PL-71: /help OpenCode показывает не более 12 инструментов — это не число
+// инструментов плагина. В коде должно быть честное пояснение, без старого
+// утверждения «12 tools» как количества инструментов плагина.
+const helpLimitMatch = /PLUGIN_HELP_VISIBLE_TOOL_LIMIT\s*=\s*(\d+)/.exec(indexSrc);
+const helpLimit = helpLimitMatch ? Number(helpLimitMatch[1]) : null;
+check(
+  `PL-71: лимит /help объявлен в коде (${helpLimit ?? "нет"}), ожидалось 12`,
+  helpLimit === 12
+);
+check(
+  "PL-71: описания инструментов честно сообщают про лимит /help",
+  indexSrc.includes("PLUGIN_HELP_NOTE") &&
+    (indexSrc.match(/PLUGIN_HELP_NOTE/g) || []).length >= 3 &&
+    indexSrc.includes("OpenCode /help displays at most")
+);
+check(
+  "PL-71: в исходниках нет устаревшего утверждения «12 tools»",
+  !/\b12 tools\b/.test(indexSrc)
+);
+check(
+  "PL-71: регрессия — устаревшее «12 tools» детектируется",
+  /\b12 tools\b/.test("// plugin provides 12 tools")
+);
+
+// PL-89: release-check SKILL.md должен объявлять счётчик сюит наравне с
+// agent-steward-dev/docs-sync. Общий цикл выше ловит только «наборов тестов»,
+// поэтому здесь проверяется форма «116 наборов».
+const suitesCounterRe = /(?<!\*)\b(\d+)\s+наборов(?: тестов)?/g;
+const suitesCountersIn = (text) => [...text.matchAll(suitesCounterRe)].map((m) => Number(m[1]));
+const releaseCheckRel = ".opencode/skills/release-check/SKILL.md";
+const releaseCheckSuites = suitesCountersIn(
+  fs.readFileSync(path.join(root, releaseCheckRel), "utf8")
+);
+check(
+  `PL-89: ${releaseCheckRel}: счётчик сюит ${releaseCheckSuites.join(",") || "отсутствует"}, ожидалось ${skillCounters.suites}`,
+  releaseCheckSuites.length > 0 && releaseCheckSuites.every((n) => n === skillCounters.suites)
+);
+check(
+  "PL-89: регрессия — подмена счётчика сюит (115 наборов) детектируется",
+  suitesCountersIn("... 115 наборов ...").every((n) => n !== skillCounters.suites)
+);
+
+// PL-78: каждая значащая строка «Детали 3.8» — чекбокс, заголовок или
+// метаданные-файлы в backticks; обрывки предложений недопустимы.
+const detail38Lines = (text) => {
+  const lines = text.split(/\r?\n/);
+  const start = lines.findIndex((line) => /^##\s+Деталь\s+3\.8\b/.test(line));
+  if (start < 0) return [];
+  const rest = lines.slice(start + 1);
+  const end = rest.findIndex((line) => /^(---|#{1,2}\s)/.test(line));
+  return (end < 0 ? rest : rest.slice(0, end)).filter((line) => line.trim() !== "");
+};
+const damaged38Lines = (text) =>
+  detail38Lines(text).filter(
+    (line) => !/^#{1,6}\s/.test(line) && !/^`/.test(line) && !/^- \[ \] /.test(line)
+  );
+check(
+  `PL-78: Деталь 3.8 — ${detail38Lines(roadmapText).length} строк, повреждённых ${damaged38Lines(roadmapText).length}`,
+  detail38Lines(roadmapText).length > 0 && damaged38Lines(roadmapText).length === 0
+);
+check(
+  "PL-78: регрессия — обрывок строки в Детали 3.8 детектируется",
+  damaged38Lines("## Деталь 3.8 — x\n\n- [ ] PL-1 - ok\nобрывок предложения\n").length === 1
+);
+
+// PL-100: ID подзадач в ROADMAP должны быть уникальны даже при параллельной
+// работе нескольких агентов.
+const roadmapIds = (text) => [...text.matchAll(/^- \[ \] ([A-Z]+-\d+(?:\.\d+)?)/gm)].map((m) => m[1]);
+const duplicateIds = (ids) => [...new Set(ids.filter((id, i) => ids.indexOf(id) !== i))];
+const roadmapDuplicateIds = duplicateIds(roadmapIds(roadmapText));
+check(
+  `PL-100: ID подзадач в ROADMAP уникальны (${roadmapIds(roadmapText).length} строк, дубли: ${roadmapDuplicateIds.join(",") || "нет"})`,
+  roadmapIds(roadmapText).length > 0 && roadmapDuplicateIds.length === 0
+);
+check(
+  "PL-100: регрессия — дубль ID детектируется",
+  duplicateIds(roadmapIds("- [ ] PL-1 - a\n- [ ] PL-1 - b\n")).join(",") === "PL-1"
+);
+
 check(
   "ROADMAP: закрытых подзадач нет (QA-A2.5/A2.6 перенесены в CHANGELOG)",
   !/\[[xX]\]\s/.test(roadmapText) && !/QA-A2\.[56]/.test(roadmapText)

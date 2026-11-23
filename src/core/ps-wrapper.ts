@@ -110,6 +110,10 @@ export const WRAPPER_SCRIPT = `param(
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 
+# PL-86/87: old .cmd files may not pass -Workdir. Fall back to the current
+# directory so quota partial-diff never fails with a Path binding error.
+if (-not $Workdir) { $Workdir = (Get-Location).Path }
+
 $ErrorActionPreference = "Continue"
 
 # P2-11: свободный текст (модель, имя workspace, списки инструментов) приходит
@@ -818,12 +822,24 @@ try {
     if ($BeforeScript) {
         Write-Log "[agent-steward] Pre-flight: $BeforeScript"
         $preCode = Invoke-HookScript -Command $BeforeScript
+        # PL-69: Invoke-HookScript складывает потоки в $script:lastHookStderr/$script:lastHookStdout.
+        $preErrorLines = @($script:lastHookStderr -split "\r?\n") | Where-Object { $_ -ne "" }
+        $preStdoutLines = @($script:lastHookStdout -split "\r?\n") | Where-Object { $_ -ne "" }
+        $preStderrText = (@($preErrorLines) -join " | ")
         Write-HookStructuredOutput -Phase "preFlight" -ExitCode $preCode
         if ($preCode -ne 0) {
             # PL-6.1: SilentlyContinue не гарантирует код 0 — подсказываем явный exit 0.
             Write-Log "[agent-steward] ОШИБКА: Pre-flight script failed (код $preCode). Завершите хук явным 'exit 0' (например: if (Test-Path -LiteralPath '<path>') { Remove-Item -LiteralPath '<path>' -Force }; exit 0)."
+            # PL-69: реальная причина должна быть видна в get_task_logs, а не только общая фраза.
+            Write-Log "[agent-steward] Pre-flight причина: command=$BeforeScript; exitCode=$preCode"
+            foreach ($line in $preErrorLines) {
+                Write-Log "[agent-steward] Pre-flight stderr: $line"
+            }
+            foreach ($line in $preStdoutLines) {
+                Write-Log "[agent-steward] Pre-flight stdout: $line"
+            }
             $script:preFlightStatus = "error"
-            $script:errorMessage = "Pre-flight script failed"
+            $script:errorMessage = "Pre-flight script failed (command=$BeforeScript, exitCode=$preCode; stderr=$preStderrText)"
             $script:exitCode = 1
             $script:skipMainTask = $true
         } else {
@@ -938,13 +954,24 @@ try {
         } catch {}
         if ($quotaLine.Count -gt 0) {
             $quotaReason = [string]$quotaLine[0]
-            $quotaDiff = Join-Path $Workdir ("reports/quota-" + ($TaskName -replace '[^a-zA-Z0-9_-]', '-') + ".diff")
+            $quotaSlug = $TaskName -replace '[^a-zA-Z0-9_-]', '-'
+            $quotaDiff = ""
+            try {
+                $quotaBase = $Workdir
+                if (-not $quotaBase) { $quotaBase = (Get-Location).Path }
+                $quotaDiff = Join-Path $quotaBase ("reports/quota-" + $quotaSlug + ".diff")
+            } catch {}
+            if (-not $quotaDiff) {
+                $quotaDiff = Join-Path ([System.IO.Path]::GetTempPath()) ("quota-" + $quotaSlug + ".diff")
+            }
             try {
                 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $quotaDiff) | Out-Null
                 & git -C $Workdir diff > $quotaDiff 2>&1
             } catch {}
             Write-Log "[agent-steward] PL-83: квота модели исчерпана: $quotaReason"
-            $script:errorMessage = "PL-83: квота модели исчерпана ($quotaReason). Частичные правки сохранены в $quotaDiff. Перезапустите задачу с другой моделью: update_task name=$TaskName model=provider/model"
+            $modelHint = ""
+            if ($Model) { $modelHint = " Текущая модель задачи: $Model." }
+            $script:errorMessage = "PL-83: квота модели исчерпана ($quotaReason). Частичные правки сохранены в $quotaDiff. Перезапустите задачу с другой моделью: update_task name=$TaskName model=provider/model$modelHint"
             $script:exitCode = 126
         }
     }
@@ -1245,6 +1272,12 @@ export async function writeWrapperCmd(
   // Раньше -LogFile и -RecorderFile добавлялись отдельными строками .cmd,
   // из-за чего PowerShell их не получал, а cmd пытался выполнить их как
   // самостоятельные команды: логи оставались пустыми, история не писалась.
+  // PL-86: рабочая директория нужна и .cmd (cd /d), и PowerShell-обёртке
+  // (-Workdir): без неё квота/partial-diff не знает, где искать reports/ и git.
+  // Вычисляем заранее и экранируем так же, как остальные пути-аргументы.
+  const effectiveWorkdir = workdir?.trim() || process.cwd();
+  const safeWorkdir = effectiveWorkdir.replace(/[\r\n\0"]+/g, "").trim();
+
   const psArgs: string[] = [
     `powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -NoProfile -File "${ps1Path}"`,
     `-TaskName "${taskName}"`,
@@ -1252,6 +1285,7 @@ export async function writeWrapperCmd(
     `-TimeoutSeconds ${timeoutSeconds}`,
     `-LockFile "${lockFile}"`,
     `-StaleLockMaxAgeMs ${STALE_LOCK_MAX_AGE_MS}`,
+    `-Workdir "${safeWorkdir}"`,
   ];
 
   // Таймаут хуков/Quality Gate: 300 с по умолчанию, 0 — без ограничения.
@@ -1388,7 +1422,6 @@ export async function writeWrapperCmd(
   // Рабочая директория: всегда переходим в неё ДО запуска PowerShell.
   // По умолчанию — текущая папка проекта (process.cwd()). Это критично для
   // MCP: opencode run подхватывает opencode.json из рабочей директории.
-  const effectiveWorkdir = workdir?.trim() || process.cwd();
   lines.push(`cd /d "${effectiveWorkdir}"`);
 
   // Спринт 19: гейт расписания ДО PowerShell. Проверяет, что cron реально
