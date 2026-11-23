@@ -851,6 +851,26 @@ export async function simulatePipeline(taskName: string): Promise<DryRunReport> 
   }
 
   const history = getHistory(null, 1000);
+  type HistoryRecord = (typeof history)[number];
+  /**
+   * PL-123: одна формула оценки для истории задачи и для глобального фолбэка —
+   * среднее по последним ESTIMATE_SAMPLE успешным записям (новые сверху).
+   */
+  const estimateFromHistory = (sample: HistoryRecord[]) => {
+    const avg = (pick: (r: HistoryRecord) => number | null | undefined) => {
+      const values = sample
+        .map(pick)
+        .filter((v): v is number => typeof v === "number" && Number.isFinite(v));
+      return values.length > 0 ? values.reduce((a, b) => a + b, 0) / values.length : null;
+    };
+    const avgMs = avg((r) => r.durationMs);
+    const tokens = avg((r) => r.tokens) ?? null;
+    return {
+      durationSec: avgMs != null ? Math.round(avgMs / 100) / 10 : null,
+      tokens,
+      costUsd: tokens != null ? (tokens / 1000) * ESTIMATED_COST_PER_1K_TOKENS_USD : null,
+    };
+  };
   const historyByTask = new Map<string, typeof history>();
   for (const record of history) {
     const list = historyByTask.get(record.taskName.toLowerCase()) ?? [];
@@ -946,25 +966,31 @@ export async function simulatePipeline(taskName: string): Promise<DryRunReport> 
     const promptPreview = (def.prompt ?? "").replace(/\s+/g, " ").trim();
     const command = `opencode run${modelArg} "${promptPreview}"`;
 
-    // Оценки: среднее по последним ESTIMATE_SAMPLE записям истории.
+    // Оценки: среднее по последним ESTIMATE_SAMPLE записям истории задачи.
+    // PL-123: нет успешных прогонов задачи -> глобальная история с пометкой
+    // источника в предупреждении (plain-text, без новых ключей i18n).
     const records = (historyByTask.get(lower) ?? []).filter((r) => r.status === "success");
     let estimatedDurationSec: number | null = null;
     let estimatedCostUsd: number | null = null;
     let estimatedTokens: number | null = null;
     if (records.length === 0) {
-      taskWarnings.push(t("dryRun.noHistory"));
-    } else {
-      const sample = records.slice(0, ESTIMATE_SAMPLE);
-      const avg = (pick: (r: (typeof sample)[number]) => number | null | undefined) => {
-        const values = sample.map(pick).filter((v): v is number => typeof v === "number" && Number.isFinite(v));
-        return values.length > 0 ? values.reduce((a, b) => a + b, 0) / values.length : null;
-      };
-      const avgMs = avg((r) => r.durationMs);
-      if (avgMs != null) estimatedDurationSec = Math.round(avgMs / 100) / 10;
-      estimatedTokens = avg((r) => r.tokens) ?? null;
-      if (estimatedTokens != null) {
-        estimatedCostUsd = (estimatedTokens / 1000) * ESTIMATED_COST_PER_1K_TOKENS_USD;
+      const globalSuccess = history.filter((r) => r.status === "success");
+      if (globalSuccess.length > 0) {
+        const estimate = estimateFromHistory(globalSuccess.slice(0, ESTIMATE_SAMPLE));
+        estimatedDurationSec = estimate.durationSec;
+        estimatedTokens = estimate.tokens;
+        estimatedCostUsd = estimate.costUsd;
+        taskWarnings.push(
+          "PL-123: оценки по глобальной истории (у задачи нет успешных запусков)",
+        );
+      } else {
+        taskWarnings.push(t("dryRun.noHistory"));
       }
+    } else {
+      const estimate = estimateFromHistory(records.slice(0, ESTIMATE_SAMPLE));
+      estimatedDurationSec = estimate.durationSec;
+      estimatedTokens = estimate.tokens;
+      estimatedCostUsd = estimate.costUsd;
     }
 
     // Проверяем опасные паттерны в промпте и хуках.

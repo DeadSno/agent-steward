@@ -12,7 +12,7 @@ const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ws-scheduler-dry-"));
 process.env.APPDATA = tempRoot;
 process.env.OPENCODE_SCHEDULER_HOME = path.join(tempRoot, "opencode", "windows-scheduler");
 
-const { initDb, closeDb } = await import("./dist/db/index.js");
+const { initDb, closeDb, getDb } = await import("./dist/db/index.js");
 const { saveTask } = await import("./dist/db/tasks-repo.js");
 const { recordRun } = await import("./dist/db/history-repo.js");
 const {
@@ -106,10 +106,15 @@ try {
   check("оценка токенов из истории (1000)", lintItem.estimatedTokens === 1000);
   check("оценка стоимости из токенов", Math.abs(lintItem.estimatedCostUsd - 0.003) < 1e-9);
 
-  // 5. Задача без истории — null + предупреждение.
+  // 5. PL-123 (а): задача без своей истории, но в глобальной истории есть
+  //    успешные прогоны Lint -> не-null оценки и пометка об источнике.
   const buildItem = report.tasks.find((t) => t.name === "Build");
-  check("нет истории -> null оценки", buildItem.estimatedDurationSec == null && buildItem.estimatedTokens == null && buildItem.estimatedCostUsd == null);
-  check("предупреждение об отсутствии истории", report.warnings.includes(`[Build] ${t("dryRun.noHistory")}`));
+  check("PL-123: нет своей истории -> не-null оценки из глобальной истории",
+    buildItem.estimatedDurationSec === 10 &&
+    buildItem.estimatedTokens === 1000 &&
+    Math.abs(buildItem.estimatedCostUsd - 0.003) < 1e-9);
+  check("PL-123: пометка источника оценки (глобальная история)",
+    report.warnings.some((w) => w.startsWith("[Build] ") && w.includes("PL-123:") && w.includes("глобальн")));
 
   // 6. Опасные паттерны.
   const danger = await simulatePipeline("Danger");
@@ -121,9 +126,12 @@ try {
   const ghost = await simulatePipeline("Ghost");
   check("предупреждение о несуществующей директории", ghost.warnings.includes(`[Ghost] ${t("dryRun.cwdMissing", { path: "Z:/definitely/not/exist" })}`));
 
-  // 8. Топологические суммы.
-  check("totals длительность = 10 с", report.totals.estimatedDurationSec === 10);
-  check("totals токены = 1000", report.totals.estimatedTokens === 1000);
+  // 8. Топологические суммы. PL-123: Root и Build теперь тоже получают
+  //    оценки из глобальной истории (10 с / 1000 токенов каждый), поэтому
+  //    сумма по трем задачам = 30 с / 3000 токенов.
+  check("totals длительность = 30 с", report.totals.estimatedDurationSec === 30);
+  check("totals токены = 3000", report.totals.estimatedTokens === 3000);
+  check("totals стоимость = 0.009", Math.abs(report.totals.estimatedCostUsd - 0.009) < 1e-9);
 
   // 9. Реального запуска нет: команда — только текст.
   check("симуляция не исполняет команды", report.tasks.every((t) => typeof t.command === "string"));
@@ -506,6 +514,36 @@ try {
       { name: "A", worktree: true, workingDirectory: sharedCwd },
       { name: "B", workingDirectory: path.join(sharedCwd, "b") },
     ]).length === 0);
+
+  // 20. PL-123: детерминированные регрессии фолбэка оценки.
+  // (а) задача без прогонов, но глобальная история непуста (2 успешных Lint
+  //     по 10 с / 1000 токенов) -> не-null оценки и пометка источника.
+  await saveTask({ name: "PL-123-Global", schedule: "0 9 * * *", prompt: "x" });
+  const globalFallback = await simulatePipeline("PL-123-Global");
+  const globalItem = globalFallback.tasks.find((t) => t.name === "PL-123-Global");
+  check("PL-123 (а): не-null оценки из глобальной истории",
+    globalItem.estimatedDurationSec === 10 &&
+    globalItem.estimatedTokens === 1000 &&
+    Math.abs(globalItem.estimatedCostUsd - 0.003) < 1e-9);
+  check("PL-123 (а): пометка источника в выводе dry_run",
+    globalFallback.warnings.some((w) => w.includes("PL-123:") && w.includes("глобальной истории")));
+  check("PL-123 (а): старое noHistory-предупреждение больше не выдаётся",
+    !globalFallback.warnings.some((w) => w.includes(t("dryRun.noHistory"))));
+
+  // (б) пустая глобальная история -> старое поведение сохранено: null + noHistory.
+  //     Чистим историю в конце прогона, чтобы не задеть предыдущие проверки.
+  getDb().exec("DELETE FROM history");
+  await saveTask({ name: "PL-123-Empty", schedule: "0 9 * * *", prompt: "x" });
+  const emptyFallback = await simulatePipeline("PL-123-Empty");
+  const emptyItem = emptyFallback.tasks.find((t) => t.name === "PL-123-Empty");
+  check("PL-123 (б): пустая глобальная история -> null оценки",
+    emptyItem.estimatedDurationSec == null &&
+    emptyItem.estimatedTokens == null &&
+    emptyItem.estimatedCostUsd == null);
+  check("PL-123 (б): пустая глобальная история -> noHistory",
+    emptyFallback.warnings.includes(`[PL-123-Empty] ${t("dryRun.noHistory")}`));
+  check("PL-123 (б): пометки глобального фолбэка нет",
+    !emptyFallback.warnings.some((w) => w.includes("PL-123:")));
 } finally {
   closeDb();
 }
