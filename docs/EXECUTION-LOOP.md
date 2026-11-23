@@ -5,21 +5,27 @@
 
 ## 1. Разрыв, который закрываем
 
-Построено модулями (спринт 36), но не течёт в живом пути:
+Исторический разрыв (спринт 36); статус на 23.11.2026 — большинство пунктов закрыто (ARCH-1.1…1.3, PL-94/95/102/103, A-1). Оставшиеся дыры отмечены ниже.
 
-- **Два мира исполнения.** Планировщик: `wrapper → opencode run → record-history → history`. Durable DAG: `runs/run_steps → resumeRun`. Запланированная задача не создаёт durable-run.
-- **Роутер не вызывается live.** `routeStep` / `decideCapabilityRoute` отсутствуют в `index.ts` / `record-history.ts`.
-- **Карта не обучается.** `recordCapabilityOutcome` не вызывается из горячего пути.
-- **Эскалация не живая.** `escalateAfterGate` есть, но провал гейта идёт в retry/chain.
+- **Два мира исполнения.** Планировщик: `wrapper → opencode run → record-history → history`. Durable DAG: `runs/run_steps → resumeRun`. ~~Запланированная задача не создаёт durable-run.~~ **Закрыто ARCH-1.1:** `recordRegisteredRun` (`src/core/record-history.ts`) создаёт тот же `createRun`, что и ad-hoc путь; вердикт пишется в общую хеш-цепочку `gate_outcomes`.
+- **Роутер не вызывается live.** ~~`routeStep` / `decideCapabilityRoute` отсутствуют в `index.ts` / `record-history.ts`.~~ **Закрыто PL-94:** `buildExecutionPlan` (`src/core/execution.ts`) вызывает `routeStep`, который внутри `src/core/router/dispatch.ts` использует `decideCapabilityRoute`; скомпилированный контекст доходит до исполнителя.
+- **Карта не обучается.** ~~`recordCapabilityOutcome` не вызывается из горячего пути.~~ **Закрыто:** `writeGateOutcome` (`src/db/capability-repo.ts`) обновляет карту из вердиктов `pass`/`fail` с EWMA.
+- **Эскалация не живая.** ~~`escalateAfterGate` есть, но провал гейта идёт в retry/chain.~~ **Закрыто PL-93/PL-102:** `executeStepWithEscalation` в `execution.ts` вызывает `escalateAfterGate`; production-путь `runMission` включает эскалацию и передаёт `agentResultGate` по умолчанию (защита от повтора того же executor'а).
 - **Нет ad-hoc входа.** Любой запуск требует регистрации: `schedule_task` + `run_task_now`; `once` — это `at` / `schtasks ONCE` / launchd. Цепочки/DAG/retry обходят расписание костылём force-маркера. *(Закрыто в AB-8: `run_mission` / CLI `run` / GUI / RPC.)*
 
 Частично построено: контекст запуска (`src/db/run-context.ts`), per-task/per-window
 бюджеты (`src/core/budget.ts`), целостность гейта (`src/core/gate-integrity.ts`),
 worktree-изоляция (`src/core/worktree.ts`, `src/core/worktree-run.ts`).
 
-Не построено вовсе: ledger + provenance; класс риска и компиляция политики;
-flake-aware повторы и отложенные эффекты; полноценная context compilation
-(repo-map + инъекция scaffolding); egress-контроль и approvals-очередь.
+Построено после спринта 36: ledger + provenance (`outcome_key`/`row_hash`/`prev_hash`,
+`evidence_path` — ARCH-1.2/1.3), отложенные эффекты (`effect_intents`,
+`effects_applied_at` — ARCH-4.1/4.2), контекст из ledger (`run-context.ts`, PL-94),
+flake-aware эскалация (PL-93/102), egress-аудит (ARCH-6.1/6.2), очередь одобрений
+с RPC/GUI и автоперезапуском (A-1, PL-95/103).
+
+Остаётся на уровне дизайна: класс риска и компиляция политики, отдельный
+gate-executor, полный egress-контроль (сейчас аудит решений), пер-таск token
+budgets, экономические колонки ledger'а (см. §3) и автоприменение рекомендаций.
 
 Подтверждение:
 
@@ -108,6 +114,20 @@ CREATE TABLE gate_outcomes (
 );
 ```
 
+> **Сверка с кодом (DS-3.4):** DDL выше — целевой дизайн, а не дословная схема
+> `SCHEMA_VERSION=14`. В реальной `src/db/schema.ts` (`GATE_OUTCOMES_DDL`)
+> реализованы `outcome_key`, `mission_id`, `run_id`, `step_id`, `step_name`,
+> `task_type`, `trigger_kind`, `executor`, `route_source`, `route_reason`,
+> `gate_type`, `verdict`, `attempts_to_pass`, `first_pass`, `evidence_path`,
+> `gate_hash`, `policy_hash`, `prompt_hash`, `model_version`, `prev_hash`,
+> `row_hash`, `created_at` и эффекты `effect_intents`/`effects_applied_at`/
+> `effects_status`/`effects_reason`. Экономические колонки (`tokens`,
+> `cost_usd`, `counterfactual_cost_usd`, `verification_cost_usd`,
+> `net_savings_usd`, `time_ms`, `overhead_ms`, `tool_versions`, `example_ref`,
+> `training_record_ref`, `escalation_from/to`) и `capability issuance` (TTL)
+> в актуальной таблице `gate_outcomes` отсутствуют — это остаток дизайна §2,
+> а не недоработка конкретного релиза.
+
 - Реализация (ARCH-1.2/1.3) добавляет `outcome_key` (идемпотентность входа) и
   `row_hash` (self-hash строки): `verifyGateOutcomeChain()` сверяет и связь
   `prev_hash`, и self-hash, поэтому подмена последней записи цепочки тоже видна.
@@ -140,9 +160,12 @@ SHA-256 в `PLUGIN_DIR/gate-snapshots/`, вне write-scope задачи. Пер
 входят в `npm test`/`test:parallel`. Юнит-проверки хэша и CLI — в
 `test-execution-pipeline.mjs`.
 
-**Остаётся планом:** отдельный gate-executor, `gate_outcomes` с `gate_hash`,
-`policy_hash`, `prompt_hash` и `prev_hash` в ledger, аудит-инцидент при
-расхождении и перенос gate-файлов под привилегии, отличные от пользовательских.
+**Реализовано (ARCH-1.2/1.3):** `gate_outcomes` хранит `gate_hash`,
+`policy_hash`, `prompt_hash`, а также `prev_hash` + `row_hash` — цепочка
+проверяется `verifyGateOutcomeChain()`.
+
+**Остаётся планом:** отдельный gate-executor, аудит-инцидент при расхождении
+и перенос gate-файлов под привилегии, отличные от пользовательских.
 Гейт по-прежнему **всегда hard**; shadow/canary — только для маршрутов и
 адаптеров (49). Подмена самих тестов агентом текущей мерой не детектируется —
 защита ограничена целостностью определения гейта.
