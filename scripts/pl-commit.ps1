@@ -122,16 +122,21 @@ try {
     exit 1
   }
 
+  $null = Invoke-Git 'fetch' @('fetch', 'origin', 'dev')
   $pushed = $false
   for ($attempt = 1; $attempt -le 3; $attempt++) {
-    if ((Invoke-Git "push#$attempt" @('push', 'origin', 'dev')) -eq 0) {
+    if ((Invoke-Git "push#$attempt" @('push', 'origin', 'HEAD:dev')) -eq 0) {
       $pushed = $true
       break
     }
     Start-Sleep -Seconds 3
   }
+
+  # PL-127: parallel tasks push to the same branch while this helper retries.
+  # Blind retries cannot resolve a non-fast-forward rejection; unlike
+  # steward-commit.ps1 (PL-104) this helper had no rebase path, so a green
+  # quality gate ended with "FAIL push" and no commit in the remote branch.
   if (-not $pushed) {
-    # A parallel task may have pushed our commit already - verify before failing.
     $null = Invoke-Git 'fetch' @('fetch', 'origin', 'dev')
     $old = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
@@ -143,6 +148,18 @@ try {
     if ($local -and $local -eq $remote) {
       $pushed = $true
       Log "push: remote already contains HEAD (concurrent push)"
+    } else {
+      # --autostash keeps foreign unstaged edits from parallel agents safe.
+      if ((Invoke-Git 'rebase' @('rebase', '--autostash', 'origin/dev')) -eq 0) {
+        if ((Invoke-Git 'push-rebase' @('push', 'origin', 'HEAD:dev')) -eq 0) {
+          $pushed = $true
+          Log "OK (rebased onto origin/dev): $Message"
+        }
+      } else {
+        $null = Invoke-Git 'rebase-quit' @('rebase', '--quit')
+        Log "CONFLICT - manual resolution required: $Message"
+        exit 2
+      }
     }
   }
   if (-not $pushed) {
