@@ -432,6 +432,11 @@ workspace:
   `opencode run` invocation);
 - Secret masking: keys matching `/(TOKEN|SECRET|PASS|PASSWORD|KEY|CREDENTIAL|AUTH)/i`
   are shown as `***` in logs and masked API responses — values never leak into logs.
+- Caution (PL-84): these variables are injected into the whole task process, including
+  any test suites started by its Quality Gate. In particular, setting
+  `AGENT_STEWARD_GATE_ALLOW_PATHS` from a workspace changes the result of the PL-25/PL-47
+  worktree checks in `test-execution-pipeline.mjs`. Gate suites must therefore clear
+  inherited gate/child variables explicitly; do not rely on a clean interactive shell.
 
 ## Observability
 

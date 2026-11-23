@@ -19,6 +19,19 @@ const check = (name, ok, detail) => {
   }
 };
 
+// PL-84: переменные workspace env наследуются обёрткой задачи и попадают даже
+// в дочерние тестовые сюиты. Без явного сброса PL-25/PL-47 проверки worktree
+// становятся недетерминированными: внешний AGENT_STEWARD_GATE_ALLOW_PATHS=src
+// «разрешает» чужую правку, которую тест обязан поймать.
+for (const key of ["AGENT_STEWARD_GATE_ALLOW_PATHS", "AGENT_STEWARD_CHILD_RUN"]) {
+  delete process.env[key];
+}
+check(
+  "PL-84: внешние gate/child env сброшены перед проверками",
+  !("AGENT_STEWARD_GATE_ALLOW_PATHS" in process.env) &&
+    !("AGENT_STEWARD_CHILD_RUN" in process.env),
+);
+
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "agent-steward-ac1-"));
 const dbPath = path.join(tempRoot, "ac1.db");
 

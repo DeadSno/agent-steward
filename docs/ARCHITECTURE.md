@@ -427,7 +427,7 @@ enforced:
 | Working directory | Task `workingDirectory`, or the workspace path, or the plugin directory |
 | Prompt | Written to a prompt file, passed to `opencode run` |
 | Timeout | `timeoutSeconds`; on expiry the child process tree is stopped and the run is marked `timeout` (Windows: CIM → WMI → `tasklist`/`Get-Process`, fail-closed tree kill) |
-| Workspace env | Variables from the workspace's `.env` file and explicit pairs are injected before `opencode run` (wrapper `env:` / `export`); secret-looking keys are masked in logs |
+| Workspace env | Variables from the workspace's `.env` file and explicit pairs are injected before `opencode run` (wrapper `env:` / `export`); secret-looking keys are masked in logs; gate suites must reset inherited `AGENT_STEWARD_GATE_ALLOW_PATHS` / `AGENT_STEWARD_CHILD_RUN` to stay deterministic (PL-84) |
 | No overlap | Lock file per task; a second start exits immediately and records `skipped` |
 | Pre-flight | `beforeScript`; non-zero exit marks `preFlight` as failed |
 | Quality Gate | `qualityGate` after a successful run; non-zero exit turns the run into an error |
