@@ -1598,6 +1598,21 @@ async function writeHookFile(
   return file;
 }
 
+/**
+ * PL-126: причина провала создания git worktree. Пишется в лог задачи и в
+ * историю (--skip), чтобы «зависший prepared» стал понятной ошибкой.
+ * ВАЖНО: без круглых скобок — эта строка попадает в `echo` внутри блока
+ * `if (...)` сгенерированного .cmd, где `)` закрыл бы блок досрочно.
+ */
+export const WORKTREE_CREATE_FAILURE_REASON =
+  "PL-126: не удалось создать git worktree, opencode не запущен, подробности в логе задачи";
+
+/** PL-126: та же причина с именем задачи — для лога и истории. */
+export function worktreeCreateFailureReason(taskName: string): string {
+  const safeTask = taskName.replace(/[\r\n\0"]+/g, "").trim() || "unknown";
+  return `${WORKTREE_CREATE_FAILURE_REASON} [задача: ${safeTask}]`;
+}
+
 export async function writeWrapperCmd(
   sanitizedName: string,
   taskName: string,
@@ -1858,6 +1873,11 @@ export async function writeWrapperCmd(
   // W-1 (0.0.6): одноразовый git worktree. Создаётся после гейта расписания,
   // чтобы пропущенный тик не плодил рабочие копии. Ошибка создания — fail-closed:
   // задача не должна молча работать в основном дереве.
+  // PL-126: раньше путь ловился через `for /f ... in (`node ... 2>> log`)`.
+  // cmd.exe считает `2>>` внутри подстановки синтаксической ошибкой и весь .cmd
+  // падал ДО запуска PowerShell — в логе оставался только «Task prepared».
+  // Теперь вывод помощника идёт во временные файлы, exit code проверяется явно,
+  // причина пишется в лог и историю, а частично созданный worktree убирается.
   let wtHelper = "";
   let wtRepo = "";
   let wtLogRedirect = "";
@@ -1866,13 +1886,40 @@ export async function writeWrapperCmd(
     wtRepo = effectiveWorkdir.replace(/[\r\n"]+/g, "").trim();
     const safeTaskName = taskName.replace(/[\r\n"]+/g, "").trim();
     wtLogRedirect = logFile?.trim() ? `>> "${logFile.trim()}" 2>&1` : "";
-    const helperErr = logFile?.trim() ? `2>> "${logFile.trim()}"` : "";
+    const wtResultFile = `${cmdPath}.wt-result`;
+    const wtErrorFile = `${cmdPath}.wt-error`;
+    const wtReason = worktreeCreateFailureReason(taskName);
+    const wtReasonB64 = Buffer.from(wtReason, "utf8").toString("base64");
+    const wtRecorder = (recorderFile ?? "").replace(/[\r\n"]+/g, "").trim();
+
     lines.push('set "AGENT_STEWARD_WORKTREE="');
+    lines.push(`set "WT_RESULT=${wtResultFile}"`);
+    lines.push(`set "WT_ERR=${wtErrorFile}"`);
+    // Явная подкоманда create — реальный контракт worktree-run.ts.
     lines.push(
-      `for /f "usebackq delims=" %%W in (\`node "${wtHelper}" --repo "${wtRepo}" --task "${safeTaskName}" ${helperErr}\`) do set "AGENT_STEWARD_WORKTREE=%%W"`,
+      `node "${wtHelper}" create --repo "${wtRepo}" --task "${safeTaskName}" > "%WT_RESULT%" 2> "%WT_ERR%"`,
     );
-    lines.push("if not defined AGENT_STEWARD_WORKTREE (");
-    lines.push(`  echo [agent-steward] ERROR: git worktree creation failed ${wtLogRedirect}`);
+    lines.push('set "WT_CREATE_CODE=%errorlevel%"');
+    // Читаем путь НЕЗАВИСИМО от кода: помощник мог создать worktree, но упасть
+    // позже — тогда его надо очистить в ветке ошибки ниже.
+    lines.push('if exist "%WT_RESULT%" set /p "AGENT_STEWARD_WORKTREE="< "%WT_RESULT%"');
+    lines.push(
+      'if "%WT_CREATE_CODE%"=="0" if not defined AGENT_STEWARD_WORKTREE set "WT_CREATE_CODE=1"',
+    );
+    lines.push('if not "%WT_CREATE_CODE%"=="0" (');
+    lines.push(`  echo [agent-steward] ERROR: ${wtReason}, code %WT_CREATE_CODE% ${wtLogRedirect}`);
+    lines.push(`  if exist "%WT_ERR%" type "%WT_ERR%" ${wtLogRedirect}`);
+    lines.push("  if defined AGENT_STEWARD_WORKTREE (");
+    lines.push(`    cd /d "${wtRepo}"`);
+    lines.push(
+      `    node "${wtHelper}" cleanup --path "%AGENT_STEWARD_WORKTREE%" --repo "${wtRepo}" ${wtLogRedirect}`,
+    );
+    lines.push("  )");
+    if (wtRecorder) {
+      lines.push(
+        `  node "${wtRecorder}" --skip "${safeTaskName}" "${wtReasonB64}" ${wtLogRedirect}`,
+      );
+    }
     lines.push("  exit /b 1");
     lines.push(")");
     lines.push('cd /d "%AGENT_STEWARD_WORKTREE%"');

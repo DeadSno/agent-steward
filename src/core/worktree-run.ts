@@ -96,8 +96,8 @@ function parseArgs(argv: string[]): { args: HelperArgs; error?: string } {
 function usage(): string {
   return [
     "Использование:",
-    "  worktree-run.js --repo <dir> --task <name> [--root <dir>] [--json]",
     "  worktree-run.js create --repo <dir> --task <name> [--root <dir>] [--json]",
+    "  worktree-run.js --repo <dir> --task <name> [--root <dir>] [--json]  (легаси, подкоманда необязательна)",
     "  worktree-run.js cleanup --path <worktree> [--repo <root>] [--root <dir>] [--keep-branch] [--json]",
     "  worktree-run.js cleanup --stale [--root <dir>] [--max-age-hours <n>] [--json]",
   ].join("\n");
@@ -119,7 +119,11 @@ async function runCreate(args: HelperArgs): Promise<number> {
     rootDir: args.root,
   });
   if (!result.ok) {
-    process.stderr.write(`[worktree] ${result.error}\n`);
+    // PL-126: обёртка пишет stderr в лог задачи — причина должна быть
+    // понятной и в логе, и в истории (которую пишет обёртка через --skip).
+    process.stderr.write(
+      `[worktree] PL-126: не удалось создать worktree для задачи "${args.task}", репозиторий ${args.repo}: ${result.error}\n`,
+    );
     return 1;
   }
 

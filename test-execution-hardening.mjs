@@ -75,6 +75,7 @@ const { getHistory } = await import("./dist/db/history-repo.js");
 const { getSetting, deleteSetting } = await import("./dist/db/settings-repo.js");
 const {
   writeWrapperCmd,
+  WORKTREE_CREATE_FAILURE_REASON,
   writePromptFile,
   lockFilePath,
   ensureWrapper,
@@ -2749,6 +2750,105 @@ try {
 } catch (err) {
   console.log("[diag] M-5..M-8 section THREW:", err instanceof Error ? err.stack : String(err));
   check("M-5..M-8: секция не выбросила исключение", false, "section threw");
+}
+
+// PL-126: детерминированный прогон сгенерированного .cmd с ошибкой create.
+// Реальные git/powershell не нужны: помощник и recorder — заглушки. Проверяем
+// fail-closed, понятную причину в логе/истории и очистку созданного worktree.
+{
+  const wtDir = path.join(tempRoot, "pl126");
+  fs.mkdirSync(wtDir, { recursive: true });
+  const wtLog = path.join(wtDir, "run.log");
+  const helperCalls = path.join(wtDir, "helper-calls.txt");
+  const recorderCalls = path.join(wtDir, "recorder-calls.txt");
+  const emittedPath = path.join(wtDir, "emitted-worktree");
+  const fakeHelper = path.join(wtDir, "fake-worktree-run.cjs");
+  const fakeRecorder = path.join(wtDir, "fake-record-history.cjs");
+  fs.writeFileSync(
+    fakeHelper,
+    [
+      'const fs = require("node:fs");',
+      "const args = process.argv.slice(2);",
+      `fs.appendFileSync(${JSON.stringify(helperCalls)}, JSON.stringify(args) + "\\n", "utf8");`,
+      'if (args[0] === "cleanup") process.exit(0);',
+      'process.stderr.write("fake helper: git worktree add failed\\n");',
+      `process.stdout.write(${JSON.stringify(emittedPath)} + "\\n");`,
+      "process.exit(1);",
+      "",
+    ].join("\r\n"),
+    "utf8",
+  );
+  fs.writeFileSync(
+    fakeRecorder,
+    [
+      'const fs = require("node:fs");',
+      `fs.appendFileSync(${JSON.stringify(recorderCalls)}, JSON.stringify(process.argv.slice(2)) + "\\n", "utf8");`,
+      "",
+    ].join("\r\n"),
+    "utf8",
+  );
+  const cmd = await writeWrapperCmd(
+    "pl126-probe",
+    "pl126 task",
+    path.join(wtDir, "prompt.txt"),
+    60,
+    path.join(wtDir, "lock"),
+    wtDir,
+    wtLog,
+    fakeRecorder,
+    undefined, undefined, undefined, undefined, undefined,
+    undefined, undefined, undefined, undefined, // qualityGate..envFile (9)
+    "new",
+    undefined, undefined, undefined, undefined, undefined,
+    true,
+    fakeHelper,
+  );
+  const run = spawnSync("cmd.exe", ["/c", cmd], {
+    encoding: "utf8",
+    windowsHide: true,
+    cwd: wtDir,
+  });
+  const readCalls = (file) =>
+    fs.existsSync(file)
+      ? fs
+          .readFileSync(file, "utf8")
+          .trim()
+          .split(/\r?\n/)
+          .filter(Boolean)
+          .map((line) => JSON.parse(line))
+      : [];
+  const helperArgs = readCalls(helperCalls);
+  const recorderArgs = readCalls(recorderCalls);
+  const logText = fs.existsSync(wtLog) ? fs.readFileSync(wtLog, "utf8") : "";
+
+  check("PL-126: .cmd с ошибкой create завершается кодом 1", run.status === 1, String(run.status));
+  check(
+    "PL-126: причина create и stderr помощника попадают в лог",
+    logText.includes("PL-126") &&
+      logText.includes(WORKTREE_CREATE_FAILURE_REASON) &&
+      logText.includes("fake helper: git worktree add failed"),
+    logText.slice(0, 400),
+  );
+  check(
+    "PL-126: помощник вызван с явной подкомандой create и реальными аргументами",
+    Array.isArray(helperArgs[0]) &&
+      JSON.stringify(helperArgs[0]) ===
+        JSON.stringify(["create", "--repo", wtDir, "--task", "pl126 task"]),
+    JSON.stringify(helperArgs[0]),
+  );
+  check(
+    "PL-126: при ошибке create очищается созданный worktree",
+    helperArgs.some((a) => a[0] === "cleanup" && a.includes("--path") && a.includes(emittedPath)),
+    JSON.stringify(helperArgs),
+  );
+  const skip = recorderArgs.find((a) => a[0] === "--skip");
+  check(
+    "PL-126: причина пишется в историю через --skip",
+    Array.isArray(skip) &&
+      skip[1] === "pl126 task" &&
+      Buffer.from(skip[2] ?? "", "base64").toString("utf8").includes("PL-126"),
+    JSON.stringify(skip),
+  );
 }
 
 const failed = results.filter((r) => !r.ok);

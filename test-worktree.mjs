@@ -21,7 +21,11 @@ const {
   DEFAULT_STALE_AFTER_MS,
 } = await import("./dist/core/worktree.js");
 const { parseImportJson } = await import("./dist/task-transfer.js");
-const { writeWrapperCmd } = await import("./dist/core/ps-wrapper.js");
+const {
+  writeWrapperCmd,
+  WORKTREE_CREATE_FAILURE_REASON,
+  worktreeCreateFailureReason,
+} = await import("./dist/core/ps-wrapper.js");
 const { buildBashWrapperScript } = await import("./dist/core/wrappers/bash.js");
 const { main: worktreeMain } = await import("./dist/core/worktree-run.js");
 const { probeGit } = await import("./dist/core/git-trigger.js");
@@ -248,11 +252,20 @@ let first;
 
   const bad = spawnSync(
     process.execPath,
-    [helper, "--repo", notRepo, "--task", "cli-bad", "--root", worktreeRoot],
+    [helper, "create", "--repo", notRepo, "--task", "cli-bad", "--root", worktreeRoot],
     { encoding: "utf8", windowsHide: true },
   );
   check("CLI: не репозиторий → код 1", bad.status === 1);
   check("CLI: ошибка в stderr", (bad.stderr ?? "").includes("[worktree]"));
+  // PL-126: ошибка create должна давать понятную причину (без реального git worktree).
+  check(
+    "PL-126 CLI: create с явной подкомандой падает с кодом 1",
+    bad.status === 1 && (bad.stderr ?? "").includes("PL-126"),
+  );
+  check(
+    "PL-126 CLI: причина содержит имя задачи и репозиторий",
+    (bad.stderr ?? "").includes("cli-bad") && (bad.stderr ?? "").includes(notRepo),
+  );
 
   const missing = spawnSync(process.execPath, [helper, "--task", "x"], {
     encoding: "utf8",
@@ -278,14 +291,18 @@ let first;
     repo,
     path.join(tempRoot, "run.log"),
   ];
-  const withWt = await writeWrapperCmd(...common, undefined, undefined, undefined, undefined,
+  const recorder = path.join(tempRoot, "record-history.js");
+  const withWt = await writeWrapperCmd(...common, recorder, undefined, undefined, undefined,
     undefined, undefined, undefined, undefined, undefined, undefined,
     "new", undefined, undefined, undefined, undefined, undefined, true, helper);
   const text = fs.readFileSync(withWt, "utf8");
   check("Windows .cmd: создаёт worktree", text.includes("AGENT_STEWARD_WORKTREE"));
   check("Windows .cmd: переходит в worktree", text.includes('cd /d "%AGENT_STEWARD_WORKTREE%"'));
   check("Windows .cmd: запоминает репозиторий", text.includes("AGENT_STEWARD_WORKTREE_REPO"));
-  check("Windows .cmd: fail-closed при ошибке", text.includes("git worktree creation failed"));
+  check(
+    "PL-126 Windows .cmd: fail-closed с понятной причиной",
+    text.includes("PL-126") && text.includes(WORKTREE_CREATE_FAILURE_REASON),
+  );
   check("Windows .cmd: путь помощника", text.includes("worktree-run.js"));
   check(
     "Windows .cmd: очистка после прогона",
@@ -299,6 +316,38 @@ let first;
     "Windows .cmd: перед очисткой выходит из worktree",
     text.includes("set \"AGENT_STEWARD_EXIT_CODE=%errorlevel%\"") &&
       text.indexOf('cd /d "' + repo) < text.indexOf('cleanup --path "%AGENT_STEWARD_WORKTREE%"'),
+  );
+
+  // PL-126: регрессии на первопричину зависания и на контракт вызова create.
+  check(
+    "PL-126 Windows .cmd: явная подкоманда create в контракте",
+    text.includes(`node "${helper}" create --repo "${repo}" --task "wt task" > `),
+  );
+  check(
+    "PL-126 Windows .cmd: нет for /f с 2>> внутри подстановки",
+    !text.includes("for /f") && !text.includes("usebackq") && !text.includes("2>>"),
+  );
+  check(
+    "PL-126 Windows .cmd: проверяется exit code создания",
+    text.includes('set "WT_CREATE_CODE=%errorlevel%"') &&
+      text.includes('if exist "%WT_RESULT%" set /p "AGENT_STEWARD_WORKTREE="< "%WT_RESULT%"') &&
+      text.includes('if not "%WT_CREATE_CODE%"=="0" ('),
+  );
+  check(
+    "PL-126 Windows .cmd: stderr помощника попадает в лог",
+    text.includes('if exist "%WT_ERR%" type "%WT_ERR%"'),
+  );
+  check(
+    "PL-126 Windows .cmd: причина пишется в историю через --skip",
+    text.includes(
+      `--skip "wt task" "${Buffer.from(worktreeCreateFailureReason("wt task"), "utf8").toString("base64")}"`,
+    ),
+  );
+  const errorAt = text.indexOf("echo [agent-steward] ERROR: PL-126");
+  const firstCleanupAt = text.indexOf('cleanup --path "%AGENT_STEWARD_WORKTREE%"');
+  check(
+    "PL-126 Windows .cmd: при ошибке create чистится созданный worktree",
+    errorAt >= 0 && firstCleanupAt > errorAt && text.indexOf("exit /b 1", errorAt) > firstCleanupAt,
   );
 
   const withoutWt = await writeWrapperCmd(...common);
