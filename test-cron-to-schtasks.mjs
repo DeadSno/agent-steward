@@ -71,9 +71,9 @@ const yearly = convertCronToSchTasks("0 4 1 1 *");
 check("QV-10: '0 4 1 1 *' -> MONTHLY", yearly.sc === "MONTHLY");
 const yearlyFlags = buildScheduleFlags(yearly);
 check(
-  "QV-10: yearly flags /d 1 /m 1 /st 04:00",
+  "QV-10: yearly flags /d 1 /m JAN /st 04:00",
   JSON.stringify(yearlyFlags.slice(0, 8)) ===
-    JSON.stringify(["/sc", "MONTHLY", "/st", "04:00", "/d", "1", "/m", "1"]),
+    JSON.stringify(["/sc", "MONTHLY", "/st", "04:00", "/d", "1", "/m", "JAN"]),
 );
 check("QV-10: yearly is native (no poll)", isNativeSchtasksExpr("0 4 1 1 *") === true);
 check("QV-10: yearly needsPollMode=false", needsPollMode("0 4 1 1 *") === false);
@@ -93,36 +93,65 @@ try {
 }
 check("QV-10: невалидный месяц отклоняется", badMonth);
 
-// --- PL-56: сборка флагов для русской локали: /m — число 1..12, а не имя месяца ---
-// На русской Windows `schtasks /m` ждёт число 1..12 или имя месяца на языке
-// системы; английское имя («JANUARY») даёт «ОШИБКА: Неправильное значение
-// параметра /M». Конвертер не знает локаль ОС, поэтому передаёт число.
-const pl56Flags = buildScheduleFlags(convertCronToSchTasks("0 4 1 1 *"));
-const pl56MonthIndex = pl56Flags.indexOf("/m");
-const pl56MonthValue = pl56Flags[pl56MonthIndex + 1];
+// --- PL-110 / PL-56: /m — 3-буквенная аббревиатура JAN..DEC ---
+// Реальный вызов `schtasks /create` на ru-RU, 23.11.2026 (удалялся сразу после
+// пробы): /m DEC -> exit 0 и в XML <ScheduleByMonth><December/><Day>2</Day>;
+// /m 12, /m ДЕК, /m ДЕКАБРЬ, /m DECEMBER -> «Неправильное значение параметра /M».
+// schtasks принимает только англоязычные аббревиатуры JAN..DEC — они же
+// перечислены в локализованной справке `schtasks /create /?`, поэтому формат
+// одинаково корректен на любой локали Windows.
+const PL110_MONTH_TOKENS = [
+  "JAN", "FEB", "MAR", "APR", "MAY", "JUN",
+  "JUL", "AUG", "SEP", "OCT", "NOV", "DEC",
+];
+const PL110_BAD_MONTH_VALUES = [
+  "12", "ДЕК", "ДЕКАБРЬ", "JANUARY", "DECEMBER", "jan", "dec",
+];
+
+const pl110FlagsDec = buildScheduleFlags(convertCronToSchTasks("0 4 2 12 *"));
+const pl110MonthValue = pl110FlagsDec[pl110FlagsDec.indexOf("/m") + 1];
 check(
-  "PL-56: yearly /m — числовой месяц '1', а не 'JANUARY' (русская локаль)",
-  pl56MonthValue === "1" && !pl56Flags.includes("JANUARY"),
+  "PL-110: '0 4 2 12 *' -> MONTHLY /st 04:00 /d 2 /m DEC",
+  JSON.stringify(pl110FlagsDec.slice(0, 8)) ===
+    JSON.stringify(["/sc", "MONTHLY", "/st", "04:00", "/d", "2", "/m", "DEC"]),
 );
 check(
-  "PL-56: /m значение — число 1..12 (корректно для любой локали ОС)",
-  /^(?:[1-9]|1[0-2])$/.test(pl56MonthValue ?? ""),
+  "PL-110: /m значение — валидный токен schtasks (не число, не имя месяца)",
+  PL110_MONTH_TOKENS.includes(pl110MonthValue) &&
+    !PL110_BAD_MONTH_VALUES.includes(pl110MonthValue),
+);
+check(
+  "PL-110: '0 4 2 * *' без /m работает как раньше",
+  (() => {
+    const f = buildScheduleFlags(convertCronToSchTasks("0 4 2 * *"));
+    return f[0] === "/sc" && f[1] === "MONTHLY" &&
+      f.includes("/d") && f[f.indexOf("/d") + 1] === "2" &&
+      !f.includes("/m") && f.includes("/sd");
+  })(),
 );
 
-// PL-56: все 12 месяцев дают числовой /m без английских имён.
-const pl56EnglishNames = [
-  "JANUARY", "FEBRUARY", "MARCH", "APRIL", "MAY", "JUNE",
-  "JULY", "AUGUST", "SEPTEMBER", "OCTOBER", "NOVEMBER", "DECEMBER",
-];
-let pl56AllNumeric = true;
+// PL-110: все 12 cron-месяцев дают корректную аббревиатуру; невалидный месяц
+// по-прежнему отклоняется, а не «ломает» конвертер (preserve PL-56/PL-57/PL-75).
+let pl110AllMonthsOk = true;
 for (let n = 1; n <= 12; n++) {
-  const f = buildScheduleFlags(convertCronToSchTasks(`0 4 1 ${n} *`));
+  const f = buildScheduleFlags(convertCronToSchTasks(`0 4 2 ${n} *`));
   const v = f[f.indexOf("/m") + 1];
-  if (v !== String(n) || pl56EnglishNames.some((name) => f.includes(name))) {
-    pl56AllNumeric = false;
+  if (v !== PL110_MONTH_TOKENS[n - 1] || f.filter((x) => x === "/m").length !== 1) {
+    pl110AllMonthsOk = false;
   }
 }
-check("PL-56: месяцы 1..12 -> числовой /m 1..12 без английских имён", pl56AllNumeric);
+check("PL-110: месяцы 1..12 -> /m JAN..DEC ровно по одному флагу", pl110AllMonthsOk);
+let pl110BadMonthThrows = false;
+try {
+  convertCronToSchTasks("0 4 2 13 *");
+} catch {
+  pl110BadMonthThrows = true;
+}
+check("PL-110: невалидный месяц (13) не ломает конвертер, а отклоняется", pl110BadMonthThrows);
+check(
+  "PL-110: /sd для явного месяца остаётся числовой DD.MM.YYYY (PL-57/PL-75)",
+  /^\d{2}\.\d{2}\.\d{4}$/.test(pl110FlagsDec[pl110FlagsDec.indexOf("/sd") + 1] ?? ""),
+);
 
 // --- PL-57: стартовая граница MONTHLY-задач (без самопроизвольного catch-up) ---
 // Дефект воспроизведён реальным вызовом конвертера до правки:
