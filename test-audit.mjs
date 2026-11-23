@@ -145,8 +145,69 @@ check("recordToolBlocked не перетирает tool", direct?.details.tool =
 clearAuditLog();
 const allowedOnly = recordTaskToolBlocks("report", ["read", "grep"], [], "system", "policy");
 const allowedRecords = readAuditLog({ action: "tool.blocked" }).records;
-check("allowedTools без deniedTools даёт одно событие", allowedOnly === 1 && allowedRecords.length === 1);
-check("allowedTools-событие помечено звёздочкой", allowedRecords[0]?.details.tool === "*" && allowedRecords[0]?.details.reason === "allowedTools");
+check("allowedTools без deniedTools не даёт ложного события", allowedOnly === 0 && allowedRecords.length === 0);
+check("в журнале нет подмены имени инструмента звёздочкой", !allowedRecords.some((r) => r.details.tool === "*" || r.details.reason === "allowedTools"));
+
+// --- PL-60: ложные tool.blocked с tool: "*" при task.create/task.update --------
+// Регрессия: внутренний вызов рекордера/MCP при сохранении ARCH-задачи с
+// allow-list политикой. task.create/task.update успешно выполняются, поэтому
+// событие tool.blocked с tool: "*"/reason: allowedTools писать нельзя — в
+// журнале должны оставаться только реальные имена инструментов.
+resetAuditCleanupThrottle();
+clearAuditLog();
+const pl60Created = recordTaskToolBlocks(
+  "PL60-arch",
+  ["read", "grep"],
+  [],
+  "mcp",
+  "schedule_task",
+  "hybrid",
+);
+const pl60CreateRecords = readAuditLog({ action: "tool.blocked" }).records;
+check(
+  "PL-60: allow-list при task.create через MCP не пишет tool.blocked",
+  pl60Created === 0 && pl60CreateRecords.length === 0,
+);
+
+const pl60Updated = recordTaskToolBlocks(
+  "PL60-arch",
+  ["read", "grep"],
+  [],
+  "mcp",
+  "update_task",
+  "hybrid",
+);
+const pl60UpdateRecords = readAuditLog({ action: "tool.blocked" }).records;
+check(
+  "PL-60: allow-list при task.update через MCP не пишет tool.blocked",
+  pl60Updated === 0 && pl60UpdateRecords.length === 0,
+);
+check(
+  "PL-60: нет записей с tool: \"*\" / reason: allowedTools",
+  ![...pl60CreateRecords, ...pl60UpdateRecords].some(
+    (r) => r.details.tool === "*" || r.details.reason === "allowedTools",
+  ),
+);
+
+// Легитимные блокировки с реальным именем инструмента должны сохраниться.
+clearAuditLog();
+const pl60Denied = recordTaskToolBlocks(
+  "PL60-arch",
+  ["read"],
+  ["shell"],
+  "mcp",
+  "schedule_task",
+  "hybrid",
+);
+const pl60DeniedRecords = readAuditLog({ action: "tool.blocked" }).records;
+check(
+  "PL-60: deniedTools по-прежнему пишутся с реальным именем инструмента",
+  pl60Denied === 1 &&
+    pl60DeniedRecords.length === 1 &&
+    pl60DeniedRecords[0].details.tool === "shell" &&
+    pl60DeniedRecords[0].details.reason === "deniedTools" &&
+    !pl60DeniedRecords.some((r) => r.details.tool === "*"),
+);
 
 clearAuditLog();
 check("пустая политика не пишет событий", recordTaskToolBlocks("plain", [], []) === 0);

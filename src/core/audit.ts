@@ -228,9 +228,12 @@ export function recordToolBlocked(input: ToolBlockedInput): number | null {
  * Фиксирует запреты задачи из её политики allowedTools/deniedTools.
  *
  * Явно запрещённые инструменты попадают в аудит по одному событию на
- * инструмент. Для режима «только разрешённые» пишется одно событие с
- * инструментом `*`, потому что список заблокированных в этом режиме
- * неограничен. Возвращает число записанных событий.
+ * инструмент — с реальным именем инструмента. Режим «только разрешённые»
+ * (непустой allowedTools без deniedTools) сам по себе НЕ пишет событие
+ * `tool.blocked`: внутренние вызовы рекордера/MCP (task.create/task.update)
+ * при сохранении политики успешно выполняются, и подменять реальное имя
+ * инструмента звёздочкой `*`/`reason: "allowedTools"` — ложная блокировка
+ * (PL-60). Возвращает число записанных событий.
  */
 export function recordTaskToolBlocks(
   task: string,
@@ -266,23 +269,11 @@ export function recordTaskToolBlocks(
       written++;
     }
   }
-  if (normalizedDenied.length === 0 && normalizedAllowed.length > 0) {
-    if (
-      recordToolBlocked({
-        task,
-        tool: "*",
-        actor,
-        source,
-        details: {
-          reason: "allowedTools",
-          allowedTools: normalizedAllowed,
-          deniedTools: null,
-        },
-      }) != null
-    ) {
-      written++;
-    }
-  }
+  // PL-60: не пишем «ложную» блокировку с tool: "*" для allow-list политики.
+  // Политика allowedTools — это описание прав задачи, а не факт блокировки:
+  // операция task.create/task.update (в т.ч. внутренний вызов рекордера/MCP)
+  // при этом успешно выполняется. В tool.blocked указываем только реальные
+  // имена инструментов из deniedTools и default-policy (см. ниже).
   // Спринт 32 / релиз 1.6: фиксируем инструменты, запрещённые политикой по
   // умолчанию (hybrid: shell/question; secure: ещё edit/webfetch/websearch/
   // subagent). Это политика на момент сохранения задачи, а не попытки вызова:
