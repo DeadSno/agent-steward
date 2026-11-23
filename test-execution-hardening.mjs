@@ -1159,6 +1159,33 @@ try {
       JSON.stringify(["src/core/scheduler"]),
   );
 
+  // PL-120: проза после последнего пути не попадает в paths.
+  const proseScope = extractScopePaths(
+    "SCOPE: src/index.ts, docs/FEATURES.md. Файл src/core/agents.ts — заглушка...",
+  );
+  check(
+    "PL-120: проза после последнего пути не попадает в paths",
+    JSON.stringify(proseScope) === JSON.stringify(["src/index.ts", "docs/FEATURES.md"]),
+    JSON.stringify(proseScope),
+  );
+  const proseOnlyScope = extractScopePaths(
+    "SCOPE: src/core/scheduler/* — каталог планировщика, дальше описание",
+  );
+  check(
+    "PL-120: проза после glob не попадает в paths",
+    JSON.stringify(proseOnlyScope) === JSON.stringify(["src/core/scheduler"]),
+    JSON.stringify(proseOnlyScope),
+  );
+  const mixedScope = extractScopePaths(
+    "SCOPE: src/index.ts, src\\core\\scheduler\\*, locales/tr.json",
+  );
+  check(
+    "PL-120: корректные пути и glob по-прежнему разбираются",
+    JSON.stringify(mixedScope) ===
+      JSON.stringify(["src/index.ts", "src\\core\\scheduler", "locales/tr.json"]),
+    JSON.stringify(mixedScope),
+  );
+
   // PL-119: create-intent — SCOPE-пути создаваемых файлов не считаются missing.
   // Берём заведомо несуществующие маркеры, чтобы проверка не зависела от диска.
   const createIntentPaths = [

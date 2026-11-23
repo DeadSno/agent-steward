@@ -17,17 +17,32 @@ import type { RunTaskResult, SchedulerBackend } from "./types.js";
 export function extractScopePaths(text: string): string[] {
   const line = /(?:^|\n)[^\n]*\bSCOPE\s*:\s*([^\n]*)/i.exec(text);
   if (!line) return [];
-  return line[1]
-    .split(/[,;]/)
-    .map((part) =>
-      part
-        .trim()
-        .replace(/^[`"'\[\]]+|[`"'\[\].]+$/g, "")
-        .trim(),
-    )
-    .filter(Boolean)
-    // SCOPE может содержать директории вида src/core/scheduler/*.
-    .map((part) => (part.endsWith("/*") || part.endsWith("\\*") ? part.slice(0, -2) : part));
+  // PL-120: путь — это ведущая последовательность path-подобных символов
+  // (буквы/цифры/_, @, ., +, /, \, -, плюс * для glob). Всё, что идёт после
+  // первого иного символа (пробел, тире, кириллическая проза), — не путь.
+  // Отсекаем хвост вида "docs/FEATURES.md. Файл src/core/agents.ts — заглушка"
+  // и прекращаем разбор: дальше в SCOPE путей уже нет.
+  const pathRun = /^[A-Za-z0-9а-яёА-ЯЁ_@.+\/\-\\*]+/;
+  const result: string[] = [];
+  for (const raw of line[1].split(/[,;]/)) {
+    const value = raw
+      .trim()
+      .replace(/^[`"'\[\]]+|[`"'\[\].]+$/g, "")
+      .trim();
+    const lead = pathRun.exec(value);
+    if (!lead) continue;
+    const candidate = lead[0].replace(/[`"'\[\].]+$/g, "").trim();
+    if (candidate) {
+      // SCOPE может содержать директории вида src/core/scheduler/*.
+      result.push(
+        candidate.endsWith("/*") || candidate.endsWith("\\*")
+          ? candidate.slice(0, -2)
+          : candidate,
+      );
+    }
+    if (lead[0] !== value) break;
+  }
+  return result;
 }
 
 /** PL-79 / PL-82: результат проверки SCOPE-путей на существование. */
