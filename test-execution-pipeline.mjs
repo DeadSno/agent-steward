@@ -39,6 +39,7 @@ const { initDb, closeDb, getDb } = await import("./dist/db/index.js");
 const repo = await import("./dist/db/runs-repo.js");
 const ac1 = await import("./dist/core/execution.js");
 const audit = await import("./dist/core/audit.js");
+const mission = await import("./dist/core/mission.js");
 // record-history имеет isDirectInvocation guard — импорт не запускает main().
 const recorder = await import("./dist/core/record-history.js");
 
@@ -1013,6 +1014,78 @@ const webhookOutcome = ac1.writeGateOutcome({
 check(
   "PL-91: ledger пишет trigger_kind=webhook, а не manual",
   webhookOutcome.triggerKind === "webhook" && webhookOutcome.verdict === "pass",
+);
+
+// --- PL-102: эскалация включена в реальном mission-пути --------------------
+check(
+  "PL-102: gate по результату исполнителя — pass",
+  ac1.agentResultGate({ result: { output: "ok" } }).ok === true,
+);
+check(
+  "PL-102: gate по результату исполнителя — fail по ошибке",
+  ac1.agentResultGate({ result: { output: "часть", error: "boom" } }).verdict === "fail",
+);
+check(
+  "PL-102: gate по результату исполнителя — fail по коду выхода",
+  ac1.agentResultGate({ result: { output: "ok", exitCode: 2 } }).ok === false,
+);
+
+const pl102Plan = await ac1.buildExecutionPlan(
+  ac1.createAdHocRunContext("PL-102 same executor", {
+    taskName: "pl102-same",
+    cwd: tempRoot,
+    taskType: "run_tests",
+    riskClass: "R0",
+  }),
+);
+let pl102Calls = 0;
+const pl102Run = await ac1.executeExecutionPlan(pl102Plan, {
+  executors: [
+    {
+      id: "solo",
+      supports: () => true,
+      execute: () => {
+        pl102Calls += 1;
+        return { output: "часть", error: "boom" };
+      },
+    },
+  ],
+  gate: () => ({ ok: false, verdict: "fail", reason: "boom" }),
+  escalation: { enabled: true },
+});
+check("PL-102: тот же исполнитель не запускается повторно", pl102Calls === 1);
+check(
+  "PL-102: причина гейта и диагностика сохранены",
+  pl102Run.status === "failed" &&
+    String(pl102Run.error).includes("boom") &&
+    String(pl102Run.error).includes("PL-102"),
+  String(pl102Run.error),
+);
+
+let pl102MissionGateCalls = 0;
+const pl102Mission = await mission.runMission(
+  { prompt: "PL-102 mission", taskName: "pl102-mission", cwd: tempRoot, model: "test/model" },
+  {
+    executor: {
+      id: "mission-solo",
+      supports: () => true,
+      execute: () => ({ output: "готово" }),
+    },
+    gate: () => {
+      pl102MissionGateCalls += 1;
+      return pl102MissionGateCalls === 1
+        ? { ok: false, verdict: "flake", reason: "шумный гейт" }
+        : { ok: true, verdict: "pass" };
+    },
+  },
+);
+check("PL-102: mission использует retry гейта по умолчанию", pl102MissionGateCalls === 2);
+check("PL-102: mission завершена passed", pl102Mission.status === "passed");
+check(
+  "PL-102: flake записан в ledger реального mission-прогона",
+  repo.listGateOutcomes(1000).some(
+    (row) => row.runId === pl102Mission.runId && row.verdict === "flake",
+  ),
 );
 
 closeDb();

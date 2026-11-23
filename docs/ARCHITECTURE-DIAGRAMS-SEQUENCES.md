@@ -56,10 +56,12 @@ sequenceDiagram
                 EX->>JR: runStepStatefullyAsync
                 JR->>OC: StepExecutor execute
                 OC-->>JR: output и exitCode
-                opt execution.escalation.enabled === true (PL-93)
+                opt по умолчанию в runMission (PL-93, PL-102); в ядре — при escalation.enabled
+                    EX->>EX: agentResultGate — ошибка или ненулевой код шага = fail
                     EX->>ESC: runGateWithRetry → resolveGateOutcome → escalateAfterGate
                     ESC-->>EX: verdict local fail → cloud; flake/infra_fail → blocked
                     EX->>DB: recordGateVerdict обучает capability_map и карантин
+                    note over EX,ESC: PL-102: тот же StepExecutor.id на новом маршруте — эскалация не дублирует агента, возвращается причина гейта
                 end
                 JR-->>EX: результат шага
                 EX->>EX: writeGateOutcome с финальным verdict (flake/fail — при эскалации)
@@ -78,9 +80,9 @@ sequenceDiagram
     end
 ```
 
-**Что видно:** единый путь `RunContext → ExecutionPlan → executeExecutionPlan`. Гейт одобрений и бюджет стоят **до** `createRun`; намерения эффектов — **до** гейта; применение эффектов — **только после** `pass`. Эскалация PL-93 показана в блоке `opt`: она вызывается только при явном `execution.escalation.enabled`, по умолчанию путь остаётся прежним. Компиляция контекста PL-94 идёт внутри `buildExecutionPlan`: `CompiledContext` с `contextHash` сохраняется в шаге и передаётся исполнителю, при эскалации пересобирается под новую модель/окно. Очередь одобрений после PL-95 видна пользователю через RPC `list_approvals`/`decide_approval` и карточку GUI, но решение не перезапускает ожидавший запуск автоматически (PL-103).
+**Что видно:** единый путь `RunContext → ExecutionPlan → executeExecutionPlan`. Гейт одобрений и бюджет стоят **до** `createRun`; намерения эффектов — **до** гейта; применение эффектов — **только после** `pass`. Эскалация PL-93 показана в блоке `opt`: в ядре она требует явного `execution.escalation.enabled`, но реальный `runMission` после PL-102 включает её и передаёт `agentResultGate`; повтор того же исполнителя под другим маршрутом запрещён. Компиляция контекста PL-94 идёт внутри `buildExecutionPlan`: `CompiledContext` с `contextHash` сохраняется в шаге и передаётся исполнителю, при эскалации пересобирается под новую модель/окно. Очередь одобрений после PL-95 видна пользователю через RPC `list_approvals`/`decide_approval` и карточку GUI, но решение не перезапускает ожидавший запуск автоматически (PL-103).
 
-**Ключевые выводы:** три места, где запуск может быть остановлен без побочных эффектов: budget gate (вызывается в [index.ts](src/index.ts:7948), не в движке), approval gate, worktree snapshot gate (`decideWorktreeSnapshot`/`enforceWorktreeSnapshot`, PL-59). Ledger-запись делает `writeGateOutcome`, а не сам исполнитель — поэтому registered и ad-hoc дают одинаковый набор хэшей. Компиляция контекста PL-94 встроена в план: `compileContextForRoute` создаёт `CompiledContext` с `contextHash`, он доходит до исполнителя и OpenCode-invocation; при эскалации `recompileContextForRouteEscalation` пересобирает контекст под новую модель (`local-7b` → `cloud-large`). flake-aware эскалация PL-93 подключена, но только при `escalation.enabled` (PL-102).
+**Ключевые выводы:** три места, где запуск может быть остановлен без побочных эффектов: budget gate (вызывается в [index.ts](src/index.ts:7948), не в движке), approval gate, worktree snapshot gate (`decideWorktreeSnapshot`/`enforceWorktreeSnapshot`, PL-59). Ledger-запись делает `writeGateOutcome`, а не сам исполнитель — поэтому registered и ad-hoc дают одинаковый набор хэшей. Компиляция контекста PL-94 встроена в план: `compileContextForRoute` создаёт `CompiledContext` с `contextHash`, он доходит до исполнителя и OpenCode-invocation; при эскалации `recompileContextForRouteEscalation` пересобирает контекст под новую модель (`local-7b` → `cloud-large`). flake-aware эскалация PL-93 подключена: в `runMission` включена по умолчанию через `agentResultGate` (PL-102), при прямом вызове ядра остаётся opt-in; рекордер зарегистрированных задач использует отдельный процесс с командной quality gate и в execution-loop эскалацию не идёт.
 
 ### 4.2 Matrix fan-out
 

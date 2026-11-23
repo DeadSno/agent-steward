@@ -668,6 +668,29 @@ export type Gate = (
   input: StepExecutionInput & { result: StepExecutionResult; attempt?: number },
 ) => GateVerdict | Promise<GateVerdict>;
 
+/**
+ * PL-102: гейт по факту выполнения шага для production-вызовов, у которых
+ * quality gate — это команда обёртки, а не JavaScript-функция. Команда гейта
+ * продолжает выполняться внутри обёртки на каждой попытке, а этот гейт
+ * проверяет, что агент вернул результат без ошибки/ненулевого кода, и даёт
+ * execution loop вердикт для retry/эскалации и capability map.
+ */
+export function agentResultGate({
+  result,
+}: StepExecutionInput & { result: StepExecutionResult }): GateVerdict {
+  if (typeof result.error === "string" && result.error.trim()) {
+    return { ok: false, reason: result.error, verdict: "fail" };
+  }
+  if (typeof result.exitCode === "number" && result.exitCode !== 0) {
+    return {
+      ok: false,
+      reason: `Код выхода агента ${result.exitCode}`,
+      verdict: "fail",
+    };
+  }
+  return { ok: true, verdict: "pass" };
+}
+
 /** Ошибка GATE: шаг выполнен, но результат не принят. */
 export class GateRejectedError extends Error {
   constructor(reason: string) {
@@ -1284,6 +1307,16 @@ async function executeStepWithEscalation(
         escalations < maxEscalations &&
         decision.next !== target;
       const nextExecutor = canEscalate ? pick(routeForTarget(step.route, decision.next)) : undefined;
+      // PL-102: обёртка миссии поддерживает и local, и cloud маршрут одним и
+      // тем же исполнителем. Повторно дёргать его под другим target — это
+      // дублирование дорогого прогона без смены модели/возможностей.
+      if (nextExecutor && nextExecutor.id === executor.id) {
+        throw new Error(
+          `GATE: ${gateResult.reason ?? "шаг отклонён гейтом"} ` +
+            `(PL-102: эскалация на ${decision.next} не выполнена — исполнитель ` +
+            `"${executor.id}" не меняется при смене маршрута; нужен отдельный executor для cloud)`,
+        );
+      }
       if (nextExecutor && decision.next !== "review") {
         target = decision.next;
         escalations += 1;

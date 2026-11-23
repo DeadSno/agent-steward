@@ -15,12 +15,15 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { LOG_DIR, sanitizeName } from "../types.js";
 import {
+  agentResultGate,
   buildExecutionPlan,
   createAdHocRunContext,
   describeExecutionPlan,
   executeExecutionPlan,
+  type ExecutionEscalationOptions,
   type ExecutionPlan,
   type ExecutionResult,
+  type Gate,
   type RunContext,
   type RunPermissionPolicy,
   type StepExecutor,
@@ -142,6 +145,14 @@ export interface MissionResult {
 /** Зависимости для тестов: позволяют подменить исполнение без OpenCode. */
 export interface MissionDependencies {
   executor?: StepExecutor;
+  /**
+   * PL-102: гейт execution loop. По умолчанию используется `agentResultGate`
+   * (ошибка/ненулевой код шага = fail), команда quality gate обёртки при этом
+   * продолжает выполняться внутри обёртки на каждой попытке.
+   */
+  gate?: Gate;
+  /** PL-102: настройки эскалации; по умолчанию включена. */
+  escalation?: ExecutionEscalationOptions;
   /** Хук после подготовки: тест может проверить отсутствие задач в ОС. */
   onPrepared?: (info: { taskName: string; cwd: string }) => void;
 }
@@ -543,6 +554,10 @@ export async function runMission(
     const result = await executeExecutionPlan(plan, {
       executors: [executor],
       stopOnError: true,
+      // PL-102: реальный mission-путь теперь использует тот же контур
+      // retry/эскалации/обучения capability map, что и тесты PL-93/PL-94.
+      gate: dependencies.gate ?? agentResultGate,
+      escalation: { enabled: true, ...(dependencies.escalation ?? {}) },
       metadata: {
         adHoc: true,
         gate: spec.gate ?? null,
