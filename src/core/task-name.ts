@@ -49,6 +49,26 @@ export function findSanitizedNameConflict(
   return null;
 }
 
+/**
+ * PL-54: проверка текста задачи (имени, промпта, аргументов CLI), который
+ * попадает в командную строку Windows. Перевод строки разрывает команду,
+ * а NUL обрезает аргумент — оба случая нужно отклонять до запуска, а не
+ * допускать молчаливой подмены промпта. Двойные кавычки допустимы: их
+ * экранирует `quoteCmdArg()` в `opencode-cli.ts`.
+ */
+export function validateCmdLineText(
+  text: string,
+  what = "Аргумент",
+): string | null {
+  if (/[\r\n]/.test(text)) {
+    return `${what} командной строки не может содержать перевод строки`;
+  }
+  if (/\0/.test(text)) {
+    return `${what} командной строки не может содержать NUL`;
+  }
+  return null;
+}
+
 /** Человекочитаемое объяснение конфликта для ошибки создания задачи. */
 export function sanitizedConflictMessage(
   name: string,

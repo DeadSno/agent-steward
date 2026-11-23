@@ -35,6 +35,8 @@ const {
   isChildRunMode,
 } = await import("./dist/core/run-mode.js");
 const { getTaskLogs } = await import("./dist/core/scheduler/logs.js");
+const { runOpencode, quoteCmdArg, opencodeCommandFor } = await import("./dist/core/opencode-cli.js");
+const { validateCmdLineText } = await import("./dist/core/task-name.js");
 const { readStructuredLogs } = await import("./dist/core/structured-log.js");
 const { LOG_DIR, sanitizeName } = await import("./dist/types.js");
 const { loadTemplates, saveTemplate, deleteTemplate } = await import("./dist/templates.js");
@@ -581,6 +583,63 @@ check(
     surface.descriptionChars > 0 &&
     surface.estimatedTokens > surface.descriptionChars / 4
 );
+
+// PL-54: промпт с двойными кавычками доходит до opencode через cmd.exe
+// без обрезки. Реальный вызов runOpencode с подменённым opencode.cmd в PATH:
+// shim форвардит %* в node-скрипт, который печатает полученный argv как JSON.
+{
+  const pl54Dir = fs.mkdtempSync(path.join(os.tmpdir(), "pl54-argv-"));
+  const echoPath = path.join(pl54Dir, "echo.cjs");
+  const shimPath = path.join(pl54Dir, "opencode.cmd");
+  fs.writeFileSync(echoPath, "process.stdout.write(JSON.stringify(process.argv.slice(2)))\n");
+  fs.writeFileSync(shimPath, `@ECHO off\r\nSETLOCAL\r\nnode "${echoPath}" %*\r\n`);
+  const prompts = [
+    'Скажи "привет" мир',
+    'echo "quoted" and "another"',
+    'промпт без кавычек, но с пробелами',
+    'путь C:\\Program Files\\x',
+  ];
+  check(
+    "PL-54: quoteCmdArg экранирует двойные кавычки удвоением",
+    quoteCmdArg('Скажи "привет" мир') === '"Скажи ""привет"" мир"'
+  );
+  check(
+    "PL-54: валидация cmd-строки пропускает двойные кавычки, но не переводы строк и NUL",
+    validateCmdLineText('Скажи "привет" мир', "Промпт") === null &&
+      /перевод строки/.test(validateCmdLineText("a\nb", "Промпт") ?? "") &&
+      /NUL/.test(validateCmdLineText("a\0b", "Промпт") ?? "")
+  );
+  check(
+    "PL-54: opencodeCommandFor (win32) строит cmd.exe /d /s /c",
+    (() => {
+      const cmd = opencodeCommandFor("win32", ["run", "--", 'Скажи "привет" мир']);
+      return cmd.file === "cmd.exe" &&
+        cmd.args[0] === "/d" && cmd.args[1] === "/s" && cmd.args[2] === "/c" &&
+        cmd.args[3].includes('"Скажи ""привет"" мир"');
+    })()
+  );
+  if (process.platform === "win32") {
+    const savedPath = process.env.PATH;
+    process.env.PATH = `${pl54Dir}${path.delimiter}${savedPath ?? ""}`;
+    try {
+      for (const prompt of prompts) {
+        const result = await runOpencode(["run", "--", prompt]);
+        let delivered = null;
+        try {
+          delivered = result.ok ? JSON.parse(result.stdout).at(-1) : null;
+        } catch {}
+        check(
+          `PL-54: runOpencode доставляет промпт без обрезки: ${JSON.stringify(prompt)}`,
+          delivered === prompt
+        );
+      }
+    } finally {
+      process.env.PATH = savedPath;
+    }
+  } else {
+    console.log("PL-54: реальный cmd.exe-прогон пропущен (не Windows)");
+  }
+}
 
 const failed = results.filter((r) => !r.ok);
 console.log(`\nAgent tools: ${results.length - failed.length}/${results.length} проверок пройдено.`);
