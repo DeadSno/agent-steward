@@ -145,13 +145,14 @@ try {
       }
       $taskSlug = (Split-Path -Leaf $logFile) -replace '\.log$', ''
       $body = @(
+        "STATUS: needs-resolution",
         "# Merge conflict needs manual resolution ($taskSlug)",
         "",
         "Message: $Message",
         "Conflicted files: " + (@($conflicts) -join '; '),
         "Backed-up copies: $backupDir",
         "",
-        "The commit was created and the Quality Gate passed. Resolve the",
+        "The commit was created but the post-flight did NOT push. Resolve the",
         "conflict markers in the listed files, then push manually:",
         "  git add <files>; git commit; git push origin HEAD:dev"
       )
@@ -169,7 +170,8 @@ try {
     }
     Log ("CONFLICT - manual resolution required: " + (@($conflicts) -join '; '))
     Log ("PL-101: conflict files preserved; marker=$markerFile; task requires conflict resolution")
-    exit 0
+    Log "STATUS: needs-resolution - post-flight MUST NOT be reported as success"
+    exit 2
   }
   if ((Invoke-Git 'push-2' @('push', 'origin', 'HEAD:dev')) -ne 0) {
     Log "FAIL push after rebase: $Message"

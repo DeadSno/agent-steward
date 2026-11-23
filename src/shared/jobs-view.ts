@@ -6,7 +6,7 @@ import {
 } from "../task-transfer.js";
 import type { ScheduledTaskInfo } from "../types.js";
 
-export type JobStatus = "running" | "success" | "error" | "partial" | "skipped" | "idle" | "unknown"
+export type JobStatus = "running" | "success" | "error" | "partial" | "skipped" | "needs-resolution" | "idle" | "unknown"
 
 export interface JobView {
   name: string
@@ -117,6 +117,8 @@ export function statusIcon(status: JobStatus): string {
       return "✓";
     case "partial":
       return "◐";
+    case "needs-resolution":
+      return "⚑";
     case "skipped":
       return "⏭";
     case "idle":

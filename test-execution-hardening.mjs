@@ -88,6 +88,7 @@ const { listEffectIntents, readEffectIntentLedger } = await import(
   "./dist/core/gate-integrity.js"
 );
 const { readAuditLog } = await import("./dist/core/audit.js");
+const { planRuntimeIsolation } = await import("./dist/core/scheduler/run-now.js");
 
 initDb();
 await ensureWrapper();
@@ -1335,11 +1336,12 @@ try {
       helper.includes("no rebase in progress - skipped 'rebase --quit'")
   );
   check(
-    "PL-101: конфликт сохраняется и помечается без падения задачи",
+    "PL-101/PL-116: конфликт сохраняется, помечается needs-resolution и не маскируется под success",
     helper.includes("merge-conflicts") &&
       helper.includes("merge-conflict-pending.md") &&
       helper.includes("PL-101: conflict files preserved") &&
-      !helper.includes("exit 2")
+      helper.includes("STATUS: needs-resolution") &&
+      helper.includes("exit 2")
   );
 
   // PL-105: pre-flight проверяет, что WorkingDirectory задачи — git worktree.
@@ -1405,6 +1407,44 @@ try {
 } catch (err) {
   console.log("[diag] PL-112 section THREW:", err instanceof Error ? err.stack : String(err));
   check("PL-112: секция не выбросила исключение", false, "section threw");
+}
+
+// --- PL-106: run-time isolation guard ---
+check(
+  "PL-106 first non-isolated run allowed",
+  planRuntimeIsolation({ activeNonIsolated: 0, worktree: false, taskName: "a" }).allowed === true
+);
+check(
+  "PL-106 second non-isolated run rejected",
+  planRuntimeIsolation({ activeNonIsolated: 1, worktree: false, taskName: "b" }).allowed === false
+);
+check(
+  "PL-106 isolated run allowed while another is active",
+  planRuntimeIsolation({ activeNonIsolated: 2, worktree: true, taskName: "c" }).allowed === true
+);
+check(
+  "PL-106 many active non-isolated runs blocked",
+  planRuntimeIsolation({ activeNonIsolated: 4, worktree: false, taskName: "d" }).allowed === false
+);
+
+// --- PL-116: conflict post-flight must not report success ---
+{
+  const commitScript = fs.readFileSync(path.resolve("scripts/steward-commit.ps1"), "utf8");
+  const historySource = fs.readFileSync(path.resolve("src/history.ts"), "utf8");
+  const jobsView = fs.readFileSync(path.resolve("src/shared/jobs-view.ts"), "utf8");
+  check("PL-116 conflict marker persisted", commitScript.includes("STATUS: needs-resolution"));
+  check(
+    "PL-116 conflict exits nonzero",
+    /STATUS: needs-resolution - post-flight MUST NOT be reported as success[\s\S]{0,60}exit 2/.test(commitScript)
+  );
+  check(
+    "PL-116 history status additive",
+    historySource.includes('"needs-resolution"') && jobsView.includes("needs-resolution")
+  );
+  check(
+    "PL-116 successful push unchanged",
+    /Log "OK \(rebased\): \$Message"[\s\S]{0,30}?exit 0/.test(commitScript)
+  );
 }
 
 const failed = results.filter((r) => !r.ok);

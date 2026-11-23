@@ -20,7 +20,13 @@ export const HISTORY_FILE = path.join(PLUGIN_DIR, "history.json");
 /** @deprecated Оставлено для обратной совместимости импортов. */
 export const METRICS_FILE = path.join(PLUGIN_DIR, "metrics.json");
 
-export type TaskStatus = "success" | "error" | "timeout" | "partial" | "skipped";
+export type TaskStatus =
+  | "success"
+  | "error"
+  | "timeout"
+  | "partial"
+  | "skipped"
+  | "needs-resolution";
 
 export interface HistoryRecord {
   taskName: string;

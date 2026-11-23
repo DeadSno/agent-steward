@@ -44,7 +44,11 @@ import { ensureWrapper, writePromptFile, writeWrapperCmd, lockFilePath, requestI
 import { getSchedulerBackend, LinuxScheduler } from "./core/scheduler/index.js";
 import { SCHEDULER_SKILL_ID, loadSchedulerSkill } from "./skill.js";
 import { getTaskLogs } from "./core/scheduler/logs.js";
-import { planParallelExecution, preflightScope } from "./core/scheduler/run-now.js";
+import {
+  planParallelExecution,
+  planRuntimeIsolation,
+  preflightScope,
+} from "./core/scheduler/run-now.js";
 import {
   findSanitizedNameConflict,
   sanitizedConflictMessage,
@@ -1084,7 +1088,7 @@ const getHistorySchema = z.object({
     .optional()
     .describe("Only return runs of this task (case-insensitive)."),
   status: z
-    .enum(["running", "success", "error", "timeout", "partial"])
+    .enum(["running", "success", "error", "timeout", "partial", "needs-resolution"])
     .optional()
     .describe("Only return runs with this status."),
   limit: z
@@ -8150,6 +8154,9 @@ export class PluginShutdownError extends Error {
   }
 }
 
+/** PL-106: счётчик активных запусков без изоляции в этом процессе плагина. */
+let activeNonIsolatedRuns = 0;
+
 async function runTaskEntry(name: string): Promise<{ alreadyRunning: boolean }> {
   if (shutdownGate.isShuttingDown()) {
     throw new PluginShutdownError(
@@ -8185,6 +8192,20 @@ async function runTaskEntry(name: string): Promise<{ alreadyRunning: boolean }> 
       return { alreadyRunning: false };
     }
 
+    // PL-106: защита в точке запуска — cron/mcp-event/файл/run_task_now
+    // приходят сюда одинаково. Вторая неизолированная задача в том же
+    // чек-ауте перезаписывают правки и ломает qualityGate, поэтому отказываем
+    // сразу, а не после 585 секунд взаимных перезаписей.
+    const isolation = planRuntimeIsolation({
+      activeNonIsolated: activeNonIsolatedRuns,
+      worktree: definition?.worktree,
+      taskName: trimmed,
+    });
+    if (!isolation.allowed) {
+      throw new Error(isolation.reason ?? "PL-106: параллельный запуск без worktree запрещён.");
+    }
+    if (!isolation.isolated) activeNonIsolatedRuns++;
+
     // QA-P3.6: если задачи нет ни в определениях, ни в планировщике ОС,
     // не дёргаем schtasks /run — он возвращает сырую ошибку ОС. Возвращаем
     // структурированное «задача не найдена», как и остальные инструменты.
@@ -8213,6 +8234,8 @@ async function runTaskEntry(name: string): Promise<{ alreadyRunning: boolean }> 
         /* не критично */
       });
       throw err;
+    } finally {
+      if (!isolation.isolated) activeNonIsolatedRuns = Math.max(0, activeNonIsolatedRuns - 1);
     }
   })();
 

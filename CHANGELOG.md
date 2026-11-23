@@ -4,6 +4,10 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ## [Unreleased]
 
+- **PL-106 — параллельные задачи в одном чек-ауте более не перезаписывают правки друг друга.** Добавлен `planRuntimeIsolation` в `src/core/scheduler/run-now.ts` и проверка в точке запуска `src/index.ts`: вторая задача без `worktree: true` отклоняется с явной причиной, изолированные запуски выполняются параллельно. Проверено: `npm run build`, `node test-execution-hardening.mjs`, `node test-docs.mjs`.
+
+- **PL-116 — конфликт rebase более не маскируется под success.** `scripts/steward-commit.ps1` при конфликте пишет `STATUS: needs-resolution` в `reports/merge-conflict-pending.md` и возвращает exit 2; статус `needs-resolution` добавлен в `src/history.ts` и панели, обычный push по-прежнему exit 0. Проверено: `npm run build`, `node test-execution-hardening.mjs`, `node test-docs.mjs`.
+
 - **PL-112 — добавлен guard на деструктивные команды в промптах.** `inspectPromptSafety` в `src/core/guard.ts` отклоняет рекурсивные удаления (`Remove-Item -Recurse`, `rm -rf`, `del /s`), абсолютные цели и обход `..`; `writePromptFile` в `src/core/ps-wrapper.ts` проверяет промпт перед записью. Регрессия добавлена в `test-execution-hardening.mjs`. Упоминания команд в прозе не блокируются. Проверено: `npm run build`, `node test-execution-hardening.mjs`, `node test-docs.mjs`.
 
 - **PL-108 — задокументирован отказ `subagent` на Free-тарифе.** В `skills/scheduled-job-best-practices/SKILL.md` §4.1 добавлена заметка о повторном воспроизведении ошибки `Free usage limit reached` при явном вызове саб-агента 23.11.2026; работа продолжена основным агентом, Quality Gate сохранён. Строка PL-108 удалена из `ROADMAP.md`. Проверено: `node test-docs.mjs` (139/139, exit 0).

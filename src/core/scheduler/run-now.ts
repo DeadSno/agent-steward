@@ -94,6 +94,40 @@ export function planParallelExecution(input: {
   };
 }
 
+/** PL-106: решение о запуске, когда в одном чек-ауте уже идёт агент. */
+export interface RuntimeIsolationPlan {
+  allowed: boolean;
+  reason: string | null;
+  isolated: boolean;
+}
+
+/**
+ * PL-106: несколько задач, запущенных одновременно без worktree, пишут в
+ * один и тот же checkout (реальный случай 23.11.2026 — 4 агента, 585с смерти
+ * и loss правок). Creation-time план учитывает только maxConcurrent и не
+ * защищает от ручных запусков и кэтч-апа, поэтому проверка повторяется в
+ * точке запуска. Задача с worktree: true изолирована и может идти вместе
+ * с другими; остальные — только по одной на процесс плагина.
+ */
+export function planRuntimeIsolation(input: {
+  activeNonIsolated: number;
+  worktree?: boolean;
+  taskName: string;
+}): RuntimeIsolationPlan {
+  const isolated = input.worktree === true;
+  const active = Math.max(0, Number(input.activeNonIsolated) || 0);
+  const allowed = isolated || active === 0;
+  return {
+    allowed,
+    isolated,
+    reason: allowed
+      ? null
+      : 'PL-106: уже запущена другая задача без worktree в этом чек-ауте. ' +
+        'Дождитесь её завершения или создайте задачу с worktree: true (' +
+        input.taskName + ').',
+  };
+}
+
 /** PL-99: признак уже закрытой находки. */
 export interface StaleVerdict {
   stale: boolean;
