@@ -197,6 +197,10 @@ agent-steward — execution engine с опциональной регистра�
 
 - [ ] PL-89 Мета-гейт `test-docs.mjs` проверяет в `.opencode/skills/release-check/SKILL.md` только счётчики tools/RPC, но не suites: устаревшее «115 наборов» прошло 129/129 и было найдено только ручной сверкой (DOC-1A) — P2. Действие: расширить проверку release-check на suites=116 (как для `agent-steward-dev`/`docs-sync`) и добавить регрессию. Число 115 в самой SKILL.md уже исправлено на 116.
 
+- [ ] PL-90 Повторение PL-72: суб-агент (`general`), запущенный для авторинга архитектурных диаграмм DOC-2, сразу упал с `Free usage limit reached. Connect a provider or subscribe to OpenCode Go...` — P3, окружение, не баг репозитория. Документ пришлось писать основным агентом. Действие: перед запуском суб-агентов проверять доступность провайдера/модели и автоматически фолбэчиться на основного агента; причину ошибки отражать в отчёте, а не терять. Воспроизведено 23.11.2026.
+
+- [ ] PL-91 Webhook реализован только на HTTP-слое (`src/server.ts:1227` — `POST /api/hooks/:task?token=…`, `src/integrations.ts:179`, `src/settings.ts` → `incomingWebhooks`), но отсутствует в `RunTrigger` (`src/core/execution.ts:65` — `manual|cron|file|git|mcp-event|once`) и в `triggerKindFor` (`src/core/execution.ts:365`), поэтому в `gate_outcomes`/`runs` webhook-запуск записывается как `manual` — P2. Действие: добавить `webhook` в `RunTrigger` и маппинг в `triggerKindFor`, миграция для старых строк не требуется (добавочное значение), регрессия в `test-execution-pipeline.mjs` + обновить C4/ER-диаграммы. Найдено при сверке DOC-2 с реальным кодом 23.11.2026.
+
 ---
 
 # 4. Правила работы (канбан)
