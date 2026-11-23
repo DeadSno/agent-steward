@@ -451,183 +451,6 @@ check(
 );
 check("ARCH-3: стабильный pass снимает карантин", !capability.isGateQuarantined("npm test"));
 
-// --- 8.1 PL-93/PL-94: эскалация и контекст в едином пути ------------------
-const compiledFiles = { "src/core/router/rules.ts": "rules content" };
-const compiledCtx = ac1.createAdHocRunContext("run tests", {
-  taskName: "pl94-compiled",
-  cwd: tempRoot,
-  taskType: "run_tests",
-  riskClass: "R0",
-});
-const compiledPlan = await ac1.buildExecutionPlan(compiledCtx, {
-  contextOptions: { files: compiledFiles, tokenBudget: 2000 },
-});
-const compiledStep = compiledPlan.steps[0];
-check("PL-94: compiledContext присутствует в шаге плана", Boolean(compiledStep.compiledContext));
-check(
-  "PL-94: contextHash — SHA-256 (64 hex)",
-  /^[0-9a-f]{64}$/.test(compiledStep.compiledContext?.contextHash ?? ""),
-);
-check("PL-94: модель контекста взята из маршрута", compiledStep.compiledContext?.model === "local-7b");
-
-let compiledSeen = null;
-const compiledExecutor = {
-  id: "pl94-executor",
-  supports: (route) => route.executor !== null,
-  execute: ({ compiledContext }) => {
-    compiledSeen = compiledContext;
-    return { output: "ok" };
-  },
-};
-await ac1.executeExecutionPlan(compiledPlan, { executors: [compiledExecutor] });
-check(
-  "PL-94: исполнитель получил тот же compiledContext",
-  compiledSeen?.contextHash === compiledStep.compiledContext?.contextHash,
-);
-
-const patchedPlan = await ac1.buildExecutionPlan(compiledCtx, {
-  contextOptions: { files: compiledFiles, tokenBudget: 2000 },
-  escalationContext: {
-    previous: compiledStep.compiledContext,
-    options: { model: "cloud-large", files: compiledFiles, tokenBudget: 4000 },
-  },
-});
-check(
-  "PL-94: patched context пересобран под cloud, а не передан старый",
-  patchedPlan.steps[0].compiledContext?.model === "cloud-large" &&
-    patchedPlan.steps[0].compiledContext !== compiledStep.compiledContext,
-);
-check(
-  "PL-94: escalationContext меняет contextHash",
-  patchedPlan.steps[0].compiledContext?.contextHash !== compiledStep.compiledContext?.contextHash,
-);
-
-const flakeCtx = ac1.createAdHocRunContext("run tests", {
-  taskName: "pl93-flake",
-  cwd: tempRoot,
-  taskType: "run_tests",
-  riskClass: "R0",
-});
-const flakePlan = await ac1.buildExecutionPlan(flakeCtx);
-let pl93GateCalls = 0;
-const flakeRun = await ac1.executeExecutionPlan(flakePlan, {
-  executors: [executor],
-  gate: ({ attempt }) => {
-    pl93GateCalls += 1;
-    return attempt === 1
-      ? { ok: false, verdict: "flake", reason: "первый вызов гейта флакнул" }
-      : { ok: true, reason: "второй вызов прошёл" };
-  },
-});
-check("PL-93: executeExecutionPlan повторил гейт на flake", pl93GateCalls === 2);
-check("PL-93: flake-pass завершил шаг passed", flakeRun.status === "passed");
-const pl93FlakeRow = repo.listGateOutcomes().find((row) => row.runId === flakeRun.runId);
-check(
-  "PL-93: ledger хранит verdict=flake, attempts_to_pass=2, first_pass=0",
-  pl93FlakeRow?.verdict === "flake" &&
-    pl93FlakeRow.attemptsToPass === 2 &&
-    pl93FlakeRow.firstPass === 0,
-);
-check("PL-93: flake-pass не эскалируется", flakeRun.escalations === undefined);
-
-const stableFailPlan = await ac1.buildExecutionPlan(
-  ac1.createAdHocRunContext("run tests", {
-    taskName: "pl93-stable-fail",
-    cwd: tempRoot,
-    taskType: "run_tests",
-    riskClass: "R0",
-  }),
-);
-let stableFailCalls = 0;
-const stableFailRun = await ac1.executeExecutionPlan(stableFailPlan, {
-  executors: [executor],
-  gate: () => {
-    stableFailCalls += 1;
-    return { ok: false, reason: "стабильный провал гейта" };
-  },
-});
-check("PL-93: стабильный fail не повторяется", stableFailCalls === 1);
-check("PL-93: стабильный fail → запуск failed", stableFailRun.status === "failed");
-check(
-  "PL-93: escalateAfterGate дал local → cloud",
-  stableFailRun.escalations?.some(
-    (item) =>
-      item.from === "local" && item.next === "cloud" &&
-      item.action === "escalate-cloud" && item.verdict === "fail",
-  ),
-);
-check(
-  "PL-93: patched context решения записан в эскалацию",
-  typeof stableFailRun.escalations?.find((item) => item.from === "local")?.patchedContextHash ===
-    "string",
-);
-
-capability.recordGateVerdict(
-  {
-    outcomeKey: "pl93-quarantine-1",
-    taskType: "run_tests",
-    gateKey: "pl93-gated",
-    verdict: "flake",
-    attemptsToPass: 2,
-    firstPass: false,
-  },
-  new Date(),
-);
-capability.recordGateVerdict(
-  {
-    outcomeKey: "pl93-quarantine-2",
-    taskType: "run_tests",
-    gateKey: "pl93-gated",
-    verdict: "flake",
-    attemptsToPass: 2,
-    firstPass: false,
-  },
-  new Date(),
-);
-check("PL-93: тестовый гейт в карантине", capability.isGateQuarantined("pl93-gated"));
-const quarantineCtx = ac1.createAdHocRunContext("run tests", {
-  taskName: "pl93-quarantine-run",
-  cwd: tempRoot,
-  taskType: "run_tests",
-  riskClass: "R0",
-  metadata: { qualityGate: "pl93-gated" },
-});
-const quarantinePlan = await ac1.buildExecutionPlan(quarantineCtx);
-const seenQuarantineRoutes = [];
-const quarantineExecutor = {
-  id: "pl93-quarantine-executor",
-  supports: (route) => {
-    seenQuarantineRoutes.push(route.target);
-    return route.executor !== null;
-  },
-  execute: () => ({ output: "ok" }),
-};
-const quarantineRun = await ac1.executeExecutionPlan(quarantinePlan, {
-  executors: [quarantineExecutor],
-});
-check(
-  "PL-93: карантин сдвинул выбор исполнителя local → cloud",
-  seenQuarantineRoutes.includes("cloud"),
-);
-check(
-  "PL-93: решение о карантине записано в escalations",
-  quarantineRun.escalations?.some(
-    (item) => item.quarantined && item.from === "local" && item.next === "cloud",
-  ),
-);
-capability.recordGateVerdict(
-  {
-    outcomeKey: "pl93-quarantine-clear",
-    taskType: "run_tests",
-    gateKey: "pl93-gated",
-    verdict: "pass",
-    attemptsToPass: 1,
-    firstPass: true,
-  },
-  new Date(),
-);
-check("PL-93: стабильный pass снял тестовый карантин", !capability.isGateQuarantined("pl93-gated"));
-
 // --- 9. ARCH-1.x: общий RunContext, registered мост и tamper-evident ledger ----
 const twinAdhoc = ac1.createAdHocRunContext(registered.prompt, {
   taskName: registered.taskName,
@@ -673,23 +496,6 @@ check(
 check(
   "ARCH-1.2: trigger_kind различает зарегистрированную задачу и ad-hoc",
   ac1.triggerKindFor(registered) === "manual" && ac1.triggerKindFor(twinAdhoc) === "adhoc",
-);
-
-// --- PL-91: вебхук — отдельный trigger_kind, а не «manual» -----------------
-// origin=registered: у ad-hoc triggerKindFor всегда вернёт «adhoc», поэтому
-// проверяем именно зарегистрированный вход (как у POST /api/hooks/:task).
-const webhookContext = { ...registered, trigger: "webhook" };
-check("PL-91: trigger=webhook принимается в RunContext", webhookContext.trigger === "webhook");
-check("PL-91: triggerKindFor(webhook) → webhook", ac1.triggerKindFor(webhookContext) === "webhook");
-const webhookOutcome = ac1.writeGateOutcome({
-  context: webhookContext,
-  runId: adhocRun.runId,
-  stepName: "webhook-step",
-  verdict: "pass",
-});
-check(
-  "PL-91: ledger пишет trigger_kind=webhook, а не manual",
-  webhookOutcome.triggerKind === "webhook" && webhookOutcome.verdict === "pass",
 );
 
 const bridgeContext = ac1.createRegisteredRunContext({
@@ -1190,6 +996,23 @@ check(
 check(
   "PL-94: contextHash после эскалации отличается",
   pl94CloudSeen[0].compiledContext?.contextHash !== pl94LocalSeen[0].compiledContext?.contextHash,
+);
+
+// --- PL-91: вебхук — отдельный trigger_kind, а не «manual» -----------------
+// origin=registered: у ad-hoc triggerKindFor всегда вернёт «adhoc», поэтому
+// проверяем именно зарегистрированный вход (как у POST /api/hooks/:task).
+const webhookContext = { ...registered, trigger: "webhook" };
+check("PL-91: trigger=webhook принимается в RunContext", webhookContext.trigger === "webhook");
+check("PL-91: triggerKindFor(webhook) → webhook", ac1.triggerKindFor(webhookContext) === "webhook");
+const webhookOutcome = ac1.writeGateOutcome({
+  context: webhookContext,
+  runId: adhocRun.runId,
+  stepName: "webhook-step",
+  verdict: "pass",
+});
+check(
+  "PL-91: ledger пишет trigger_kind=webhook, а не manual",
+  webhookOutcome.triggerKind === "webhook" && webhookOutcome.verdict === "pass",
 );
 
 closeDb();

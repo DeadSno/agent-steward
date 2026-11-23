@@ -216,38 +216,6 @@ assert(
   `бюджет после эскалации соблюдён (${escalated.context.estimatedTokens})`,
 );
 
-// 12. PL-94: компиляция контекста подключена к buildExecutionPlan.
-const exec = await import("./dist/core/execution.js");
-const pl94Context = exec.createAdHocRunContext("run tests", {
-  taskName: "pl94-dispatch",
-  cwd: tempRoot,
-  taskType: "run_tests",
-  riskClass: "R0",
-});
-const pl94Plan = await exec.buildExecutionPlan(pl94Context, {
-  contextOptions: { files: routeFiles, tokenBudget: 4000 },
-});
-assert(
-  /^[0-9a-f]{64}$/.test(pl94Plan.steps[0].compiledContext?.contextHash ?? ""),
-  "PL-94: шаг плана несёт compiledContext с SHA-256 хэшем",
-);
-assert(
-  pl94Plan.steps[0].compiledContext?.model === EXECUTOR_MODEL.local,
-  "PL-94: модель контекста взята из маршрута",
-);
-const patchedPlan = await exec.buildExecutionPlan(pl94Context, {
-  contextOptions: { files: routeFiles, tokenBudget: 4000 },
-  escalationContext: {
-    previous: pl94Plan.steps[0].compiledContext,
-    options: { model: EXECUTOR_MODEL.cloud, files: routeFiles, tokenBudget: 4000 },
-  },
-});
-assert(
-  patchedPlan.steps[0].compiledContext?.model === EXECUTOR_MODEL.cloud &&
-    patchedPlan.steps[0].compiledContext !== pl94Plan.steps[0].compiledContext,
-  "PL-94: patched context пересобран под cloud после эскалации",
-);
-
 closeDb();
 
 if (process.exitCode === 1) {

@@ -56,3 +56,16 @@
 - [x] Документация диаграмм обновлена, ARCH-5.1/5.2 и sequence 4.1 описаны.
 - [x] Команды верификации запущены, exit-коды зафиксированы в §3.
 - [x] Коммит/push не выполнялись.
+
+## 6. Сверка после rebase на origin/dev (23.11.2026, main agent)
+
+При push выяснилось, что `origin/dev` уже содержит чужие коммиты `0df2a60` [PL-93], `ea813a6` [PL-94], `c033802` [PL-95], `14d8899` [PL-97]. При rebase ветки `steward-work` возникли конфликты в `src/core/execution.ts`, `CHANGELOG.md`, `ROADMAP.md`, `docs/ARCHITECTURE-DIAGRAMS.md` и `test-execution-pipeline.mjs`.
+
+Итог сверки:
+- Сохранена реализация PL-93/PL-94 из `origin/dev` (flake-aware retry — opt-in через `execution.escalation.enabled`; компиляция контекста через `dispatch.ts`). Дублирующая интеграция B5 в `execution.ts` и её тесты (`test-escalation.mjs`, `test-router-dispatch.mjs`, блоки PL-93/94 в `test-execution-pipeline.mjs`) отброшены как конфликтующие с официальной реализацией.
+- Сохранена уникальная часть B5 — **PL-91**: `webhook` в `RunTrigger` и `triggerKindFor`, новая регрессия (3 проверки) в `test-execution-pipeline.mjs`, обновлённые C4/ER/gap-описания в `docs/ARCHITECTURE-DIAGRAMS.md`.
+- Из-за автоматического слияния в `test-execution-pipeline.mjs` осталось дублированное объявление `flakePlan` (SyntaxError); файл восстановлен из `origin/dev`, поверх добавлен только блок PL-91.
+- `CHANGELOG.md`: оставлены чужие строки PL-93/94/95/97 и добавлена наша строка PL-91; дубли PL-93/94 удалены.
+- `ROADMAP.md`: PL-91/93/94/95/97 удалены, чужие открытые PL-102/PL-103 сохранены, наши находки перенумерованы в PL-106..PL-109.
+
+Повторная верификация после сверки: `npm run build` (exit 0), `node test-docs.mjs` (138/138, exit 0), `node test-execution-pipeline.mjs` (exit 0), `node test-escalation.mjs` (exit 0), `node test-router-dispatch.mjs` (exit 0), `node test-agent-tools.mjs` (67/67), `node test-model-validation.mjs` (exit 0), `node test-dry-run.mjs` (68/68), `node test-cron-to-schtasks.mjs` (37/37), `node test-execution-hardening.mjs` (106/106), `node test-task-logs.mjs` (8/8), `node test-run-dlq.mjs` (exit 0).
