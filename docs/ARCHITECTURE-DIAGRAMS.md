@@ -240,14 +240,14 @@ flowchart TB
         BP["buildExecutionPlan — execution.ts:468"]
         ROUTE["routeStep — router/dispatch.ts:51"]
         DECIDE["decideCapabilityRoute — capability-repo.ts:329"]
-        COMPILE["compileRunContext — run-context.ts:593"]
+        COMPILE["compileRunContext — run-context.ts:593 (НЕ в прогоне)"]
     end
 
     subgraph run["Исполнение"]
         EXEC["executeExecutionPlan — execution.ts:1029"]
         JOUR["runStepStatefullyAsync — run-journal.ts:181"]
         WG["writeGateOutcome — execution.ts:395"]
-        GATE["runGateWithRetry — router/escalation.ts:184"]
+        GATE["runGateWithRetry — router/escalation.ts:184 (НЕ в прогоне)"]
         EFFECT["recordEffectIntents / applyDeferredEffects — gate-integrity.ts:503 / :549"]
     end
 
@@ -255,9 +255,9 @@ flowchart TB
         RUNS["createRun / finishStep — runs-repo.ts:257 / :496"]
         LEDGER["recordGateOutcome / readGateOutcomeLedger / verifyGateOutcomeChain — runs-repo.ts:748 / :858 / :829"]
         CAP["recordCapabilityOutcome — capability-repo.ts:241<br/>recordGateVerdict — capability-repo.ts:503"]
-        RESUME["findResumeStep — run-resume.ts:76"]
+        RESUME["findResumeStep — run-resume.ts:76 / resumeRunPanel (подготовка)"]
         DLQ["enqueueDeadLetter / retryDeadLetter — run-dlq.ts:128 / :238"]
-        BUDGET["evaluateBudgetGate — budget.ts:180"]
+        BUDGET["evaluateBudgetGate — budget.ts:180<br/>вызов: checkBudgetGate index.ts:7948"]
     end
 
     CR --> VRC
@@ -266,25 +266,27 @@ flowchart TB
     PLAN --> BP
     BP --> ROUTE
     DECIDE --> ROUTE
-    ROUTE --> COMPILE
     BP --> EXEC
     EXEC --> RUNS
     EXEC --> JOUR
-    JOUR --> GATE
-    GATE --> WG
-    WG --> LEDGER
     EXEC --> EFFECT
     EFFECT --> LEDGER
-    LEDGER --> CAP
+    WG --> LEDGER
     CAP --> DECIDE
-    BUDGET --> EXEC
-    RESUME --> JOUR
     JOUR --> DLQ
+    BUDGET -.->|только в index.ts, не в execution| BP
+    ROUTE -.->|PL-94| COMPILE
+    JOUR -.->|PL-93| GATE
+    GATE -.-> WG
+    LEDGER -.->|PL-93| CAP
+    RESUME -.->|PL-92| JOUR
 ```
 
-**Что видно:** замыкание «исполнение → ledger → capability map → роутинг» — это и есть самообучающийся роутинг. `writeGateOutcome` — единственная точка записи вердикта, откуда данные расходятся в ledger и в обучение карты.
+**Условные обозначения:** сплошная стрелка — реальный вызов в `src/`; пунктирная — модуль существует и покрыт тестами, но в production execution loop не подключён (PL-92, PL-93, PL-94, PL-96).
 
-**Ключевые выводы:** Правило «flake/infra_fail не обновляют capability_map» реализовано в `recordGateVerdict`: карту трогает только `recordCapabilityOutcome` для стабильных `pass`/`fail`. Lease шага (`renewStepLease` в [runs-repo.ts](src/db/runs-repo.ts:553) и [run-journal.ts](src/db/run-journal.ts:119)) — основа safe-resume: живой процесс не даёт recovery финализировать чужой шаг.
+**Что видно:** ядро реально замыкает лишь «исполнение → ledger» и «capability_map → роутинг». Полного цикла «исполнение → ledger → обучение карты → роутинг» в текущем коде нет: `recordGateVerdict` вызывается отдельно от `writeGateOutcome` и в движок не встроен.
+
+**Ключевые выводы:** `writeGateOutcome` ([execution.ts](src/core/execution.ts:395)) — единственная точка записи вердикта в ledger, но не в обучение карты. Бюджет проверяется до старта задачи в [index.ts](src/index.ts:7948) (`checkBudgetGate`), а не внутри `executeExecutionPlan`. Lease шага (`renewStepLease` в [runs-repo.ts](src/db/runs-repo.ts:553) и [run-journal.ts](src/db/run-journal.ts:119)) — основа safe-resume, но сам `resumeRun` в прогон не подключён (PL-92).
 
 ### 6. Модель данных (ER-диаграмма)
 
@@ -423,7 +425,17 @@ erDiagram
 5. **Экономика v2 частична** — `budget.ts` считает day/week/per-task гейты, но E-3 (token efficiency), E-4 (прогноз/Grafana), E-5 (local vs cloud) открыты.
 6. **Покрытие Quality Gate неполное** — по PL-65/PL-66 в ROADMAP: часть ARCH-задач не включала затронутые сюиты и `lint`. Обёртка не всегда проверяет SCOPE-пути на существование (PL-79/PL-82).
 7. **Суб-агент как механизм выполнения ненадёжен на Free-модели** — при автопроверке документа суб-агент упал с «Free usage limit reached» (аналог PL-72/PL-76). Добавлено как PL-90.
-8. **`[TODO: проверить]`** — точное имя RPC-метода для ручного одобрения в [rpc.ts](src/rpc.ts) не зафиксировано в этой версии документа; сверка требуется перед вёрсткой UX-экрана.
+8. **Очередь одобрений без интерфейса (PL-95).** `requestApproval`/`decideApproval`/`listPendingApprovals` есть в [audit.ts](src/core/audit.ts:679), гейт встроен в `executeExecutionPlan` (:1057), но `grep -i approv src/rpc.ts` даёт 0 совпадений — RPC-методов и GUI-экрана нет. Прежний `[TODO: проверить]` снят: метода просто не существует, имя выдумывать нельзя.
+
+9. **Resume и DLQ-retry не исполняются в production (PL-92).** `resumeRun`/`resumeRunSync` ([run-resume.ts](src/db/run-resume.ts:128)) вызываются только тестами; [run-panel-api.ts](src/core/run-panel-api.ts:241) лишь открывает run заново и возвращает `prepared: true`; `retryDeadLetter` ([run-dlq.ts](src/db/run-dlq.ts:238)) явно перекладывает выполнение на «внешний обработчик», которого в `src/` нет. Диаграмма 4.3 описывает ***целевой*** поток, а не текущий.
+
+10. **Эскалация и flake-aware retry не подключены к движку (PL-93).** [escalation.ts](src/core/router/escalation.ts:184) (`runGateWithRetry`, `resolveGateOutcome`, `escalateAfterGate`) не импортируется [execution.ts](src/core/execution.ts): вердикт пишется напрямую через `writeGateOutcome` (:1215/:1254). `isGateQuarantined` ([capability-repo.ts](src/db/capability-repo.ts:616)) тоже не вызывается в роутинге — карантин влияет только на обучение карты.
+
+11. **Компиляция контекста по ledger не работает в прогоне (PL-94).** `buildExecutionPlan` ([execution.ts](src/core/execution.ts:468)) вызывает `routeStep`, но не `compileContextForRoute` ([dispatch.ts](src/core/router/dispatch.ts:133)); `recompileContextOnEscalation` ([run-context.ts](src/db/run-context.ts:814)) не вызывается вовсе. Исполнителю передаётся сырой `RunContext` без `contextHash`.
+
+12. **Ledger проверяется лишь первые 1000 строк (PL-96).** `verifyGateOutcomeChain()` ([runs-repo.ts](src/db/runs-repo.ts:829)) без аргументов использует `listGateOutcomes()` с дефолтным лимитом 1000; автопроверки цепочки на старте нет.
+
+> **Важно для читателя:** пункты 9–12 означают, что часть подсистем реализована как проверенная библиотека, но не встроена в production execution loop. Диаграммы 3 и 4.1 показывают фактические вызовы сплошной линией, а неподключённые связи — пунктиром.
 
 ### Ссылки на смежные документы
 

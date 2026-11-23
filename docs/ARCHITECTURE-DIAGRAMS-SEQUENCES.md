@@ -15,6 +15,7 @@
 sequenceDiagram
     participant OS as Планировщик ОС
     participant SCH as scheduler windows или posix
+    participant IDX as index.ts (MCP CLI)
     participant RH as record-history.ts
     participant EX as execution.ts
     participant BG as budget.ts
@@ -31,17 +32,17 @@ sequenceDiagram
     SCH->>RH: beginRegisteredRun и recordRegisteredRun
     RH->>EX: createRegisteredRunContext
     EX->>EX: validateRunContext
-    RH->>BG: evaluateBudgetGate
+    IDX->>BG: checkBudgetGate → evaluateBudgetGate (до старта, не в execution.ts)
     alt бюджет исчерпан
-        BG-->>RH: skip с причиной
-        RH-->>OS: задача пропущена без запуска агента
+        BG-->>IDX: skip с причиной
+        IDX-->>OS: задача пропущена без запуска агента
     else бюджет есть
-        BG-->>RH: ok
+        BG-->>IDX: ok
         RH->>EX: buildExecutionPlan
         EX->>RT: planMission и routeStep
         RT->>DB: decideCapabilityRoute читает capability_map
-        RT->>CTX: compileContextForRoute compileRunContext
-        CTX-->>RT: CompiledContext с contextHash
+        RT--xCTX: compileContextForRoute compileRunContext — НЕ вызывается (PL-94)
+        note over RT,CTX: buildExecutionPlan вызывает только routeStep, исполнителю передаётся сырой RunContext
         RT-->>EX: ExecutionPlan с маршрутами
         EX->>AUD: requestApproval если options.approval и R2 или R3
         alt нет одобрения
@@ -55,8 +56,8 @@ sequenceDiagram
                 EX->>JR: runStepStatefullyAsync
                 JR->>OC: StepExecutor execute
                 OC-->>JR: output и exitCode
-                JR->>ESC: runGateWithRetry и resolveGateOutcome
-                ESC-->>JR: вердикт pass fail flake infra_fail
+                JR--xESC: runGateWithRetry и resolveGateOutcome — НЕ вызывается (PL-93)
+                note over JR,ESC: executeExecutionPlan пишет вердикт напрямую через writeGateOutcome, минуя retry/эскалацию
                 JR-->>EX: результат шага
                 EX->>EX: writeGateOutcome
                 EX->>DB: recordGateOutcome с prev_hash и row_hash
@@ -74,9 +75,9 @@ sequenceDiagram
     end
 ```
 
-**Что видно:** единый путь `RunContext → ExecutionPlan → executeExecutionPlan`. Гейт одобрений и бюджет стоят **до** `createRun`; намерения эффектов — **до** гейта; применение эффектов — **только после** `pass`.
+**Что видно:** единый путь `RunContext → ExecutionPlan → executeExecutionPlan`. Гейт одобрений и бюджет стоят **до** `createRun`; намерения эффектов — **до** гейта; применение эффектов — **только после** `pass`. Стрелки `--x` с пометками PL-94 и PL-93 показывают вызовы, которых в production нет.
 
-**Ключевые выводы:** три места, где запуск может быть остановлен без побочных эффектов: budget gate, approval gate, worktree snapshot gate (`decideWorktreeSnapshot`/`enforceWorktreeSnapshot`, PL-59). Ledger-запись делает `writeGateOutcome`, а не сам исполнитель — поэтому registered и ad-hoc дают одинаковый набор хэшей.
+**Ключевые выводы:** три места, где запуск может быть остановлен без побочных эффектов: budget gate (вызывается в [index.ts](src/index.ts:7948), не в движке), approval gate, worktree snapshot gate (`decideWorktreeSnapshot`/`enforceWorktreeSnapshot`, PL-59). Ledger-запись делает `writeGateOutcome`, а не сам исполнитель — поэтому registered и ad-hoc дают одинаковый набор хэшей. Компиляция контекста и flake-aware эскалация в этом пути отсутствуют (PL-94, PL-93).
 
 ### 4.2 Matrix fan-out
 
@@ -129,7 +130,7 @@ sequenceDiagram
 
 ### 4.3 Resume после краша
 
-Источник: [run-journal.ts](src/db/run-journal.ts) (`recoverInterruptedSteps`), [run-resume.ts](src/db/run-resume.ts) (`findResumeStep`, `resumeRun`), [runs-repo.ts](src/db/runs-repo.ts) (`renewStepLease`), [run-dlq.ts](src/db/run-dlq.ts).
+Источник: [run-journal.ts](src/db/run-journal.ts) (`recoverInterruptedSteps`), [run-resume.ts](src/db/run-resume.ts) (`findResumeStep`, `resumeRun`), [runs-repo.ts](src/db/runs-repo.ts) (`renewStepLease`), [run-dlq.ts](src/db/run-dlq.ts). **Ниже — целевой поток:** `recoverInterruptedSteps` действительно вызывается при старте, а `resumeRun` в `src/` не вызывается вообще (только в тестах) — см. PL-92.
 
 ```mermaid
 sequenceDiagram
@@ -154,7 +155,8 @@ sequenceDiagram
             RJ->>AUD: записать причину прерывания
         end
     end
-    BOOT->>RS: resumeRun с runId
+    BOOT--xRS: resumeRun с runId — НЕ вызывается в production (PL-92)
+    Note over BOOT,RS: ResumeResult готовит run, но исполнителя шага не запускает
     RS->>DB: findResumeStep и listRunSteps
     DB-->>RS: первый незавершённый шаг по position
     RS->>CTX: pendingInjectionsForStep
@@ -172,9 +174,9 @@ sequenceDiagram
     RS-->>BOOT: ResumeResult
 ```
 
-**Что видно:** recovery не финализирует шаг с живым lease (`owner_id` + `lease_until`). Возобновление идёт строго по `position` из `findResumeStep`; инъекции на паузе потребляются ровно один раз.
+**Что видно:** recovery не финализирует шаг с живым lease (`owner_id` + `lease_until`). Возобновление идёт строго по `position` из `findResumeStep`; инъекции на паузе потребляются ровно один раз. Стрелка `--x` к `resumeRun` означает, что в текущем production-коде этот вызов отсутствует.
 
-**Ключевые выводы:** идемпотентность шага держится на `idempotency_key` + `attempt` в `run_steps`, а не на повторном вызове агента вслепую. Механизмов два и они не смешиваются: `recoverInterruptedSteps` (массовый при старте) и `resumeRun` (точечный по runId). DLQ — тупик для детерминированных ошибок, а не общий ретрай.
+**Ключевые выводы:** идемпотентность шага держится на `idempotency_key` + `attempt` в `run_steps`, а не на повторном вызове агента вслепую. Механизмов два и они не смешиваются: `recoverInterruptedSteps` (массовый при старте, реально работает) и `resumeRun` (точечный по runId — только библиотека и тесты, PL-92). `retryDeadLetter` тоже лишь готовит шаг и ждёт внешний обработчик. DLQ — тупик для детерминированных ошибок, а не общий ретрай.
 
 ---
 
