@@ -128,6 +128,33 @@ check(
   bashQuotaScript.includes('QUOTA_DIFF="$WORKDIR/reports/quota-$SAFE_NAME.diff"') &&
     bashQuotaScript.includes("update_task name=$TASK_NAME model=provider/model")
 );
+// PL-113: аргументы дочернего powershell не должны проходить через повторный
+// разбор командной строки - иначе промпт с кавычками и многоточием падает до
+// старта агента с Cannot process argument ... name.
+check(
+  "PL-113 PowerShell: аргументы идут через JSON-файл и EncodedCommand",
+  psWrapperScript.includes("ConvertTo-Json -InputObject @($Arguments) -Compress -Depth 32") &&
+    psWrapperScript.includes("-EncodedCommand $encodedCommand") &&
+    psWrapperScript.includes("| ConvertFrom-Json); & ''{1}'' @a")
+);
+check(
+  "PL-113 PowerShell: больше нет -File с аргументами в cmdline",
+  !psWrapperScript.includes("-File $CommandPath @Arguments")
+);
+// PL-107: qualityGate получает список файлов задачи, чтобы не линтить чужие
+// незакоммиченные файлы общего worktree.
+const lintTaskFiles = fs.readFileSync(path.resolve("scripts/lint-task-files.mjs"), "utf8");
+check(
+  "PL-107 PowerShell: gate-хук получает -AllowPaths",
+  psWrapperScript.includes("-Command $QualityGate -AllowPaths $GateAllowPaths") &&
+    psWrapperScript.includes("$env:AGENT_STEWARD_GATE_ALLOW_PATHS = $AllowPaths")
+);
+check(
+  "PL-107: хелпер линтит только файлы из AGENT_STEWARD_GATE_ALLOW_PATHS",
+  lintTaskFiles.includes("AGENT_STEWARD_GATE_ALLOW_PATHS") &&
+    lintTaskFiles.includes("eslint") &&
+    lintTaskFiles.includes("no-error-on-unmatched-pattern")
+);
 
 const recorder = path.resolve("dist/core/record-history.js");
 

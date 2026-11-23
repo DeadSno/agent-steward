@@ -285,12 +285,21 @@ if ($RecorderFile) {
 # GateTimeoutSeconds ограничивает время хука: зависший pre-flight/Quality Gate
 # раньше держал lock до истечения общего таймаута задачи (до 24 ч).
 function Invoke-HookScript {
-    param([string]$Command)
+    # PL-107: список файлов задачи из afterScript приходит сюда и экспортируется
+    # в хук, чтобы qualityGate мог линтить только свои файлы, а не весь src/.
+    param([string]$Command, [string]$AllowPaths = "")
     $timeout = $GateTimeoutSeconds
+    $previousAllowPaths = $env:AGENT_STEWARD_GATE_ALLOW_PATHS
+    if ($AllowPaths) { $env:AGENT_STEWARD_GATE_ALLOW_PATHS = $AllowPaths }
 
     if (-not $timeout -or $timeout -le 0) {
         $output = & cmd.exe /c $Command 2>&1
         $code = $LASTEXITCODE
+        if ($null -eq $previousAllowPaths) {
+            Remove-Item Env:\AGENT_STEWARD_GATE_ALLOW_PATHS -ErrorAction SilentlyContinue
+        } else {
+            $env:AGENT_STEWARD_GATE_ALLOW_PATHS = $previousAllowPaths
+        }
         # Без таймаута потоки.cmd объединены — сохраняем как stdout, stderr пуст.
         $script:lastHookStdout = (@($output) -join "\`n")
         $script:lastHookStderr = ""
@@ -322,7 +331,18 @@ function Invoke-HookScript {
         $psi.StandardErrorEncoding = [System.Text.Encoding]::UTF8
         $proc = New-Object System.Diagnostics.Process
         $proc.StartInfo = $psi
-        $null = $proc.Start()
+        # Ребёнок наследует окружение в момент Start(), поэтому возвращаем
+        # предыдущее значение сразу после запуска хука.
+        try {
+            if ($AllowPaths) { $env:AGENT_STEWARD_GATE_ALLOW_PATHS = $AllowPaths }
+            $null = $proc.Start()
+        } finally {
+            if ($null -eq $previousAllowPaths) {
+                Remove-Item Env:\AGENT_STEWARD_GATE_ALLOW_PATHS -ErrorAction SilentlyContinue
+            } else {
+                $env:AGENT_STEWARD_GATE_ALLOW_PATHS = $previousAllowPaths
+            }
+        }
         $outTask = $proc.StandardOutput.ReadToEndAsync()
         $errTask = $proc.StandardError.ReadToEndAsync()
         $finished = $proc.WaitForExit([int]($timeout * 1000))
@@ -386,6 +406,27 @@ function Write-HookStructuredOutput {
 # пробуем старый WMI, а если и он недоступен — Get-Process/tasklist.
 # Иерархию Get-Process и tasklist не отдают, поэтому при отсутствии данных
 # сторож переходит в fail-closed и убивает дерево по корневому PID.
+# PL-113: аргументы дочернего powershell.exe (особенно промпт с кавычками и
+# многоточием) больше не передаются в командной строке. Сериализуем массив в
+# JSON-файл, а сам вызов - в EncodedCommand: дочерний процесс разворачивает
+# аргументы из JSON через @a и не переразбирает cmdline оболочки.
+function Invoke-ChildWithArgs {
+    param([string]$CommandPath, [string[]]$Arguments, [string]$LogFile)
+    $argsFile = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "sched-args-" + [guid]::NewGuid().ToString("N") + ".json")
+    try {
+        ConvertTo-Json -InputObject @($Arguments) -Compress -Depth 32 | Set-Content -LiteralPath $argsFile -Encoding UTF8
+        $childCode = '$a = @(Get-Content -LiteralPath ''{0}'' -Raw -Encoding UTF8 | ConvertFrom-Json); & ''{1}'' @a; exit $LASTEXITCODE' -f $argsFile.Replace("'", "''"), $CommandPath.Replace("'", "''")
+        $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($childCode))
+        if ($LogFile) {
+            & powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand $encodedCommand *>&1 | ForEach-Object { Format-LogLine $_ } | Out-File -FilePath $LogFile -Append -Encoding utf8
+        } else {
+            & powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand $encodedCommand *>&1 | ForEach-Object { Format-LogLine $_ } | Out-Host
+        }
+        return $LASTEXITCODE
+    } finally {
+        Remove-Item -LiteralPath $argsFile -Force -ErrorAction SilentlyContinue
+    }
+}
 function Invoke-OpenCodeOnce {
     param([string]$CommandPath, [string[]]$Arguments)
 
@@ -512,22 +553,16 @@ function Invoke-OpenCodeOnce {
         # после завершения процесса: дашборд/get_task_logs были слепы во время
         # долгих запусков, росла память, а при kill обёртки лог терялся целиком.
         # $LASTEXITCODE после конвейера сохраняет код последней нативной команды.
-        if ($LogFile) {
-            if ($CommandPath -like "*.ps1") {
-                & powershell.exe -ExecutionPolicy Bypass -NoProfile -File $CommandPath @Arguments *>&1 | ForEach-Object { Format-LogLine $_ } | Out-File -FilePath $LogFile -Append -Encoding utf8
-                $script:attemptExitCode = $LASTEXITCODE
-            } else {
-                & $CommandPath @Arguments *>&1 | ForEach-Object { Format-LogLine $_ } | Out-File -FilePath $LogFile -Append -Encoding utf8
-                $script:attemptExitCode = $LASTEXITCODE
-            }
+        if ($CommandPath -like "*.ps1") {
+            # PL-113: больше не вызываем дочерний powershell с -File и массивом
+            # аргументов в cmdline - он переразбирал её и ломал кавычки/многоточие.
+            $script:attemptExitCode = Invoke-ChildWithArgs -CommandPath $CommandPath -Arguments $Arguments -LogFile $LogFile
+        } elseif ($LogFile) {
+            & $CommandPath @Arguments *>&1 | ForEach-Object { Format-LogLine $_ } | Out-File -FilePath $LogFile -Append -Encoding utf8
+            $script:attemptExitCode = $LASTEXITCODE
         } else {
-            if ($CommandPath -like "*.ps1") {
-                & powershell.exe -ExecutionPolicy Bypass -NoProfile -File $CommandPath @Arguments *>&1 | ForEach-Object { Format-LogLine $_ } | Out-Host
-                $script:attemptExitCode = $LASTEXITCODE
-            } else {
-                & $CommandPath @Arguments *>&1 | ForEach-Object { Format-LogLine $_ } | Out-Host
-                $script:attemptExitCode = $LASTEXITCODE
-            }
+            & $CommandPath @Arguments *>&1 | ForEach-Object { Format-LogLine $_ } | Out-Host
+            $script:attemptExitCode = $LASTEXITCODE
         }
     } finally {
         if ($null -eq $previousChildRun) {
@@ -883,11 +918,13 @@ try {
         $prompt = $worktreeContext + $prompt
     }
 
-    # CreateProcess ограничивает командную строку 32767 символами, а промпт
-    # передаётся opencode аргументом ($opencodeArgs += $prompt). Явная ошибка
-    # понятнее, чем обрезанный/отвергнутый запуск. Основная валидация — в schedule_task.
+    # PL-113: для .ps1-шима промпт больше не попадает в cmdline дочернего
+    # процесса - Invoke-ChildWithArgs передаёт аргументы через JSON-файл и
+    # EncodedCommand. Ограничение CreateProcess 32767 символов на него не
+    # действует; проверка оставлена только как защита от аномально большого
+    # промпта при прямом вызове .cmd/.exe. Основная валидация - в schedule_task.
     if ($prompt -and $prompt.Length -gt 30000) {
-        throw "Промпт слишком длинный для командной строки Windows: $($prompt.Length) символов (максимум 30000). Сократите промпт."
+        throw "Промпт слишком длинный: $($prompt.Length) символов (максимум 30000). Сократите промпт."
     }
 
     # Спринт 21: env-переменные workspace. Файл пишет плагин, значения не логируются.
@@ -1069,7 +1106,8 @@ try {
         if ($gateIntegrityOk) {
             Write-Log "[agent-steward] Запуск Quality Gate: $QualityGate"
             # Тот же таймаут, что у хуков: зависший gate не должен держать lock.
-            $gateCode = Invoke-HookScript -Command $QualityGate
+            # PL-107: хук видит список файлов задачи -> scoped lint вместо eslint src.
+            $gateCode = Invoke-HookScript -Command $QualityGate -AllowPaths $GateAllowPaths
 
             if ($gateCode -eq 124) {
                 Write-Log "[agent-steward] ОШИБКА: Quality Gate превысил таймаут $GateTimeoutSeconds с и был остановлен."
