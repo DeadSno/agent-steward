@@ -519,6 +519,11 @@ export interface StepExecutionResult {
   output?: unknown;
   /** Явная ошибка без исключения; ядро переведёт шаг в failed. */
   error?: string;
+  /**
+   * PL-62: код выхода процесса агента. Отделен от вердикта гейта: ненулевой
+   * код сам по себе не означает провал, если qualityGate прошёл.
+   */
+  exitCode?: number;
 }
 
 /**
@@ -580,6 +585,172 @@ export class GateRejectedError extends Error {
     super(reason);
     this.name = "GateRejectedError";
   }
+}
+
+/* ------------------------------------------------------------------------- *
+ * PL-62: код выхода процесса агента ≠ результат Quality Gate.
+ *
+ * Обёртка раньше помечала задачу `error` («Код возврата 1»), хотя агент
+ * завершил работу, и пропускала qualityGate/коммит только потому, что код
+ * выхода процесса агента был ненулевым. Код выхода — это факт завершения
+ * процесса, а не вердикт проверки. Решение принимается по гейту, а при
+ * расхождении (exit != 0, gate=pass) причина кода фиксируется в логе и истории.
+ * ------------------------------------------------------------------------- */
+
+/** PL-62: вход решения о запуске qualityGate при ненулевом коде агента. */
+export interface AgentExitGateInput {
+  /** Код выхода процесса агента (например, `opencode run`). */
+  readonly agentExitCode: number;
+  /** Задан ли qualityGate у задачи. */
+  readonly hasQualityGate: boolean;
+  /** Есть ли признаки того, что агент реально выполнил работу (артефакты/вывод). */
+  readonly workCompleted?: boolean;
+  /** Куда писать диагностику (по умолчанию — `console.warn`). */
+  readonly log?: (message: string) => void;
+}
+
+/**
+ * PL-62: решает, нужно ли запускать qualityGate.
+ *
+ * Ненулевой код выхода сам по себе не отменяет гейт: если агент оставил
+ * артефакты/вывод, гейт запускается и уже его вердикт определяет статус.
+ * Гейт пропускается только при настоящей аварии до работы (нет вывода),
+ * либо когда он не задан.
+ */
+export function shouldRunQualityGate(input: AgentExitGateInput): boolean {
+  const workCompleted = input.workCompleted ?? true;
+  const run =
+    input.hasQualityGate && (input.agentExitCode === 0 || workCompleted === true);
+  if (!run && input.hasQualityGate && input.agentExitCode !== 0) {
+    (input.log ?? ((line) => console.warn(line)))(
+      `[agent-steward] PL-62: qualityGate пропущен: код выхода ${input.agentExitCode} при отсутствии артефактов работы`,
+    );
+  }
+  return run;
+}
+
+/** PL-62: итоговое решение по расхождению кода выхода агента и гейта. */
+export interface AgentExitVerdict {
+  /** Статус задачи с учётом вердикта гейта, а не только кода выхода. */
+  readonly status: "success" | "error";
+  /** Причина, которую нужно записать в историю/лог (null при чистом успехе). */
+  readonly reason: string | null;
+  /** Код выхода и гейт разошлись. */
+  readonly diverged: boolean;
+  /** qualityGate/afterScript должны быть запущены, даже если код ненулевой. */
+  readonly runQualityGate: boolean;
+  readonly runAfterScript: boolean;
+  /** Диагностические строки с префиксом PL-62. */
+  readonly logLines: readonly string[];
+}
+
+/** PL-62: вход {@link resolveAgentExitVerdict}. */
+export interface AgentExitVerdictInput {
+  /** Код выхода процесса агента. */
+  readonly agentExitCode: number;
+  /** Вердикт qualityGate: `true`/`false`, либо `null`, если гейта нет. */
+  readonly gatePassed: boolean | null;
+  /** Признак выполненной работы (артефакты/вывод). */
+  readonly workCompleted?: boolean;
+  /** Имя задачи для диагностики. */
+  readonly taskName?: string;
+  /** Куда писать диагностику (по умолчанию — `console.warn`). */
+  readonly log?: (message: string) => void;
+}
+
+/**
+ * PL-62: различает код выхода процесса агента и результат qualityGate.
+ *
+ * - gate=pass + exit!=0 → расхождение: статус `success`, после-runScript
+ *   запускается, причина кода 1 логируется с префиксом PL-62;
+ * - gate=fail → `error` (при exit=0 это тоже расхождение, в сторону гейта);
+ * - гейта нет → статус определяется кодом выхода.
+ */
+export function resolveAgentExitVerdict(input: AgentExitVerdictInput): AgentExitVerdict {
+  const workCompleted = input.workCompleted ?? true;
+  const code = Number.isFinite(input.agentExitCode) ? Math.trunc(input.agentExitCode) : 1;
+  const runQualityGate = shouldRunQualityGate({
+    agentExitCode: code,
+    hasQualityGate: input.gatePassed !== null,
+    workCompleted,
+    log: input.log,
+  });
+  const runAfterScript = true; // post-flight выполняется всегда, включая расхождения.
+  const logLines: string[] = [];
+  const emit = (line: string): void => {
+    logLines.push(line);
+    (input.log ?? ((message) => console.warn(message)))(line);
+  };
+
+  if (input.gatePassed === true) {
+    if (code === 0) {
+      return {
+        status: "success",
+        reason: null,
+        diverged: false,
+        runQualityGate,
+        runAfterScript,
+        logLines,
+      };
+    }
+    const reason = `Код возврата ${code} при пройденном qualityGate (PL-62)`;
+    emit(
+      `[agent-steward] PL-62: расхождение: код выхода процесса агента ${code}, qualityGate=pass — ` +
+        `задача '${input.taskName ?? ""}' считается успешной, причина кода зафиксирована`,
+    );
+    return {
+      status: "success",
+      reason,
+      diverged: true,
+      runQualityGate,
+      runAfterScript,
+      logLines,
+    };
+  }
+
+  if (input.gatePassed === false) {
+    const reason =
+      code === 0
+        ? "Quality Gate провален (PL-62: расхождение с кодом выхода 0)"
+        : `Quality Gate провален (код возврата агента ${code})`;
+    if (code === 0) {
+      emit(
+        `[agent-steward] PL-62: расхождение: код выхода 0, qualityGate=fail — статус error по вердикту гейта`,
+      );
+    }
+    return {
+      status: "error",
+      reason,
+      diverged: code === 0,
+      runQualityGate,
+      runAfterScript,
+      logLines,
+    };
+  }
+
+  // Гейта нет: код выхода остаётся единственным источником статуса.
+  if (code === 0) {
+    return {
+      status: "success",
+      reason: null,
+      diverged: false,
+      runQualityGate,
+      runAfterScript,
+      logLines,
+    };
+  }
+  const reason = `Код возврата ${code}`;
+  emit(
+    `[agent-steward] PL-62: qualityGate не задан, код выхода ${code} — статус error, причина зафиксирована`,
+  );
+  return {
+    status: "error",
+    reason,
+    diverged: false,
+    runQualityGate,
+    runAfterScript,
+    logLines,
+  };
 }
 
 /* ------------------------------------------------------------------------- *
@@ -998,14 +1169,34 @@ export async function executeExecutionPlan(
     try {
       const execution = await runStepStatefullyAsync(run.id, step.stepName, async () => {
         const result = await executor.execute({ step, context: plan.context, plan });
-        if (result.error) {
-          throw new Error(result.error);
-        }
-        if (options.gate) {
+        // PL-62: код выхода процесса агента — ещё не вердикт. Даже при
+        // ненулевом коде запускаем гейт, если агент оставил артефакты/вывод.
+        const agentExitCode =
+          typeof result.exitCode === "number" ? result.exitCode : result.error ? 1 : 0;
+        const workCompleted = result.output !== undefined;
+        let gatePassed: boolean | null = null;
+        if (
+          options.gate &&
+          shouldRunQualityGate({
+            agentExitCode,
+            hasQualityGate: true,
+            workCompleted,
+          })
+        ) {
           const verdict = await options.gate({ step, context: plan.context, plan, result });
+          gatePassed = verdict.ok;
           if (!verdict.ok) {
             throw new GateRejectedError(verdict.reason ?? "GATE отклонил результат шага");
           }
+        }
+        const decision = resolveAgentExitVerdict({
+          agentExitCode,
+          gatePassed,
+          workCompleted,
+          taskName: plan.context.taskName,
+        });
+        if (decision.status === "error") {
+          throw new Error(result.error ?? decision.reason ?? "Код возврата агента");
         }
         return result.output;
       });

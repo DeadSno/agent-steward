@@ -930,6 +930,150 @@ try {
   check("PL-59: секция не выбросила исключение", false, "section threw");
 }
 
+// --- PL-62: код выхода процесса агента ≠ результат qualityGate ---
+try {
+  const {
+    shouldRunQualityGate,
+    resolveAgentExitVerdict,
+  } = await import("./dist/core/execution.js");
+
+  // Воспроизведение дефекта: exit=1, но агент оставил артефакт и гейт прошел.
+  {
+    const logs = [];
+    const verdict = resolveAgentExitVerdict({
+      agentExitCode: 1,
+      gatePassed: true,
+      taskName: "PL-62 divergence",
+      log: (line) => logs.push(line),
+    });
+    check(
+      "PL-62: exit=1 + gate=pass даёт success (код выхода не вердикт)",
+      verdict.status === "success" && verdict.diverged === true,
+      JSON.stringify(verdict)
+    );
+    check(
+      "PL-62: причина кода 1 зафиксирована в логе и результате",
+      /Код возврата 1/.test(verdict.reason ?? "") &&
+        logs.some((line) => line.includes("PL-62") && line.includes("qualityGate=pass")),
+      JSON.stringify({ reason: verdict.reason, logs })
+    );
+    check(
+      "PL-62: при расхождении gate/afterScript остаются запущенными",
+      verdict.runQualityGate === true && verdict.runAfterScript === true,
+      JSON.stringify(verdict)
+    );
+  }
+
+  // Обычные и аварийные комбинации не меняют прежнюю семантику.
+  {
+    const clean = resolveAgentExitVerdict({ agentExitCode: 0, gatePassed: true });
+    check(
+      "PL-62: exit=0 + gate=pass — чистый success без причины",
+      clean.status === "success" && clean.diverged === false && clean.reason === null,
+      JSON.stringify(clean)
+    );
+    const gateFail = resolveAgentExitVerdict({ agentExitCode: 1, gatePassed: false });
+    check(
+      "PL-62: exit=1 + gate=fail — error, расхождений нет",
+      gateFail.status === "error" && gateFail.diverged === false,
+      JSON.stringify(gateFail)
+    );
+    const inverted = resolveAgentExitVerdict({ agentExitCode: 0, gatePassed: false });
+    check(
+      "PL-62: exit=0 + gate=fail — error по вердикту гейта",
+      inverted.status === "error" && inverted.diverged === true,
+      JSON.stringify(inverted)
+    );
+    const noGate = resolveAgentExitVerdict({ agentExitCode: 1, gatePassed: null });
+    check(
+      "PL-62: без гейта код выхода остаётся источником статуса",
+      noGate.status === "error" && /Код возврата 1/.test(noGate.reason ?? ""),
+      JSON.stringify(noGate)
+    );
+  }
+
+  // Решение о запуске гейта: ненулевой код не отменяет гейт при артефактах.
+  {
+    const logs = [];
+    const withWork = shouldRunQualityGate({
+      agentExitCode: 1,
+      hasQualityGate: true,
+      workCompleted: true,
+      log: (line) => logs.push(line),
+    });
+    const crash = shouldRunQualityGate({
+      agentExitCode: 1,
+      hasQualityGate: true,
+      workCompleted: false,
+      log: (line) => logs.push(line),
+    });
+    const noGate = shouldRunQualityGate({ agentExitCode: 1, hasQualityGate: false });
+    check(
+      "PL-62: гейт запускается при exit=1 и артефактах работы",
+      withWork === true && crash === false && noGate === false,
+      JSON.stringify({ withWork, crash, noGate })
+    );
+    check(
+      "PL-62: пропуск гейта при аварии до работы логируется",
+      logs.some((line) => line.includes("PL-62") && line.includes("пропущен")),
+      logs.join(" | ")
+    );
+  }
+
+  // Интеграция в execution loop: executor сообщил exit=1, но гейт прошёл.
+  {
+    const makePlan = async (suffix) => {
+      const context = createAdHocRunContext(`PL-62 ${suffix} миссия`, {
+        taskName: `pl62-${suffix}-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        taskType: "mission",
+        riskClass: "R0",
+      });
+      return buildExecutionPlan(context);
+    };
+    let gateCalls = 0;
+    const gate = () => {
+      gateCalls += 1;
+      return { ok: true };
+    };
+    const executor = {
+      id: "pl62-test",
+      supports: () => true,
+      execute: async () => ({
+        output: "done",
+        error: "Код возврата 1",
+        exitCode: 1,
+      }),
+    };
+    const plan = await makePlan("diverged");
+    const result = await executeExecutionPlan(plan, { executors: [executor], gate });
+    check(
+      "PL-62: execution loop не помечает расхождение как failed",
+      result.status === "passed" && gateCalls === 1,
+      JSON.stringify({ status: result.status, gateCalls, steps: result.steps })
+    );
+    check(
+      "PL-62: шаг с exit=1 и пройденным гейтом остаётся passed",
+      result.steps[0]?.status === "passed",
+      JSON.stringify(result.steps)
+    );
+
+    gateCalls = 0;
+    const crashPlan = await makePlan("crash");
+    const crashResult = await executeExecutionPlan(crashPlan, {
+      executors: [{ id: "pl62-crash", supports: () => true, execute: async () => ({ error: "Код возврата 1", exitCode: 1 }) }],
+      gate,
+    });
+    check(
+      "PL-62: при аварии без артефактов гейт не запускается, шаг failed",
+      crashResult.status === "failed" && gateCalls === 0,
+      JSON.stringify({ status: crashResult.status, gateCalls })
+    );
+  }
+} catch (err) {
+  console.log("[diag] PL-62 section THREW:", err instanceof Error ? err.stack : String(err));
+  check("PL-62: секция не выбросила исключение", false, "section threw");
+}
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\nExecution hardening: ${results.length - failed.length}/${results.length} проверок пройдено.`);
 try {
