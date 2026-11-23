@@ -21,16 +21,6 @@ Legacy: `opencode-windows-scheduler@1.5.8`.
 
 ---
 
-# 3. Остальные задачи (не бэклог и не архитектура)
-
-## Деталь 3.5 — Approvals и окружения (0.1.0)
-`src/core/approval*`, `src/core/environment*`
-
-## Деталь 3.6 — Мульти-агентная оркестрация (0.2.x+)
-`src/core/agents*`
-
-## Деталь 3.7 — Инфраструктура и релиз (внешние действия)
-`package.json`, npm, GitHub
 
 **Задача X-1 — `npm deprecate` legacy** · P1 · ⏸️
 - [ ] X-1.1 Депрекейт `opencode-windows-scheduler@1.5.8`
@@ -46,8 +36,6 @@ Legacy: `opencode-windows-scheduler@1.5.8`.
 - [ ] X-5.1 Привести теги к существующим релизам
 - [ ] X-5.2 GitHub release для каждого тега
 
-## Деталь 3.8 — Обратная связь от пользователей (bug reports → GitHub Issues)
-`src/core/feedback.ts`, `src/settings.ts`, `src/index.ts`, `infra/feedback-worker/`
 
 ### QA-находки, найденные при проверке работоспособности плагина
 
