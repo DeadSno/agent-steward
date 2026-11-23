@@ -201,6 +201,74 @@ export function mixedScriptPromptWarning(prompt: string): string | null {
   );
 }
 
+/**
+ * PL-65: полный набор сюит, которые обязаны присутствовать в `qualityGate`
+ * задачи, если она затрагивает модуль. ARCH-7 менял `src/core/execution.ts`,
+ * но в гейте не было `test-mission-run.mjs` — регрессия ARCH-7.2 прошла
+ * незамеченной. Ключ — путь модуля в SCOPE, значение — все затронутые сюиты.
+ */
+export const MODULE_REQUIRED_TEST_SUITES: Readonly<Record<string, readonly string[]>> = {
+  "src/core/execution.ts": [
+    "test-mission-run.mjs",
+    "test-execution-pipeline.mjs",
+    "test-execution-hardening.mjs",
+  ],
+};
+
+/** PL-65: пути исходных модулей в SCOPE задачи (промпт/afterScript). */
+const SCOPE_MODULE_RE = /\bsrc\/[\w./-]+\.ts\b/g;
+
+/**
+ * PL-65: извлекает уникальные пути модулей из `src/` с расширением `.ts`.
+ * Fail-open: нет текста — пустой список.
+ */
+export function scopeModulesFromText(text: string | null | undefined): string[] {
+  if (typeof text !== "string" || !text) return [];
+  const found = new Set<string>();
+  for (const match of text.matchAll(SCOPE_MODULE_RE)) found.add(match[0]);
+  return [...found].sort();
+}
+
+/**
+ * PL-65: синонимы сюиты в гейте — имя файла и npm-скрипт
+ * (`test-mission-run.mjs` → `test:mission-run`), чтобы покрытие принимало
+ * обе формы записи.
+ */
+function suiteAliases(suite: string): string[] {
+  const alias = suite.replace(/^test-/, "test:").replace(/\.mjs$/, "");
+  return [suite.toLowerCase(), alias.toLowerCase()];
+}
+
+/**
+ * PL-65: возвращает предупреждение, если `qualityGate` задачи не содержит
+ * полного набора сюит для изменённого модуля. Сравнение регистронезависимое,
+ * поддерживаются `node <suite>.mjs` и `npm run test:<name>`.
+ * Fail-open: модуль не известен реестру или SCOPE пуст — тишина.
+ */
+export function qualityGateCoverageWarning(
+  qualityGate: string | null | undefined,
+  changedModules: readonly string[],
+): string | null {
+  if (!changedModules || changedModules.length === 0) return null;
+  const gate = typeof qualityGate === "string" ? qualityGate.toLowerCase() : "";
+  const missing: string[] = [];
+  for (const modulePath of changedModules) {
+    const required = MODULE_REQUIRED_TEST_SUITES[modulePath];
+    if (!required) continue;
+    const absent = required.filter(
+      (suite) => !suiteAliases(suite).some((alias) => gate.includes(alias)),
+    );
+    if (absent.length > 0) missing.push(`«${modulePath}»: ${absent.join(", ")}`);
+  }
+  if (missing.length === 0) return null;
+  return (
+    "PL-65: qualityGate не покрывает полный набор сюит, затронутых изменёнными модулями — " +
+    `${missing.join("; ")}. ` +
+    "Добавьте недостающие сюиты в qualityGate (например, `node test-mission-run.mjs` или " +
+    "`npm run test:mission-run`), иначе регрессия в них пройдёт незамеченной, как ARCH-7.2."
+  );
+}
+
 /** Опасные паттерны, о которых обязательно предупреждаем (ключи каталога). */
 const DANGEROUS_PATTERNS: { test: RegExp; messageKey: string }[] = [
   { test: /rm\s+-rf\s+\/(?:\s|$)/, messageKey: "dryRun.danger.rmRoot" },
@@ -735,6 +803,15 @@ export async function simulatePipeline(taskName: string): Promise<DryRunReport> 
     // китайский текст легитимно (например, вывод локализованной команды).
     const scriptWarning = mixedScriptPromptWarning(def.prompt ?? "");
     if (scriptWarning) taskWarnings.push(scriptWarning);
+
+    // PL-65: если SCOPE задачи задевает модуль с известным набором сюит,
+    // qualityGate обязан содержать их все. Иначе регрессия в пропущенной сюите
+    // (как ARCH-7.2 в test-mission-run.mjs) не будет поймана гейтом.
+    const changedModules = scopeModulesFromText(
+      [def.prompt, def.afterScript].filter((s): s is string => typeof s === "string").join("\n"),
+    );
+    const coverageWarning = qualityGateCoverageWarning(def.qualityGate, changedModules);
+    if (coverageWarning) taskWarnings.push(coverageWarning);
 
     // QV-9: частый cron + тяжёлый промпт (`opencode run`) — антипаттерн из
     // SKILL.md: каждый тик поднимает полную сессию агента и сжигает квоту.

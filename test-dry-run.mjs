@@ -17,6 +17,7 @@ const { saveTask } = await import("./dist/db/tasks-repo.js");
 const { recordRun } = await import("./dist/db/history-repo.js");
 const {
   simulatePipeline, workingDirectoryDriftWarning, isFrequentCron, minimumCronIntervalMinutes,
+  scopeModulesFromText, qualityGateCoverageWarning, MODULE_REQUIRED_TEST_SUITES,
 } = await import("./dist/core/dry-run.js");
 const { t } = await import("./dist/i18n.js");
 
@@ -241,6 +242,50 @@ try {
   const hook = await simulatePipeline("HookOnly");
   check("PL-64: CJK только в afterScript не даёт предупреждения (проверяем промпт)",
     !hasScriptWarning(hook.warnings));
+
+  // 15. PL-65: qualityGate обязан покрывать все сюиты изменённого модуля.
+  //     ARCH-7 менял src/core/execution.ts, но забыл test-mission-run.mjs —
+  //     регрессия ARCH-7.2 дошла до итоговой проверки.
+  const hasCoverageWarning = (warnings) => warnings.some((w) => w.includes("PL-65:"));
+  check("PL-65: реестр execution.ts содержит полный набор из трёх сюит",
+    JSON.stringify(MODULE_REQUIRED_TEST_SUITES["src/core/execution.ts"]) ===
+    JSON.stringify(["test-mission-run.mjs", "test-execution-pipeline.mjs", "test-execution-hardening.mjs"]));
+  check("PL-65: SCOPE извлекает путь модуля без дублей",
+    JSON.stringify(scopeModulesFromText(
+      "SCOPE: src/core/execution.ts; test-dry-run.mjs\nSCOPE: src/core/execution.ts",
+    )) === JSON.stringify(["src/core/execution.ts"]));
+  check("PL-65: пустой SCOPE и неизвестный модуль не дают предупреждения",
+    qualityGateCoverageWarning("npm test", []) === null &&
+    qualityGateCoverageWarning("npm test", scopeModulesFromText("нет модулей")) === null &&
+    qualityGateCoverageWarning("npm test", ["src/core/dry-run.ts"]) === null);
+
+  await saveTask({
+    name: "PL-65-PartialGate", schedule: "0 9 * * *",
+    prompt: "SCOPE: src/core/execution.ts; test-dry-run.mjs",
+    qualityGate: "node test-execution-pipeline.mjs && node test-execution-hardening.mjs",
+  });
+  const partial = await simulatePipeline("PL-65-PartialGate");
+  check("PL-65: неполный qualityGate предупреждает о пропущенной сюите",
+    hasCoverageWarning(partial.warnings) &&
+    partial.warnings.some((w) => w.includes("test-mission-run.mjs")));
+  check("PL-65: предупреждение не делает отчёт провальным", partial.success === true);
+
+  await saveTask({
+    name: "PL-65-FullGate", schedule: "0 9 * * *",
+    prompt: "SCOPE: src/core/execution.ts; test-dry-run.mjs",
+    qualityGate: "node test-mission-run.mjs && npm run test:execution-pipeline && node test-execution-hardening.mjs",
+  });
+  const full = await simulatePipeline("PL-65-FullGate");
+  check("PL-65: полный qualityGate (включая npm-алиас) без предупреждения",
+    !hasCoverageWarning(full.warnings));
+
+  await saveTask({
+    name: "PL-65-NoGate", schedule: "0 9 * * *",
+    prompt: "SCOPE: src/core/execution.ts",
+  });
+  const noGate = await simulatePipeline("PL-65-NoGate");
+  check("PL-65: отсутствие qualityGate тоже даёт предупреждение",
+    hasCoverageWarning(noGate.warnings));
 } finally {
   closeDb();
 }
