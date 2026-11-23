@@ -22,10 +22,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export type Locale = "ru" | "en" | "zh";
+export type Locale = "ru" | "en" | "zh" | "tr";
 
 /** Порядок важен для UI: первым идёт локаль по умолчанию. */
-export const SUPPORTED_LOCALES: readonly Locale[] = ["ru", "en", "zh"];
+export const SUPPORTED_LOCALES: readonly Locale[] = ["ru", "en", "zh", "tr"];
 
 /** Русский остаётся локалью по умолчанию (см. ROADMAP, спринт 28). */
 export const DEFAULT_LOCALE: Locale = "ru";
@@ -41,7 +41,7 @@ export const LOCALE_AUTO = "auto" as const;
 
 /**
  * Режим по умолчанию: как в OpenCode — следовать за языком интерфейса.
- * Явный выбор пользователя (`ru`/`en`/`zh`) сохраняется как есть.
+ * Явный выбор пользователя (`ru`/`en`/`zh`/`tr`) сохраняется как есть.
  */
 export const DEFAULT_LOCALE_MODE: LocaleMode = LOCALE_AUTO;
 

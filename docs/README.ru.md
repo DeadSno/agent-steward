@@ -46,7 +46,7 @@ Translations: [English](../README.md) · [中文](README.zh.md).
 | Мультирепо | workspaces с валидацией путей, запуски по workspace, матрица поверх родительской задачи |
 | Наблюдаемость | история SQLite (success / error / timeout / partial / running), метрики (длительность, токены, стоимость), JSONL-логи с `/api/logs`, Prometheus `/metrics`, экспорт OTLP, логи по задачам, веб-дашборд с аналитикой за 14 дней, ретеншн истории и экспорт CSV/JSON |
 | Эксплуатация | dry-run, экспорт/импорт JSON, шаблоны, уведомления по нескольким каналам (webhook, Telegram, нативные toast), тихие часы, дайджест, локальный ассистент для триажа уведомлений (fail-open, shadow-режим), зашифрованные секреты (`${secret:NAME}`), журнал аудита, настройки |
-| Интерфейсы | панель OpenCode GUI, веб-дашборд, 30 инструментов для агента, встроенный скилл |
+| Интерфейсы | панель OpenCode GUI, веб-дашборд, 32 инструментов для агента, встроенный скилл |
 
 ### Язык интерфейса
 
@@ -106,13 +106,17 @@ npm run build && npm run build:gui
 
 ## Инструменты для агента
 
-Агенту доступен весь функционал — 30 инструментов: расписание, пайплайны, эксплуатация, аналитика и администрирование.
+Агенту доступен весь функционал — 32 инструментов: расписание, пайплайны, эксплуатация, аналитика и администрирование.
 
 | Инструмент | Аргументы | Что делает |
 |---|---|---|
 | `schedule_task` | `name`, `prompt`, `schedule` для cron или `runAt` / `delaySeconds` для одноразового запуска, опционально `session` / `sessionMaxRuns`, `timeoutSeconds`, `model`, `priority`, `beforeScript`, `afterScript`, `qualityGate`, `dependsOn`, `retryCount`, `retryDelay`, `nextTaskOnSuccess`, `nextTaskOnError`, `triggerType` (`cron`/`file`/`git`/`mcp-event`/`once`), `mcpEvent`, `watchPath`, `watchGlobs`, `watchIgnore`, `gitBranch`, `gitPaths`, `gitIgnore`, `gitPollSeconds`, `activeDays`, `windowPolicy` (`skip`/`postpone`/`run`), `workingDirectory`, `workspaceId`, `allowedTools`, `deniedTools`, `matrix` | Регистрирует задачу в планировщике ОС (cron, одноразовый запуск, файл, git или MCP-событие) |
+| `schedule_advanced` | полная схема `schedule_task` | Расширенное планирование в профиле admin |
+| `schedule_advanced` | полная схема `schedule_task` | Расширенное планирование в профиле admin |
 | `list_tasks` | — | Задачи: расписание, статус, следующее время запуска, цепочки, workspace, сводка матрицы |
 | `update_task` | `name` + изменяемые поля | Частичное обновление: незаданные поля сохраняются, пустые — очищаются, `matrix: null` убирает матрицу |
+| `update_advanced` | полная схема `update_task` | Расширенное обновление в профиле admin |
+| `update_advanced` | полная схема `update_task` | Расширенное обновление в профиле admin |
 | `delete_task` | `name` | Удаляет задачу (родитель матрицы — вместе с клонами и агрегатором) |
 | `run_task_now` | `name` | Немедленный запуск (для матрицы — запуск fan-out) |
 | `pause_task` | `name` | Пауза (для матрицы — все клоны) |
@@ -280,6 +284,7 @@ npm run test:en      # те же сюиты с английской локаль
 - [PIPELINE.md](PIPELINE.md) — конвейер как код: формат, CLI, идемпотентный apply.
 - [SAVINGS.md](SAVINGS.md) — как считается оценка «Сэкономлено $» (English).
 - [../CROSS_PLATFORM.md](../CROSS_PLATFORM.md) — различия и бэкенды Windows / macOS / Linux.
+- [Сайт документации (runbook GitHub Pages)](FEATURES.md#documentation-site-github-pages) — как собирается и публикуется документация.
 
 ## FAQ
 

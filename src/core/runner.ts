@@ -1,0 +1,226 @@
+import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import path from "node:path";
+import { createDockerRunner } from "./runner-docker.js";
+import { createSSHRunner } from "./runner-ssh.js";
+
+/**
+ * D-1.1: минимальный контракт runner'а. Выбор runner'а — конфигурация, а не имя ОС:
+ * один и тот же интерфейс работает на Windows, Linux и macOS.
+ */
+export type RunnerKind = "local" | "docker" | "ssh";
+
+/** Описание запуска: что исполнить и в каком контексте. */
+export interface RunnerLaunch {
+  /** Исполняемый файл в целевом окружении (например, `opencode`). */
+  command: string;
+  /** Аргументы в фиксированном порядке. */
+  args: readonly string[];
+  /** Рабочая директория в целевом окружении. */
+  workdir?: string;
+  /** Переменные окружения; ключи сортируются при построении команды. */
+  env?: Readonly<Record<string, string | undefined>>;
+}
+
+/** Готовая команда: файл + аргументы, без оболочки и без выполнения. */
+export interface RunnerCommand {
+  command: string;
+  args: string[];
+}
+
+export interface RunnerResult {
+  exitCode: number;
+  stdout?: string;
+  stderr?: string;
+}
+
+/** Транспорт для явного выполнения; по умолчанию — spawn без shell. */
+export type CommandInvoke = (
+  command: string,
+  args: readonly string[],
+) => Promise<RunnerResult>;
+
+/** Минимальный интерфейс Runner: имя, доступность, команда, выполнение. */
+export interface Runner {
+  readonly name: RunnerKind;
+  /**
+   * Чистый флаг доступности окружения/бинарника: resolve и dry-run его
+   * проверяют, но никаких команд при этом не выполняют.
+   */
+  available(): boolean;
+  /** Детерминированное построение команды без выполнения. */
+  buildCommand(launch: RunnerLaunch): RunnerCommand;
+  /** Выполнение — только по явному вызову (в resolve/dry-run не участвует). */
+  execute(launch: RunnerLaunch, invoke?: CommandInvoke): Promise<RunnerResult>;
+}
+
+/** Зависимости проверки бинарника — подменяются в тестах без реальных вызовов. */
+export interface RunnerDeps {
+  env?: NodeJS.ProcessEnv;
+  exists?: (file: string) => boolean;
+  delimiter?: string;
+  dockerBinary?: string;
+  sshBinary?: string;
+}
+
+/** Спецификация выбора runner'а (`kind` по умолчанию `local`). */
+export interface RunnerConfig {
+  kind?: RunnerKind;
+  /** Образ для docker. */
+  image?: string;
+  /** Хост для ssh. */
+  host?: string;
+  /** Пользователь для ssh. */
+  user?: string;
+  /** Явный opt-out: принудительный fail-open на local. */
+  optOut?: boolean;
+  deps?: RunnerDeps;
+}
+
+/** Байт-стабильное описание выбора и команды (D-3.1). */
+export interface RunnerVerdict {
+  requested: RunnerKind;
+  runner: RunnerKind;
+  fallback: boolean;
+  reason: string;
+  command: string;
+  args: string[];
+}
+
+export interface ResolvedRunner {
+  runner: Runner;
+  requested: RunnerKind;
+  fallback: boolean;
+  reason: string;
+  verdict(launch: RunnerLaunch): RunnerVerdict;
+}
+
+/** Возможные расширения исполняемого файла — проверяются на любой ОС. */
+const BINARY_SUFFIXES = ["", ".exe", ".cmd", ".bat", ".com"] as const;
+
+/**
+ * Проверка бинарника по PATH без запуска команд и без привязки к ОС.
+ * `exists` и `delimiter` внедряются в тестах, чтобы смоделировать отсутствие
+ * docker/ssh, не трогая реальную файловую систему и сеть.
+ */
+export function binaryAvailable(binary: string, deps: RunnerDeps = {}): boolean {
+  if (!binary) return false;
+  const env = deps.env ?? process.env;
+  const exists =
+    deps.exists ??
+    ((file: string) => {
+      try {
+        return existsSync(file);
+      } catch {
+        return false;
+      }
+    });
+  if (binary.includes("/") || binary.includes("\\")) {
+    return BINARY_SUFFIXES.some((suffix) => exists(binary + suffix));
+  }
+  const pathValue = env.PATH ?? env.Path ?? "";
+  const delimiter = deps.delimiter ?? path.delimiter;
+  return pathValue
+    .split(delimiter)
+    .filter(Boolean)
+    .some((dir) => BINARY_SUFFIXES.some((suffix) => exists(path.join(dir, binary + suffix))));
+}
+
+/** Общая валидация описания запуска: без неё команда не собирается. */
+export function validateLaunch(launch: RunnerLaunch): void {
+  if (!launch.command || /[\r\n\0]/.test(launch.command)) {
+    throw new Error("Runner: некорректная команда запуска");
+  }
+  if (launch.workdir !== undefined && /[\r\n\0]/.test(launch.workdir)) {
+    throw new Error("Runner: некорректная рабочая директория");
+  }
+  for (const arg of launch.args) {
+    if (/[\r\n\0]/.test(arg)) {
+      throw new Error("Runner: аргумент содержит перевод строки или NUL");
+    }
+  }
+}
+
+/** Транспорт по умолчанию: фиксированный argv, без оболочки и интерполяции. */
+export const spawnInvoke: CommandInvoke = (command, args) =>
+  new Promise<RunnerResult>((resolve, reject) => {
+    const child = spawn(command, [...args], { shell: false, windowsHide: true });
+    let stdout = "";
+    let stderr = "";
+    child.stdout?.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString("utf8");
+    });
+    child.stderr?.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString("utf8");
+    });
+    child.on("error", reject);
+    child.on("close", (exitCode) => resolve({ exitCode: exitCode ?? -1, stdout, stderr }));
+  });
+
+/** Локальный runner: тот же интерфейс, никаких docker/ssh-зависимостей. */
+export function createLocalRunner(): Runner {
+  const runner: Runner = {
+    name: "local",
+    available: () => true,
+    buildCommand: (launch) => {
+      validateLaunch(launch);
+      return { command: launch.command, args: [...launch.args] };
+    },
+    execute: (launch, invoke = spawnInvoke) => {
+      const built = runner.buildCommand(launch);
+      return invoke(built.command, built.args);
+    },
+  };
+  return runner;
+}
+
+/**
+ * D-2.1/D-3.1: выбор runner'а по конфигурации. По умолчанию и при любом
+ * fail-open (нет бинарника, нет обязательного параметра, явный opt-out)
+ * возвращается local; вердикт зависит только от спеки и не использует часы
+ * или случайные числа.
+ */
+export function resolveRunner(config: RunnerConfig = {}): ResolvedRunner {
+  const requested = config.kind ?? "local";
+  const deps = config.deps;
+
+  const make = (runner: Runner, fallback: boolean, reason: string): ResolvedRunner => ({
+    runner,
+    requested,
+    fallback,
+    reason,
+    verdict: (launch) => {
+      const built = runner.buildCommand(launch);
+      return {
+        requested,
+        runner: runner.name,
+        fallback,
+        reason,
+        command: built.command,
+        args: built.args,
+      };
+    },
+  });
+
+  if (requested === "local") return make(createLocalRunner(), false, "");
+
+  if (config.optOut === true) {
+    return make(createLocalRunner(), true, `${requested} opt-out`);
+  }
+
+  if (requested === "docker") {
+    if (!config.image) return make(createLocalRunner(), true, "docker image missing");
+    const runner = createDockerRunner({ image: config.image, deps });
+    if (!runner.available()) {
+      return make(createLocalRunner(), true, "docker binary not available");
+    }
+    return make(runner, false, "");
+  }
+
+  if (!config.host) return make(createLocalRunner(), true, "ssh host missing");
+  const runner = createSSHRunner({ host: config.host, user: config.user, deps });
+  if (!runner.available()) {
+    return make(createLocalRunner(), true, "ssh binary not available");
+  }
+  return make(runner, false, "");
+}

@@ -49,7 +49,7 @@ Want to see it without installing OpenCode? `node scripts/demo-dashboard.mjs` st
 | Multi-repo | workspaces with path validation, per-workspace runs, matrix over one parent task |
 | Observability | SQLite history (success / error / timeout / partial / running), metrics (duration, tokens, cost), JSONL run logs with `/api/logs`, Prometheus `/metrics`, OTLP export, per-task logs, local web dashboard with 14-day analytics, history retention and CSV/JSON export |
 | Operations | dry-run preview, export/import JSON, templates, multi-channel notifications (webhook, Telegram, native OS toasts), quiet hours, digest, encrypted secrets (`${secret:NAME}`), audit log, settings |
-| Interfaces | OpenCode GUI panel, web dashboard, 30 agent tools, built-in agent skill |
+| Interfaces | OpenCode GUI panel, web dashboard, 32 agent tools, built-in agent skill |
 
 ### Language
 
@@ -125,13 +125,19 @@ npm run build && npm run build:gui
 
 ## Agent tools
 
-The agent gets the full feature set — 30 tools covering scheduling, pipelines, operations, observability and administration:
+The agent gets the full feature set — 32 tools covering scheduling, pipelines, operations, observability and administration:
 
 | Tool | Arguments | What it does |
 |---|---|---|
 | `schedule_task` | `name`, `prompt`, `schedule` for cron or `runAt` / `delaySeconds` for one-shot, optional `session` / `sessionMaxRuns`, `timeoutSeconds`, `model`, `priority`, `beforeScript`, `afterScript`, `qualityGate`, `dependsOn`, `retryCount`, `retryDelay`, `nextTaskOnSuccess`, `nextTaskOnError`, `triggerType` (`cron`/`file`/`git`/`mcp-event`/`once`), `mcpEvent`, `watchPath`, `watchGlobs`, `watchIgnore`, `gitBranch`, `gitPaths`, `gitIgnore`, `gitPollSeconds`, `activeDays`, `windowPolicy` (`skip`/`postpone`/`run`), `workingDirectory`, `workspaceId`, `allowedTools`, `deniedTools`, `legacyShell`, `matrix` | Registers a job with the OS scheduler (cron, one-shot, file, git or MCP-event trigger) |
+| `schedule_advanced` | full `schedule_task` schema: matrix, DAG, retry, launch windows and all trigger types | Advanced scheduling in the admin profile |
+| `schedule_advanced` | full `schedule_task` schema: matrix, DAG, retry, launch windows and all trigger types | Advanced scheduling in the admin profile |
+| `schedule_advanced` | full `schedule_task` schema: matrix, DAG, retry, launch windows and all trigger types | Advanced scheduling in the admin profile |
 | `list_tasks` | — | Returns jobs with schedule, status, next run, chains, workspace and matrix summary |
 | `update_task` | `name` + any field to change | Partial update; omitted fields keep their values, empty values clear them, `matrix: null` removes the matrix |
+| `update_advanced` | full `update_task` schema | Advanced task updates in the admin profile |
+| `update_advanced` | full `update_task` schema | Advanced task updates in the admin profile |
+| `update_advanced` | full `update_task` schema | Advanced task updates in the admin profile |
 | `delete_task` | `name` | Deletes a job (a matrix parent deletes clones and aggregator) |
 | `run_task_now` | `name` | Runs a job immediately (matrix parent starts the fan-out) |
 | `pause_task` | `name` | Pauses a job (matrix parent pauses every clone) |
@@ -304,6 +310,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 - [docs/PIPELINE.md](docs/PIPELINE.md) — pipeline-as-code: file format, CLI, idempotent apply.
 - [docs/SAVINGS.md](docs/SAVINGS.md) — how the "Saved $" estimate is calculated.
 - [CROSS_PLATFORM.md](CROSS_PLATFORM.md) — Windows / macOS / Linux differences and backends.
+- [Documentation site (GitHub Pages runbook)](docs/FEATURES.md#documentation-site-github-pages) — how the docs are built and published.
 
 Translations: [Русский](docs/README.ru.md) · [中文](docs/README.zh.md).
 

@@ -21,6 +21,7 @@ import {
   isLocale,
   isLocaleMode,
   mapAppLocale,
+  messageIn,
   missingKeys,
   normalizeLocale,
   normalizeLocaleMode,
@@ -47,14 +48,16 @@ check(
   getLocale() === normalizeLocale(process.env.OPENCODE_SCHEDULER_LOCALE)
 );
 setLocale("ru");
-check("SUPPORTED_LOCALES = [ru, en, zh]", SUPPORTED_LOCALES.join(",") === "ru,en,zh");
+check("SUPPORTED_LOCALES = [ru, en, zh, tr]", SUPPORTED_LOCALES.join(",") === "ru,en,zh,tr");
 check("isLocale('ru')", isLocale("ru") === true);
 check("isLocale('en')", isLocale("en") === true);
 check("isLocale('zh')", isLocale("zh") === true);
+check("isLocale('tr')", isLocale("tr") === true);
 check("isLocale('EN') — false", isLocale("EN") === false);
 check("isLocale(null) — false", isLocale(null) === false);
 check("normalizeLocale('en') → en", normalizeLocale("en") === "en");
 check("normalizeLocale('zh') → zh", normalizeLocale("zh") === "zh");
+check("normalizeLocale('tr') → tr", normalizeLocale("tr") === "tr");
 check("normalizeLocale('de') → ru", normalizeLocale("de") === "ru");
 check("normalizeLocale(undefined) → ru", normalizeLocale(undefined) === "ru");
 
@@ -63,6 +66,7 @@ check("mapAppLocale('zh-CN') → zh", mapAppLocale("zh-CN") === "zh");
 check("mapAppLocale('zh-Hans') → zh", mapAppLocale("zh-Hans") === "zh");
 check("mapAppLocale('en-GB') → en", mapAppLocale("en-GB") === "en");
 check("mapAppLocale('ru-RU') → ru", mapAppLocale("ru-RU") === "ru");
+check("mapAppLocale('tr-TR') → tr", mapAppLocale("tr-TR") === "tr");
 check("mapAppLocale('ZH_hant_TW') → zh", mapAppLocale("ZH_hant_TW") === "zh");
 check("mapAppLocale('de-DE') → ru", mapAppLocale("de-DE") === "ru");
 check("mapAppLocale('') → ru", mapAppLocale("") === "ru");
@@ -91,10 +95,12 @@ check("setLocale('xx') откатывает к ru", setLocale("xx") === "ru" && 
 const ruFile = catalogPath("ru");
 const enFile = catalogPath("en");
 const zhFile = catalogPath("zh");
+const trFile = catalogPath("tr");
 check("catalogPath('ru') находит locales/ru.json", !!ruFile && ruFile.endsWith(path.join("locales", "ru.json")));
 check("catalogPath('en') находит locales/en.json", !!enFile && enFile.endsWith(path.join("locales", "en.json")));
 check("catalogPath('zh') находит locales/zh.json", !!zhFile && zhFile.endsWith(path.join("locales", "zh.json")));
-check("availableLocales() = [ru, en, zh]", availableLocales().join(",") === "ru,en,zh");
+check("catalogPath('tr') находит locales/tr.json", !!trFile && trFile.endsWith(path.join("locales", "tr.json")));
+check("availableLocales() = [ru, en, zh, tr]", availableLocales().join(",") === "ru,en,zh,tr");
 check("каталоги читаются как JSON-объекты", !!JSON.parse(fs.readFileSync(ruFile, "utf8")));
 check("hasKey('server.notFound', 'ru')", hasKey("server.notFound", "ru") === true);
 check("hasKey('no.such.key', 'ru') — false", hasKey("no.such.key", "ru") === false);
@@ -108,8 +114,65 @@ check(
   "число ключей ru и en совпадает",
   catalogKeys("ru").length === catalogKeys("en").length
 );
+check("missingKeys('tr') пуст", missingKeys("tr").length === 0);
+check("absentKeys('tr') пуст", absentKeys("tr").length === 0);
+check(
+  "паритет ключей во всех локалях (ru/en/zh/tr)",
+  SUPPORTED_LOCALES.every(
+    (loc) =>
+      missingKeys(loc).length === 0 &&
+      absentKeys(loc).length === 0 &&
+      catalogKeys(loc).length === catalogKeys("ru").length
+  )
+);
+check(
+  "все значения каталогов — непустые строки",
+  SUPPORTED_LOCALES.every((loc) => {
+    const file = catalogPath(loc);
+    const raw = file ? JSON.parse(fs.readFileSync(file, "utf8")) : {};
+    return catalogKeys(loc).every(
+      (key) =>
+        typeof messageIn(loc, key) === "string" &&
+        messageIn(loc, key).trim().length > 0 &&
+        typeof raw[key] === "string"
+    );
+  })
+);
 
-// PL-36: self_analysis локализован — ключи есть во всех трёх локалях и
+// tr: детерминизм каталога и перевода (A-5.1).
+const trRaw1 = fs.readFileSync(trFile, "utf8");
+const trRaw2 = fs.readFileSync(trFile, "utf8");
+check(
+  "tr: каталог читается детерминированно",
+  trRaw1 === trRaw2 &&
+    JSON.stringify(JSON.parse(trRaw1)) === JSON.stringify(JSON.parse(trRaw2))
+);
+check(
+  "tr: catalogKeys отсортированы",
+  JSON.stringify(catalogKeys("tr")) === JSON.stringify([...catalogKeys("tr")].sort())
+);
+setLocale("tr");
+check("tr: setLocale('tr') возвращает tr", getLocale() === "tr");
+check("tr: статический ключ переведён", t("server.notFound") === "Sayfa bulunamadı.");
+check(
+  "tr: интерполяция переведена",
+  t("server.taskNotFound", { task: "build" }).includes("görevi bulunamadı") &&
+    t("server.taskNotFound", { task: "build" }).includes("build")
+);
+check(
+  "tr: перевод детерминирован при повторных вызовах",
+  t("server.taskNotFound", { task: "build" }) ===
+    t("server.taskNotFound", { task: "build" }) &&
+    t("server.notFound") === t("server.notFound")
+);
+check(
+  "tr: плюрализация интерполирует число",
+  t("common.runsCount", { count: 5 }).includes("5") &&
+    t("common.runsCount", { count: 5 }) === t("common.runsCount", { count: 5 })
+);
+setLocale("ru");
+
+// PL-36: self_analysis локализован — ключи есть во всех локалях и
 // не возвращают сам ключ (t() не падает на фолбэк).
 const SELF_ANALYSIS_KEYS = [
   "selfAnalysis.level.excellent",
@@ -130,7 +193,7 @@ const SELF_ANALYSIS_KEYS = [
   "selfAnalysis.rec.crashes",
 ];
 check(
-  "PL-36: selfAnalysis.* ключи присутствуют в ru/en/zh",
+  "PL-36: selfAnalysis.* ключи присутствуют во всех локалях",
   SUPPORTED_LOCALES.every((loc) =>
     SELF_ANALYSIS_KEYS.every((key) => hasKey(key, loc))
   )

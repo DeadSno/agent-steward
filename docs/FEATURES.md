@@ -16,6 +16,7 @@ Translations: [中文](FEATURES.zh.md).
 - [Agent interface](#agent-interface)
 - [Platform support](#platform-support)
 - [Limits and non-goals](#limits-and-non-goals)
+- [Documentation site (GitHub Pages)](#documentation-site-github-pages)
 
 ## Scheduling
 
@@ -382,6 +383,23 @@ A whole DAG can be declared in `opencode.pipeline.yaml` and applied as code:
   `pipeline_apply`, `pipeline_export` tools cover the lifecycle; apply is idempotent,
   skips unchanged steps and never deletes stale tasks.
 - Full format and limits: [PIPELINE.md](PIPELINE.md).
+
+### Agent orchestration helpers
+
+Pure helpers in `src/core/agents.ts` (re-exported from `src/core/execution.ts`)
+can be composed around a pipeline step:
+
+- `buildContextArtifact` gathers text from earlier step results into a stable,
+  deduplicated, size-limited context; secrets are redacted before collection.
+- `assignRole` alternates `worker` and `reviewer` deterministically and never
+  assigns a reviewer without a preceding worker step.
+- `postmortem` classifies a failed step and proposes a correction, while
+  `retryWithPostmortem` produces an updated spec with an incrementing attempt
+  and an attempt limit; only correctable failures are retried and the input
+  spec is never mutated.
+- `fallbackModel` switches to another available model only when confidence
+  drops below a threshold, and fails open to the primary model when no
+  fallback is available.
 
 ## Multi-repository workspaces
 
@@ -805,6 +823,19 @@ and troubleshooting (including `OLLAMA_CONTEXT_LENGTH`) are documented in
 | Agent tools and skill | yes | yes | yes |
 | Runs without a logged-on user | opt-in (`runWhenLoggedOff`) | always (crontab) | no (per-user agent) |
 
+### Runner backends (opt-in)
+
+Task execution goes through a small `Runner` interface (`name`, `available`,
+`buildCommand`, `execute`). The default `resolveRunner()` returns the **local**
+runner: no Docker or SSH binary is required and existing installations keep
+working unchanged. Docker (`docker run --rm ...`) and SSH (`ssh -o BatchMode=yes
+...`) are opt-in backends selected by configuration, not by the host OS. They
+only build a deterministic command at resolve/dry-run time; the CLI is invoked
+only by an explicit `execute`. With a missing binary or an explicit opt-out the
+factory fails open to `local`. The same specification always yields the same
+command and verdict (no clock or randomness), so verdicts are byte-stable.
+No new tools or RPC methods are added.
+
 ## Limits and non-goals
 
 - **No one-shot scheduling without `triggerType: "once"`.** One-shot runs exist
@@ -824,3 +855,28 @@ and troubleshooting (including `OLLAMA_CONTEXT_LENGTH`) are documented in
   permission-enforcement limitations in ARCHITECTURE.md.
 - **Matrix clones are separate tasks.** They appear in the task list (grouped under the
   parent) and consume global concurrency slots like any other run.
+
+## Documentation site (GitHub Pages)
+
+The `docs/` tree is plain Markdown; the repository has no dedicated site generator yet,
+so publishing is an external GitHub-side action, not something the plugin or its test
+suites do. English remains the primary source; keep the ru/zh pairs in sync — the
+`test-docs.mjs` meta-gate checks h2/code-fence parity and the README suite counter.
+
+Runbook:
+
+1. Validate the source locally before publishing:
+
+   ```sh
+   npm run build
+   node test-docs.mjs        # docs/meta-gate: parity, counters, ROADMAP rules
+   ```
+
+2. In the GitHub repository open **Settings → Pages → Build and deployment**, choose
+   **Deploy from a branch**, then select the branch (`main`) and the `/docs` folder —
+   or a `gh-pages` branch containing the published files.
+3. Pages renders Markdown with Jekyll. If pages are served as raw text, add a
+   `docs/_config.yml` with a Pages-supported theme and YAML front matter on entry
+   pages; re-run `node test-docs.mjs` after any documentation edit.
+4. After the push verify `https://<owner>.github.io/<repo>/` and the translated entry
+   pages. Pages rebuilds automatically on every push to the selected branch.

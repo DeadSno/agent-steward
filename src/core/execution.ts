@@ -1678,3 +1678,31 @@ export async function executeExecutionPlan(
     ...(sagaResults.length > 0 ? { effects: sagaResults } : {}),
   };
 }
+
+/* ------------------------------------------------------------------------- *
+ * M-1..M-4: примитивы мульти-агентной оркестрации живут в ./agents.js и
+ * реэкспортируются здесь как часть единого пути исполнения. Поведение самого
+ * execution loop не меняется: это чистые функции без сети и без БД.
+ * ------------------------------------------------------------------------- */
+export {
+  DEFAULT_CONTEXT_LIMIT,
+  DEFAULT_CONFIDENCE_THRESHOLD,
+  DEFAULT_MAX_ATTEMPTS,
+  REDACTED,
+  assignRole,
+  buildContextArtifact,
+  fallbackModel,
+  postmortem,
+  redactSecrets,
+  retryWithPostmortem,
+} from "./agents.js";
+export type {
+  AgentRole,
+  ContextStep,
+  Postmortem,
+  PostmortemKind,
+  RetryDecision,
+  RetrySpec,
+  RoleStep,
+  StepResultLike,
+} from "./agents.js";

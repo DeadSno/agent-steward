@@ -116,13 +116,17 @@ npm run build && npm run build:gui
 
 ## Agent 工具
 
-agent 可获得完整功能 —— 30 个工具，覆盖调度、流水线、运维、可观测性与管理：
+agent 可获得完整功能 —— 32 个工具，覆盖调度、流水线、运维、可观测性与管理：
 
 | 工具 | 参数 | 作用 |
 |---|---|---|
 | `schedule_task` | `name`；cron 用 `schedule`，一次性用 `runAt` / `delaySeconds`；可选 `session` / `sessionMaxRuns`、`timeoutSeconds`、`model`、`priority`、`beforeScript`、`afterScript`、`qualityGate`、`dependsOn`、`retryCount`、`retryDelay`、`nextTaskOnSuccess`、`nextTaskOnError`、`triggerType`（`cron`/`file`/`git`/`mcp-event`/`once`）、`mcpEvent`、`watchPath`、`watchGlobs`、`watchIgnore`、`gitBranch`、`gitPaths`、`gitIgnore`、`gitPollSeconds`、`activeDays`、`windowPolicy`（`skip`/`postpone`/`run`）、`workingDirectory`、`workspaceId`、`allowedTools`、`deniedTools`、`legacyShell`、`matrix` | 在操作系统调度器中注册任务（cron、一次性、文件、git 或 MCP 事件触发器） |
+| `schedule_advanced` | `schedule_task` 完整参数 | admin 配置下的高级调度 |
+| `schedule_advanced` | `schedule_task` 完整参数 | admin 配置下的高级调度 |
 | `list_tasks` | — | 返回任务及其 schedule、状态、下次运行、链路、workspace 和矩阵摘要 |
 | `update_task` | `name` + 要修改的字段 | 部分更新；省略的字段保留原值，空值表示清空，`matrix: null` 移除矩阵 |
+| `update_advanced` | `update_task` 完整参数 | admin 配置下的高级更新 |
+| `update_advanced` | `update_task` 完整参数 | admin 配置下的高级更新 |
 | `delete_task` | `name` | 删除任务（矩阵父任务会一并删除克隆和聚合器） |
 | `run_task_now` | `name` | 立即运行任务（矩阵父任务会启动扇出） |
 | `pause_task` | `name` | 暂停任务（矩阵父任务会暂停每个克隆） |
@@ -289,6 +293,7 @@ npm run test:en      # same suites with the English locale
 - [docs/PIPELINE.md](PIPELINE.md) —— 流水线即代码：文件格式、CLI、幂等 apply。
 - [docs/SAVINGS.md](SAVINGS.md) —— "Saved $" 估算如何计算。
 - [CROSS_PLATFORM.md](../CROSS_PLATFORM.md) —— Windows / macOS / Linux 的差异与后端。
+- [文档站点（GitHub Pages 操作手册）](FEATURES.md#documentation-site-github-pages) —— 文档如何构建与发布。
 
 ## FAQ
 

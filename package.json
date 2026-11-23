@@ -197,6 +197,7 @@
     "test:watch-paths": "node test-watch-paths.mjs",
     "test:en": "node scripts/test-locale.mjs en",
     "test:zh": "node scripts/test-locale.mjs zh",
+    "test:tr": "node scripts/test-locale.mjs tr",
     "test:parallel": "node scripts/run-tests.mjs",
     "pretest:parallel": "npm run build",
     "test:parallel:en": "node scripts/run-tests.mjs --locale=en",

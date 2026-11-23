@@ -1409,6 +1409,369 @@ try {
   check("PL-112: секция не выбросила исключение", false, "section threw");
 }
 
+// --- D-1.1/D-1.2/D-1.3/D-2.1/D-3.1: runner-интерфейс и детерминированный вердикт ---
+// Здесь проверяется только чистое построение команды и флаг доступности:
+// никаких docker/ssh-процессов, сети и реальных бинарников не вызывается.
+try {
+  const { resolveRunner, binaryAvailable, createLocalRunner } = await import(
+    "./dist/core/runner.js"
+  );
+  const { createDockerRunner } = await import("./dist/core/runner-docker.js");
+  const { createSSHRunner, buildRemoteCommand, quoteRemoteArg } = await import(
+    "./dist/core/runner-ssh.js"
+  );
+
+  const dependencyDir = path.join(tempRoot, "fakebin");
+  const deps = {
+    env: { PATH: dependencyDir },
+    exists: (file) => file.includes("fakebin"),
+    dockerBinary: "docker",
+    sshBinary: "ssh",
+  };
+  const launch = {
+    command: "opencode",
+    args: ["run", 'task "x"'],
+    workdir: "/work dir",
+    env: { Z_VAR: "2", A_VAR: "1" },
+  };
+
+  // D-1.1: минимальный интерфейс — имя, доступность, buildCommand, execute.
+  const local = createLocalRunner();
+  check(
+    "D-1.1: Runner открывает имя, доступность, построение и выполнение",
+    local.name === "local" &&
+      local.available() === true &&
+      typeof local.buildCommand === "function" &&
+      typeof local.execute === "function",
+  );
+  const localCmd = local.buildCommand(launch);
+  check(
+    "D-1.1: local.buildCommand — копия описания запуска без выполнения",
+    localCmd.command === "opencode" &&
+      localCmd.args.join("|") === 'run|task "x"' &&
+      localCmd.args !== launch.args,
+    JSON.stringify(localCmd),
+  );
+
+  // D-2.1: по умолчанию local; docker/ssh даже не проверяются.
+  const probingExists = () => {
+    throw new Error("local runner must not probe docker/ssh binaries");
+  };
+  const defaultResolved = resolveRunner({ deps: { ...deps, exists: probingExists } });
+  const defaultVerdict = defaultResolved.verdict(launch);
+  check(
+    "D-2.1: resolveRunner() по умолчанию возвращает local",
+    defaultResolved.runner.name === "local" &&
+      defaultVerdict.requested === "local" &&
+      defaultVerdict.runner === "local" &&
+      defaultVerdict.fallback === false &&
+      defaultVerdict.reason === "",
+    JSON.stringify(defaultVerdict),
+  );
+
+  // D-1.2: docker CLI — детерминированный argv, без выполнения при сборке.
+  const docker = createDockerRunner({ image: "alpine:3.20", deps });
+  const dockerCmd = docker.buildCommand(launch);
+  const expectedDockerArgs = [
+    "run",
+    "--rm",
+    "--workdir",
+    "/work dir",
+    "--env",
+    "A_VAR=1",
+    "--env",
+    "Z_VAR=2",
+    "alpine:3.20",
+    "opencode",
+    "run",
+    'task "x"',
+  ];
+  check(
+    "D-1.2: docker-команда собирается из docker CLI без выполнения",
+    dockerCmd.command === "docker" &&
+      JSON.stringify(dockerCmd.args) === JSON.stringify(expectedDockerArgs),
+    JSON.stringify(dockerCmd),
+  );
+  check(
+    "D-1.2: docker.available — чистый флаг из бинарника",
+    docker.available() === true && docker.name === "docker",
+  );
+
+  // D-1.3: ssh CLI — BatchMode, user@host и экранирование удалённой команды.
+  const ssh = createSSHRunner({ host: "build.example", user: "ci", deps });
+  const sshCmd = ssh.buildCommand(launch);
+  const expectedRemote =
+    "cd '/work dir' && A_VAR='1' Z_VAR='2' 'opencode' 'run' 'task \"x\"'";
+  check(
+    "D-1.3: ssh-команда содержит BatchMode, user@host и quoted remote",
+    sshCmd.command === "ssh" &&
+      JSON.stringify(sshCmd.args.slice(0, 3)) ===
+        JSON.stringify(["-o", "BatchMode=yes", "ci@build.example"]) &&
+      sshCmd.args[3] === expectedRemote &&
+      buildRemoteCommand(launch) === expectedRemote,
+    JSON.stringify(sshCmd),
+  );
+  check(
+    "D-1.3: ssh экранирует одинарные кавычки детерминированно",
+    quoteRemoteArg("it's") === "'it'\\''s'",
+    quoteRemoteArg("it's"),
+  );
+  check("D-1.3: ssh.available — чистый флаг из бинарника", ssh.available() === true);
+
+  // D-3.1: та же спека и та же спецификация запуска → байт-в-байт вердикт.
+  const spec = { kind: "docker", image: "alpine:3.20", deps };
+  const verdictA = resolveRunner(spec).verdict(launch);
+  const verdictB = resolveRunner({ ...spec, deps: { ...deps } }).verdict({
+    ...launch,
+    env: { A_VAR: "1", Z_VAR: "2" },
+  });
+  check(
+    "D-3.1: одинаковая спека даёт байт-в-байт одинаковый вердикт",
+    JSON.stringify(verdictA) === JSON.stringify(verdictB) &&
+      verdictA.runner === "docker" &&
+      verdictA.fallback === false,
+    `${JSON.stringify(verdictA)} != ${JSON.stringify(verdictB)}`,
+  );
+  const runnerSource = ["runner.ts", "runner-docker.ts", "runner-ssh.ts"]
+    .map((name) => fs.readFileSync(path.join("src", "core", name), "utf8"))
+    .join("\n");
+  check(
+    "D-3.1: runner-исходники не читают часы и не используют random",
+    !/Date\.now|new Date\(|Math\.random|performance\.now/.test(runnerSource),
+  );
+
+  // D-2.1: fail-open при отсутствии бинарника и при явном opt-out.
+  const noDocker = resolveRunner({
+    kind: "docker",
+    image: "alpine:3.20",
+    deps: { ...deps, exists: () => false },
+  });
+  check(
+    "D-2.1: docker без бинарника → local fail-open",
+    noDocker.runner.name === "local" &&
+      noDocker.fallback === true &&
+      /binary/.test(noDocker.reason),
+    JSON.stringify({ name: noDocker.runner.name, reason: noDocker.reason }),
+  );
+  const noSsh = resolveRunner({
+    kind: "ssh",
+    host: "build.example",
+    deps: { ...deps, exists: () => false },
+  });
+  check(
+    "D-2.1: ssh без бинарника → local fail-open",
+    noSsh.runner.name === "local" &&
+      noSsh.fallback === true &&
+      /binary/.test(noSsh.reason),
+    JSON.stringify({ name: noSsh.runner.name, reason: noSsh.reason }),
+  );
+  const optedOut = resolveRunner({
+    kind: "ssh",
+    host: "build.example",
+    optOut: true,
+    deps: { ...deps, exists: probingExists },
+  });
+  check(
+    "D-2.1: opt-out → local без проверки бинарника",
+    optedOut.runner.name === "local" &&
+      optedOut.fallback === true &&
+      /opt-out/.test(optedOut.reason),
+    JSON.stringify({ name: optedOut.runner.name, reason: optedOut.reason }),
+  );
+  check(
+    "D-2.1: binaryAvailable(absence) даёт false, найденный бинарник — true",
+    binaryAvailable("missing-tool", { env: { PATH: dependencyDir }, exists: () => false }) ===
+      false && binaryAvailable("docker", deps) === true,
+  );
+  const dockerResolved = resolveRunner(spec);
+  check(
+    "D-1.2: resolveRunner выбирает docker при наличии бинарника",
+    dockerResolved.runner.name === "docker" &&
+      dockerResolved.fallback === false &&
+      dockerResolved.verdict(launch).command === "docker",
+    JSON.stringify(dockerResolved.verdict(launch)),
+  );
+} catch (err) {
+  console.log("[diag] Runner section THREW:", err instanceof Error ? err.stack : String(err));
+  check("D-1/D-2/D-3: runner-секция не выбросила исключение", false, "section threw");
+}
+
+// --- M-1..M-4: детерминированная мульти-агентная оркестрация ---
+try {
+  const {
+    buildContextArtifact,
+    assignRole,
+    postmortem,
+    retryWithPostmortem,
+    fallbackModel,
+    redactSecrets,
+  } = await import("./dist/core/agents.js");
+  const executionExports = await import("./dist/core/execution.js");
+
+  const orchestrationSteps = [
+    { stepName: "collect", output: ["alpha", "beta"] },
+    { stepName: "verify", output: "beta", error: "incorrect result" },
+    { stepName: "fix", result: ["gamma"] },
+  ];
+  const ctx = buildContextArtifact(orchestrationSteps);
+  check(
+    "M-1.1: сквозной контекст собран из результатов шагов по порядку",
+    JSON.stringify(ctx) === JSON.stringify(["alpha", "beta", "incorrect result", "gamma"]),
+    JSON.stringify(ctx),
+  );
+  check(
+    "M-1.1: дубликаты результатов отбрасываются",
+    ctx.filter((item) => item === "beta").length === 1,
+    JSON.stringify(ctx),
+  );
+  check(
+    "M-1.1: лимит ограничивает число артефактов",
+    JSON.stringify(buildContextArtifact(orchestrationSteps, 2)) === JSON.stringify(["alpha", "beta"])
+  );
+  check(
+    "M-1.1: пустой вход и нулевой лимит дают пустой список",
+    JSON.stringify(buildContextArtifact([])) === "[]" &&
+      JSON.stringify(buildContextArtifact(orchestrationSteps, 0)) === "[]"
+  );
+  check(
+    "M-1.1: контекст детерминирован при повторном вызове",
+    JSON.stringify(buildContextArtifact(orchestrationSteps)) ===
+      JSON.stringify(buildContextArtifact(orchestrationSteps))
+  );
+  const secretArtifacts = buildContextArtifact([
+    { output: "Authorization: Bearer sk-abcdefgh12345678" },
+    { output: "API_KEY=sk-abcdefgh12345678" },
+    { error: "token: supersecretvalue123" },
+  ]);
+  check(
+    "M-1.1: секреты вырезаются до попадания в контекст",
+    secretArtifacts.every((item) => !/sk-abcdefgh|supersecretvalue/.test(item)) &&
+      secretArtifacts.some((item) => item.includes("[REDACTED]")),
+    JSON.stringify(secretArtifacts)
+  );
+  check(
+    "M-1.1: redactSecrets не зависит от окружения",
+    redactSecrets("password: hunter2") === "password: [REDACTED]" &&
+      redactSecrets("plain text") === "plain text"
+  );
+
+  check("M-2.1: первый шаг без предыдущей роли — worker", assignRole({ stepName: "a" }) === "worker");
+  check(
+    "M-2.1: после worker назначается reviewer",
+    assignRole({ stepName: "b" }, "worker") === "reviewer"
+  );
+  check(
+    "M-2.1: после reviewer снова worker (чередование)",
+    assignRole({ stepName: "c" }, "reviewer") === "worker"
+  );
+  check(
+    "M-2.1: reviewer без предыдущего worker запрещён",
+    assignRole({ stepName: "b", role: "reviewer" }, null) === "worker"
+  );
+  check(
+    "M-2.1: явный reviewer после worker разрешён",
+    assignRole({ stepName: "b", role: "reviewer" }, "worker") === "reviewer"
+  );
+  check(
+    "M-2.1: роли детерминированы",
+    assignRole({ role: "reviewer" }, "worker") === assignRole({ role: "reviewer" }, "worker")
+  );
+
+  const timeoutPm = postmortem({ error: "ETIMEDOUT: step exceeded timeout", exitCode: 1 });
+  check(
+    "M-3.1: postmortem извлекает причину и предлагает исправление",
+    timeoutPm.kind === "timeout" && /ETIMEDOUT/.test(timeoutPm.cause) &&
+      timeoutPm.correction.length > 0 && timeoutPm.correctable === true,
+    JSON.stringify(timeoutPm)
+  );
+  const secretPm = postmortem("API_KEY=sk-abcdefgh12345678 leaked");
+  check(
+    "M-3.1: ошибка с секретом не корректируема, секрет вырезан",
+    secretPm.correctable === false && !/sk-abcdefgh/.test(secretPm.cause),
+    JSON.stringify(secretPm)
+  );
+  const successPm = postmortem({ status: "passed", output: "ok" });
+  check(
+    "M-3.1: успешный шаг не даёт причины и повтора",
+    successPm.cause === "" && successPm.correctable === false,
+    JSON.stringify(successPm)
+  );
+  const originalSpec = { stepName: "verify", prompt: "fix it", attempt: 1 };
+  const retryDecision = retryWithPostmortem({ error: "timeout" }, originalSpec);
+  check(
+    "M-3.1: retry инкрементит attempt и проставляет лимит",
+    retryDecision.retry === true && retryDecision.spec.attempt === 2 &&
+      retryDecision.spec.maxAttempts === 3 && retryDecision.spec.prompt === "fix it",
+    JSON.stringify(retryDecision)
+  );
+  check(
+    "M-3.1: исходный spec не мутирует",
+    originalSpec.attempt === 1 && !("maxAttempts" in originalSpec),
+    JSON.stringify(originalSpec)
+  );
+  const blockedRetry = retryWithPostmortem({ error: "API_KEY=sk-abcdefgh12345678" }, originalSpec);
+  check(
+    "M-3.1: повтор только на корректируемую ошибку",
+    blockedRetry.retry === false && blockedRetry.spec.attempt === 1 &&
+      blockedRetry.postmortem.kind === "secret",
+    JSON.stringify(blockedRetry)
+  );
+  const exhausted = retryWithPostmortem({ error: "timeout" }, { ...originalSpec, attempt: 3 });
+  check(
+    "M-3.1: лимит попыток останавливает повтор",
+    exhausted.retry === false && exhausted.spec.attempt === 3 && exhausted.spec.maxAttempts === 3,
+    JSON.stringify(exhausted)
+  );
+  check(
+    "M-3.1: retry детерминирован",
+    JSON.stringify(retryWithPostmortem({ error: "timeout" }, originalSpec)) ===
+      JSON.stringify(retryWithPostmortem({ error: "timeout" }, originalSpec))
+  );
+
+  check(
+    "M-4.1: высокая уверенность оставляет primary",
+    fallbackModel("primary/model", ["backup/model"], 0.9) === "primary/model"
+  );
+  check(
+    "M-4.1: низкая уверенность выбирает запасную модель",
+    fallbackModel("primary/model", ["primary/model", "backup/model"], 0.2) === "backup/model"
+  );
+  check(
+    "M-4.1: нет доступных моделей — fail-open на primary",
+    fallbackModel("primary/model", [], 0.1) === "primary/model" &&
+      fallbackModel("primary/model", null, 0) === "primary/model"
+  );
+  check(
+    "M-4.1: только primary в списке — fail-open",
+    fallbackModel("primary/model", ["primary/model"], 0.1) === "primary/model"
+  );
+  check(
+    "M-4.1: невалидный confidence не вызывает фолбэк",
+    fallbackModel("primary/model", ["backup/model"], Number.NaN) === "primary/model"
+  );
+  check(
+    "M-4.1: порог настраивается и выбор детерминирован",
+    fallbackModel("a", ["b"], 0.5, { threshold: 0.8 }) === "b" &&
+      JSON.stringify(fallbackModel("a", ["b", "c"], 0.1)) ===
+        JSON.stringify(fallbackModel("a", ["b", "c"], 0.1))
+  );
+  check(
+    "M-1..M-4: execution.ts реэкспортирует оркестрационные функции",
+    typeof executionExports.buildContextArtifact === "function" &&
+      typeof executionExports.assignRole === "function" &&
+      typeof executionExports.postmortem === "function" &&
+      typeof executionExports.retryWithPostmortem === "function" &&
+      typeof executionExports.fallbackModel === "function"
+  );
+} catch (err) {
+  console.log("[diag] M-1..M-4 section THREW:", err instanceof Error ? err.stack : String(err));
+  check("M-1..M-4: секция не выбросила исключение", false, "section threw");
+}
+
+
+
+
+
 // --- PL-106: run-time isolation guard ---
 check(
   "PL-106 first non-isolated run allowed",

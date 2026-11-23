@@ -15,6 +15,7 @@ Translations: [English](FEATURES.md).
 - [Agent 接口](#agent-接口)
 - [平台支持](#平台支持)
 - [限制与非目标](#限制与非目标)
+- [文档站点（GitHub Pages）](#文档站点github-pages)
 
 ## 调度
 
@@ -633,7 +634,7 @@ GUI 面板）支持 `list`、`set` 和 `delete`。密钥名匹配
 
 ## Agent 接口
 
-二十九个工具：`schedule_task`、`list_tasks`、`update_task`、`delete_task`、
+三十二个工具：`schedule_task`、`schedule_advanced`、`list_tasks`、`update_task`、`update_advanced`、`delete_task`、
 `run_task_now`、`pause_task`、`resume_task`、`get_history`、`get_task_logs`、`dry_run`、
 `manage_workspaces`、`matrix_control`（results/cancel/cleanup/preview）、`get_metrics`、
 `get_analytics`、`self_analysis`（健康评分、异常、趋势）、`manage_settings`、
@@ -745,3 +746,27 @@ endpoint 必须是 https（localhost 可用 http），保存时校验。先调�
   ARCHITECTURE.md 中的权限强制限制。
 - **矩阵克隆是独立的任务。** 它们出现在任务列表中（归组在父任务
   下），并像任何其他运行一样消耗全局并发槽位。
+
+## 文档站点（GitHub Pages）
+
+`docs/` 目录是纯 Markdown；仓库里目前没有专门的站点生成器，因此发布是 GitHub 侧的
+外部操作，插件和测试套件都不会执行部署。英文仍是主要来源；请保持 ru/zh 成对同步——
+`test-docs.mjs` 元闸门会检查 h2/代码块数量一致性以及 README 中的套件计数。
+
+操作手册：
+
+1. 发布前在本地校验源文件：
+
+   ```sh
+   npm run build
+   node test-docs.mjs        # 文档元闸门：一致性、计数、ROADMAP 规则
+   ```
+
+2. 在 GitHub 仓库中打开 **Settings → Pages → Build and deployment**，选择
+   **Deploy from a branch**，然后指定分支（`main`）和 `/docs` 目录——
+   或者使用包含已发布文件的 `gh-pages` 分支。
+3. Pages 使用 Jekyll 渲染 Markdown。如果页面以纯文本形式提供，请添加
+   `docs/_config.yml`（使用 Pages 支持的主题）并在入口页面加上 YAML front matter；
+   每次修改文档后重新运行 `node test-docs.mjs`。
+4. 推送后检查 `https://<owner>.github.io/<repo>/` 以及各语言入口页。
+   Pages 会在所选分支每次推送后自动重新构建。
