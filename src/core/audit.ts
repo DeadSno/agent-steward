@@ -1,4 +1,5 @@
 import { getDb } from "../db/index.js";
+import { verifyGateOutcomeChain, type GateOutcomeChain } from "../db/runs-repo.js";
 import { safeStringify } from "../text.js";
 import { redactSecretsInText } from "./secrets.js";
 import {
@@ -799,4 +800,73 @@ export function recordApprovalGateBlock(input: ApprovalGateBlockInput): number |
       decision: rejected ? "reject" : null,
     },
   });
+}
+
+/**
+ * PL-98: результат автоматической проверки tamper-evident цепочки ledger-а.
+ * Наследует поля `GateOutcomeChain` и добавляет метаданные самого факта проверки.
+ */
+export interface GateLedgerVerification extends GateOutcomeChain {
+  /** ISO-время проверки. */
+  checkedAt: string;
+  /** Инициатор: startup | self-analysis:tool | self-analysis:rpc | ... */
+  source: string;
+  /** id строки аудита (null, если записать не удалось). */
+  auditId: number | null;
+}
+
+let lastGateLedgerVerification: GateLedgerVerification | null = null;
+
+/**
+ * PL-98: проверяет ВСЮ цепочку gate_outcomes и фиксирует результат в журнале
+ * аудита. Никогда не бросает исключение: старт плагина и отчёты не должны
+ * падать из-за повреждённого ledger-а. Возвращает результат и кэширует его
+ * для `getLastGateLedgerVerification()`.
+ */
+export function verifyGateLedgerIntegrity(source = "startup"): GateLedgerVerification {
+  const checkedAt = new Date().toISOString();
+  let chain: GateOutcomeChain;
+  try {
+    chain = verifyGateOutcomeChain();
+  } catch (err) {
+    chain = {
+      ok: false,
+      length: 0,
+      brokenAt: null,
+      reason: `не удалось проверить цепочку: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+  const auditId = recordAudit({
+    action: "gate_ledger.verify",
+    targetType: "ledger",
+    target: "gate_outcomes",
+    actor: "system",
+    source,
+    details: {
+      ok: chain.ok,
+      length: chain.length,
+      brokenAt: chain.brokenAt,
+      reason: chain.reason ?? null,
+      checkedAt,
+    },
+  });
+  const result: GateLedgerVerification = { ...chain, checkedAt, source, auditId };
+  lastGateLedgerVerification = result;
+  if (!result.ok) {
+    try {
+      console.error(
+        `[gate-ledger] цепочка повреждена (${result.source}): ${
+          result.reason ?? `разрыв в записи ${result.brokenAt}`
+        }`,
+      );
+    } catch {
+      // console недоступен — результат всё равно записан в аудит и отчёт.
+    }
+  }
+  return result;
+}
+
+/** PL-98: результат последней автопроверки цепочки в этом процессе. */
+export function getLastGateLedgerVerification(): GateLedgerVerification | null {
+  return lastGateLedgerVerification;
 }

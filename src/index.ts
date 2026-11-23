@@ -218,6 +218,7 @@ import {
   readAuditLog,
   recordAudit,
   recordTaskToolBlocks,
+  verifyGateLedgerIntegrity,
 } from "./core/audit.js";
 import type { AuditEntryInput } from "./core/audit.js";
 
@@ -3517,6 +3518,8 @@ const selfAnalysisExecute = wrapExecute<SelfAnalysisArgs>(async (args) => {
     health: report.health,
     summary: report.summary,
     sources: report.sources,
+    // PL-98: свежая проверка цепочки — отчёт всегда показывает текущее состояние.
+    gateLedger: verifyGateLedgerIntegrity("self-analysis:tool"),
   };
 
   if (args.includeAnomalies !== false) {
@@ -4596,6 +4599,17 @@ export async function createRuntime(ctxLike: RuntimeContextLike): Promise<Schedu
   } catch (err) {
     console.error(
       `[recovery] Не удалось восстановить незавершённые запуски: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  }
+  // PL-98: проверяем tamper-evident цепочку gate_outcomes при каждом старте.
+  // Результат пишется в журнал аудита; ошибка не должна ломать старт плагина.
+  try {
+    verifyGateLedgerIntegrity("startup");
+  } catch (err) {
+    console.error(
+      `[gate-ledger] Автопроверка цепочки не выполнена: ${
         err instanceof Error ? err.message : String(err)
       }`,
     );
@@ -5880,6 +5894,8 @@ const v2Plugin = Plugin.define({
             health: report.health,
             summary: report.summary,
             sources: report.sources,
+            // PL-98: свежая проверка цепочки по RPC-пути самоанализа.
+            gateLedger: verifyGateLedgerIntegrity("self-analysis:rpc"),
           };
 
           if (includeAnomalies !== false) {

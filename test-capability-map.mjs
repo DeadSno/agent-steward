@@ -497,5 +497,60 @@ assert(
 );
 closeDb();
 
+// 18. PL-98: автопроверка цепочки ledger-а пишется в аудит и доступна отчёту.
+const pl98DbPath = path.join(tempRoot, "pl98-ledger.db");
+initDb(pl98DbPath);
+const { verifyGateLedgerIntegrity, getLastGateLedgerVerification } = await import(
+  "./dist/core/audit.js"
+);
+for (let i = 0; i < 5; i += 1) {
+  recordGateOutcome({
+    outcomeKey: `pl98-${i}`,
+    verdict: "pass",
+    createdAt: new Date(Date.UTC(2026, 0, 1, 0, 0, i)).toISOString(),
+  });
+}
+const firstCheck = verifyGateLedgerIntegrity("startup");
+assert(firstCheck.ok && firstCheck.length === 5, "PL-98: стартовая проверка нашла все 5 записей");
+assert(firstCheck.source === "startup", "PL-98: источник проверки зафиксирован");
+assert(firstCheck.auditId !== null, "PL-98: результат проверки записан в аудит");
+assert(
+  getLastGateLedgerVerification() === firstCheck,
+  "PL-98: последний результат доступен без повторного чтения ledger-а",
+);
+const readVerifyAudit = () =>
+  getDb()
+    .prepare(
+      "SELECT action, source, details_json FROM audit_log " +
+        "WHERE action = 'gate_ledger.verify' ORDER BY id ASC",
+    )
+    .all();
+const firstAudit = readVerifyAudit();
+assert(firstAudit.length === 1, "PL-98: в аудите ровно одна запись gate_ledger.verify");
+assert(
+  firstAudit[0].source === "startup" && JSON.parse(firstAudit[0].details_json).ok === true,
+  "PL-98: аудит сохранил источник и успешный результат",
+);
+const pl98Rows = listGateOutcomes(10000);
+getDb()
+  .prepare("UPDATE gate_outcomes SET evidence_path = ? WHERE id = ?")
+  .run("forged-pl98", pl98Rows[pl98Rows.length - 1].id);
+const secondCheck = verifyGateLedgerIntegrity("self-analysis:rpc");
+assert(!secondCheck.ok, "PL-98: повторная проверка ловит подмену последней записи");
+assert(secondCheck.brokenAt === 4, "PL-98: разрыв найден в последней (5-й) записи");
+assert(
+  secondCheck.source === "self-analysis:rpc" &&
+    getLastGateLedgerVerification() === secondCheck,
+  "PL-98: данные отчёта берутся из свежей проверки",
+);
+const secondAudit = readVerifyAudit();
+assert(secondAudit.length === 2, "PL-98: обе проверки зафиксированы в журнале аудита");
+const failedDetails = JSON.parse(secondAudit[1].details_json);
+assert(
+  failedDetails.ok === false && failedDetails.brokenAt === 4,
+  "PL-98: в аудите есть details повреждённой цепочки",
+);
+closeDb();
+
 console.log(process.exitCode ? "\nЕсть провалы." : "\nВсе проверки Capability Map пройдены.");
 

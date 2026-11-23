@@ -10,6 +10,7 @@ import {
   type AnalyticsReport,
 } from "./analytics.js";
 import { t } from "../i18n.js";
+import type { GateLedgerVerification } from "./audit.js";
 
 // ==================== Типы ====================
 
@@ -143,6 +144,8 @@ export interface SelfAnalysisReport {
     /** Явное имя того же счётчика definition — без двусмысленности «analyzed». */
     taskDefinitions: number;
   };
+  /** PL-98: автопроверка tamper-evident цепочки gate_outcomes. */
+  gateLedger?: GateLedgerVerification;
 }
 
 /** Опции для генерации отчёта самоанализа. */
