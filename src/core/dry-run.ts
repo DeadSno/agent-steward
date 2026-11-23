@@ -176,6 +176,31 @@ const ESTIMATE_SAMPLE = 10;
 /** Средняя цена за 1K токенов (должна совпадать с dashboards/server.ts). */
 export const ESTIMATED_COST_PER_1K_TOKENS_USD = 0.003;
 
+/**
+ * PL-64: кириллица и CJK в одном промпте — типичный артефакт машинного
+ * перевода/копипасты («报告和 run статус» в ARCH-6). Проверяем именно
+ * СМЕШИВАНИЕ: чисто китайские, японские, корейские и чисто русские промпты
+ * остаются допустимыми локалями и предупреждения не дают.
+ */
+const CYRILLIC_SCRIPT_RE = /\p{Script=Cyrillic}/u;
+const CJK_SCRIPT_RE = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\p{Script=Bopomofo}]/u;
+
+/** PL-64: возвращает текст предупреждения или null, если скрипты не смешаны. */
+export function mixedScriptPromptWarning(prompt: string): string | null {
+  if (
+    typeof prompt !== "string" ||
+    !CYRILLIC_SCRIPT_RE.test(prompt) ||
+    !CJK_SCRIPT_RE.test(prompt)
+  ) {
+    return null;
+  }
+  return (
+    "PL-64: промпт содержит смешанные скрипты — CJK (иероглифы/кана/хангыль) и кириллицу в одном тексте. " +
+    "Это обычно машинный перевод или копипаста; проверьте язык промпта до запуска. " +
+    "Чисто китайские, японские, корейские и чисто русские промпты не затрагиваются."
+  );
+}
+
 /** Опасные паттерны, о которых обязательно предупреждаем (ключи каталога). */
 const DANGEROUS_PATTERNS: { test: RegExp; messageKey: string }[] = [
   { test: /rm\s+-rf\s+\/(?:\s|$)/, messageKey: "dryRun.danger.rmRoot" },
@@ -704,6 +729,12 @@ export async function simulatePipeline(taskName: string): Promise<DryRunReport> 
         "PL-2.2: промпт требует самопроверки (node/тесты), но shell запрещён: добавьте shell в allowedTools или перенесите проверки в qualityGate/afterScript.",
       );
     }
+
+    // PL-64: смешанные CJK/кириллица в промпте — предупреждаем до запуска,
+    // не прерывая симуляцию. Только промпт: хуки/скрипты могут содержать
+    // китайский текст легитимно (например, вывод локализованной команды).
+    const scriptWarning = mixedScriptPromptWarning(def.prompt ?? "");
+    if (scriptWarning) taskWarnings.push(scriptWarning);
 
     // QV-9: частый cron + тяжёлый промпт (`opencode run`) — антипаттерн из
     // SKILL.md: каждый тик поднимает полную сессию агента и сжигает квоту.

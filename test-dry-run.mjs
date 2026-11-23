@@ -193,6 +193,54 @@ try {
   const explicit = await simulatePipeline("PL-55-ExplicitCommand");
   check("PL-55: явная команда npm test по-прежнему даёт PL-2.2",
     explicit.warnings.some((w) => w.includes("PL-2.2")));
+
+  // 14. PL-64: смешивание CJK и кириллицы в одном промпте (как в ARCH-6)
+  //     предупреждает до запуска, но не ломает китайские/русские локали.
+  // Имена задач нейтральные: warnings имеют префикс [taskName], поэтому
+  // совпадение «PL-64» в имени дало бы ложное срабатывание проверки.
+  const hasScriptWarning = (warnings) => warnings.some((w) => w.includes("PL-64:"));
+  await saveTask({
+    name: "MixedScripts", schedule: "0 9 * * *",
+    prompt: "报告和 run статус: подготовь отчёт",
+  });
+  const mixed = await simulatePipeline("MixedScripts");
+  check("PL-64: смешанные CJK+кириллица дают предупреждение",
+    hasScriptWarning(mixed.warnings));
+  check("PL-64: предупреждение не делает отчёт провальным (warning, не error)",
+    mixed.success === true && Array.isArray(mixed.warnings));
+
+  await saveTask({
+    name: "ChineseOnly", schedule: "0 9 * * *",
+    prompt: "请报告运行结果和状态",
+  });
+  const chinese = await simulatePipeline("ChineseOnly");
+  check("PL-64: чистый китайский промпт не даёт предупреждения",
+    !hasScriptWarning(chinese.warnings));
+
+  await saveTask({
+    name: "RussianOnly", schedule: "0 9 * * *",
+    prompt: "Подготовь отчёт о статусе запуска",
+  });
+  const russian = await simulatePipeline("RussianOnly");
+  check("PL-64: чистый русский промпт не даёт предупреждения",
+    !hasScriptWarning(russian.warnings));
+
+  await saveTask({
+    name: "KanaMixed", schedule: "0 9 * * *",
+    prompt: "レポートと run статус",
+  });
+  const kana = await simulatePipeline("KanaMixed");
+  check("PL-64: смешанные кана+кириллица тоже дают предупреждение",
+    hasScriptWarning(kana.warnings));
+
+  await saveTask({
+    name: "HookOnly", schedule: "0 9 * * *",
+    prompt: "Подготовь отчёт о статусе запуска",
+    afterScript: "echo 报告和状态",
+  });
+  const hook = await simulatePipeline("HookOnly");
+  check("PL-64: CJK только в afterScript не даёт предупреждения (проверяем промпт)",
+    !hasScriptWarning(hook.warnings));
 } finally {
   closeDb();
 }
