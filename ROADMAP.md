@@ -134,9 +134,6 @@ agent-steward — execution engine с опциональной регистра�
 **Задача X-2 — Legacy 1.5.9 с `<0.1.0`** · P1 · ⏸️
 - [ ] X-2.1 Upper bound, чтобы breaking 0.1.0 не прилетел
 
-**Задача X-3 — `is_template: false`** · P3 · ⏸️
-- [ ] X-3.1 Убрать из `package.json`
-
 **Задача X-4 — Dependabot** · P2 · ⏸️
 - [ ] X-4.1 Мерж #4 (plugin 2.3.0)
 - [ ] X-4.2 OpenTUI 0.9.0
@@ -144,9 +141,6 @@ agent-steward — execution engine с опциональной регистра�
 **Задача X-5 — Теги/релизы/версии** · P2 · ⏸️
 - [ ] X-5.1 Привести теги к существующим релизам
 - [ ] X-5.2 GitHub release для каждого тега
-
-**Задача X-6 — `systemd` в keywords** · P3 · ⏸️
-- [ ] X-6.1 Убрать, бэкенда нет
 
 ## Деталь 3.8 — Обратная связь от пользователей (bug reports → GitHub Issues)
 `src/core/feedback.ts`, `src/settings.ts`, `src/index.ts`, `infra/feedback-worker/`

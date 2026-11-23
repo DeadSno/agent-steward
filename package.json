@@ -21,7 +21,6 @@
     "task-scheduler",
     "windows-scheduler",
     "launchd",
-    "systemd",
     "ai-agents",
     "ai-automation",
     "agent-orchestration",
