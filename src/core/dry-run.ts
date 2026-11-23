@@ -186,14 +186,27 @@ const DANGEROUS_PATTERNS: { test: RegExp; messageKey: string }[] = [
  * PL-2.2: команды самопроверки, которые агент не выполнит без инструмента
  * shell. Если они есть в промпте, а shell запрещён, агент получает tool.blocked
  * и рапортует об «успешной проверке», ничего не проверив.
+ *
+ * PL-55: ищем именно повелительные команды и явные команды (в backticks,
+ * отдельной строкой, после приглашения). Простое упоминание «тестов/results»
+ * в описании — например, «результаты тестов GitHub Actions» — предупреждением
+ * не считается. Кириллические паттерны используют Unicode-lookahead вместо \b:
+ * в JS \b построен на ASCII-\w и с кириллицей не работает.
  */
 const SELF_CHECK_PATTERNS: readonly RegExp[] = [
-  /\bnpm\s+(?:test|run\s+[\w-]*test[\w-]*)\b/i,
-  /\bnode(?:\.exe)?\s+\S/i,
-  /\bpytest\b/i,
-  /\b(?:go|dotnet)\s+test\b/i,
-  /\btest\b/i,
-  /тест/iu,
+  // Повелительные команды: «run npm test», «run pytest», «run node check.js».
+  /\brun\s+(?:npm\s+(?:test|run\s+[\w-]*test[\w-]*)|pytest|go\s+test|dotnet\s+test)\b/i,
+  /\brun\s+node(?:\.exe)?\s+\S/i,
+  // «выполни [команду] npm test», «запусти pytest», «прогони dotnet test».
+  /(?:выполни|запусти|прогони)\s+(?:команду\s+)?npm\s+(?:test|run\s+[\w-]*test[\w-]*)\b/iu,
+  /(?:выполни|запусти|прогони)\s+(?:команду\s+)?(?:pytest|go\s+test|dotnet\s+test)\b/iu,
+  // «запусти тесты», «проверь себя».
+  /запусти\s+(?:тесты|тест|проверки|проверку)(?![\p{L}\p{N}])/iu,
+  /проверь\s+себя(?![\p{L}\p{N}])/iu,
+  // Явная команда в backticks: `npm test`, `pytest`.
+  /`\s*(?:npm\s+(?:test|run\s+[\w-]*test[\w-]*)|pytest|go\s+test|dotnet\s+test)\s*`/i,
+  // Явная команда отдельной строкой или после приглашения: $ npm test, > pytest.
+  /(?:^|[\r\n]|\$\s*|>\s*)\s*(?:npm\s+(?:test|run\s+[\w-]*test[\w-]*)|pytest|go\s+test|dotnet\s+test)\b/im,
 ];
 
 /** PL-2.2: эффективный запрет shell с учётом legacy-режима и политик. */

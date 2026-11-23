@@ -163,6 +163,36 @@ try {
   const heavyCron = await simulatePipeline("TimeoutTask");
   check("PL-49: предупреждение про timeout > интервала cron",
     heavyCron.warnings.some((w) => w.includes("PL-49")));
+
+  // 13. PL-55: эвристика PL-2.2 не должна срабатывать на упоминание
+  //     результатов тестов в описании, но обязана ловить реальные команды.
+  const shellDenied = { allowedTools: ["read"], deniedTools: ["bash"] };
+  await saveTask({
+    name: "PL-55-MentionOnly", schedule: "0 9 * * *",
+    prompt: "Проанализируй результаты тестов GitHub Actions: какие тесты прошли, какие node test упали. В логах уже есть npm test results — просто интерпретируй их и напиши отчёт.",
+    ...shellDenied,
+  });
+  const mention = await simulatePipeline("PL-55-MentionOnly");
+  check("PL-55: упоминание результатов тестов НЕ даёт PL-2.2",
+    !mention.warnings.some((w) => w.includes("PL-2.2")));
+
+  await saveTask({
+    name: "PL-55-Imperative", schedule: "0 9 * * *",
+    prompt: "Запусти тесты и проверь себя: run npm test, затем доложи результат.",
+    ...shellDenied,
+  });
+  const imperative = await simulatePipeline("PL-55-Imperative");
+  check("PL-55: повелительная команда самопроверки по-прежнему даёт PL-2.2",
+    imperative.warnings.some((w) => w.includes("PL-2.2")));
+
+  await saveTask({
+    name: "PL-55-ExplicitCommand", schedule: "0 9 * * *",
+    prompt: "Выполни команду:\n`npm test`\nи сообщи результат.",
+    ...shellDenied,
+  });
+  const explicit = await simulatePipeline("PL-55-ExplicitCommand");
+  check("PL-55: явная команда npm test по-прежнему даёт PL-2.2",
+    explicit.warnings.some((w) => w.includes("PL-2.2")));
 } finally {
   closeDb();
 }
