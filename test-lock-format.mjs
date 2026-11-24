@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { LockManager, ownerPidFromToken, parseLockToken } from "./dist/core/lock.js";
+import { LockManager, ownerPidFromToken, parseLockToken, withLockWait } from "./dist/core/lock.js";
 import { PS_LOCK_PID_FUNCTION, WRAPPER_SCRIPT } from "./dist/core/ps-wrapper.js";
 import { BASH_LOCK_PID_FUNCTION, buildBashWrapperScript } from "./dist/core/wrappers/bash.js";
 
@@ -248,6 +248,52 @@ try {
     console.log("skip - bash недоступен в PATH");
   }
 } finally {
+  await fs.rm(home, { recursive: true, force: true }).catch(() => {});
+}
+
+// X-4.3: конкуренция за один lock-файл. На Windows read/unlock параллельных
+// владельцев даёт транзиентный EPERM на open(); он не должен пробрасываться
+// наружу из release()/withLockWait().
+{
+  const lockDir = path.join(home, "x-4-3-locks");
+  await fs.mkdir(lockDir, { recursive: true });
+  const manager = new LockManager(lockDir);
+
+  const results = await Promise.allSettled(
+    Array.from({ length: 64 }, (_, i) =>
+      withLockWait(
+        manager,
+        "registry-p2-16-parallel",
+        async () => {
+          await new Promise((resolve) => setTimeout(resolve, i % 3));
+          return i;
+        },
+        { timeoutMs: 15000, staleMs: 60000 },
+      ),
+    ),
+  );
+  const rejected = results.filter((r) => r.status === "rejected");
+  check(
+    rejected.length === 0 && results.filter((r) => r.status === "fulfilled").length === 64,
+    "X-4.3: 64 параллельных withLockWait завершаются без EPERM",
+    rejected.slice(0, 2).map((r) => String(r.reason)).join("; "),
+  );
+  check(
+    (await manager.isLocked("registry-p2-16-parallel")) === false,
+    "X-4.3: все lock-файлы освобождены после параллельных операций",
+  );
+
+  const token = await manager.acquire("release-race");
+  const releases = await Promise.allSettled(
+    Array.from({ length: 32 }, () => manager.release("release-race", token)),
+  );
+  check(
+    releases.every((r) => r.status === "fulfilled") &&
+      releases.some((r) => r.value === true) &&
+      (await manager.isLocked("release-race")) === false,
+    "X-4.3: 32 параллельных release с одним токеном не падают и снимают lock",
+    releases.filter((r) => r.status === "rejected").map((r) => String(r.reason)).join("; "),
+  );
   await fs.rm(home, { recursive: true, force: true }).catch(() => {});
 }
 

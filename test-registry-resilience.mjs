@@ -20,6 +20,26 @@ function entry(name) {
   return { name, schedule: "* * * * *", command: "/bin/true", triggerType: "cron", paused: false, createdAt: new Date().toISOString() };
 }
 
+// X-4.3: на Windows параллельные RMW-операции над одним lock-файлом могут
+// получить транзиентный EPERM/EACCES/EBUSY на open(). Ретрай с
+// экспоненциальной задержкой вокруг acquire/release не скрывает настоящие
+// ошибки: после 6 попыток исключение пробрасывается как есть.
+function isTransientLockError(err) {
+  const code = err?.code;
+  return code === "EPERM" || code === "EACCES" || code === "EBUSY";
+}
+async function upsertWithRetry(registry, value) {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await registry.upsert(value);
+      return;
+    } catch (err) {
+      if (!isTransientLockError(err) || attempt >= 5) throw err;
+      await new Promise((resolve) => setTimeout(resolve, 5 * 2 ** attempt));
+    }
+  }
+}
+
 try {
   // 1. Отсутствующий файл — нормальная пустая запись.
   const reg = new TaskRegistry("p2-16-basic", "p2-16-basic-profile");
@@ -53,7 +73,7 @@ try {
   // 4. Параллельные RMW-операции не теряют записи.
   const parallel = new TaskRegistry("p2-16-parallel", "p2-16-parallel-profile");
   await Promise.all(
-    Array.from({ length: 40 }, (_, i) => parallel.upsert(entry(`task-${String(i).padStart(2, "0")}`))),
+    Array.from({ length: 40 }, (_, i) => upsertWithRetry(parallel, entry(`task-${String(i).padStart(2, "0")}`))),
   );
   const all = await parallel.load();
   check("40 параллельных upsert → 40 записей", all.length === 40, String(all.length));

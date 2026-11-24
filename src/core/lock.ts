@@ -279,6 +279,33 @@ export class LockManager {
   }
 
   /**
+   * X-4.3: чтение токена переживает кратковременные Windows-блокировки.
+   * На Windows параллельный read/write одного lock-файла возвращает
+   * EPERM/EACCES/EBUSY именно на open(), а не только на unlink(). Раньше
+   * release() и unlinkWithRetry() перевыбрасывали эту ошибку, из-за чего
+   * параллельные RMW-операции падали флейком в test-registry-resilience.mjs.
+   * ENOENT — нормальный исход (lock уже снят), возвращаем null.
+   */
+  private async readTokenWithRetry(
+    lockPath: string,
+    attempts = 6,
+  ): Promise<string | null> {
+    for (let i = 0; i < attempts; i += 1) {
+      try {
+        return await fs.readFile(lockPath, "utf8");
+      } catch (err: unknown) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code === "ENOENT") return null;
+        const transient = code === "EPERM" || code === "EACCES" || code === "EBUSY";
+        if (!transient || i === attempts - 1) throw err;
+        // Экспоненциальная задержка: 5, 10, 20, 40, 80 мс.
+        await new Promise((resolve) => setTimeout(resolve, 5 * 2 ** i));
+      }
+    }
+    return null;
+  }
+
+  /**
    * Удаляет lock-файл, переживая кратковременные Windows-блокировки.
    *
    * На Windows unlink может вернуть EPERM/EACCES/EBUSY, пока другой процесс
@@ -295,14 +322,8 @@ export class LockManager {
       // QW-15.3: read→unlink не атомарен. Перед КАЖДОЙ попыткой удаления
       // перепроверяем токен: если lock уже перехвачен новым владельцем,
       // удалять чужой файл нельзя (TOCTOU между readFile и unlink).
-      let current: string;
-      try {
-        current = await fs.readFile(lockPath, "utf8");
-      } catch (err: unknown) {
-        if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
-        throw err;
-      }
-      if (current !== expectedToken) return false;
+      const current = await this.readTokenWithRetry(lockPath);
+      if (current === null || current !== expectedToken) return false;
       try {
         await fs.unlink(lockPath);
         return true;
@@ -330,14 +351,8 @@ export class LockManager {
    */
   async release(taskName: string, token: string): Promise<boolean> {
     const lockPath = this.lockFilePath(taskName);
-    let current: string;
-    try {
-      current = await fs.readFile(lockPath, "utf8");
-    } catch (err: unknown) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
-      throw err;
-    }
-    if (current !== token) return false;
+    const current = await this.readTokenWithRetry(lockPath);
+    if (current === null || current !== token) return false;
     // P3-39: на Windows unlink может кратковременно упасть EPERM, пока
     // другие процессы читают lock для проверки владельца.
     // QW-15.3: unlinkWithRetry сам повторно проверяет токен перед unlink.
