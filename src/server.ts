@@ -39,6 +39,7 @@ import { PROMETHEUS_CONTENT_TYPE, renderPrometheusMetrics } from "./core/prometh
 import { buildOtlpExport } from "./core/otel.js";
 import { auditDateFilterError, readAuditLog, recordAudit } from "./core/audit.js";
 import { getLocale, t } from "./i18n.js";
+import { localizeDashboardHtml } from "./dashboard-i18n.js";
 
 /**
  * Локальный веб-дашборд (Спринт 5).
@@ -1493,7 +1494,9 @@ function sendJson(res: http.ServerResponse, status: number, payload: unknown): v
     res.end();
     return;
   }
-  send(res, status, JSON_TYPE, JSON.stringify(payload));
+  // Локализуем и данные API: часть строк (причины pre-flight, статусы демо,
+  // длительности) приходит из истории/демо-данных и не присутствует в HTML.
+  send(res, status, JSON_TYPE, localizeDashboardHtml(JSON.stringify(payload), getLocale()));
 }
 
 /** Санитизирует сообщение об ошибке для клиентского ответа.
@@ -1693,7 +1696,7 @@ async function collectTasksWithMetrics(deps: DashboardDeps) {
  * Внутри строковой константы не используются бэктики и ${}, чтобы не экранировать.
  */
 function renderPage(nonce: string): string {
-  return `<!DOCTYPE html>
+  const html = `<!DOCTYPE html>
 <html lang="${getLocale()}">
 <head>
 <meta charset="utf-8">
@@ -2968,4 +2971,7 @@ function renderPage(nonce: string): string {
 </script>
 </body>
 </html>`;
+  // Язык интерфейса: русский остаётся как есть, остальные локали получают
+  // переведённую разметку (см. src/dashboard-i18n.ts).
+  return localizeDashboardHtml(html, getLocale());
 }

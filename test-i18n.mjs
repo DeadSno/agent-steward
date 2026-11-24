@@ -31,6 +31,7 @@ import {
   setLocale,
   t,
 } from "./dist/i18n.js";
+import { localizeDashboardHtml } from "./dist/dashboard-i18n.js";
 
 const root = path.dirname(url.fileURLToPath(new URL(import.meta.url)));
 
@@ -290,6 +291,32 @@ const child = spawnSync(
 check(
   "OPENCODE_SCHEDULER_LOCALE=en задаёт локаль запуска",
   child.stdout.trim() === "en"
+);
+
+// --- 10. Локализация готового HTML дашборда ---------------------------------
+const dashboardRu = "<div>Всего запусков: 8 задач · Все · 31 с · не задан workdir задачи — снимок дерева</div>";
+check(
+  "дашборд ru: исходный HTML не меняется",
+  localizeDashboardHtml(dashboardRu, "ru") === dashboardRu
+);
+const dashboardEn = localizeDashboardHtml(dashboardRu, "en");
+check(
+  "дашборд en: метрики и статусы переводятся",
+  dashboardEn.includes("Total runs") && dashboardEn.includes("All")
+);
+check(
+  "дашборд en: короткие слова по границам, без порчи «задачи»",
+  dashboardEn.includes("8 tasks") &&
+    localizeDashboardHtml("<div>задачи планировщика</div>", "en").includes("задачи планировщика")
+);
+check(
+  "дашборд en: длительности и причины pre-flight переводятся",
+  dashboardEn.includes("31 s") &&
+    dashboardEn.includes("workdir not set for the task — tree snapshot")
+);
+check(
+  "дашборд en: неизвестная локаль получает английский",
+  localizeDashboardHtml(dashboardRu, "de") === dashboardEn
 );
 
 const failed = results.filter((r) => !r.ok);

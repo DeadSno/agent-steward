@@ -58,8 +58,9 @@ Translations: [English](../README.md) · [Русский](README.ru.md).
 也可通过 `manage_settings` 工具切换（`action: "update"`，`locale: "zh"` 等）。
 `locale: "auto"`（「自动」，默认）跟随 OpenCode 界面语言：面板会立即响应语言切换，
 并将解析后的语言发送到服务器，使通知、摘要和仪表盘保持一致。切换无需重启。
-仪表盘的本地化仍在推进：部分客户端字符串目前仍为俄语。按设计，agent 工具描述
-与 schema 保持英语，输出到控制台的诊断信息保持俄语。
+仪表盘跟随解析后的语言：俄语和英语已完整本地化（`docs/dashboard.png` 中的截图为英文版）；
+中文目前回退到英文界面文案。按设计，agent 工具描述与 schema 保持英语，
+输出到控制台的诊断信息保持俄语。
 
 字符串目录位于 `locales/ru.json`、`locales/en.json` 和 `locales/zh.json`；
 每个键必须同时存在于三者中，否则 CI 会失败。
@@ -164,7 +165,7 @@ Agent 任务以 `opencode run --auto` 运行，因此其工具策略必须显式
 | `secure` | read、glob、grep、skill | edit、shell、question、webfetch、websearch、subagent |
 | `legacy` | 全部十个动作 | — |
 
-`deniedTools` 始终优先。非空的 `allowedTools` 会变成 allowlist：未列出的动作一律禁止，也可以显式恢复被策略禁止的动作（例如 `shell`）。`legacyShell: true` 仅在 `hybrid` 下恢复 `shell`，用于从旧版本迁移的任务。
+`deniedTools` 始终优先。非空的 `allowedTools` 是针对非只读动作的 allowlist：read、glob、grep 和 skill 会自动加入（PL-133），因此要禁止它们必须在 `deniedTools` 中显式列出。它也可以显式恢复被策略禁止的动作（例如 `shell`）。`legacyShell: true` 仅在 `hybrid` 下恢复 `shell`，用于从旧版本迁移的任务。
 
 被阻止的动作会以 `tool.blocked` 写入审计日志，带 `reason: "default-policy"` 和 `hint`；每次运行还会记录当前生效的策略。
 

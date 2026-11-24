@@ -61,9 +61,11 @@ panel header (🌐 Auto / Русский / English / 中文) and is also availab
 `locale: "auto"` (the "Auto" option, used by default) follows the OpenCode interface language: the panel
 reacts to language changes immediately, and the resolved locale is sent to the server so
 notifications, digests and the dashboard use the same language. The switch applies
-without a restart. Dashboard localization is still being rolled out: some client-side
-strings remain Russian for now. Agent tool descriptions and schemas stay English by
-design, and diagnostics printed to the console stay Russian.
+without a restart. The dashboard follows the resolved locale: Russian and English are
+fully localized (its screenshot in `docs/dashboard.png` is the English variant);
+Chinese currently falls back to English for dashboard chrome until its catalog is ready.
+Agent tool descriptions and schemas stay English by design, and diagnostics printed
+to the console stay Russian.
 
 Catalogs live in `locales/ru.json`, `locales/en.json` and `locales/zh.json`; every key
 must exist in all three, otherwise CI fails.
@@ -174,7 +176,7 @@ Agent jobs run with `opencode run --auto`, so their tool policy must be explicit
 | `secure` | read, glob, grep, skill | edit, shell, question, webfetch, websearch, subagent |
 | `legacy` | all ten actions | — |
 
-`deniedTools` always wins. A non-empty `allowedTools` is an allowlist: it denies every action that is not listed, and can explicitly re-enable an action denied by the policy (for example `shell`). `legacyShell: true` re-enables `shell` only under `hybrid`, for tasks migrated from older versions.
+`deniedTools` always wins. A non-empty `allowedTools` is an allowlist for non-read-only actions: read, glob, grep and skill are added automatically (PL-133), so to forbid them you must list them explicitly in `deniedTools`. It can also explicitly re-enable an action denied by the policy (for example `shell`). `legacyShell: true` re-enables `shell` only under `hybrid`, for tasks migrated from older versions.
 
 Blocked actions are written to the audit journal as `tool.blocked` with `reason: "default-policy"` and a `hint`, and each run logs the active policy.
 
