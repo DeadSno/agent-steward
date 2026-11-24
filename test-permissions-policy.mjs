@@ -54,6 +54,23 @@ check("deniedTools overrides legacy", effDeny.permissions.find((p) => p.action =
 const effAllow = resolvePermissions({ policy: "hybrid", allowedTools: ["shell"] });
 check("allowedTools enables shell in hybrid", effAllow.permissions.find((p) => p.action === "shell").effect === "allow");
 
+// PL-133: shell-only allowlist не блокирует чтение кода и загрузку скиллов.
+for (const action of ["read", "glob", "grep", "skill", "shell"]) {
+  check(
+    `PL-133: shell-only разрешает ${action}`,
+    effAllow.permissions.find((p) => p.action === action).effect === "allow",
+  );
+}
+const effShellOnlyDenied = resolvePermissions({
+  policy: "hybrid",
+  allowedTools: ["shell"],
+  deniedTools: ["skill"],
+});
+check(
+  "PL-133: явный deniedTools запрещает skill даже в shell-only задаче",
+  effShellOnlyDenied.permissions.find((p) => p.action === "skill").effect === "deny",
+);
+
 const config = buildOpencodeConfig({ policy: "hybrid" });
 const parsed = JSON.parse(config);
 check("config has schema", parsed["$schema"] === "https://opencode.ai/config.json");

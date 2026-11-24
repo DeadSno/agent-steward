@@ -1024,6 +1024,11 @@ The effective policy is resolved in this order (later wins):
 7. `--auto` — auto-approves everything that remains, so no interactive prompts block
    an unattended run.
 
+With a non-empty `allowedTools` allowlist (for example a shell-only task with
+`allowedTools: ["shell"]`), the safe read-only actions `read`, `glob`, `grep` and
+`skill` are always allowed as well — the child agent can read code and load repository
+skills even in a shell-only task; only an explicit `deniedTools` entry can deny them.
+
 Tool mapping used by both wrappers:
 
 | Task tool | OpenCode action |

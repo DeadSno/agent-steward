@@ -590,13 +590,22 @@ function hintFor(action: PermissionAction): string {
  * 1. базовая политика (hybrid/secure/legacy), legacyShell возвращает shell;
  * 2. deniedTools переводит действие в deny (выигрывает всегда);
  * 3. непустой allowedTools превращается в allowlist и может явно вернуть
- *    действие, запрещённое политикой (кроме явно запрещённых deniedTools).
+ *    действие, запрещённое политикой (кроме явно запрещённых deniedTools);
+ *    при этом безопасные read-only действия read/glob/grep/skill
+ *    (READ_ONLY_TOOLS) разрешаются дополнительно, даже если их нет в списке, —
+ *    PL-133: shell-only задача всё равно может читать код и загружать скиллы
+ *    репозитория; явный deniedTools по-прежнему запрещает любое из них.
  */
 export function resolvePermissions(input: PermissionInput = {}): EffectivePermissions {
   const policy = normalizePolicy(input.policy);
   const legacyShell = input.legacyShell === true;
-  const allowed = actionsForTools(normalizeToolList(input.allowedTools));
+  const allowedTools = normalizeToolList(input.allowedTools);
   const denied = actionsForTools(normalizeToolList(input.deniedTools));
+  const allowed = actionsForTools(allowedTools);
+  // PL-133: shell-only allowlist не должен блокировать чтение кода и скиллов.
+  if (allowedTools.length > 0) {
+    for (const action of actionsForTools(READ_ONLY_TOOLS)) allowed.add(action);
+  }
 
   const base = new Set<PermissionAction>(POLICY_BASE[policy]);
   if (policy === "hybrid" && legacyShell) base.add("shell");
