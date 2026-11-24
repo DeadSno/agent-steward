@@ -23,6 +23,7 @@ const {
 const { parseImportJson } = await import("./dist/task-transfer.js");
 const {
   writeWrapperCmd,
+  ensureWrapper,
   WORKTREE_CREATE_FAILURE_REASON,
   worktreeCreateFailureReason,
 } = await import("./dist/core/ps-wrapper.js");
@@ -318,6 +319,25 @@ let first;
       text.indexOf('cd /d "' + repo) < text.indexOf('cleanup --path "%AGENT_STEWARD_WORKTREE%"'),
   );
 
+  // W-1: PowerShell-обёртка должна сама перейти в worktree. Иначе .cmd делает
+  // cd, а Set-Location $Workdir возвращает процесс в основной репозиторий.
+  const psText = fs.readFileSync(await ensureWrapper(), "utf8");
+  check(
+    "Windows PS: worktree подменяет Workdir",
+    psText.includes(
+      "if ($env:AGENT_STEWARD_WORKTREE) { $Workdir = $env:AGENT_STEWARD_WORKTREE }",
+    ),
+  );
+  check(
+    "Windows PS: checkout-lock считается по исходному репозиторию",
+    psText.includes("GetBytes($script:checkoutRoot)") &&
+      psText.includes("$script:checkoutRoot = if ($env:AGENT_STEWARD_WORKTREE_REPO)"),
+  );
+  check(
+    "Windows PS: quota-diff сохраняется в исходном репозитории",
+    psText.includes("$quotaBase = $script:checkoutRoot"),
+  );
+
   // PL-126: регрессии на первопричину зависания и на контракт вызова create.
   check(
     "PL-126 Windows .cmd: явная подкоманда create в контракте",
@@ -383,8 +403,23 @@ let first;
   );
   check(
     "bash: очистка выходит из worktree",
-    enabled.includes('cd "$WORKDIR" 2>/dev/null || true') &&
+    enabled.includes('cd "$REPO_DIR" 2>/dev/null || true') &&
       enabled.includes('cleanup --path "$AGENT_STEWARD_WORKTREE"'),
+  );
+  check(
+    "bash: исходный репозиторий запоминается отдельно",
+    enabled.includes('REPO_DIR="$WORKDIR"') &&
+      enabled.includes('export AGENT_STEWARD_WORKTREE_REPO="$REPO_DIR"') &&
+      enabled.includes('--repo "$REPO_DIR"'),
+  );
+  check(
+    "bash: WORKDIR переключается на worktree",
+    enabled.includes('WORKDIR="$AGENT_STEWARD_WORKTREE"'),
+  );
+  check(
+    "bash: quota-diff пишется в исходный репозиторий, diff — из worktree",
+    enabled.includes('QUOTA_DIFF="$REPO_DIR/reports/') &&
+      enabled.includes('git -C "$WORKDIR" diff > "$QUOTA_DIFF"'),
   );
 
   const disabled = buildBashWrapperScript({

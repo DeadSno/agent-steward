@@ -115,6 +115,14 @@ $OutputEncoding = [System.Text.Encoding]::UTF8
 # directory so quota partial-diff never fails with a Path binding error.
 if (-not $Workdir) { $Workdir = (Get-Location).Path }
 
+# W-1 (0.0.6): .cmd создаёт одноразовый worktree и переходит в него, но
+# PowerShell получает -Workdir исходного репозитория. Без этой подмены
+# opencode run, snapshot, quota-diff и git status работали в основном дереве.
+# Исходный репозиторий нужен для checkout-lock (общий на все worktree) и для
+# сохранения quota-diff: worktree удаляется после прогона.
+$script:checkoutRoot = if ($env:AGENT_STEWARD_WORKTREE_REPO) { $env:AGENT_STEWARD_WORKTREE_REPO } else { $Workdir }
+if ($env:AGENT_STEWARD_WORKTREE) { $Workdir = $env:AGENT_STEWARD_WORKTREE }
+
 $ErrorActionPreference = "Continue"
 
 # P2-11: свободный текст (модель, имя workspace, списки инструментов) приходит
@@ -280,7 +288,7 @@ $checkoutHash = ""
 try {
     $sha = [System.Security.Cryptography.SHA256]::Create()
     try {
-        $hashBytes = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($Workdir))
+        $hashBytes = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($script:checkoutRoot))
         $checkoutHash = [System.BitConverter]::ToString($hashBytes).Replace("-", "").Substring(0, 16).ToLowerInvariant()
     } finally {
         $sha.Dispose()
@@ -348,7 +356,7 @@ try {
         }
     }
     if (-not $script:checkoutLockAcquired) {
-        $checkoutSkipReason = "PL-121: в чек-ауте $Workdir уже идёт другая задача — запуск пропущен"
+        $checkoutSkipReason = "PL-121: в чек-ауте $script:checkoutRoot уже идёт другая задача — запуск пропущен"
         Write-Log "[agent-steward] $checkoutSkipReason"
         # PL-146: пропуск должен остаться в истории, иначе файловый триггер
         # теряет событие бесследно (get_history пуст, повторный touch нужен).
@@ -1311,7 +1319,8 @@ try {
             $quotaSlug = $TaskName -replace '[^a-zA-Z0-9_-]', '-'
             $quotaDiff = ""
             try {
-                $quotaBase = $Workdir
+                # quota-diff должен пережить удаление одноразового worktree.
+                $quotaBase = $script:checkoutRoot
                 if (-not $quotaBase) { $quotaBase = (Get-Location).Path }
                 $quotaDiff = Join-Path $quotaBase ("reports/quota-" + $quotaSlug + ".diff")
             } catch {}

@@ -179,6 +179,38 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 
 ---
 
+## Деталь 3.17 — Верификация аудита Qwen (QW)
+`src/runtime.ts`, `src/core/scheduler/mac.ts`, `src/core/permissions.ts`, `legacy/package.json`, `test-*.mjs`, `docs/*`
+
+> Отчёт Qwen от 24.11.2026 проверяется по коду: в ROADMAP попадают только подтверждённые находки. QW-1 (worktree isolation) закрыт и перенесён в CHANGELOG. Неподтверждённые пункты P2/P3 ведутся в QW-6 до воспроизведения.
+
+**Задача QW-2 — catch-up на POSIX запускает задачи, стоящие на паузе** · P1 · ⬜
+- [ ] QW-2.1 Добавить `if (def.paused) continue;` в цикл catch-up `src/runtime.ts` рядом с проверкой `pausedUntil`
+- [ ] QW-2.2 Регрессия: paused cron-задача не запускается при старте, unpaused — запускается
+- [ ] QW-2.3 Проверки: `npm run build`, `test-run-state.mjs`/`test-crash-recovery.mjs`, `test-docs.mjs`
+
+**Задача QW-3 — macOS 13+ пауза не переживает выход/вход в систему** · P1 · ⬜
+- [ ] QW-3.1 На modern launchctl вызывать `disable gui/<uid>/<label>` при паузе и `enable` при возобновлении/установке
+- [ ] QW-3.2 Пауза при установке уже приостановленной задачи должна оставлять агент выключенным
+- [ ] QW-3.3 Регрессия: `test-mac-launchctl.mjs` проверяет план аргументов для Darwin ≥ 22
+
+**Задача QW-4 — `egress` в `OPENCODE_CONFIG_CONTENT` отсутствует в схеме OpenCode** · P1 · ⬜
+- [ ] QW-4.1 Убрать корневой `egress` из `buildOpencodeConfig`; runtime-guard `runEgressGuarded` сохранить
+- [ ] QW-4.2 Обновить `test-permissions-policy.mjs`: сгенерированный конфиг не содержит `egress`
+- [ ] QW-4.3 Проверки: `npm run build`, `test-permissions-policy.mjs`, `test-docs.mjs`
+
+**Задача QW-5 — legacy-шим npm 1.5.8 тянет ломающий мажор и ведёт на несуществующий пакет** · P1 · ⬜
+- [ ] QW-5.1 Поднять `legacy/package.json` до 1.5.10 с диапазоном `>=0.0.2 <0.1.0`
+- [ ] QW-5.2 Опубликовать 1.5.10 как `latest`, поставить корректный deprecation (`Use agent-steward`) на 1.5.8/1.5.9
+- [ ] QW-5.3 Синхронизировать `docs/RELEASE-RUNBOOK.md` (X-1/X-2) и release-чеклист
+
+**Задача QW-6 — верификация P2/P3 отчёта Qwen** · P2 · ⬜
+- [ ] QW-6.1 Проверить по коду: quota-детектор, macOS one-shot cleanup, MONTHLY boundary, detectStaleTask, POSIX delete order, defer TTL, poll fail-open, needsPollMode, миграция каталога, SSH/Docker runner, dashboard Origin
+- [ ] QW-6.2 Подтверждённые пункты оформить отдельными задачами QW-7+ с репродукцией и тестом
+- [ ] QW-6.3 Опровергнутые пункты зафиксировать в CHANGELOG как «не подтверждено» с причиной
+
+---
+
 # 4. Правила работы (канбан)
 
 1. **Одна подзадача за раз.** Взял → сделал → отчёт → следующая подзадача.
