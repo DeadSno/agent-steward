@@ -159,6 +159,16 @@ check(
     bashQuotaScript.includes("printf '%s\\n' \"$QUOTA_SCOPE\" | grep -qE") &&
     !bashQuotaScript.includes("grep -qE 'Free usage limit reached|Insufficient Balance|free usage limit' \"$LOG_FILE\"")
 );
+// QW-10: без node и с SCHEDULE_CRON обёртка обязана exit 3 (fail-closed).
+const qw10BashSource = fs.readFileSync(
+  new URL("./dist/core/wrappers/bash.js", import.meta.url),
+  "utf8",
+);
+check(
+  "QW-10 bash: отсутствие node при SCHEDULE_CRON → fail-closed exit 3",
+  qw10BashSource.includes("QW-10: node не найден в PATH при SCHEDULE_CRON") &&
+    qw10BashSource.includes('"      exit 3",')
+);
 // PL-113: аргументы дочернего powershell не должны проходить через повторный
 // разбор командной строки - иначе промпт с кавычками и многоточием падает до
 // старта агента с Cannot process argument ... name.

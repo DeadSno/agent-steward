@@ -758,9 +758,12 @@ export function buildScheduleGate(
   notAfter?: string,
   days?: number[] | null,
   windowPolicy?: string | null,
+  platform: NodeJS.Platform = process.platform,
 ): ScheduleGateSpec | undefined {
   const tz = (timezone || "").trim() || undefined;
-  const poll = needsPollMode(expr, tz);
+  // QW-10: needsPollMode — schtasks-семантика Windows; на POSIX нативные
+  // Vixie-выражения (списки/диапазоны/шаги) выполняет crontab сам.
+  const poll = platform === "win32" ? needsPollMode(expr, tz) : needsPosixPollMode(expr, tz);
   const normalizedDays = normalizeActiveDays(days);
   const policy = windowPolicy === "skip" || windowPolicy === "run" ? windowPolicy : undefined;
   if (!poll && !(notBefore && notAfter) && !normalizedDays) return undefined;

@@ -7419,6 +7419,7 @@ export async function schedulerCreateTask(
         normalizedNotAfter,
         normalizedActiveDays,
         normalizedWindowPolicy,
+        process.platform,
       )
       : undefined;
   const wrapperGate = gate

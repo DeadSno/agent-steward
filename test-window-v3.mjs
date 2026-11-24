@@ -93,6 +93,13 @@ const gatePost = buildScheduleGate("0 9 * * *", utc, "09:00", "19:00", [1, 2, 3,
 check("buildScheduleGate windowPolicy=postpone → не сереализуется", gatePost !== undefined && gatePost.windowPolicy === undefined);
 // без дней и окна → undefined (не poll-режим).
 check("buildScheduleGate без дней/окна → undefined", buildScheduleGate("0 9 * * *") === undefined);
+// QW-10: платформо-зависимый выбор poll-режима (schtasks vs crontab).
+const qw10Win = buildScheduleGate("0 9 * * 1-5", undefined, undefined, undefined, undefined, undefined, "win32");
+check("QW-10 win32: schtasks не выражает диапазон дней → poll", qw10Win !== undefined && qw10Win.cron === "0 9 * * 1-5");
+const qw10Posix = buildScheduleGate("0 9 * * 1-5", undefined, undefined, undefined, undefined, undefined, "linux");
+check("QW-10 POSIX: crontab понимает диапазон дней → гейт не нужен", qw10Posix === undefined);
+const qw10PosixTz = buildScheduleGate("0 9 * * *", "Europe/Berlin", undefined, undefined, undefined, undefined, "linux");
+check("QW-10 POSIX: чужая IANA-зона → poll", qw10PosixTz !== undefined && qw10PosixTz.cron === "0 9 * * *");
 
 // --- 6. CLI schedule-gate: --days и --window-policy -------------------------
 function runGate(args) {
