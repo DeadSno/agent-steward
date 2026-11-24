@@ -1819,6 +1819,10 @@ function renderPage(nonce: string): string {
   .matrix-toggle { background: transparent; border: none; color: var(--muted); cursor: pointer; padding: 0 2px; font-size: 12px; }
   .matrix-toggle:hover { color: var(--accent); }
   .matrix-badge { font-size: 11px; color: var(--run); white-space: nowrap; }
+  .matrix-progress { margin-top: 3px; width: 130px; height: 5px; border-radius: 3px; background: rgba(143,160,184,.18); overflow: hidden; }
+  .matrix-progress > i { display: block; height: 100%; background: var(--run); transition: width .3s ease; }
+  .matrix-progress.done > i { background: var(--ok); }
+  .matrix-progress.failed > i { background: var(--err); }
   .clone-badge { font-size: 11px; color: var(--muted); white-space: nowrap; }
   tr.clone-row td { background: rgba(126, 200, 250, 0.03); }
   tr.clone-row .name { padding-left: 26px; font-weight: 500; color: #cfd7e3; }
@@ -2164,11 +2168,41 @@ function renderPage(nonce: string): string {
       : s.status === 'error' ? 'var(--err)'
       : s.status === 'partial' ? 'var(--run)'
       : 'var(--run)';
-    return '<div class="matrix-badge" style="color:' + color + '" title="' + esc(s.message) + '">' +
+    return '<div class="matrix-badge" data-matrix-progress="' + esc(t.name) + '" style="color:' + color + '" title="' + esc(s.message) + '">' +
       '📦 Matrix: ' + s.successCount + '/' + s.totalCount + ' успешных' +
       (s.errorCount ? ' · ❌ ошибок: ' + s.errorCount : '') +
       (s.pendingCount ? ' · ⏳ в работе: ' + s.pendingCount : '') +
       '</div>';
+  }
+
+  /** D06 (IM-6): живой прогресс матрицы по данным /api/matrix/:name. */
+  function matrixProgressHtml(report) {
+    if (!report || !report.totalCount) return '';
+    var done = Number(report.successCount) + Number(report.errorCount);
+    var pct = Math.round(done * 100 / report.totalCount);
+    var cls = report.status === 'success' ? ' done' : report.status === 'error' ? ' failed' : '';
+    return '<div class="matrix-badge" style="color:' + (report.status === 'success' ? 'var(--ok)' : report.status === 'error' ? 'var(--err)' : 'var(--run)') + '">' +
+      '📦 Matrix: ' + report.successCount + '/' + report.totalCount + ' · ' + pct + '%' +
+      (report.pendingCount ? ' · ⏳ ' + report.pendingCount : '') +
+      '</div><div class="matrix-progress' + cls + '" title="' + esc(report.message || '') + '"><i style="width:' + pct + '%"></i></div>';
+  }
+
+  /** OP-6: обновляем только матричные ячейки, не перезагружая страницу и не дёргая /api/tasks. */
+  async function loadMatrixProgress() {
+    var parents = allTasks.filter(function (t) { return t.isMatrixParent; });
+    if (parents.length === 0) return;
+    await Promise.all(parents.map(async function (t) {
+      var node = document.querySelector('[data-matrix-progress="' + CSS.escape(t.name) + '"]');
+      if (!node) return;
+      try {
+        var data = await safeJson('/api/matrix/' + encodeURIComponent(t.name), null);
+        if (data && data.success && data.report) {
+          node.innerHTML = matrixProgressHtml(data.report);
+        }
+      } catch (err) {
+        // Ошибки отдельного опроса не ломают остальной дашборд.
+      }
+    }));
   }
 
   function metricsHtml(m) {
@@ -2879,6 +2913,7 @@ function renderPage(nonce: string): string {
       document.getElementById('m-tokens').textContent = m.tokens != null ? Number(m.tokens).toLocaleString('ru-RU') : '—';
       document.getElementById('m-cost').textContent = m.costUsd != null ? '$' + Number(m.costUsd).toFixed(2) : '—';
       renderTasks(tasks);
+      void loadMatrixProgress();
       renderGraph(tasks);
       renderHistory(history);
       renderModelsAnalysis(modelsAnalysis);
@@ -3075,6 +3110,8 @@ function renderPage(nonce: string): string {
 
   loadAll();
   setInterval(loadAll, 5000);
+  // IM-6: прогресс матрицы обновляется чаще, чем общий список задач.
+  setInterval(loadMatrixProgress, 2000);
   loadAnalytics();
   setInterval(loadAnalytics, ANALYTICS_INTERVAL_MS);
 })();

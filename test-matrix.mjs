@@ -404,6 +404,27 @@ try {
   closeDb();
 }
 
+  // IM-6 / D06: живой прогресс матрицы на дашборде без перезагрузки страницы.
+  const serverSrc = fs.readFileSync(new URL("./src/server.ts", import.meta.url), "utf8");
+  check(
+    "IM-6: дашборд опрашивает /api/matrix/:name отдельно от /api/tasks",
+    serverSrc.includes("function loadMatrixProgress()") &&
+      serverSrc.includes("'/api/matrix/' + encodeURIComponent(t.name)") &&
+      serverSrc.includes("data-matrix-progress=")
+  );
+  check(
+    "IM-6: прогресс-бар обновляется чаще общего списка",
+    serverSrc.includes("setInterval(loadMatrixProgress, 2000)") &&
+      serverSrc.includes("setInterval(loadAll, 5000)") &&
+      serverSrc.includes("void loadMatrixProgress();")
+  );
+  check(
+    "IM-6: прогресс показывает процент и состояния",
+    serverSrc.includes("function matrixProgressHtml(report)") &&
+      serverSrc.includes("var pct = Math.round(done * 100 / report.totalCount)") &&
+      serverSrc.includes('class="matrix-progress')
+  );
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\nMatrix: ${results.length - failed.length}/${results.length} проверок пройдено.`);
 process.exit(failed.length > 0 ? 1 : 0);

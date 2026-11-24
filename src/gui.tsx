@@ -2934,6 +2934,14 @@ export default Plugin.define({
                   {job.matrixSummary.errorCount > 0 ? ` · ❌ ${job.matrixSummary.errorCount}` : ""}
                   {job.matrixSummary.pendingCount > 0 ? ` · ⏳ ${job.matrixSummary.pendingCount}` : ""}
                 </span>
+                <div
+                  style={`height:4px;border-radius:2px;background:#2a2a2a;overflow:hidden`}
+                  title={`${Math.round((job.matrixSummary.successCount + job.matrixSummary.errorCount) * 100 / Math.max(1, job.matrixSummary.totalCount))}%`}
+                >
+                  <div
+                    style={`height:100%;width:${Math.round((job.matrixSummary.successCount + job.matrixSummary.errorCount) * 100 / Math.max(1, job.matrixSummary.totalCount))}%;background:${job.matrixSummary.status === "success" ? "#34c759" : job.matrixSummary.status === "error" ? "#ff3b30" : "#ff9f0a"};transition:width 0.3s ease`}
+                  />
+                </div>
               </div>
             )}
             <div
