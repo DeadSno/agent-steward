@@ -1216,24 +1216,35 @@ const resumeTaskSchema = z.object({
   name: z.string().describe("Task name to resume."),
 });
 
-const getHistorySchema = z.object({
-  taskName: z
-    .string()
-    .optional()
-    .describe("Only return runs of this task (case-insensitive)."),
-  status: z
-    .enum(["running", "success", "error", "timeout", "partial", "needs-resolution"])
-    .optional()
-    .describe("Only return runs with this status."),
-  limit: z
-    .number()
-    .optional()
-    .describe("Maximum number of records to return (default 20, max 200)."),
-  compact: z
-    .boolean()
-    .optional()
-    .describe("Trim long error texts to save tokens (default false; full text kept otherwise)."),
-});
+const getHistorySchema = z
+  .object({
+    // QA-PORT-11: псевдоним name каноничен для get_task_logs — принимаем и здесь,
+    // чтобы get_history({name}) фильтровал, а не молча возвращал всю историю.
+    name: z
+      .string()
+      .optional()
+      .describe("Alias for taskName (case-insensitive)."),
+    taskName: z
+      .string()
+      .optional()
+      .describe("Only return runs of this task (case-insensitive)."),
+    status: z
+      .enum(["running", "success", "error", "timeout", "partial", "needs-resolution"])
+      .optional()
+      .describe("Only return runs with this status."),
+    limit: z
+      .number()
+      .optional()
+      .describe("Maximum number of records to return (default 20, max 200)."),
+    compact: z
+      .boolean()
+      .optional()
+      .describe("Trim long error texts to save tokens (default false; full text kept otherwise)."),
+  })
+  // QA-PORT-11: раньше z.object молча выбрасывал неизвестные ключи, из-за чего
+  // get_history({name:"X"}) выглядел как сломанный фильтр. Теперь опечатка в
+  // аргументе видна сразу, а не маскируется под «все записи».
+  .strict();
 
 export const getTaskLogsSchema = z.object({
   name: z.string().optional().describe("Task name to read logs for (alias: taskName)."),
@@ -3124,11 +3135,24 @@ export function compactHistoryRecords<T extends { error?: unknown }>(
 }
 
 const getHistoryExecute = wrapExecute<HistoryArgs>(async (args) => {
+  // QA-PORT-11: адаптеры не всегда прогоняют input через Zod (MCP передаёт
+  // голый shape, RPC — plain object), поэтому проверяем keys и здесь. Иначе
+  // опечатка в аргументе молча игнорируется и возвращается вся история.
+  const allowedHistoryKeys = new Set(["name", "taskName", "status", "limit", "compact"]);
+  const unknownKeys = Object.keys(args ?? {}).filter((key) => !allowedHistoryKeys.has(key));
+  if (unknownKeys.length > 0) {
+    throw new Error(
+      `get_history: неизвестные аргументы: ${unknownKeys.join(", ")}. ` +
+        `Допустимо: ${[...allowedHistoryKeys].join(", ")}.`,
+    );
+  }
   const limit = Math.max(1, Math.min(args.limit ?? 20, 200));
+  // QA-PORT-11: name — псевдоним taskName, как в get_task_logs (PL-19).
+  const taskName = args.taskName?.trim() || args.name?.trim() || undefined;
   // PL-46: зависшие записи (schtasks /End) должны закрываться не только при
   // setup, но и при наблюдении истории — иначе остаются running навсегда.
   recoverInterruptedRuns();
-  const records = await loadHistory(args.taskName, limit, args.status);
+  const records = await loadHistory(taskName, limit, args.status);
   const output = args.compact ? compactHistoryRecords(records) : records;
 
   return {
@@ -5886,13 +5910,24 @@ const v2Plugin = Plugin.define({
       },
       get_history: async (input: unknown) => {
         // Контракт совпадает с агентским инструментом get_history:
-        // limit по умолчанию 20 (максимум 200), фильтры taskName и status.
-        const { limit, taskName, status } = input as {
+        // limit по умолчанию 20 (максимум 200), фильтры taskName (или name) и status.
+        // QA-PORT-11: RPC не проходит Zod — проверяем ключи и псевдоним name явно.
+        const record = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+        const allowed = ["name", "taskName", "status", "limit", "compact"];
+        const unknownKeys = Object.keys(record).filter((key) => !allowed.includes(key));
+        if (unknownKeys.length > 0) {
+          return {
+            success: false,
+            error: `get_history: неизвестные аргументы: ${unknownKeys.join(", ")}. Допустимо: ${allowed.join(", ")}.`,
+          };
+        }
+        const { limit, taskName, name, status } = record as {
           limit?: number;
           taskName?: string;
+          name?: string;
           status?: string;
         };
-        const filter = taskName?.trim().toLowerCase();
+        const filter = (taskName?.trim() || name?.trim() || undefined)?.toLowerCase();
         const statusFilter = status?.trim().toLowerCase();
         const max = Math.max(1, Math.min(Math.floor(limit ?? 20), 200));
         const records = await loadHistory(filter, max, statusFilter);

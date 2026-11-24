@@ -41,7 +41,11 @@ project: agent-steward
 - `get_analytics` / `get_metrics` — искать расхождения счётчиков, `tokens=0`, `costUsd=0`,
   аномальные модели (`skipped`, `(default)`).
 - `get_history` — одна запись с `error "-"`, `durationMs` > 300000, `status=skipped` —
-  повод проверить wrapper и запись usage.
+  повод проверить wrapper и запись usage. Сигнатура ровно: `taskName` (или псевдоним
+  `name`), `status`, `limit`, `compact`. Неизвестные ключи теперь отклоняются,
+  а `name` работает как псевдоним `taskName` (QA-PORT-11): раньше опечатка молча
+  игнорировалась и `get_history({name:...})` возвращал всю историю, из-за чего
+  фильтр казалось сломанным. Перед выводом «фильтр сломан» сверьте сигнатуру.
 - `get_task_logs` — пустой лог у задачи со статусом `error` means plugin-side подготовка
   обнулила файл до запуска обёртки или обёртка упала до ersten вывода.
 - `list_tasks` — `orphaned=true`, `nextRun` в прошлом, `runsTotal` без статуса — признаки

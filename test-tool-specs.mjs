@@ -27,7 +27,7 @@ const EXPECTED_HASHES = {
   "get_analytics": "670d13b7fa742830125f7858cadd7b2b0c5b5c891d430bca5503104f7fabfeaa",
   "get_audit_log": "3810746a61da06c07a4ff741373a56cecd9660ef9d4f8681d2907798dde859f0",
   "get_dashboard_info": "35585e2d07b4e1a4be6e4363578356e8f4c9f122b9b932d109bc0551e0adfe0b",
-  "get_history": "ad06186c7923e0d62f80110c2208832242a18110a086b9c06547d59c48ebf110",
+  "get_history": "d493aca4a2d50598b1320c006bb74b01ab82ab9cb1cb31b364b9666b5d71c11d",
   "get_metrics": "6cc97118655743a29c01757ab200ed3dc1152eddf6e77c314c88034dff1fdd71",
   "get_task_logs": "e283a97a52a0ceb44dae5a604411787b53fc34e327656d89cb3da6902f1e207d",
   "list_tasks": "2165c5cde418227f0eb6eb6a6cf24f2bf8b19899c5f609cf1eaa30111e35424a",
@@ -189,6 +189,20 @@ check("P-1.2: все JSON-схемы инструментов валидны д�
   }
 });
 
+// QA-PORT-11:get_history раньше молча игнорировал name и любые опечатки,
+// из-за чего фильтр казался сломанным — возвращалась вся история.
+const historySpec = specs.find((spec) => spec.name === "get_history");
+check("QA-PORT-11: get_history принимает name как псевдоним taskName", () => {
+  assert.ok(historySpec, "нет spec get_history");
+  assert.equal(historySpec.input.parse({ name: "X", limit: 3 }).name, "X");
+  assert.equal(historySpec.input.parse({ taskName: "X", compact: true }).taskName, "X");
+});
+check("QA-PORT-11: get_history отклоняет неизвестные аргументы", () => {
+  const parsed = historySpec.input.safeParse({ name: "X", bogus: 1 });
+  assert.equal(parsed.success, false, "неизвестный ключ должен отклоняться, а не игнорироваться");
+  assert.match(parsed.error?.issues?.[0]?.message ?? "", /Unrecognized key/i);
+});
+
 // QA-PORT-4: event-driven задачи доступны без admin-профиля.
 const coreSpecs = createToolSpecs({}, { AGENT_STEWARD_TOOL_PROFILE: "core" });
 check("QA-PORT-4: emit_event зарегистрирован в core-профиле", () => {
@@ -231,5 +245,17 @@ check("P-1.2: RPC-only-методы не изменились", () => {
   for (const method of RPC_ONLY) assert.ok(rpcMethods.includes(method), `${method}: нет в RPC`);
 });
 
+// QA-PORT-11: адаптеры (Code Mode/MCP/RPC) не всегда прогоняют input через
+// Zod — обработчик и RPC обязаны отклонять лишние ключи сами.
+const unknownExec = await historySpec.execute({ bogus: 1 });
+const aliasExec = await historySpec.execute({ name: "__QA_PORT_11_MISSING__", limit: 3 });
+check("QA-PORT-11: execute отклоняет неизвестный аргумент", () => {
+  const payload = JSON.parse(unknownExec.content);
+  assert.equal(payload.success, false);
+  assert.match(payload.error ?? "", /неизвестные аргументы/);
+});
+check("QA-PORT-11: execute фильтрует по name (псевдоним taskName)", () => {
+  assert.equal(JSON.parse(aliasExec.content).count, 0);
+});
 console.log(`\nTool specs: ${passed}/${passed + failed} проверок пройдено.`);
 if (failed > 0) process.exitCode = 1;
