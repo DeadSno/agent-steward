@@ -14,6 +14,7 @@ import {
 import { parseUsageFromText } from "./dist/invokers/usage-parser.js";
 import { ToolPolicy } from "./dist/invokers/tool-policy.js";
 import { scheduleTaskSchema, updateTaskSchema } from "./dist/index.js";
+import { buildBashWrapperScript } from "./dist/core/wrappers/bash.js";
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const read = (rel) => fs.readFileSync(path.join(root, rel), "utf8");
@@ -136,6 +137,40 @@ check("P-3.2: runner.ts подключён к AgentInvoker.invoke", () => {
   const src = read("src/invokers/agent-invoker.ts");
   assert.match(src, /resolveRunner\(options\.runner\)/);
   assert.match(src, /\.runner\.execute\(/);
+});
+
+check("P-3.3: смена харнесса меняет обёртку без правки ядра", () => {
+  const base = {
+    sanitizedName: "p33-contract",
+    taskName: "P3.3 contract",
+    promptFile: "/tmp/p33-contract.prompt",
+    timeoutSeconds: 60,
+    lockFile: "/tmp/p33-contract.lock",
+  };
+  const scriptFor = (harness) => {
+    const built = resolveInvoker(harness).buildCommand({ env: {} });
+    return buildBashWrapperScript({
+      ...base,
+      ...(harness === "opencode"
+        ? {}
+        : { harnessDefaults: { commandPath: built.commandPath, args: built.args } }),
+    });
+  };
+  const opencode = scriptFor("opencode");
+  const dsh = scriptFor("dsh-headless");
+  const cursor = scriptFor("cursor-cli");
+  // Исходный харнесс остаётся буквально прежним.
+  assert.match(opencode, /HARNESS_COMMAND_PATH=''/);
+  assert.match(opencode, /HARNESS_ARGS=''/);
+  assert.match(opencode, /AGENT_COMMAND_PATH="\$\{AGENT_COMMAND_PATH:-opencode\}"/);
+  assert.match(opencode, /AGENT_ARGS=\$\{AGENT_ARGS-'run --auto'\}/);
+  // Другой харнесс подставляется только через публичный контракт инвокера.
+  assert.match(dsh, /HARNESS_COMMAND_PATH='dsh'/);
+  assert.match(dsh, /HARNESS_ARGS='--headless run'/);
+  assert.match(cursor, /HARNESS_COMMAND_PATH='cursor'/);
+  assert.match(cursor, /HARNESS_ARGS='agent --print'/);
+  assert.ok(!dsh.includes("HARNESS_COMMAND_PATH='opencode'"));
+  assert.ok(!dsh.includes("--model") || !dsh.includes("HARNESS_ARGS='--model"));
 });
 
 await checkAsync("P-3.2: invoke_execution через local runner", async () => {
