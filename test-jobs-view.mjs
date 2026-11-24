@@ -4,6 +4,8 @@ import fs from "node:fs";
 
 const { groupJobsForDisplay, buildJobsView, nextJobSelection, formatJobLog } =
   await import("./dist/shared/jobs-view.js");
+const { filterJobs, isJobFilterActive, JOB_FILTER_STATUSES } =
+  await import("./dist/shared/job-filter.js");
 
 let passed = 0;
 let failed = 0;
@@ -171,6 +173,42 @@ check(
   guiSource.includes('gt("gui.backendStatusOnline")') &&
     guiSource.includes('gt("gui.backendStatusOffline")') &&
     guiSource.includes('gt("gui.backendStatusTitle"')
+);
+
+// IM-13 / D14: клиентский фильтр задач без обращения к RPC.
+const filterRows = [
+  job("Deploy-Prod", { status: "error" }),
+  job("deploy-dev", { status: "success" }),
+  job("report", { status: "running" }),
+];
+check(
+  "IM-13: фильтр по имени регистронезависим и сохраняет порядок",
+  filterJobs(filterRows, { query: "DEPLOY" }).map((j) => j.name).join(",") ===
+    "Deploy-Prod,deploy-dev"
+);
+check(
+  "IM-13: фильтр по статусу комбинируется с именем",
+  filterJobs(filterRows, { query: "deploy", status: "success" }).map((j) => j.name).join(",") ===
+    "deploy-dev"
+);
+check(
+  "IM-13: пустой запрос и all возвращают все задачи",
+  filterJobs(filterRows, { query: "  ", status: "all" }).length === 3 &&
+    !isJobFilterActive({ query: " ", status: "all" })
+);
+check(
+  "IM-13: активный фильтр и supported статусы",
+  isJobFilterActive({ query: "deploy" }) &&
+    isJobFilterActive({ status: "error" }) &&
+    JOB_FILTER_STATUSES.includes("running") &&
+    JOB_FILTER_STATUSES[0] === "all"
+);
+check(
+  "IM-13: GUI применяет фильтр к загруженному списку и не вызывает RPC",
+  guiSource.includes('data-quick-filter="name"') &&
+    guiSource.includes('data-quick-filter="status"') &&
+    guiSource.includes("filterJobs(inWorkspace") &&
+    guiSource.includes("quickFilterActive() && jobsArr().length > 0")
 );
 
 if (failed > 0) {

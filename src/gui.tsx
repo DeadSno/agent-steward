@@ -5,6 +5,7 @@ import { loadHistory, loadMetrics, type HistoryRecord } from "./history.js"
 import { buildAuditFilename, formatAuditCsv } from "./shared/audit-csv.js"
 import { buildProfileBundle, parseProfileBundle, profileSettingsPatch, serializeProfileBundle } from "./shared/profile-transfer.js"
 import { selectImportTasks } from "./shared/task-import-select.js"
+import { filterJobs, isJobFilterActive, JOB_FILTER_STATUSES } from "./shared/job-filter.js"
 import { DEFAULT_LOCALE, DEFAULT_LOCALE_MODE, normalizeLocale, normalizeLocaleMode, registerCatalog, setLocale, t, type LocaleMode, type TranslateParams, type Locale } from "./i18n.js"
 // Каталоги встраиваются в бандл на этапе сборки: в webview OpenCode нет
 // доступа к файлам пакета, поэтому ленивый fs-загрузчик из i18n.ts не работает.
@@ -433,6 +434,9 @@ export default Plugin.define({
     const [workspaces, setWorkspaces] = createSignal<Workspace[]>([])
     const [workspacesCollapsed, setWorkspacesCollapsed] = createSignal(false)
     const [workspaceFilter, setWorkspaceFilter] = createSignal("all")
+  // D14 (IM-13): локальный фильтр — не делает RPC и не перезагружает задачи.
+  const [quickFilter, setQuickFilter] = createSignal("")
+  const [quickStatus, setQuickStatus] = createSignal("all")
     const [workspaceBusy, setWorkspaceBusy] = createSignal(false)
     const [workspaceId, setWorkspaceId] = createSignal("")
     // Профили плагина (Спринт 21): отдельные БД/настройки/порт дашборда.
@@ -2831,9 +2835,20 @@ export default Plugin.define({
     const jobsArr = () => jobs() ?? []
     const visibleJobs = () => {
       const filter = workspaceFilter()
-      if (filter === "all") return jobsArr()
-      if (filter === "none") return jobsArr().filter((job) => !job.workspaceId)
-      return jobsArr().filter((job) => job.workspaceId === filter)
+      const inWorkspace =
+        filter === "all"
+          ? jobsArr()
+          : filter === "none"
+            ? jobsArr().filter((job) => !job.workspaceId)
+            : jobsArr().filter((job) => job.workspaceId === filter)
+      // D14: быстрый фильтр применяется к уже загруженному списку задач.
+      return filterJobs(inWorkspace, { query: quickFilter(), status: quickStatus() })
+    }
+    const quickFilterActive = () =>
+      isJobFilterActive({ query: quickFilter(), status: quickStatus() })
+    function resetQuickFilter() {
+      setQuickFilter("")
+      setQuickStatus("all")
     }
 
     /**
@@ -6175,18 +6190,54 @@ export default Plugin.define({
             {/* Список задач */}
             <div style="display:block;width:100%;margin-top:24px">
               <h3 style="margin:0;margin-bottom:8px;font-size:14px;font-weight:600;color:#ffffff">{gt("gui.tasksHeading")}</h3>
-              {workspaceFilter() !== "all" && (
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+                <input
+                  data-quick-filter="name"
+                  type="text"
+                  value={quickFilter()}
+                  onInput={(e) => setQuickFilter(e.currentTarget.value)}
+                  placeholder={gt("gui.taskFilterPlaceholder")}
+                  title={gt("gui.taskFilterTitle")}
+                  style="flex:1;min-width:180px;padding:6px 10px;border-radius:999px;border:1px solid #333;background:#1e1e1e;color:#e0e0e0;font-size:12px;outline:none"
+                />
+                <select
+                  data-quick-filter="status"
+                  value={quickStatus()}
+                  onChange={(e) => setQuickStatus(e.currentTarget.value)}
+                  title={gt("gui.taskFilterTitle")}
+                  style="padding:6px 10px;border-radius:999px;border:1px solid #333;background:#1e1e1e;color:#e0e0e0;font-size:12px;outline:none;cursor:pointer"
+                >
+                  {JOB_FILTER_STATUSES.map((status) => (
+                    <option key={status} value={status}>
+                      {status === "all" ? gt("gui.taskFilterAllStatuses") : status}
+                    </option>
+                  ))}
+                </select>
+                {quickFilterActive() && (
+                  <button
+                    data-quick-filter="reset"
+                    onClick={resetQuickFilter}
+                    title={gt("gui.taskFilterReset")}
+                    style="padding:6px 10px;border-radius:999px;border:1px solid #333;background:#1e1e1e;color:#e0e0e0;font-size:12px;cursor:pointer"
+                  >
+                    {gt("gui.taskFilterReset")}
+                  </button>
+                )}
+              </div>
+              {(workspaceFilter() !== "all" || quickFilterActive()) && (
                 <div style="font-size:11px;color:#8e8e93;margin-bottom:8px">
-                  {gt("gui.filterSummary", { scope: workspaceFilter() === "none" ? gt("gui.workspaceNone") : `📦 ${workspaces().find((w) => w.id === workspaceFilter())?.name ?? "workspace"}`, visible: visibleJobs().length, total: jobsArr().length })}
+                  {gt("gui.filterSummary", { scope: workspaceFilter() === "all" ? gt("gui.taskFilterScope") : workspaceFilter() === "none" ? gt("gui.workspaceNone") : `📦 ${workspaces().find((w) => w.id === workspaceFilter())?.name ?? "workspace"}`, visible: visibleJobs().length, total: jobsArr().length })}
                 </div>
               )}
               {visibleJobs().length === 0 ?
                 <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:40px 16px;color:#a0a0a6;font-size:13px;gap:10px">
                   <span style="font-size:40px;line-height:1">{winterMode() ? "🎄" : "📅"}</span>
                   <span style="max-width:380px;line-height:1.5">
-                    {winterMode()
-                      ? gt("gui.emptyWinter")
-                      : gt("gui.emptyNormal")}
+                    {quickFilterActive() && jobsArr().length > 0
+                      ? gt("gui.taskFilterEmpty")
+                      : winterMode()
+                        ? gt("gui.emptyWinter")
+                        : gt("gui.emptyNormal")}
                   </span>
                 </div>
               :
