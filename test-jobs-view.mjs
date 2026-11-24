@@ -156,6 +156,23 @@ check(
   serverSource.includes("'task:' + key") && serverSource.includes("'clone:' + key")
 );
 
+// IM-1 / D01: индикатор состояния ОС-бэкенда в GUI.
+const guiSource = fs.readFileSync(new URL("./src/gui.tsx", import.meta.url), "utf8");
+check(
+  "IM-1: индикатор бэкенда имеет зелёное/красное состояние",
+  guiSource.includes("data-backend-status={backendOnline() ? \"online\" : \"offline\"}") &&
+    guiSource.includes('"#34c759"') &&
+    guiSource.includes('"#ff3b30"') &&
+    guiSource.includes("setBackendOnline(true)") &&
+    guiSource.includes("setBackendOnline(false)")
+);
+check(
+  "IM-1: подпись индикатора локализована",
+  guiSource.includes('gt("gui.backendStatusOnline")') &&
+    guiSource.includes('gt("gui.backendStatusOffline")') &&
+    guiSource.includes('gt("gui.backendStatusTitle"')
+);
+
 if (failed > 0) {
   console.error(`\nПровалено: ${failed}, пройдено: ${passed}`);
   process.exit(1);

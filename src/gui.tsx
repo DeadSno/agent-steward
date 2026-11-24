@@ -714,14 +714,19 @@ export default Plugin.define({
     const [schedulerTitle, setSchedulerTitle] = createSignal(gt("gui.app.title"))
     // Платформа нужна форме: режим входа есть только у Планировщика Windows.
     const [schedulerPlatform, setSchedulerPlatform] = createSignal<NodeJS.Platform | "">("")
+    // D01 (IM-1): состояние бэкенда планировщика. Зелёный — RPC отвечает и ОС-бэкенд
+    // доступен, красный — запрос get_platform не удался (плагин/сервер не жив).
+    const [backendOnline, setBackendOnline] = createSignal(false)
 
     async function loadPlatformGui() {
       try {
         const info = await rpc.get_platform({})
         if (info?.title) setSchedulerTitle(info.title)
         if (info?.platform) setSchedulerPlatform(info.platform)
+        setBackendOnline(true)
       } catch (err: any) {
         console.error("RPC Error (get_platform):", err)
+        setBackendOnline(false)
       }
     }
 
@@ -3195,6 +3200,16 @@ export default Plugin.define({
                 <h2 style="margin:0;font-size:22px;font-weight:800;letter-spacing:0.2px;line-height:1.2;color:#ffffff">
                   {winterMode() ? `❄️ ${schedulerTitle()} ❄️` : schedulerTitle()}
                 </h2>
+                <div style="display:flex;align-items:center;gap:6px;margin-top:6px">
+                  <span
+                    data-backend-status={backendOnline() ? "online" : "offline"}
+                    title={gt("gui.backendStatusTitle", { platform: schedulerPlatform() || "?" })}
+                    style={`display:inline-block;width:9px;height:9px;border-radius:50%;flex:none;background:${backendOnline() ? "#34c759" : "#ff3b30"};box-shadow:0 0 6px ${backendOnline() ? "rgba(52,199,89,0.7)" : "rgba(255,59,48,0.7)"}`}
+                  />
+                  <span style="font-size:11px;color:#8e8e93">
+                    {backendOnline() ? gt("gui.backendStatusOnline") : gt("gui.backendStatusOffline")}
+                  </span>
+                </div>
                 <div style="margin-top:5px;font-size:11px;font-weight:600;letter-spacing:1.2px;text-transform:uppercase;color:#8e8e93">
                   Local AI CI/CD Orchestrator
                 </div>
