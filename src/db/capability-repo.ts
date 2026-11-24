@@ -1,5 +1,15 @@
 import type { GateVerdict } from "../core/router/escalation.js";
 import { normalizeTaskType } from "../core/router/rules.js";
+import {
+  LOCAL_SUCCESS_THRESHOLD as MATH_LOCAL_SUCCESS_THRESHOLD,
+  CLOUD_FAILURE_THRESHOLD as MATH_CLOUD_FAILURE_THRESHOLD,
+  MIN_RUNS_FOR_DECISION as MATH_MIN_RUNS_FOR_DECISION,
+  RECENT_RUNS_LIMIT as MATH_RECENT_RUNS_LIMIT,
+  decayedSuccessRate,
+  effectiveReliability,
+  type CapabilityTarget,
+} from "../core/router/capability-math.js";
+export type { CapabilityTarget };
 import { getDb, withTransaction } from "./index.js";
 import { getSetting, setSetting } from "./settings-repo.js";
 import { safeStringify } from "../text.js";
@@ -20,32 +30,28 @@ import { recordGateOutcome } from "./runs-repo.js";
  * (Explore-режим).
  */
 
-/** Куда исполнять шаг. `review` — данных достаточно, но успех нестабилен. */
-export type CapabilityTarget = "local" | "cloud" | "review" | "explore";
-
-/** Порог, выше которого шаг считается надёжным для локали. */
-export const LOCAL_SUCCESS_THRESHOLD = 0.85;
-
-/** Порог, ниже которого локальный исполнитель считается безнадёжным. */
-export const CLOUD_FAILURE_THRESHOLD = 0.3;
-
-/** Минимум исходов, чтобы карта вообще бралась судить. */
-export const MIN_RUNS_FOR_DECISION = 3;
-
-/** Сколько последних исходов хранить (1 — гейт пройден, 0 — провал). */
-export const RECENT_RUNS_LIMIT = 10;
-
 /**
- * B13: полураспад веса исхода в последних прогонах. Исход давностью
- * `SUCCESS_HALF_LIFE_RUNS` прогонов весит вдвое меньше свежего.
+ * S-2: формулы и пороги вынесены в чистый модуль `capability-math`, чтобы
+ * публичный сабпат `agent-steward/router` и SQLite-карта использовали одну
+ * реализацию. Старые имена остаются частью публичного API этого модуля.
  */
-export const SUCCESS_HALF_LIFE_RUNS = 8;
+export {
+  LOCAL_SUCCESS_THRESHOLD,
+  CLOUD_FAILURE_THRESHOLD,
+  MIN_RUNS_FOR_DECISION,
+  RECENT_RUNS_LIMIT,
+  SUCCESS_HALF_LIFE_RUNS,
+  DECAY_WEIGHT,
+  FIRST_PASS_WEIGHT,
+  decayedSuccessRate,
+  effectiveReliability,
+} from "../core/router/capability-math.js";
 
-/** B13: доля затухающего success rate в итоговой надёжности. */
-export const DECAY_WEIGHT = 0.7;
-
-/** B13: доля first-pass rate в итоговой надёжности. */
-export const FIRST_PASS_WEIGHT = 0.3;
+/** Локальные алиасы для констант, используемых в этом файле. */
+const LOCAL_SUCCESS_THRESHOLD = MATH_LOCAL_SUCCESS_THRESHOLD;
+const CLOUD_FAILURE_THRESHOLD = MATH_CLOUD_FAILURE_THRESHOLD;
+const MIN_RUNS_FOR_DECISION = MATH_MIN_RUNS_FOR_DECISION;
+const RECENT_RUNS_LIMIT = MATH_RECENT_RUNS_LIMIT;
 
 export interface CapabilityRecord {
   taskType: string;
@@ -149,40 +155,6 @@ function parseRecentRuns(raw: unknown): number[] {
   } catch {
     return [];
   }
-}
-
-/**
- * B13: экспоненциально взвешенный success rate последних исходов.
- *
- * Свежий исход весит 1, исход давностью `halfLife` прогонов — 0.5.
- * Так старые успехи не перевешивают свежие провалы, а `last_10_runs`
- * участвует в решении, а не только хранится для отчёта.
- */
-export function decayedSuccessRate(
-  runs: number[],
-  halfLife: number = SUCCESS_HALF_LIFE_RUNS,
-): number {
-  const recent = runs
-    .filter((value) => value === 0 || value === 1)
-    .slice(-RECENT_RUNS_LIMIT);
-  if (recent.length === 0) return 0;
-  const hl = Number.isFinite(halfLife) && halfLife > 0 ? halfLife : SUCCESS_HALF_LIFE_RUNS;
-  let weighted = 0;
-  let weights = 0;
-  recent.forEach((value, index) => {
-    const age = recent.length - 1 - index;
-    const weight = Math.pow(0.5, age / hl);
-    weighted += weight * value;
-    weights += weight;
-  });
-  return weights > 0 ? weighted / weights : 0;
-}
-
-/** B13: надёжность для маршрутизации — затухание плюс успех с первой попытки. */
-export function effectiveReliability(decayedRate: number, firstPassRate: number): number {
-  const decayed = Math.min(1, Math.max(0, decayedRate));
-  const firstPass = Math.min(1, Math.max(0, firstPassRate));
-  return DECAY_WEIGHT * decayed + FIRST_PASS_WEIGHT * firstPass;
 }
 
 function rowToRecord(row: Record<string, unknown>): CapabilityRecord {

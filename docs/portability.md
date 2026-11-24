@@ -11,6 +11,7 @@
 | `agent-steward/core` | `createRuntimeCore`, `buildToolSpecs`, `RuntimeDeps`, `ToolSpec`, `TOOL_NAMES`, `AgentInvoker`/`resolveInvoker`/`HARNESS_VALUES` — только контекст-free ядро (P-1.2/P-3.1); `createRuntime`/`createToolSpecs` остаются в корневом `agent-steward` и не импортируются фасадом |
 | `agent-steward/mcp` | `createMcpServer`, `startMcpServer`, `mcpToolSpecs` |
 | `agent-steward/dsh` | `defineDshTools`, `submitDshJob`, `DSH_ADAPTER_VERSION`, `DSH_HARNESS`, `buildDshCommand`, `invokeDsh` |
+| `agent-steward/router` | `createCapabilityRouter`, `routeStaticStep`, `STATIC_ROUTE_RULES`, `decayedSuccessRate`, `effectiveReliability`, `applyLearningOutcome`, `decideLearningRoute`, пороги и снимок роутера (Деталь 3.19 / S-2, см. [docs/ROUTER.md](ROUTER.md)) — без БД и `@opencode-*` |
 
 ## Команды
 

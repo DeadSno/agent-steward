@@ -265,7 +265,7 @@ src/
 npm install
 npm run build        # tsc
 npm run build:gui    # vite
-npm test             # 122 сюита, 600+ проверок
+npm test             # 123 сюита, 600+ проверок
 npm run test:en      # те же сюиты с английской локалью
 ```
 

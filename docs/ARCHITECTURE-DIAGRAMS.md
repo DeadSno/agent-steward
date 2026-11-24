@@ -55,6 +55,7 @@ src/core/prometheus.ts
 src/core/ps-wrapper.ts
 src/core/record-history.ts
 src/core/retention.ts
+src/core/router/capability-math.ts
 src/core/router/dispatch.ts
 src/core/router/escalation.ts
 src/core/router/planner.ts
@@ -117,7 +118,7 @@ src/db/tasks-repo.ts
 src/db/templates-repo.ts
 ```
 
-**Что видно:** 82 модулей в `src/core/` (из них 4 — `router/`, 10 — `scheduler/`, 1 — `wrappers/`) и 18 модулей в `src/db/`. Durable-слой вынесен в `src/db/`, оркестрация — в `src/core/`. Счётчик сверен с `src/core/**/*.ts` 24.11.2026 (71 → 80 после D-1/D-3, M-1…M-4, A-2, T-1, S3-D36 и QW-2; 81 после QW-9; 82 после S-1; 18 в `src/db/` после BN-7).
+**Что видно:** 83 модулей в `src/core/` (из них 5 — `router/`, 10 — `scheduler/`, 1 — `wrappers/`) и 18 модулей в `src/db/`. Durable-слой вынесен в `src/db/`, оркестрация — в `src/core/`. Счётчик сверен с `src/core/**/*.ts` 24.11.2026 (71 → 80 после D-1/D-3, M-1…M-4, A-2, T-1, S3-D36 и QW-2; 81 после QW-9; 82 после S-1; 83 после S-2; 18 в `src/db/` после BN-7).
 
 **Ключевые выводы:** Принцип «ядро не зависит от транспорта» реализован через [`execution.ts`](src/core/execution.ts): исполнитель (`StepExecutor`) передаётся в `executeExecutionPlan` снаружи. Отдельного `gate-repo.ts` не существует — операции с `gate_outcomes` распределены между [`execution.ts`](src/core/execution.ts), [`runs-repo.ts`](src/db/runs-repo.ts) и [`capability-repo.ts`](src/db/capability-repo.ts).
 
@@ -129,6 +130,7 @@ src/db/templates-repo.ts
 |---|---|---|
 | [src/core/execution.ts](src/core/execution.ts) | ✅ | Execution engine: `createRegisteredRunContext`, `createAdHocRunContext`, `validateRunContext`, `writeGateOutcome`, `buildExecutionPlan`, `executeExecutionPlan`. Здесь единая точка входа для registered и ad-hoc. |
 | [src/core/mission.ts](src/core/mission.ts) | ✅ | Ad-hoc missions: `normalizeMissionSpec`, `createMissionContext`, `runMission`. |
+| [src/core/router/capability-math.ts](src/core/router/capability-math.ts) | ✅ | S-2: общие формулы `first_pass_rate`, `decayedSuccessRate`, `effectiveSuccessRate`, пороги и flywheel для SQLite-карты и публичного сабпата `agent-steward/router`. |
 | [src/core/router/dispatch.ts](src/core/router/dispatch.ts) | ✅ | Capability-map routing: `routeStep`, `compileContextForRoute`, `recompileContextForRouteEscalation`. |
 | [src/core/router/escalation.ts](src/core/router/escalation.ts) | ✅ | Escalation logic: `gateVerdict`, `runGateWithRetry`, `resolveGateOutcome`, `escalateAfterGate`. |
 | [src/core/budget.ts](src/core/budget.ts) | ✅ | Budget gates: `evaluateBudgetGate`, `evaluateTaskTokenBudgetGate`, `buildBudgetReport`. |
