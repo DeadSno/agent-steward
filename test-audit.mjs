@@ -18,7 +18,7 @@ const permissions = await import("./dist/core/permissions.js");
 const dbModule = await import("./dist/db/index.js");
 
 const { recordAudit, readAuditLog, cleanupAuditLog, clearAuditLog, resetAuditCleanupThrottle, recordToolBlocked, recordTaskToolBlocks, recordEgressAttempt, runEgressGuardedWithAudit, summarizeEgressRun, EGRESS_ALLOWED_ACTION, EGRESS_BLOCKED_ACTION } = audit;
-const { clearStructuredLogs, readStructuredLogs } = await import("./dist/core/structured-log.js");
+const { appendStructuredLog, clearStructuredLogs, readStructuredLogs } = await import("./dist/core/structured-log.js");
 
 const results = [];
 function check(name, cond) {
@@ -579,6 +579,33 @@ check(
   "BN-5: дочерний процесс с process.exit сбрасывает буфер структурированного лога",
   exitFlushChild.status === 0 &&
     readStructuredLogs({ event: "bn5.exit.flush" }).total === 1,
+);
+clearStructuredLogs();
+
+// --- 8c. D13 (IM-12): корреляция логов по runId --------------------------------
+appendStructuredLog({ event: "im12.started", runId: 4242, task: "corr", ts: "2026-01-07T00:00:00.000Z" });
+appendStructuredLog({ event: "im12.hook", runId: 4242, task: "corr", ts: "2026-01-07T00:00:01.000Z" });
+appendStructuredLog({ event: "im12.other", runId: 4243, task: "corr", ts: "2026-01-07T00:00:02.000Z" });
+appendStructuredLog({ event: "im12.legacy", task: "corr", ts: "2026-01-07T00:00:03.000Z" });
+const byRun = readStructuredLogs({ runId: 4242, event: "im12.started" });
+check(
+  "D13: фильтр /api/logs по runId возвращает только события запуска",
+  byRun.total === 1 && byRun.records[0].runId === 4242,
+);
+check(
+  "D13: записи без runId не попадают в выборку запуска",
+  readStructuredLogs({ runId: 4242 }).records.every((r) => r.runId === 4242) &&
+    readStructuredLogs({ runId: 9999 }).total === 0,
+);
+check(
+  "D13: строковый runId из query-параметра работает так же",
+  readStructuredLogs({ runId: "4242" }).total === 2,
+);
+const serverSourceIm12 = fs.readFileSync(new URL("./src/server.ts", import.meta.url), "utf8");
+check(
+  "D13: /api/logs принимает и возвращает runId в filters",
+  serverSourceIm12.includes('runIdRaw = url.searchParams.get("runId")') &&
+    serverSourceIm12.includes("runId: runIdRaw"),
 );
 clearStructuredLogs();
 

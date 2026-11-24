@@ -85,6 +85,8 @@ export interface ReadStructuredLogsFilter {
   task?: string;
   status?: string;
   event?: string;
+  /** D13/IM-12: только события одного запуска (id из `record-history --start`). */
+  runId?: number | string;
   /** ISO-время: записи не раньше. */
   since?: string;
   /** ISO-время: записи не позже. */
@@ -329,6 +331,10 @@ export function readStructuredLogs(
   const task = filter.task?.trim().toLowerCase();
   const status = filter.status?.trim().toLowerCase();
   const event = filter.event?.trim().toLowerCase();
+  const runId =
+    filter.runId === undefined || filter.runId === null || filter.runId === ""
+      ? undefined
+      : String(filter.runId).trim();
   const since = filter.since?.trim();
   const until = filter.until?.trim();
 
@@ -359,6 +365,8 @@ export function readStructuredLogs(
       if (task && safeStringify(parsed.task ?? "").toLowerCase() !== task) continue;
       if (status && safeStringify(parsed.status ?? "").toLowerCase() !== status) continue;
       if (event && String(parsed.event).toLowerCase() !== event) continue;
+      // D13/IM-12: старые записи без runId не попадают в выборку запуска.
+      if (runId && String(parsed.runId ?? "") !== runId) continue;
       if (since && String(parsed.ts) < since) continue;
       if (until && String(parsed.ts) > until) continue;
       records.push(parsed as unknown as StructuredLogRecord);

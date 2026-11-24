@@ -962,6 +962,12 @@ async function handleRequest(
       const task = url.searchParams.get("task") ?? undefined;
       const status = url.searchParams.get("status") ?? undefined;
       const event = url.searchParams.get("event") ?? undefined;
+      // D13/IM-12: корреляция всех событий одного запуска по runId.
+      const runIdRaw = url.searchParams.get("runId")?.trim() || undefined;
+      if (runIdRaw && !/^\d+$/.test(runIdRaw)) {
+        sendJson(res, 400, { error: "Некорректный параметр runId: ожидается целое число." });
+        return;
+      }
       const since = url.searchParams.get("since") ?? undefined;
       const until = url.searchParams.get("until") ?? undefined;
       const limitRaw = Number(url.searchParams.get("limit") ?? 200);
@@ -976,7 +982,7 @@ async function handleRequest(
       const limit = Number.isFinite(limitRaw)
         ? Math.max(1, Math.min(5000, Math.floor(limitRaw)))
         : 200;
-      const result = readStructuredLogs({ task, status, event, since, until, limit });
+      const result = readStructuredLogs({ task, status, event, runId: runIdRaw, since, until, limit });
       if ((url.searchParams.get("format") || "").toLowerCase() === "jsonl") {
         const body = result.records.map((record) => JSON.stringify(record)).join("\n");
         const stamp = new Date().toISOString().replace(/[:.]/g, "-");
@@ -994,7 +1000,7 @@ async function handleRequest(
         total: result.total,
         malformed: result.malformed,
         limit,
-        filters: { task: task ?? null, status: status ?? null, event: event ?? null, since: since ?? null, until: until ?? null },
+        filters: { task: task ?? null, status: status ?? null, event: event ?? null, runId: runIdRaw ?? null, since: since ?? null, until: until ?? null },
       });
       return;
     }

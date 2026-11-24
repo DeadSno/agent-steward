@@ -11,6 +11,8 @@ export type StageName = (typeof STAGE_NAMES)[number];
 
 export interface StageLogLine {
   stage: StageName | null;
+  /** D13 (IM-12): id запуска из `--start`, если он известен. */
+  runId?: number;
   message: string;
 }
 
@@ -22,8 +24,9 @@ export function stageMarker(stage: StageName): string {
 }
 
 /** Форматирует строку лога: `[stage:run] Сообщение`. */
-export function formatStageLog(stage: StageName, message: string): string {
-  return `${stageMarker(stage)} ${message}`;
+export function formatStageLog(stage: StageName, message: string, runId?: number): string {
+  const run = typeof runId === "number" && Number.isFinite(runId) ? `[run:${Math.trunc(runId)}]` : "";
+  return `${stageMarker(stage)}${run} ${message}`;
 }
 
 /** Разбирает строку лога; для строк без метки возвращает stage=null. */
@@ -31,8 +34,14 @@ export function parseStageLog(line: string): StageLogLine {
   const match = /^\[stage:([^\]]+)\]\s?(.*)$/.exec(line);
   if (!match) return { stage: null, message: line };
   const name = match[1];
+  const rest = match[2] ?? "";
+  // D13/IM-12: дополнительный маркер [run:<id>] добавляется обёрткой,
+  // когда id запуска уже известен (после `record-history --start`).
+  const runMatch = /^\[run:(\d+)\]\s?/.exec(rest);
+  const runId = runMatch ? Number(runMatch[1]) : undefined;
   return {
     stage: STAGE_SET.has(name) ? (name as StageName) : null,
-    message: match[2] ?? "",
+    ...(runId !== undefined ? { runId } : {}),
+    message: runMatch ? rest.slice(runMatch[0].length) : rest,
   };
 }

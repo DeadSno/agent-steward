@@ -172,7 +172,9 @@ function Write-Log {
 # Старые парсеры продолжают видеть обычный текст; новые — префикс [stage:*].
 function Write-Stage {
     param([string]$Stage, [string]$Message)
-    Write-Log "[stage:$Stage] $Message"
+    # D13/IM-12: сквозной runId во всех этапах, когда он уже известен.
+    if ($script:runId) { Write-Log "[stage:$Stage][run:$script:runId] $Message" }
+    else { Write-Log "[stage:$Stage] $Message" }
 }
 
 # BN-3: лог задачи дописывается между прогонами. Без границы размер растёт

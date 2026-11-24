@@ -210,6 +210,26 @@ check(
     psSource.includes("function Write-Stage {"),
 );
 
+// IM-12 / D13: сквозной runId в метках этапов.
+check(
+  "D13: метка этапа несёт runId и разбирается обратно",
+  (() => {
+    const line = formatStageLog("run", "запуск агента", 4242);
+    const parsed = parseStageLog(line);
+    return line === "[stage:run][run:4242] запуск агента" && parsed.stage === "run" && parsed.runId === 4242 && parsed.message === "запуск агента";
+  })(),
+);
+check(
+  "D13: старые метки этапов без runId остаются совместимыми",
+  parseStageLog("[stage:gate] проверка").runId === undefined &&
+    parseStageLog("[stage:gate] проверка").message === "проверка" &&
+    formatStageLog("gate", "проверка") === "[stage:gate] проверка",
+);
+check(
+  "D13: PS-обёртка добавляет runId в метки этапов",
+  psSource.includes('Write-Log "[stage:$Stage][run:$script:runId] $Message"'),
+);
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\nTask logs: ${results.length - failed.length}/${results.length} проверок пройдено.`);
 process.exit(failed.length > 0 ? 1 : 0);
