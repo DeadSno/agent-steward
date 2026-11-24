@@ -912,6 +912,21 @@ function Format-LogLine {
     return $text
 }
 
+# PL-140: общая санитизация причины — используется и веткой ошибки агента
+# (PL-130), и веткой провала Quality Gate. Принимает уже отобранные строки,
+# режет ANSI/управляющие символы и ограничивает длину 200 символами.
+function Get-SanitizedReason {
+    param([string[]]$ReasonLines)
+    $errorReason = ""
+    if ($ReasonLines -and $ReasonLines.Count -gt 0) { $errorReason = [string]$ReasonLines[0] }
+    if (-not $errorReason) { return "" }
+    # Санитизация ANSI/управляющих символов и ограничение длины (как в PL-83).
+    $errorReason = [regex]::Replace($errorReason, "$esc\\[[0-9;?]*[A-Za-z]", "")
+    $errorReason = ($errorReason -replace '[^\x20-\x7EА-Яа-яЁё]', '').Trim()
+    if ($errorReason.Length -gt 200) { $errorReason = $errorReason.Substring(0, 200) + '...' }
+    return $errorReason
+}
+
 # Пытается вытащить из лога задачи информацию о расходе токенов и стоимости.
 # OpenCode может печатать строки вида "Tokens: 1234", "Usage: 1234 tokens",
 # "cost: $0.012" и т.п. Если данные не найдены — возвращает пустые строки,
@@ -1377,8 +1392,21 @@ try {
                 $script:exitCode = 1
                 $gatePassed = $false
             } elseif ($gateCode -ne 0) {
-                Write-Log "[agent-steward] ОШИБКА: Quality Gate провален. Код возврата: $gateCode"
-                $script:errorMessage = "Quality Gate провален. Код возврата: $gateCode"
+                # PL-140: причина провала — из хвоста вывода гейта (stdout/stderr,
+                # которые Invoke-HookScript складывает в lastHookStdout/lastHookStderr),
+                # а не только голый «Код возврата N». Санитизация — общим хелпером.
+                $gateOutputLines = @()
+                foreach ($gateStream in @($script:lastHookStdout, $script:lastHookStderr)) {
+                    if ($gateStream) {
+                        $gateOutputLines += @($gateStream -split "\r?\n" | Where-Object { $_ -and $_.Trim() })
+                    }
+                }
+                $gateReasonLines = @($gateOutputLines | Select-Object -Last 1)
+                $gateReason = Get-SanitizedReason -ReasonLines $gateReasonLines
+                $gateDetail = "Quality Gate провален. Код возврата: $gateCode"
+                if ($gateReason) { $gateDetail = "$gateDetail. Причина: $gateReason" }
+                Write-Log "[agent-steward] ОШИБКА: $gateDetail"
+                $script:errorMessage = $gateDetail
                 $script:exitCode = 1
                 $gatePassed = $false
             } else {
@@ -1413,16 +1441,11 @@ try {
                         Select-Object -Last 1)
                 } catch {}
             }
-            if ($reasonLines.Count -gt 0) {
-                $errorReason = [string]$reasonLines[0]
-                # Санитизация ANSI/управляющих символов и ограничение длины (как в PL-83).
-                $errorReason = [regex]::Replace($errorReason, "$esc\\[[0-9;?]*[A-Za-z]", "")
-                $errorReason = ($errorReason -replace '[^\x20-\x7EА-Яа-яЁё]', '').Trim()
-                if ($errorReason.Length -gt 200) { $errorReason = $errorReason.Substring(0, 200) + '...' }
-                if ($errorReason) {
-                    $script:errorMessage = "$($script:errorMessage). Причина: $errorReason"
-                    Write-Log "[agent-steward] PL-130: причина ошибки агента: $errorReason"
-                }
+            # PL-140: санитизация вынесена в общий хелпер (используется и гейтом).
+            $errorReason = Get-SanitizedReason -ReasonLines $reasonLines
+            if ($errorReason) {
+                $script:errorMessage = "$($script:errorMessage). Причина: $errorReason"
+                Write-Log "[agent-steward] PL-130: причина ошибки агента: $errorReason"
             }
         }
         Write-Log "[agent-steward] ОШИБКА: задача '$TaskName' завершилась с кодом $($script:exitCode). $script:errorMessage"

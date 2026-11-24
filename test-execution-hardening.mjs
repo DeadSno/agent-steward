@@ -1418,6 +1418,36 @@ try {
   check("PL-130: секция не выбросила исключение", false, "section threw");
 }
 
+// --- PL-140: причина провала Quality Gate в errorMessage и логе (строковые регрессии) ---
+// Проверяем WRAPPER_SCRIPT из dist — без реального powershell и планировщика.
+try {
+  check(
+    "PL-140: общий хелпер санитизации определён и вызывается и гейтом, и агентом",
+    psWrapperScript.includes("function Get-SanitizedReason") &&
+      psWrapperScript.includes("Get-SanitizedReason -ReasonLines $gateReasonLines") &&
+      psWrapperScript.includes("Get-SanitizedReason -ReasonLines $reasonLines")
+  );
+  check(
+    "PL-140: причина гейта извлекается из хвоста вывода (lastHookStdout/lastHookStderr)",
+    psWrapperScript.includes(
+      "foreach ($gateStream in @($script:lastHookStdout, $script:lastHookStderr))"
+    ) && psWrapperScript.includes("$gateOutputLines | Select-Object -Last 1")
+  );
+  check(
+    "PL-140: причина гейта форматируется в errorMessage и Write-Log, а не только «Код возврата N»",
+    psWrapperScript.includes('$gateDetail = "Quality Gate провален. Код возврата: $gateCode"') &&
+      psWrapperScript.includes('$gateDetail = "$gateDetail. Причина: $gateReason"') &&
+      psWrapperScript.includes("$script:errorMessage = $gateDetail") &&
+      psWrapperScript.includes('Write-Log "[agent-steward] ОШИБКА: $gateDetail"') &&
+      !psWrapperScript.includes(
+        'Write-Log "[agent-steward] ОШИБКА: Quality Gate провален. Код возврата: $gateCode"'
+      )
+  );
+} catch (err) {
+  console.log("[diag] PL-140 section THREW:", err instanceof Error ? err.stack : String(err));
+  check("PL-140: секция не выбросила исключение", false, "section threw");
+}
+
 // --- PL-80/81/101/104/105: регрессии коммит-хелперов и обёртки (B4) ---
 try {
   const repoRoot = process.cwd();
