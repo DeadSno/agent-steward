@@ -93,13 +93,46 @@ check("P-1.3: npm pack --dry-run включает все точки входа �
   const required = ["docs/portability.md", "docs/mcp-setup.md", "skills/scheduled-job-best-practices/SKILL.md"];
   // QA-PORT-9: npm не упаковывает junction dist/ (свежий worktree W-1).
   // В CI dist/ — реальная папка после npm run build, поэтому там проверяем и его.
-  if (fs.lstatSync(path.join(root, "dist")).isSymbolicLink()) {
+  const distLink = path.join(root, "dist");
+  const distIsLink = fs.lstatSync(distLink).isSymbolicLink();
+  if (process.env.CI === "true" && distIsLink) {
+    assert.fail("CI собирает пакет из junction dist/ — tarball будет без entrypoint'ов (QA-PORT-9)");
+  }
+  if (distIsLink) {
     console.warn("dist/ — junction: npm pack локально не включает dist; проверка артефактов ниже в CI (QA-PORT-9)");
   } else {
     required.push("dist/index.js", "dist/core-entry.js", "dist/mcp.js", "dist/dsh.js", "dist/cli.js", "dist/serve.js");
   }
   for (const file of required) {
     assert(files.includes(file), `в tarball нет ${file}`);
+  }
+});
+
+check("QA-PORT-9: npm не упаковывает junction dist/ (новая проверка из чистого чек-аута)", () => {
+  // Воспроизводим ровно тот случай, что ломает publish из свежего worktree:
+  // package.json + junction dist/, никаких real-файлов dist. Пакет получается
+  // без entrypoint'ов — поэтому публиковать можно только из чистого чек-аута.
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "steward-pack-junction-"));
+  const link = path.join(tmp, "dist");
+  try {
+    fs.copyFileSync(path.join(root, "package.json"), path.join(tmp, "package.json"));
+    fs.symlinkSync(path.join(root, "dist"), link, "junction");
+    const packed = spawnSync("npm pack --dry-run --json --ignore-scripts", {
+      cwd: tmp,
+      encoding: "utf8",
+      shell: true,
+    });
+    assert.equal(packed.status, 0, packed.stderr || "npm pack --dry-run в junction-каталоге завершился ошибкой");
+    const files = Object.values(JSON.parse(packed.stdout))[0].files.map((entry) => entry.path);
+    assert(files.includes("package.json"), "в tarball нет package.json");
+    assert(
+      !files.some((file) => file.startsWith("dist/")),
+      "npm упаковал junction dist/ — ожидалось, что dist/ отсутствует в tarball (QA-PORT-9)",
+    );
+  } finally {
+    // Удаляем junction явно: rm -recursive не должен зайти в реальный dist/.
+    try { fs.unlinkSync(link); } catch {}
+    fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3 });
   }
 });
 

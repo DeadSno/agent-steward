@@ -11,7 +11,7 @@
 > и фиксируются в [CHANGELOG.md](./CHANGELOG.md) — больше нигде.
 >
 > **Нумерация.** Нумерация сохранена для преемственности ссылок: открытые детали —
-> 3.14, 3.15, 3.16, 3.17 и новые стратегические 3.18/3.19; следующий раздел — 4.
+> 3.15, 3.16 и новая стратегическая 3.19; следующий раздел — 4.
 
 Текущая версия: **agent-steward 0.0.7** (24.11.2026).
 Legacy: `opencode-windows-scheduler@1.5.9`.
@@ -30,8 +30,6 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 **Задача X-4 — Dependabot** · P2 · 🔄
 
 ## QA-находки (проверка работоспособности плагина 24.11.2026)
-
-- [ ] QA-PORT-9: `npm pack --dry-run --json` из worktree, где `dist/` — junction на основной чек-аут (PL-109/W-1), вообще не включает `dist/*` в tarball (`npm` не упаковывает симлинки/джункшены): publish из такого worktree даст битый пакет без entrypoint'ов — P2. Действие: проверять состав tarball в CI на реальной сборке (добавлено в P-1.3) и публиковать только из чистого чек-аута; локальный тест при junction проверяет только доки и скилл. Обнаружено 24.11.2026.
 
 - [ ] QA-PORT-12: CLI-помощник `dist/core/worktree-run.js` молча ничего не делает, когда `dist/` — junction на основной чек-аут (W-1): проверка `import.meta.url === pathToFileURL(path.resolve(process.argv[1]))` не срабатывает, `main()` не вызывается, exit 0 и пустой stdout (`node test-worktree.mjs` в таком worktree — 104/113, в чек-ауте с реальным `dist/` — 107/107); с флагами `--preserve-symlinks --preserve-symlinks-main` помощник работает — P2. Действие: сравнивать реальные пути (`fs.realpathSync`) при определении entrypoint'а либо запускать helper в тестах с флагами симлинков, как в `test-mcp-adapter.mjs`. Обнаружено 24.11.2026.
 - [ ] QA-PORT-13: `node test-i18n.mjs` в worktree, где `dist/` — junction на `.steward-dev/dist` (W-1), падает: `catalogPath()` (`src/i18n.ts`) ищет каталоги рядом с модулем, то есть в `.steward-dev/locales`, где есть `ru/en/zh.json`, но нет `tr.json`; `absentKeys('tr')` не пуст, `availableLocales()` = `[ru,en,zh]`, а дальше тест падает с `ERR_INVALID_ARG_TYPE` на `fs.readFileSync(null)` (`test-i18n.mjs:144`) — P2. Действие: синхронизировать `locales/tr.json` в dev-установку при создании worktree или расширить `candidateCatalogDirs()` поиском каталога рядом с тестом/корнем репозитория; в чистом чек-ауте с реальным `dist/` дефект не проявляется. Обнаружено 24.11.2026.
