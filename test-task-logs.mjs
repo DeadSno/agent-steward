@@ -24,6 +24,9 @@ const {
   TASK_LOG_TRIM_MARKER,
 } = await import("./dist/core/mission.js");
 const { saveTask, deleteTask } = await import("./dist/db/tasks-repo.js");
+const { STAGE_NAMES, stageMarker, formatStageLog, parseStageLog } = await import(
+  "./dist/shared/stage-log.js"
+);
 
 const results = [];
 function check(name, cond) {
@@ -177,6 +180,34 @@ check(
     bashSource.indexOf("Log rotated (size limit)") <
       bashSource.indexOf("=== Run started %s (%s)") &&
     psSource.includes(TASK_LOG_TRIM_MARKER),
+);
+
+// IM-3 / D03: метки этапов [stage:*] — формат, парсер и обратная совместимость.
+check(
+  "IM-3: четыре этапа имеют machine-readable метки",
+  STAGE_NAMES.join(",") === "preFlight,run,postFlight,gate" &&
+    stageMarker("gate") === "[stage:gate]",
+);
+check(
+  "IM-3: форматирование и разбор метки обратимы",
+  STAGE_NAMES.every((stage) => {
+    const line = formatStageLog(stage, `сообщение ${stage}`);
+    const parsed = parseStageLog(line);
+    return parsed.stage === stage && parsed.message === `сообщение ${stage}`;
+  }),
+);
+check(
+  "IM-3: старые строки без метки разбираются как stage=null",
+  parseStageLog("[agent-steward] Pre-flight: npm test").stage === null &&
+    parseStageLog("[stage:unknown] текст").stage === null,
+);
+check(
+  "IM-3: PS-обёртка пишет метки всех этапов",
+  psSource.includes('Write-Stage -Stage "preFlight"') &&
+    psSource.includes('Write-Stage -Stage "run"') &&
+    psSource.includes('Write-Stage -Stage "postFlight"') &&
+    psSource.includes('Write-Stage -Stage "gate"') &&
+    psSource.includes("function Write-Stage {"),
 );
 
 const failed = results.filter((r) => !r.ok);

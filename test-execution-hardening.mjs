@@ -1555,6 +1555,14 @@ try {
     psWrapperScript.includes("Частичные правки сохранены в $quotaDiff") &&
       psWrapperScript.includes("$modelHint"),
   );
+  check(
+    "IM-3: PS-обёртка помечает этапы preFlight/run/postFlight/gate",
+    psWrapperScript.includes("function Write-Stage {") &&
+      psWrapperScript.includes('Write-Stage -Stage "preFlight"') &&
+      psWrapperScript.includes('Write-Stage -Stage "run"') &&
+      psWrapperScript.includes('Write-Stage -Stage "postFlight"') &&
+      psWrapperScript.includes('Write-Stage -Stage "gate"'),
+  );
 
   // PL-99: закрытая находка отсекается до запуска задачи.
   const openFinding = detectStaleTask({

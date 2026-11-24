@@ -168,6 +168,13 @@ function Write-Log {
     Write-Host $line
 }
 
+# IM-3 / D03: machine-readable метка этапа в обычной строке лога.
+# Старые парсеры продолжают видеть обычный текст; новые — префикс [stage:*].
+function Write-Stage {
+    param([string]$Stage, [string]$Message)
+    Write-Log "[stage:$Stage] $Message"
+}
+
 # BN-3: лог задачи дописывается между прогонами. Без границы размер растёт
 # бесконечно, а get_task_logs/recorder читают весь файл. Перед новым запуском
 # оставляем только хвост — маркер Run started нового прогона будет в начале.
@@ -1232,7 +1239,7 @@ try {
 
     # Pre-flight: выполняется ДО основной задачи. Ненулевой код отменяет запуск.
     if ($BeforeScript) {
-        Write-Log "[agent-steward] Pre-flight: $BeforeScript"
+        Write-Stage -Stage "preFlight" -Message "Pre-flight: $BeforeScript"
         $preCode = Invoke-HookScript -Command $BeforeScript
         # PL-69: Invoke-HookScript складывает потоки в $script:lastHookStderr/$script:lastHookStdout.
         $preErrorLines = @($script:lastHookStderr -split "\r?\n") | Where-Object { $_ -ne "" }
@@ -1390,6 +1397,7 @@ try {
     # (retryCount/retryDelay в БД), иначе на Windows получалось (1+N)^2
     # запусков: N попыток внутри обёртки × N+1 запуск из recorder'а.
     # Параметры -RetryCount/-RetryDelaySeconds принимаются, но игнорируются.
+    Write-Stage -Stage "run" -Message "Запуск агента: $opencodeCmd"
     $script:exitCode = Invoke-OpenCodeOnce -CommandPath $opencodeCmd -Arguments $opencodeArgs
     # PL-81: код выхода процесса запоминаем до всех классификаторов (квота и т.д.),
     # чтобы потом отличить "ошибку агента" от "ошибки верификации".
@@ -1577,7 +1585,7 @@ try {
         }
 
         if ($gateIntegrityOk) {
-            Write-Log "[agent-steward] Запуск Quality Gate: $QualityGate"
+            Write-Stage -Stage "gate" -Message "Запуск Quality Gate: $QualityGate"
             # Тот же таймаут, что у хуков: зависший gate не должен держать lock.
             # PL-107: хук видит список файлов задачи -> scoped lint вместо eslint src.
             $gateCode = Invoke-HookScript -Command $QualityGate -AllowPaths $GateAllowPaths
@@ -1664,7 +1672,7 @@ try {
 } finally {
     # Post-flight: выполняется ВСЕГДА, даже если основная задача упала.
     if ($AfterScript) {
-        Write-Log "[agent-steward] Post-flight: $AfterScript"
+        Write-Stage -Stage "postFlight" -Message "Post-flight: $AfterScript"
         $postCode = Invoke-HookScript -Command $AfterScript
         Write-HookStructuredOutput -Phase "postFlight" -ExitCode $postCode
         if ($postCode -ne 0) {
