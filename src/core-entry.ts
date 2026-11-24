@@ -61,6 +61,23 @@ export {
   type GateTaskRow,
   type TokenScorecard,
 } from "./core/reliability-scorecard.js";
+// S-4: библиотека gate-passed рецептов с проверкой объективных доказательств.
+export {
+  RECIPE_LIBRARY_FORMAT,
+  RECIPE_LIBRARY_VERSION,
+  RECIPES_METHODOLOGY_URL,
+  getRecipe,
+  getRecipeLibrary,
+  listRecipes,
+  verifyAllRecipes,
+  verifyRecipe,
+  verifyRecipeById,
+  type GatePassedRecipe,
+  type RecipeGate,
+  type RecipeGateEvidence,
+  type RecipeLibrary,
+  type RecipeVerification,
+} from "./core/recipes.js";
 export {
   TOOL_NAMES,
   buildToolSpecs,

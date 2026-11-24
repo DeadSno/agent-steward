@@ -274,7 +274,7 @@ src/
 npm install
 npm run build        # tsc
 npm run build:gui    # vite
-npm test             # 124 test suites, 600+ checks
+npm test             # 125 test suites, 600+ checks
 npm run test:en      # same suites with the English locale
 ```
 
@@ -293,6 +293,7 @@ npm run test:en      # same suites with the English locale
 - [docs/PIPELINE.md](PIPELINE.md) —— 流水线即代码：文件格式、CLI、幂等 apply。
 - [docs/SAVINGS.md](SAVINGS.md) —— "Saved $" 估算如何计算。
 - [RELIABILITY.md](RELIABILITY.md) —— 客观门禁与节省 token 的公开指标（S-3，English）。
+- [RECIPES.md](RECIPES.md) —— 带可验证证据的门禁通过配方库（S-4，English）。
 - [CROSS_PLATFORM.md](../CROSS_PLATFORM.md) —— Windows / macOS / Linux 的差异与后端。
 - [文档站点（GitHub Pages 操作手册）](FEATURES.md#documentation-site-github-pages) —— 文档如何构建与发布。
 

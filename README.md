@@ -287,7 +287,7 @@ Tasks are **interactive only** by default: Task Scheduler starts them only while
 npm install
 npm run build        # tsc
 npm run build:gui    # vite
-npm test             # 124 test suites, 600+ checks
+npm test             # 125 test suites, 600+ checks
 npm run test:en      # same suites with the English locale
 ```
 
@@ -311,6 +311,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 - [docs/PIPELINE.md](docs/PIPELINE.md) — pipeline-as-code: file format, CLI, idempotent apply.
 - [docs/SAVINGS.md](docs/SAVINGS.md) — how the "Saved $" estimate is calculated.
 - [docs/RELIABILITY.md](docs/RELIABILITY.md) — public scorecard of objective gates and saved tokens (S-3).
+- [docs/RECIPES.md](docs/RECIPES.md) — gate-passed recipe library with verifiable evidence (S-4).
 - [CROSS_PLATFORM.md](CROSS_PLATFORM.md) — Windows / macOS / Linux differences and backends.
 - [Documentation site (GitHub Pages runbook)](docs/FEATURES.md#documentation-site-github-pages) — how the docs are built and published.
 

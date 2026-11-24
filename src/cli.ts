@@ -9,6 +9,8 @@
  *   agent-steward pipeline export --pipeline <name> [--out <file>]
  *   agent-steward apply -f <file> [--dry-run] [--json]   # алиас pipeline apply
  *   agent-steward scorecard <file.json> [--json]          # S-3 метрика надёжности
+ *   agent-steward recipes list [--task-type <type>] [--json]  # S-4 библиотека рецептов
+ *   agent-steward recipes verify [id] [--json]            # S-4 проверка доказательств гейтов
  *
  * Exit-коды: 0 — успех, 1 — ошибки валидации/применения, 2 — неверные аргументы.
  */
@@ -19,6 +21,12 @@ import { listTasks } from "./db/tasks-repo.js";
 import { loadPipelineFile } from "./core/pipeline-io.js";
 import { toOpenPipelineSpec } from "./core/pipeline-open-spec.js";
 import { buildReliabilityScorecard } from "./core/reliability-scorecard.js";
+import {
+  getRecipe,
+  getRecipeLibrary,
+  verifyAllRecipes,
+  verifyRecipe,
+} from "./core/recipes.js";
 import { executePipelineApply, planPipelineApply } from "./core/pipeline-apply.js";
 import { tasksToPipelineSpec } from "./core/pipeline-map.js";
 import { saveTaskDefinition, type TaskDefinition } from "./task-transfer.js";
@@ -34,6 +42,8 @@ const USAGE = `agent-steward — планировщик agent jobs
   agent-steward pipeline export --pipeline <name> [--out <file>]
   agent-steward apply -f <file> [--dry-run] [--json]
   agent-steward scorecard <file.json> [--json]
+  agent-steward recipes list [--task-type <type>] [--json]
+  agent-steward recipes verify [id] [--json]
   agent-steward mcp
   agent-steward serve [--port <number>]
 
@@ -43,6 +53,7 @@ const USAGE = `agent-steward — планировщик agent jobs
   apply     создать/обновить задачи из файла (идемпотентно)
   export    выгрузить задачи pipeline из БД обратно в YAML
   scorecard публичная метрика объективных гейтов и сэкономленных токенов (S-3)
+  recipes   библиотека gate-passed рецептов и проверка их доказательств (S-4)
   mcp       поднять 34 инструмента как MCP-сервер на stdio
   serve     поднять локальный дашборд без OpenCode
 
@@ -52,6 +63,7 @@ const USAGE = `agent-steward — планировщик agent jobs
   -f, --file    файл pipeline для алиаса apply
   --pipeline    имя pipeline для export
   --out         файл для export (по умолчанию stdout)
+  --task-type   фильтр рецептов по типу задачи (recipes list)
 `;
 
 interface PrintedIssue {
@@ -260,6 +272,89 @@ async function runScorecard(args: string[]): Promise<number> {
   );
   console.log(`Методика: ${card.methodologyUrl}`);
   return 0;
+}
+
+/** S-4: список gate-passed рецептов и проверка их доказательств. */
+async function runRecipes(args: string[]): Promise<number> {
+  const [subcommand, ...rest] = args;
+  const json = rest.includes("--json");
+  if (!subcommand) {
+    console.error("Не указана подкоманда recipes.\n");
+    console.error(USAGE);
+    return 2;
+  }
+  if (subcommand === "--help" || subcommand === "-h" || subcommand === "help") {
+    console.log(USAGE);
+    return 0;
+  }
+
+  if (subcommand === "list") {
+    const taskType = flagValue(rest, "--task-type");
+    const library = getRecipeLibrary();
+    const recipes = taskType
+      ? library.recipes.filter((recipe) => recipe.taskType === taskType)
+      : library.recipes;
+    if (json) {
+      console.log(
+        JSON.stringify(
+          { ...library, recipeCount: recipes.length, recipes },
+          null,
+          2,
+        ),
+      );
+      return 0;
+    }
+    console.log(`${library.format} v${library.version}: ${recipes.length} рецептов`);
+    for (const recipe of recipes) {
+      console.log(
+        `  ${recipe.id} [${recipe.taskType}] — ${recipe.title} (гейтов: ${recipe.gates.length})`,
+      );
+    }
+    console.log(`Методика: ${library.methodologyUrl}`);
+    return 0;
+  }
+
+  if (subcommand === "verify") {
+    const id = rest.find((arg) => !arg.startsWith("--"));
+    if (id) {
+      const recipe = getRecipe(id);
+      if (!recipe) {
+        console.error(`Рецепт «${id}» не найден.`);
+        return 1;
+      }
+      const result = verifyRecipe(recipe);
+      if (json) {
+        console.log(JSON.stringify(result, null, 2));
+      } else {
+        console.log(
+          `${result.ok ? "OK" : "FAIL"} ${result.recipeId}: ` +
+            `${result.verifiedGates}/${result.gateCount} гейтов подтверждено`,
+        );
+        for (const reason of result.reasons) console.error(`  - ${reason}`);
+        console.log(`Методика: ${result.methodologyUrl}`);
+      }
+      return result.ok ? 0 : 1;
+    }
+
+    const results = verifyAllRecipes();
+    if (json) {
+      console.log(JSON.stringify(results, null, 2));
+    } else {
+      for (const result of results) {
+        console.log(
+          `${result.ok ? "OK" : "FAIL"} ${result.recipeId}: ` +
+            `${result.verifiedGates}/${result.gateCount} гейтов подтверждено`,
+        );
+        for (const reason of result.reasons) console.error(`  - ${reason}`);
+      }
+      console.log(`Всего: ${results.length}, подтверждено: ${results.filter((r) => r.ok).length}`);
+    }
+    return results.every((result) => result.ok) ? 0 : 1;
+  }
+
+  console.error(`Неизвестная подкоманда recipes «${subcommand}».\n`);
+  console.error(USAGE);
+  return 2;
 }
 
 async function runExport(args: string[]): Promise<number> {
@@ -506,6 +601,9 @@ async function main(argv: string[]): Promise<number> {
       return 0;
     }
     return runScorecard([command, ...rest].filter((value): value is string => Boolean(value)));
+  }
+  if (group === "recipes") {
+    return runRecipes([command, ...rest].filter((value): value is string => Boolean(value)));
   }
   if (group !== "pipeline") {
     console.error(`Неизвестная команда «${group}».\n`);
