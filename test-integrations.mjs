@@ -42,6 +42,7 @@ const {
   timingSafeStringEqual,
 } = await import("./dist/integrations.js");
 const { renderPrometheusMetrics } = await import("./dist/core/prometheus.js");
+const { selectImportTasks, parseImportNames } = await import("./dist/shared/task-import-select.js");
 const { buildOtlpExport } = await import("./dist/core/otel.js");
 const {
   startDashboardServer,
@@ -575,6 +576,32 @@ assert(
     backupSource.includes("BEGIN IMMEDIATE") &&
     backupSource.includes("createHash"),
   "BN-7: онлайн-снимок, логический restore и проверка SHA-256 присутствуют в реализации"
+);
+
+// D12 (IM-11): выборочный импорт и маппинг имён.
+const importTasks = [
+  { name: "A", schedule: "0 1 * * *", prompt: "a", dependsOn: [] },
+  { name: "B", schedule: "0 2 * * *", prompt: "b", dependsOn: ["A"] },
+  { name: "C", schedule: "0 3 * * *", prompt: "c", dependsOn: ["B"], nextTaskOnSuccess: "A" },
+];
+const partial = selectImportTasks(importTasks, {
+  names: ["b"],
+  nameMap: { B: "B-new" },
+});
+assert(partial.tasks.length === 1 && partial.tasks[0].name === "B-new", "IM-11: выбрана одна задача и применён маппинг имени");
+assert(partial.skipped.join(",") === "A,C", "IM-11: невыбранные задачи помечены пропущенными");
+assert(partial.tasks[0].dependsOn === undefined, "IM-11: ссылка на неимпортированную задачу удалена");
+const renamed = selectImportTasks(importTasks, {
+  names: ["A", "B", "C"],
+  nameMap: { A: "A2" },
+});
+assert(
+  renamed.tasks[1].dependsOn?.[0] === "A2" && renamed.tasks[2].nextTaskOnSuccess === "A2",
+  "IM-11: маппинг имени распространён на DAG-зависимости"
+);
+assert(
+  parseImportNames("A, B=New; C")?.join("|") === "A|B=New|C",
+  "IM-11: список имён из GUI разбирается по запятой и точке с запятой"
 );
 
 closeDb();

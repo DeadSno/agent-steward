@@ -4,6 +4,7 @@ import { SchedulerRpc } from "./rpc.js"
 import { loadHistory, loadMetrics, type HistoryRecord } from "./history.js"
 import { buildAuditFilename, formatAuditCsv } from "./shared/audit-csv.js"
 import { buildProfileBundle, parseProfileBundle, profileSettingsPatch, serializeProfileBundle } from "./shared/profile-transfer.js"
+import { selectImportTasks } from "./shared/task-import-select.js"
 import { DEFAULT_LOCALE, DEFAULT_LOCALE_MODE, normalizeLocale, normalizeLocaleMode, registerCatalog, setLocale, t, type LocaleMode, type TranslateParams, type Locale } from "./i18n.js"
 // Каталоги встраиваются в бандл на этапе сборки: в webview OpenCode нет
 // доступа к файлам пакета, поэтому ленивый fs-загрузчик из i18n.ts не работает.
@@ -1693,6 +1694,8 @@ export default Plugin.define({
     const [exportBusy, setExportBusy] = createSignal(false)
     const [importBusy, setImportBusy] = createSignal(false)
     const [importFile, setImportFile] = createSignal<File | null>(null)
+    // D12 (IM-11): «name1=new1; name2; name3=new3» — выбираемые задачи и маппинг имён.
+    const [importSelection, setImportSelection] = createSignal("")
 
     async function handleExport() {
       setExportBusy(true)
@@ -1735,7 +1738,30 @@ export default Plugin.define({
       }
       setImportBusy(true)
       try {
-        const text = await file.text()
+        let text = await file.text()
+        // D12 (IM-11): применяем выбор подмножества и маппинг имён на клиенте —
+        // RPC-контракт import_tasks остаётся неизменным (только поле data).
+        const selection = importSelection()
+        if (selection.trim()) {
+          const entries = selection.split(/[;,]/).map((part) => part.trim()).filter(Boolean)
+          const names = entries.filter((part) => !part.includes("="))
+          const nameMap: Record<string, string> = {}
+          for (const part of entries) {
+            if (!part.includes("=")) continue
+            const [from, to] = part.split(/=(.+)/)
+            if (from?.trim() && to?.trim()) nameMap[from.trim()] = to.trim()
+          }
+          const raw = JSON.parse(text)
+          const list = Array.isArray(raw) ? raw : raw.tasks
+          if (Array.isArray(list)) {
+            const picked = selectImportTasks(list, {
+              names: names.length ? names : undefined,
+              nameMap,
+            })
+            const payload = Array.isArray(raw) ? picked.tasks : { ...raw, tasks: picked.tasks }
+            text = JSON.stringify(payload)
+          }
+        }
         const result = await rpc.import_tasks({ data: text })
         if (!result.success) {
           ctx.toast.show({ title: gt("gui.toast.importFailed"), variant: "error", description: result.error })
@@ -3462,7 +3488,16 @@ export default Plugin.define({
               </div>
             )}
 
-            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;align-items:center">
+              <input
+                data-import-selection
+                type="text"
+                value={importSelection()}
+                onInput={(e) => setImportSelection(e.currentTarget.value)}
+                placeholder={gt("gui.importSelectionPlaceholder")}
+                title={gt("gui.importSelectionTitle")}
+                style="flex:1;min-width:220px;padding:6px 10px;border-radius:6px;border:1px solid #333;background:#1e1e1e;color:#e0e0e0;font-size:12px;outline:none"
+              />
               <button
                 onClick={handleExport}
                 disabled={exportBusy()}

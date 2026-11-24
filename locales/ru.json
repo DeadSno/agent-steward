@@ -237,6 +237,8 @@
   "gui.historyOlderThan": "старше {days} дн.",
   "gui.historyUpToRecords": "до {count} записей",
   "gui.import": "Импорт",
+  "gui.importSelectionPlaceholder": "Имена: A; B=НовоеИмя",
+  "gui.importSelectionTitle": "Выборочный импорт: перечислите имена задач через «;». Формат «старое=новое» переименовывает задачу и её DAG-связи. Пусто — импортировать все.",
   "gui.importBusy": "Импорт...",
   "gui.job.activeDaysTitle": "Запуск только в дни: {days}",
   "gui.job.cancelMatrixTitle": "Отменить выполняющиеся клоны матрицы \"{name}\"",

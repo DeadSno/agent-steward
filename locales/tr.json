@@ -237,6 +237,8 @@
   "gui.historyOlderThan": "{days} günden eski",
   "gui.historyUpToRecords": "en fazla {count} kayıt",
   "gui.import": "İçe aktar",
+  "gui.importSelectionPlaceholder": "Adlar: A; B=YeniAd",
+  "gui.importSelectionTitle": "Seçici içe aktarma: görev adlarını ';' ile ayırın. 'eski=yeni' görevi ve DAG bağlantılarını yeniden adlandırır. Boşsa tümünü içe aktarır.",
   "gui.importBusy": "İçe aktarılıyor...",
   "gui.job.activeDaysTitle": "Yalnızca şu günlerde çalıştır: {days}",
   "gui.job.cancelMatrixTitle": "Çalışan matris klonlarını iptal et \"{name}\"",

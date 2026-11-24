@@ -102,6 +102,7 @@ import {
   type DeleteOutcome,
 } from "./shared/batch-delete.js";
 import { buildAuditFilename, formatAuditCsv } from "./shared/audit-csv.js";
+import { selectImportTasks } from "./shared/task-import-select.js";
 import {
   defaultNotifications,
   loadSettings,
@@ -1644,6 +1645,12 @@ export const manageProfilesSchema = z.object({
 export const transferTasksSchema = z.object({
   action: z.enum(["export", "import"]).describe("export — JSON snapshot; import — recreate tasks from a snapshot."),
   data: z.string().optional().describe("JSON produced by export (required for import)."),
+  names: z.array(z.string()).optional().describe("Import only these task names (case-insensitive)."),
+  nameMap: z.record(z.string(), z.string()).optional().describe("Rename imported tasks: original name → new name."),
+  keepMissingDeps: z
+    .boolean()
+    .optional()
+    .describe("Keep references to tasks excluded from the import (default: drop them)."),
 });
 
 /** send_notification — проверка уведомлений и дайджест. */
@@ -4225,7 +4232,13 @@ const transferTasksExecute = wrapExecute<TransferArgs>(async (args) => {
     return { content: JSON.stringify({ success: false, error: t("tool.transfer.importData") }) };
   }
   const parsed = parseImportJson(args.data);
-  if (parsed.tasks.length === 0) {
+  // D12 (IM-11): выборочный импорт и маппинг имён до создания задач.
+  const selection = selectImportTasks(parsed.tasks, {
+    names: args.names,
+    nameMap: args.nameMap,
+    keepMissingDeps: args.keepMissingDeps,
+  });
+  if (selection.tasks.length === 0) {
     return {
       content: JSON.stringify({
         success: false,
@@ -4236,8 +4249,8 @@ const transferTasksExecute = wrapExecute<TransferArgs>(async (args) => {
   }
 
   const imported: string[] = [];
-  const errors: string[] = [...parsed.errors];
-  for (const def of parsed.tasks) {
+  const errors: string[] = [...parsed.errors, ...selection.warnings];
+  for (const def of selection.tasks) {
     try {
       await schedulerCreateTask(
         def.name,
@@ -4303,7 +4316,13 @@ const transferTasksExecute = wrapExecute<TransferArgs>(async (args) => {
   }
   await refreshTriggers();
   return {
-    content: JSON.stringify({ success: errors.length === 0, imported, errors }),
+    content: JSON.stringify({
+      success: errors.length === 0,
+      imported,
+      errors,
+      skipped: selection.skipped,
+      mapped: selection.mapped,
+    }),
   };
 });
 

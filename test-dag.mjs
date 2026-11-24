@@ -10,6 +10,7 @@ import { closeDb } from "./dist/db/index.js";
 // record-history.js безопасен для импорта: CLI-режим запускается только при
 // прямом вызове файла (guard через import.meta.url).
 const { selectDependentsToTrigger } = await import("./dist/core/record-history.js");
+const { selectImportTasks } = await import("./dist/shared/task-import-select.js");
 
 // Упорядоченная очистка временной директории теста: на Windows force:true не
 // помогает при открытых SQLite-хендлах / WAL / антивирусе, поэтому закрываем
@@ -242,6 +243,20 @@ ok("История: при отсутствии данных поля tokens/cos
   assert.ok(noTokens);
   assert.equal(noTokens.tokens, null);
   assert.equal(noTokens.cost_usd, null);
+});
+
+ok("IM-11: выборочный импорт сохраняет DAG-зависимости", () => {
+  const tasks = [
+    { name: "build", schedule: "0 9 * * *", prompt: "p1", dependsOn: [] },
+    { name: "deploy", schedule: "0 10 * * *", prompt: "p2", dependsOn: ["build"] },
+    { name: "skip", schedule: "0 11 * * *", prompt: "p3", dependsOn: ["deploy"] },
+  ];
+  const result = selectImportTasks(tasks, { names: ["build", "deploy"], nameMap: { build: "ci" } });
+  assert.equal(result.tasks.length, 2);
+  assert.deepEqual(result.skipped, ["skip"]);
+  assert.equal(result.tasks[0].name, "ci");
+  assert.deepEqual(result.tasks[1].dependsOn, ["ci"]);
+  assert.equal(result.warnings.length, 0);
 });
 
 await rmTemp(tempRoot);

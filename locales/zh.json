@@ -237,6 +237,8 @@
   "gui.historyOlderThan": "早于 {days} 天",
   "gui.historyUpToRecords": "最多 {count} 条记录",
   "gui.import": "导入",
+  "gui.importSelectionPlaceholder": "名称：A; B=新名称",
+  "gui.importSelectionTitle": "选择性导入：用“;”分隔任务名。“旧名=新名”会重命名任务及其 DAG 依赖。留空则导入全部。",
   "gui.importBusy": "正在导入…",
   "gui.job.activeDaysTitle": "仅在以下日期运行：{days}",
   "gui.job.cancelMatrixTitle": "取消正在运行的矩阵克隆 “{name}”",

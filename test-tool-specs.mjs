@@ -50,7 +50,7 @@ const EXPECTED_HASHES = {
   "schedule_task": "e054072d5661ae5900a1317ad334e4ac1f5bd8e35fd6f5962cb723c783309378",
   "self_analysis": "1455ca31e66913748fbf3803567919e1a0c0781b46ddaa25015d11e6d27973ab",
   "send_notification": "c212dcbf36e38363577dc1afc60a32a3b780e18bdc55c93aed609b9f38033b1d",
-  "transfer_tasks": "5971ba4980ba58b6af7a519b629f9e6a5fd16ba0bbcbaeaee060d32ed0c9e2bd",
+  "transfer_tasks": "d6392ba65a6124d7e7213fa8b64f0732a92f080f5526067ed424a66e878b0662",
   "update_advanced": "844abfea03bdfa50cece13a2b8211ba3251a613c19f4b35d843511f6e933d374",
   "update_task": "92557e2d5bbc2c4fe2b98f6ad615bcbe441f08330af9485a79c07e07ea4c0e05",
 };

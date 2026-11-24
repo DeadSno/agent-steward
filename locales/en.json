@@ -237,6 +237,8 @@
   "gui.historyOlderThan": "older than {days} d",
   "gui.historyUpToRecords": "up to {count} records",
   "gui.import": "Import",
+  "gui.importSelectionPlaceholder": "Names: A; B=NewName",
+  "gui.importSelectionTitle": "Selective import: list task names separated by ';'. 'old=new' renames a task and its DAG links. Empty imports all.",
   "gui.importBusy": "Importing...",
   "gui.job.activeDaysTitle": "Run only on days: {days}",
   "gui.job.cancelMatrixTitle": "Cancel running matrix clones \"{name}\"",
