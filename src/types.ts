@@ -32,9 +32,11 @@ export const LEGACY_TASK_PREFIX = `OpenCode\\${LEGACY_TASK_FOLDER_NAME}`;
 /**
  * Директория для хранения файлов плагина (обёртки, логи, блокировки, история).
  *
- * Windows: %APPDATA%\opencode\windows-scheduler (как раньше — без миграции).
- * macOS/Linux: $XDG_CONFIG_HOME/opencode/windows-scheduler или
- *              ~/.config/opencode/windows-scheduler.
+ * Windows: %APPDATA%\opencode\agent-steward; macOS/Linux:
+ * $XDG_CONFIG_HOME/opencode/agent-steward или ~/.config/opencode/agent-steward.
+ * Для нестандартного профиля добавляется суффикс профиля. Старые каталоги
+ * windows-scheduler один раз копируются в новые (см. src/profiles.ts,
+ * migrateLegacyBaseDir) — без «как раньше, без миграции».
  * Спринт 21: директория зависит от активного профиля (см. src/profiles.ts).
  */
 function resolvePluginDir(): string {

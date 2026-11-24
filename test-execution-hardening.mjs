@@ -3497,6 +3497,37 @@ try {
   check("PL-138/PL-134: секция не выбросила исключение", false, "section threw");
 }
 
+// QW-14.2: статические гурды на устаревшие комментарии/логи.
+{
+  const readSrc = (rel) => fs.readFileSync(new URL(rel, import.meta.url), "utf8");
+  const typesSrc = readSrc("./src/types.ts");
+  const dbSrc = readSrc("./src/db/index.ts");
+  const indexSrc = readSrc("./src/index.ts");
+  const atFallbackSrc = readSrc("./src/core/scheduler/at-fallback.ts");
+  const registrySrc = readSrc("./src/core/scheduler/registry.ts");
+  check(
+    "QW-14.2: комментарий PLUGIN_DIR описывает agent-steward и миграцию",
+    typesSrc.includes("opencode\\agent-steward") &&
+      typesSrc.includes("migrateLegacyBaseDir") &&
+      !typesSrc.includes("как раньше — без миграции"),
+  );
+  check(
+    "QW-14.2: сообщение БД требует Node 22.22+ (как в engines)",
+    dbSrc.includes("Node 22.22+") &&
+      dbSrc.includes("Node.js 22.22+") &&
+      !dbSrc.includes("22.5+"),
+  );
+  check(
+    "QW-14.2: create_task больше не логирует весь input с промптом",
+    !indexSrc.includes("[agent-steward] create_task input:"),
+  );
+  check(
+    "QW-14.2: prune fallback сохраняет реестр через transact под локом",
+    atFallbackSrc.includes("registry.transact(async (entries)") &&
+      registrySrc.includes("transact<T>(fn:"),
+  );
+}
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\nExecution hardening: ${results.length - failed.length}/${results.length} проверок пройдено.`);
 try {

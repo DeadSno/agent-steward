@@ -5,7 +5,7 @@ import { PLUGIN_DIR } from "../types.js";
 import { applySchema, getSchemaVersion, SCHEMA_VERSION } from "./schema.js";
 
 /**
- * Подключение к SQLite через встроенный `node:sqlite` (Node 22.5+).
+ * Подключение к SQLite через встроенный `node:sqlite` (Node 22.22+, см. engines).
  *
  * Мы не импортируем модуль статически: в @types/node 20 типов для node:sqlite
  * ещё нет, а `createRequire` позволяет получить модуль без объявления
@@ -53,7 +53,7 @@ function loadSqlite(): DatabaseSyncCtor {
   } catch (err: unknown) {
     throw new Error(
       `node:sqlite недоступен (${err instanceof Error ? err.message : String(err)}). ` +
-        "Планировщику требуется Node.js 22.5+ (рекомендуется Node 24).",
+        "Планировщику требуется Node.js 22.22+ (рекомендуется Node 24).",
     );
   }
 }

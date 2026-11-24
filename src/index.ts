@@ -5448,7 +5448,8 @@ const v2Plugin = Plugin.define({
         };
       },
       create_task: async (input: unknown) => {
-        console.log("[agent-steward] create_task input:", input);
+        // QW-14.2: раньше здесь логировался весь input с промптом — убираем,
+        // чтобы секреты и содержимое задач не попадали в stdout.
         // QA-P2.1: RPC обходит MCP/Zod — проверяем диапазоны явно.
         const rangeError = validateTaskInputRanges(input as {
           prompt?: string;

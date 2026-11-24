@@ -61,6 +61,11 @@ export interface PruneAtFallbackReport {
 export interface FallbackRegistry {
   load(): Promise<RegistryEntry[]>;
   save(entries: RegistryEntry[]): Promise<void>;
+  /**
+   * QW-14.2: read-modify-write под межпроцессной блокировкой. Есть у
+   * TaskRegistry; тестовые двойки без него получают прежний load/save-путь.
+   */
+  transact?<T>(fn: (entries: RegistryEntry[]) => T | Promise<T>): Promise<T>;
 }
 
 const PID_JOB_PREFIX = "pid:";
@@ -246,53 +251,70 @@ export async function pruneStaleFallbackEntries(
     return { kept: 0, removed: 0, rescheduled: 0, missed: 0, skipped: true };
   }
 
-  const entries = await registry.load();
-  const report: PruneAtFallbackReport = {
-    kept: 0,
-    removed: 0,
-    rescheduled: 0,
-    missed: 0,
-    skipped: false,
+  const pruneEntries = async (
+    entries: RegistryEntry[],
+  ): Promise<{ report: PruneAtFallbackReport; changed: boolean }> => {
+    const report: PruneAtFallbackReport = {
+      kept: 0,
+      removed: 0,
+      rescheduled: 0,
+      missed: 0,
+      skipped: false,
+    };
+
+    let changed = false;
+    for (const entry of entries) {
+      if (!isPidJobId(entry.atJobId)) continue;
+      const pid = pidFromJobId(entry.atJobId!);
+
+      if (isAlive(pid, entry.name)) {
+        report.kept += 1;
+        continue;
+      }
+
+      delete entry.atJobId;
+      changed = true;
+      report.removed += 1;
+
+      if (entry.triggerType !== "once" || entry.paused) continue;
+
+      const target = entry.runAt ? Date.parse(entry.runAt) : Number.NaN;
+      if (Number.isFinite(target) && target > nowMs) {
+        try {
+          entry.atJobId = await schedule(entry, buildFallbackCommand(entry), nowMs);
+          report.rescheduled += 1;
+        } catch (err: unknown) {
+          warn(
+            `[scheduler] Не удалось пересоздать fallback для "${entry.name}": ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        }
+        continue;
+      }
+
+      report.missed += 1;
+      warn(
+        `[scheduler] One-shot "${entry.name}" не будет запущена: fallback-процесс потерян, ` +
+          `время запуска уже прошло (${entry.runAt ?? "runAt не задан"}).`,
+      );
+    }
+
+    return { report, changed };
   };
 
-  let changed = false;
-  for (const entry of entries) {
-    if (!isPidJobId(entry.atJobId)) continue;
-    const pid = pidFromJobId(entry.atJobId!);
-
-    if (isAlive(pid, entry.name)) {
-      report.kept += 1;
-      continue;
-    }
-
-    delete entry.atJobId;
-    changed = true;
-    report.removed += 1;
-
-    if (entry.triggerType !== "once" || entry.paused) continue;
-
-    const target = entry.runAt ? Date.parse(entry.runAt) : Number.NaN;
-    if (Number.isFinite(target) && target > nowMs) {
-      try {
-        entry.atJobId = await schedule(entry, buildFallbackCommand(entry), nowMs);
-        report.rescheduled += 1;
-      } catch (err: unknown) {
-        warn(
-          `[scheduler] Не удалось пересоздать fallback для "${entry.name}": ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        );
-      }
-      continue;
-    }
-
-    report.missed += 1;
-    warn(
-      `[scheduler] One-shot "${entry.name}" не будет запущена: fallback-процесс потерян, ` +
-        `время запуска уже прошло (${entry.runAt ?? "runAt не задан"}).`,
-    );
+  // QW-14.2: у настоящего реестра read+modify+write идёт под межпроцессной
+  // блокировкой (P2-16); раньше save вызывался снаружи и мог затереть чужие
+  // записи, добавленные другим процессом между load() и save().
+  if (registry.transact) {
+    return registry.transact(async (entries) => {
+      const { report } = await pruneEntries(entries);
+      return report;
+    });
   }
 
+  const entries = await registry.load();
+  const { report, changed } = await pruneEntries(entries);
   if (changed) await registry.save(entries);
   return report;
 }

@@ -287,6 +287,43 @@ const pruneNow = Date.parse("2026-11-18T10:00:00Z");
   check(state.saves === 1, "после удаления мёртвой записи реестр сохранён");
 }
 
+// QW-14.2: с transact read+modify+write целиком идёт под блокировкой.
+{
+  const dead = entry({
+    name: "locked",
+    atJobId: "pid:44",
+    runAt: "2026-11-18T09:00:00Z",
+  });
+  const events = [];
+  const registry = {
+    load: async () => {
+      events.push("load");
+      throw new Error("load не должен вызываться напрямую");
+    },
+    save: async () => {
+      events.push("save");
+    },
+    transact: async (fn) => {
+      events.push("lock");
+      const result = await fn([dead]);
+      events.push("save");
+      return result;
+    },
+  };
+  const report = await pruneStaleFallbackEntries(registry, {
+    now: () => pruneNow,
+    isAlive: () => false,
+  });
+  check(
+    report.removed === 1 &&
+      report.missed === 1 &&
+      events.join(",") === "lock,save" &&
+      dead.atJobId === undefined,
+    "QW-14.2: prune использует transact и не сохраняет реестр вне лока",
+    { report, events, atJobId: dead.atJobId },
+  );
+}
+
 if (process.platform !== "linux") {
   const report = await pruneStaleFallbackEntries({
     load: async () => {

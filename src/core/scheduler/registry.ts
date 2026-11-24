@@ -155,6 +155,15 @@ export class TaskRegistry {
     );
   }
 
+  /**
+   * QW-14.2: публичный read-modify-write под межпроцессной блокировкой.
+   * Используется pruneStaleFallbackEntries, чтобы load+правки+save не
+   * пересекались с параллельной записью другого процесса.
+   */
+  transact<T>(fn: (entries: RegistryEntry[]) => T | Promise<T>): Promise<T> {
+    return this.mutate(fn);
+  }
+
   async find(name: string): Promise<RegistryEntry | undefined> {
     const entries = await this.load();
     return entries.find((e) => e.name.toLowerCase() === name.toLowerCase());
