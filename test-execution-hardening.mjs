@@ -1768,6 +1768,69 @@ try {
   check("PL-131/PL-135: секция не выбросила исключение", false, "section threw");
 }
 
+// --- PL-142: verify build+lint before burning the gate marker ---
+// A stale/forged marker must not push broken code. String-only regressions on
+// scripts/pl-commit.ps1 pin the ordering: read marker -> verify all commands ->
+// remove marker -> commit/push, with a fail-closed exit 2 that keeps the marker.
+try {
+  const helper = fs.readFileSync(path.resolve("scripts/pl-commit.ps1"), "utf8");
+  const markerTest = helper.indexOf("Test-Path -LiteralPath $markerPath");
+  const markerRead = helper.indexOf("Get-Content -LiteralPath $markerPath -Raw");
+  const markerRemove = helper.indexOf("Remove-Item -LiteralPath $markerPath -Force");
+  const verifyLoop = helper.indexOf("foreach ($cmd in $verifyList)");
+  const buildAnchor = helper.indexOf("& npm run build 2>&1");
+  const lintAnchor = helper.indexOf("'& npm run lint 2>&1'");
+  const commitPos = helper.indexOf("@('commit', '-m', $Message, '--')");
+  const pushPos = helper.indexOf("@('push', 'origin', 'HEAD:dev')");
+  const failGate = helper.indexOf("FAIL build (npm run build exit");
+
+  check(
+    "PL-142: маркер читается до верификации и НЕ удаляется сразу",
+    markerTest >= 0 && markerRead > markerTest && markerRemove > markerRead,
+    `test@${markerTest}, read@${markerRead}, remove@${markerRemove}`
+  );
+  check(
+    "PL-142: build и lint присутствуют в явном списке проверок по умолчанию",
+    buildAnchor >= 0 && lintAnchor >= 0 && lintAnchor > buildAnchor,
+    `build@${buildAnchor}, lint@${lintAnchor}`
+  );
+  check(
+    "PL-142: верификация (build+lint) выполняется до commit и push",
+    verifyLoop >= 0 && commitPos > verifyLoop && pushPos > verifyLoop,
+    `verify@${verifyLoop}, commit@${commitPos}, push@${pushPos}`
+  );
+  check(
+    "PL-142: маркер удаляется только после успешной верификации и до commit",
+    markerRemove > verifyLoop && markerRemove < commitPos,
+    `verify@${verifyLoop}, remove@${markerRemove}, commit@${commitPos}`
+  );
+  check(
+    "PL-142: провал гейта — exit 2, маркер остаётся, commit/push не выполняется",
+    failGate > verifyLoop &&
+      failGate < commitPos &&
+      /exit 2/.test(helper.slice(failGate, failGate + 160)) &&
+      helper.includes("gate marker kept (verification failed)"),
+    `fail@${failGate}`
+  );
+  check(
+    "PL-142: параметр -VerifyCommands задаёт явный список проверок",
+    helper.includes("[string[]]$VerifyCommands") &&
+      helper.includes("foreach ($entry in @($VerifyCommands))") &&
+      helper.includes("@($entry) -split ';'"),
+    "VerifyCommands param"
+  );
+  check(
+    "PL-142: сохранены PL-41/PL-58/PL-127/PL-132 маркеры без регрессий",
+    helper.includes("@('commit', '-m', $Message, '--')") &&
+      helper.includes("@('cherry-pick', $local)") &&
+      helper.includes("WARN PL-58") &&
+      helper.includes("PL-127/PL-132:")
+  );
+} catch (err) {
+  console.log("[diag] PL-142 section THREW:", err instanceof Error ? err.stack : String(err));
+  check("PL-142: секция не выбросила исключение", false, "section threw");
+}
+
 // --- PL-112: prompt destructive-command guard ---
 try {
   const { inspectPromptSafety } = await import("./dist/core/guard.js");

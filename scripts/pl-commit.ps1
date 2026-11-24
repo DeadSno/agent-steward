@@ -23,7 +23,13 @@
 param(
   [Parameter(Mandatory = $true)][string]$Message,
   [Parameter(Mandatory = $true)][string]$Files,
-  [Parameter(Mandatory = $true)][string]$Marker
+  [Parameter(Mandatory = $true)][string]$Marker,
+  # PL-142: explicit list of checks that must pass before the gate marker is
+  # consumed. Accepts an array ('npm run build', 'npm run lint') or a single
+  # 'npm run build;npm run lint' string - each entry is split on ';'.
+  # Defaults to build + lint (the values below are ready PS expressions, so
+  # '& npm run build 2>&1' stays the anchor for the PL-135 source regression).
+  [string[]]$VerifyCommands = @('& npm run build 2>&1', '& npm run lint 2>&1')
 )
 
 $ErrorActionPreference = 'Stop'
@@ -54,14 +60,17 @@ function Invoke-Git([string]$what, [string[]]$arguments) {
 }
 
 try {
+  # PL-142: read the gate marker but DO NOT burn it yet. A stale or hand-made
+  # marker must never push broken code: verification runs first and the marker
+  # is removed only when every check passed. On failure we exit 2 with the
+  # marker intact, so no staging/commit/push happens.
   $gateOk = Test-Path -LiteralPath $markerPath
-  if ($gateOk) {
-    Remove-Item -LiteralPath $markerPath -Force
-  }
   if (-not $gateOk) {
     Log "SKIP (quality gate did not pass): $Message"
     exit 0
   }
+  $markerContent = Get-Content -LiteralPath $markerPath -Raw
+  Log ("PL-142: gate marker read ({0}): {1}" -f $markerPath, ([string]$markerContent).Trim())
 
   $fileList = @($Files -split ';' | Where-Object { $_ } | ForEach-Object { $_.Trim() })
   if ($fileList.Count -eq 0) {
@@ -69,25 +78,56 @@ try {
     exit 0
   }
 
-  # PL-135: verify the build BEFORE staging/committing/pushing. The gate marker
-  # alone is not enough - it can be left over from an older run or created by
-  # hand, so a failing build (e.g. npm run build = exit 2) must never reach dev.
-  # A non-zero build code aborts with exit 2: no commit, no push.
-  $oldBuild = $ErrorActionPreference
-  $ErrorActionPreference = 'Continue'
-  try {
-    $buildOutput = & npm run build 2>&1
-    $buildCode = $LASTEXITCODE
-    foreach ($line in $buildOutput) { Log ("[build] {0}" -f [string]$line) }
+  # PL-135 + PL-142: verify BEFORE staging/committing/pushing. Build and lint
+  # (plus any extra -VerifyCommands) come from one explicit list; every command
+  # must exit 0 before the gate marker is consumed. The marker alone is not
+  # enough - it can be left over from an older run or created by hand, so a
+  # failing check (e.g. npm run build/lint = exit 2) must never reach dev.
+  $verifyList = @()
+  foreach ($entry in @($VerifyCommands)) {
+    foreach ($part in (@($entry) -split ';')) {
+      $c = ([string]$part).Trim()
+      if ($c) { $verifyList += $c }
+    }
   }
-  finally {
-    $ErrorActionPreference = $oldBuild
-  }
-  if ($buildCode -ne 0) {
-    Log "FAIL build (npm run build exit $buildCode): commit/push aborted: $Message"
+  if ($verifyList.Count -eq 0) {
+    Log "FAIL verify (empty -VerifyCommands): commit/push aborted: $Message"
     exit 2
   }
-  Log "OK build (npm run build): $Message"
+
+  foreach ($cmd in $verifyList) {
+    # Accept both 'npm run lint' and '& npm run lint 2>&1' forms.
+    $expr = ([string]$cmd).Trim()
+    if (-not $expr.StartsWith('&')) { $expr = "& $expr" }
+    if (-not $expr.Contains('2>&1')) { $expr = "$expr 2>&1" }
+
+    $oldVerify = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+      $verifyOutput = Invoke-Expression -Command $expr
+      $verifyCode = $LASTEXITCODE
+      foreach ($line in @($verifyOutput)) { Log ("[verify:{0}] {1}" -f $cmd, [string]$line) }
+    }
+    finally {
+      $ErrorActionPreference = $oldVerify
+    }
+    if ($verifyCode -ne 0) {
+      # PL-142: marker stays on failure; no commit/push. Keep 'exit 2' adjacent
+      # to the build log line for the PL-135 source-level regression.
+      Log "PL-142: gate marker kept (verification failed): $markerPath"
+      if ($cmd -match 'build') {
+        Log "FAIL build (npm run build exit $verifyCode): commit/push aborted: $Message"
+        exit 2
+      }
+      Log "FAIL verify ('$cmd' exit $verifyCode): commit/push aborted: $Message"
+      exit 2
+    }
+    Log "OK verify ($cmd): $Message"
+  }
+
+  # PL-142: all verification passed - now (and only now) consume the marker.
+  Remove-Item -LiteralPath $markerPath -Force
+  Log "PL-142: gate marker consumed after successful verification: $Message"
 
   # Task manifest is the only source of file ownership. Normalize separators
   # to forward slashes so comparison is stable on Windows.
