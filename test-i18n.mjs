@@ -4,6 +4,7 @@
  */
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import url from "node:url";
 import { spawnSync } from "node:child_process";
@@ -97,6 +98,40 @@ const ruFile = catalogPath("ru");
 const enFile = catalogPath("en");
 const zhFile = catalogPath("zh");
 const trFile = catalogPath("tr");
+
+// QA-PORT-13: при junction dist/ realpath модуля указывает в dev-установку,
+// где tr.json отсутствует. Изолированная проверка: модуль лежит во временном
+// каталоге с ru/en/zh, а cwd — корень репозитория с полным locales/.
+{
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "steward-i18n-cwd-"));
+  try {
+    fs.mkdirSync(path.join(tmp, "dist"), { recursive: true });
+    fs.mkdirSync(path.join(tmp, "locales"), { recursive: true });
+    fs.copyFileSync(path.join(root, "dist", "i18n.js"), path.join(tmp, "dist", "i18n.js"));
+    for (const loc of ["ru", "en", "zh"]) {
+      fs.copyFileSync(
+        path.join(root, "locales", `${loc}.json`),
+        path.join(tmp, "locales", `${loc}.json`),
+      );
+    }
+    const moduleHref = url.pathToFileURL(path.join(tmp, "dist", "i18n.js")).href;
+    const probe = spawnSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        `import { catalogPath } from ${JSON.stringify(moduleHref)}; console.log(catalogPath("tr") || "");`,
+      ],
+      { cwd: root, encoding: "utf8" },
+    );
+    check(
+      "QA-PORT-13: catalogPath('tr') падает в cwd, даже если рядом с модулем только ru/en/zh",
+      probe.status === 0 && (probe.stdout ?? "").trim() === path.join(root, "locales", "tr.json"),
+    );
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
 check("catalogPath('ru') находит locales/ru.json", !!ruFile && ruFile.endsWith(path.join("locales", "ru.json")));
 check("catalogPath('en') находит locales/en.json", !!enFile && enFile.endsWith(path.join("locales", "en.json")));
 check("catalogPath('zh') находит locales/zh.json", !!zhFile && zhFile.endsWith(path.join("locales", "zh.json")));
@@ -141,8 +176,10 @@ check(
 );
 
 // tr: детерминизм каталога и перевода (A-5.1).
-const trRaw1 = fs.readFileSync(trFile, "utf8");
-const trRaw2 = fs.readFileSync(trFile, "utf8");
+// QA-PORT-13: если каталог не найден, тест обязан упасть проверкой выше, а не
+// TypeError в fs.readFileSync(null).
+const trRaw1 = trFile ? fs.readFileSync(trFile, "utf8") : "";
+const trRaw2 = trFile ? fs.readFileSync(trFile, "utf8") : "";
 check(
   "tr: каталог читается детерминированно",
   trRaw1 === trRaw2 &&

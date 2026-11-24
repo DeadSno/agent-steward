@@ -62,9 +62,40 @@ function moduleDir(): string | null {
 
 /** Каталоги, где может лежать `locales/` (оба варианта дают корень пакета). */
 function candidateCatalogDirs(): string[] {
+  const dirs: string[] = [];
   const dir = moduleDir();
-  if (!dir) return [];
-  return [path.resolve(dir, "../locales"), path.resolve(dir, "locales")];
+  if (dir) {
+    dirs.push(path.resolve(dir, "../locales"), path.resolve(dir, "locales"));
+  }
+  // QA-PORT-13: в свежем worktree `dist/` — junction на dev-установку, поэтому
+  // realpath модуля указывает в её `locales/`, где может не быть новой локали
+  // (например, `tr.json`). Рабочая директория — исходный репозиторий, её
+  // `locales/` и есть актуальный источник. Кандидат из cwd идёт последним и
+  // используется только если рядом с модулем нужного файла нет; в GUI-бандле
+  // `process` отсутствует, поэтому обращение защищено.
+  try {
+    if (typeof process !== "undefined" && typeof process.cwd === "function") {
+      const cwd = process.cwd();
+      const checkoutLocales = path.resolve(cwd, "locales");
+      const isDevCheckout =
+        fs.existsSync(path.join(cwd, "src", "i18n.ts")) &&
+        SUPPORTED_LOCALES.every((locale) =>
+          fs.existsSync(path.join(checkoutLocales, `${locale}.json`)),
+        );
+      if (isDevCheckout) {
+        // Исходный чек-аут — актуальный источник каталогов, даже если модуль
+        // загружен через junction из более старой dev-установки: иначе ru/en/zh
+        // берутся из старых файлов, а tr — из новых, и паритет ключей ломается.
+        dirs.unshift(checkoutLocales);
+      } else {
+        dirs.push(checkoutLocales);
+      }
+      dirs.push(path.resolve(cwd, "dist", "locales"));
+    }
+  } catch {
+    // Нет cwd — остаются каталоги рядом с модулем.
+  }
+  return [...new Set(dirs)];
 }
 
 const catalogs = new Map<Locale, Record<string, string>>();
