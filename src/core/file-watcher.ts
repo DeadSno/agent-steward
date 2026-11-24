@@ -12,12 +12,60 @@ import { hasPathControlChars } from "./watch-paths.js";
 export const FILE_TRIGGER_DEBOUNCE_MS = 2000;
 
 /**
- * PL-130: окно, в котором изменения наблюдаемого файла игнорируются после
- * запуска задачи. Запущенный агент сам редактирует файл (например, ROADMAP.md),
+ * PL-130: окно по умолчанию, в котором изменения наблюдаемого файла игнорируются
+ * после запуска задачи. Запущенный агент сам редактирует файл (например, ROADMAP.md),
  * и без подавления эти правки порождают каскад самоповторов (11 лишних запусков
- * в зонде DS313-FILE-PROBE).
+ * в зонде DS313-FILE-PROBE). PL-143: окно настраивается через env (0 — выключить
+ * подавление), каждый фактический пропуск логируется.
  */
 export const FILE_TRIGGER_SELF_WRITE_SUPPRESS_MS = 15000;
+
+/** PL-143: переменная окружения с окном подавления self-write в миллисекундах. */
+export const FILE_SELF_WRITE_SUPPRESS_ENV = "AGENT_STEWARD_FILE_SELF_WRITE_SUPPRESS_MS";
+
+/** PL-143: результат разбора окна подавления из строки окружения. */
+export interface FileSelfWriteSuppressParseResult {
+  /** Эффективное окно в миллисекундах. */
+  value: number;
+  /** Предупреждение о невалидном значении (null — значение корректно). */
+  warning: string | null;
+}
+
+/**
+ * PL-143: чистая функция разбора окна подавления. Принимает неотрицательное целое
+ * число мс; пустая строка, дроби, отрицательные и слишком большие значения дают
+ * `fallbackMs` вместе с предупреждением. Никаких сайд-эффектов — легко тестировать.
+ */
+export function parseFileSelfWriteSuppressMs(
+  raw: string | undefined,
+  fallbackMs: number = FILE_TRIGGER_SELF_WRITE_SUPPRESS_MS,
+): FileSelfWriteSuppressParseResult {
+  if (raw === undefined) return { value: fallbackMs, warning: null };
+
+  const trimmed = raw.trim();
+  const parsed = /^\d+$/.test(trimmed) ? Number(trimmed) : Number.NaN;
+  if (!Number.isSafeInteger(parsed)) {
+    return {
+      value: fallbackMs,
+      warning:
+        `[PL-143] Некорректное значение ${FILE_SELF_WRITE_SUPPRESS_ENV}="${raw}": ` +
+        `ожидалось неотрицательное целое число мс. Используется ${fallbackMs} мс.`,
+    };
+  }
+  return { value: parsed, warning: null };
+}
+
+/**
+ * PL-143: читает env и возвращает эффективное окно подавления, предупреждая
+ * в консоли о невалидном значении. Вызывается один раз при создании менеджера.
+ */
+export function resolveFileSelfWriteSuppressMs(
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  const { value, warning } = parseFileSelfWriteSuppressMs(env[FILE_SELF_WRITE_SUPPRESS_ENV]);
+  if (warning) console.warn(warning);
+  return value;
+}
 
 export type FileTriggerHandler = (
   taskName: string,
@@ -50,11 +98,18 @@ export class FileWatchManager {
   constructor(
     private readonly handler: FileTriggerHandler,
     private readonly debounceMs: number = FILE_TRIGGER_DEBOUNCE_MS,
+    /** PL-143: эффективное окно подавления, прочитанное из env (или по умолчанию). */
+    private readonly suppressMs: number = resolveFileSelfWriteSuppressMs(),
   ) {}
 
   /** Сколько задач сейчас отслеживается. */
   get size(): number {
     return this.entries.size;
+  }
+
+  /** PL-143: действующее окно подавления self-write в миллисекундах. */
+  get selfWriteSuppressMs(): number {
+    return this.suppressMs;
   }
 
   /**
@@ -63,10 +118,7 @@ export class FileWatchManager {
    * дебаунса — иначе агент, отредактировав наблюдаемый файл, перезапускает сам
    * себя. Ключ — имя задачи в нижнем регистре, как и в `entries`.
    */
-  suppressForTask(
-    taskName: string,
-    ms: number = FILE_TRIGGER_SELF_WRITE_SUPPRESS_MS,
-  ): void {
+  suppressForTask(taskName: string, ms: number = this.suppressMs): void {
     if (!taskName) return;
     this.suppressUntil.set(taskName.toLowerCase(), Date.now() + Math.max(0, ms));
   }
@@ -206,7 +258,15 @@ export class FileWatchManager {
       // PL-130: пока задача активна, её собственные правки наблюдаемого файла
       // не запускают новый прогон и не перезапускают дебаунс-таймер.
       const until = this.suppressUntil.get(name.toLowerCase());
-      if (until !== undefined && Date.now() < until) return;
+      if (until !== undefined && Date.now() < until) {
+        // PL-143: пропуск больше не молчаливый — видно, какая задача и какой
+        // путь были проигнорированы и до какого момента действует окно.
+        console.log(
+          `[PL-143] Подавляю self-write задачи "${name}": изменение "${changedPath}" ` +
+            `проигнорировано (окно подавления до ${new Date(until).toISOString()}).`,
+        );
+        return;
+      }
       if (!accepts(changedPath)) return;
       if (entry.timer) clearTimeout(entry.timer);
       entry.timer = setTimeout(() => {

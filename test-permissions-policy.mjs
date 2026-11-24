@@ -1,4 +1,5 @@
 import assert from "node:assert";
+import { readFileSync } from "node:fs";
 import {
   resolvePermissions,
   buildOpencodeConfig,
@@ -69,6 +70,29 @@ const effShellOnlyDenied = resolvePermissions({
 check(
   "PL-133: явный deniedTools запрещает skill даже в shell-only задаче",
   effShellOnlyDenied.permissions.find((p) => p.action === "skill").effect === "deny",
+);
+
+// PL-141: allowlist намеренно нестрогий; жёсткое запрещение read-only действий —
+// только через явный deniedTools. Контракт зафиксирован в ARCHITECTURE.
+const effShellHardDenied = resolvePermissions({
+  policy: "hybrid",
+  allowedTools: ["shell"],
+  deniedTools: ["read", "glob", "grep", "skill"],
+});
+for (const action of ["read", "glob", "grep", "skill"]) {
+  check(
+    `PL-141: deniedTools запрещает ${action} в shell-only задаче`,
+    effShellHardDenied.permissions.find((p) => p.action === action).effect === "deny",
+  );
+}
+check(
+  "PL-141: shell остаётся разрешённым при явном denied read-only",
+  effShellHardDenied.permissions.find((p) => p.action === "shell").effect === "allow",
+);
+const architecture = readFileSync(new URL("./docs/ARCHITECTURE.md", import.meta.url), "utf8");
+check(
+  "PL-141: ARCHITECTURE документирует нестрогий allowlist и deniedTools",
+  architecture.includes("only an explicit `deniedTools` entry can deny them"),
 );
 
 const config = buildOpencodeConfig({ policy: "hybrid" });

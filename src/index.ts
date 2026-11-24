@@ -176,7 +176,10 @@ import {
   parseImportJson,
   normalizePriority,
 } from "./task-transfer.js";
-import { FileWatchManager } from "./core/file-watcher.js";
+import {
+  FILE_TRIGGER_SELF_WRITE_SUPPRESS_MS,
+  FileWatchManager,
+} from "./core/file-watcher.js";
 import { GitTriggerManager } from "./core/git-trigger.js";
 import type {
   McpEventTrigger,
@@ -5028,6 +5031,13 @@ export async function createRuntime(ctxLike: RuntimeContextLike): Promise<Schedu
       // PL-130: задачу уже запустили — последующие правки наблюдаемого файла
       // сделаны этим же агентом и не должны вызывать самоповтор (11 лишних
       // запусков в зонде DS313-FILE-PROBE).
+      // PL-143: окно берётся из AGENT_STEWARD_FILE_SELF_WRITE_SUPPRESS_MS
+      // (по умолчанию FILE_TRIGGER_SELF_WRITE_SUPPRESS_MS); каждое фактическое
+      // подавление логируется в FileWatchManager.onChange с префиксом PL-143.
+      console.log(
+        `[PL-143] Задача "${taskName}": установлено окно подавления self-write ` +
+          `${fileWatcherManager?.selfWriteSuppressMs ?? FILE_TRIGGER_SELF_WRITE_SUPPRESS_MS} мс.`,
+      );
       fileWatcherManager?.suppressForTask(taskName);
       await scheduleEventRun(taskName, "изменение отслеживаемого файла");
     } catch (err) {

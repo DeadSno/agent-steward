@@ -3,6 +3,12 @@ import fs from "node:fs";
 import path from "node:path";
 
 const { normalizeWatchPath, validateWatchGlobs } = await import("./dist/core/watch-paths.js");
+const {
+  FILE_TRIGGER_SELF_WRITE_SUPPRESS_MS,
+  FILE_SELF_WRITE_SUPPRESS_ENV,
+  parseFileSelfWriteSuppressMs,
+  resolveFileSelfWriteSuppressMs,
+} = await import("./dist/core/file-watcher.js");
 
 const base = path.resolve("tmp-watch-base");
 
@@ -73,9 +79,9 @@ assert(
 );
 assert(
   watcherSrc.includes(
-    "suppressForTask(\n    taskName: string,\n    ms: number = FILE_TRIGGER_SELF_WRITE_SUPPRESS_MS,\n  ): void"
+    "suppressForTask(taskName: string, ms: number = this.suppressMs): void"
   ),
-  "PL-130: FileWatchManager объявляет публичный suppressForTask(taskName, ms?)"
+  "PL-130/PL-143: FileWatchManager объявляет публичный suppressForTask(taskName, ms?) с окном из env"
 );
 assert(
   watcherSrc.includes("this.suppressUntil.set(taskName.toLowerCase()"),
@@ -95,6 +101,86 @@ assert(
   indexSrc.indexOf("fileWatcherManager?.suppressForTask(taskName)") <
     indexSrc.indexOf('scheduleEventRun(taskName, "изменение отслеживаемого файла")'),
   "PL-130: подавление вызывается ПЕРЕД запуском задачи"
+);
+
+// PL-143: окно подавления настраивается через env, дефолт — 15000 мс.
+assert.equal(
+  FILE_TRIGGER_SELF_WRITE_SUPPRESS_MS,
+  15000,
+  "PL-143: окно подавления по умолчанию равно 15000 мс"
+);
+assert.equal(
+  FILE_SELF_WRITE_SUPPRESS_ENV,
+  "AGENT_STEWARD_FILE_SELF_WRITE_SUPPRESS_MS",
+  "PL-143: имя переменной окружения зафиксировано"
+);
+
+// Чистая функция разбора: env задаёт окно (0 — подавление выключено).
+assert.deepEqual(
+  parseFileSelfWriteSuppressMs("1234"),
+  { value: 1234, warning: null },
+  "PL-143: валидное значение env задаёт окно подавления"
+);
+assert.deepEqual(
+  parseFileSelfWriteSuppressMs(" 0 "),
+  { value: 0, warning: null },
+  "PL-143: 0 — корректное значение (подавление выключено)"
+);
+assert.deepEqual(
+  parseFileSelfWriteSuppressMs(undefined),
+  { value: 15000, warning: null },
+  "PL-143: неустановленный env даёт дефолт 15000 без предупреждения"
+);
+
+// Невалидное значение → дефолт + предупреждение с именем переменной.
+for (const bad of ["abc", "-5", "1.5", "", "   ", "999999999999999999999"]) {
+  const parsed = parseFileSelfWriteSuppressMs(bad);
+  assert.equal(parsed.value, 15000, `PL-143: невалидное "${bad}" → дефолт 15000`);
+  assert(
+    parsed.warning !== null &&
+      parsed.warning.includes("PL-143") &&
+      parsed.warning.includes("AGENT_STEWARD_FILE_SELF_WRITE_SUPPRESS_MS"),
+    `PL-143: невалидное "${bad}" сопровождается предупреждением`
+  );
+}
+// Резолвер читает именно env и предупреждает о невалидном значении.
+assert.equal(
+  resolveFileSelfWriteSuppressMs({ AGENT_STEWARD_FILE_SELF_WRITE_SUPPRESS_MS: "2500" }),
+  2500,
+  "PL-143: резолвер берёт окно из переданного env"
+);
+const originalWarn = console.warn;
+const warnings = [];
+console.warn = (msg) => warnings.push(String(msg));
+let resolvedBad;
+try {
+  resolvedBad = resolveFileSelfWriteSuppressMs({
+    AGENT_STEWARD_FILE_SELF_WRITE_SUPPRESS_MS: " nonnegative ",
+  });
+} finally {
+  console.warn = originalWarn;
+}
+assert.equal(resolvedBad, 15000, "PL-143: невалидное env → дефолт 15000");
+assert(
+  warnings.length === 1 && warnings[0].includes("PL-143"),
+  "PL-143: невалидное env пишет предупреждение в консоль"
+);
+
+// Исходники: лог подавления обязателен и содержит имя задачи и путь.
+assert(
+  watcherSrc.includes(
+    'FILE_SELF_WRITE_SUPPRESS_ENV = "AGENT_STEWARD_FILE_SELF_WRITE_SUPPRESS_MS"'
+  ),
+  "PL-143: объявлено имя переменной окружения"
+);
+assert(
+  watcherSrc.includes("[PL-143] Подавляю self-write задачи") &&
+    watcherSrc.includes('изменение "${changedPath}"'),
+  "PL-143: onChange логирует подавление с именем задачи и путём"
+);
+assert(
+  indexSrc.includes("[PL-143]") && indexSrc.includes("selfWriteSuppressMs"),
+  "PL-143: обработчик файлового триггера логирует настроенное окно"
 );
 
 console.log("Watch paths: все проверки пройдены.");
