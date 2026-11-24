@@ -3239,9 +3239,29 @@ const dryRunExecute = wrapExecute<DryRunArgs>(async (args) => {
   const available = await availableModelsForDryRun(definitions);
 
   if (name) {
-    const report = await simulatePipeline(name);
-    annotateDryRunModelWarnings(report, definitions, available);
-    return { content: JSON.stringify(report) };
+    try {
+      const report = await simulatePipeline(name);
+      annotateDryRunModelWarnings(report, definitions, available);
+      return { content: JSON.stringify(report) };
+    } catch (err) {
+      // QA-PORT-14: MCP/Code Mode требует структурированный результат — сырое
+      // исключение от simulatePipeline ломает адаптер ("declared output without
+      // an output schema"), поэтому неизвестное имя возвращается как отчёт.
+      return {
+        content: JSON.stringify({
+          success: false,
+          taskName: name,
+          tasks: [],
+          totals: {
+            estimatedDurationSec: null,
+            estimatedCostUsd: null,
+            estimatedTokens: null,
+          },
+          warnings: [],
+          error: err instanceof Error ? err.message : String(err),
+        }),
+      };
+    }
   }
 
   const reports: (DryRunReport & { error?: string })[] = [];

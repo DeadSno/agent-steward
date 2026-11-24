@@ -28,9 +28,6 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 
 ## QA-находки (проверка работоспособности плагина 24.11.2026)
 
-- [ ] QA-PORT-14: `dry_run({name:"НЕСУЩЕСТВУЮЩАЯ"})` через MCP плагина падает с сырым `Error: Tool result declared output without an output schema` вместо структурированного ответа «задача не найдена»; причина по коду — `simulatePipeline()` (`src/core/dry-run.ts`) бросает `t("dryRun.taskNotFound")`, а `dryRunExecute` (`src/index.ts`) не перехватывает исключение для именованного вызова (в контурном прогоне без имени исключения ловятся и превращаются в `error` отчёта) — P2. Действие: в `dryRunExecute` ловить ошибку поиска задачи и возвращать `DryRunReport` с `success:false` и понятным `error` через объявленную output-схему; добавить регрессию в `test-docs.mjs`/`test-tool-specs.mjs`. Обнаружено 24.11.2026.
-
-
 ---
 
 ## Деталь 3.15 — Улучшения продукта из TEST-PLAN §7.3

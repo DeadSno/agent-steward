@@ -257,5 +257,17 @@ check("QA-PORT-11: execute отклоняет неизвестный аргум�
 check("QA-PORT-11: execute фильтрует по name (псевдоним taskName)", () => {
   assert.equal(JSON.parse(aliasExec.content).count, 0);
 });
+
+// QA-PORT-14: именованный dry_run раньше бросал исключение наружу, и адаптер
+// MCP отвечал сырым "Tool result declared output without an output schema".
+const dryRunSpec = specs.find((spec) => spec.name === "dry_run");
+const dryRunMissingExec = await dryRunSpec.execute({ name: "__QA_PORT_14_MISSING__" });
+check("QA-PORT-14: dry_run неизвестного имени возвращает структурированную ошибку", () => {
+  const payload = JSON.parse(dryRunMissingExec.content);
+  assert.equal(payload.success, false);
+  assert.equal(payload.taskName, "__QA_PORT_14_MISSING__");
+  assert.deepEqual(payload.tasks, []);
+  assert.match(payload.error ?? "", /не найден|not found/i);
+});
 console.log(`\nTool specs: ${passed}/${passed + failed} проверок пройдено.`);
 if (failed > 0) process.exitCode = 1;
