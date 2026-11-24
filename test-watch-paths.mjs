@@ -92,14 +92,17 @@ assert(
     watcherSrc.indexOf("Date.now() < until") < watcherSrc.indexOf("clearTimeout(entry.timer)"),
   "PL-130: onChange игнорирует изменение до истечения окна, не трогая дебаунс-таймер"
 );
-const indexSrc = fs.readFileSync(path.resolve("src/index.ts"), "utf8");
+// Деталь 3.18 / P-1.1: обработчик перенесён из src/index.ts в src/runtime.ts
+// при изоляции ядра; тест следует за кодом, а не тянет фрагмент обратно.
+const runtimeSrc = fs.readFileSync(path.resolve("src/runtime.ts"), "utf8");
+const SUPPRESS_CALL = "getFileWatcherManager()?.suppressForTask(taskName)";
+const EVENT_RUN_CALL = 'scheduleEventRun(taskName, "изменение отслеживаемого файла")';
 assert(
-  indexSrc.includes("fileWatcherManager?.suppressForTask(taskName)"),
-  "PL-130: обработчик файлового триггера подавляет запись до scheduleEventRun"
+  runtimeSrc.includes(SUPPRESS_CALL),
+  "PL-130: обработчик файлового триггера подавляет запись до scheduleEventRun (src/runtime.ts)"
 );
 assert(
-  indexSrc.indexOf("fileWatcherManager?.suppressForTask(taskName)") <
-    indexSrc.indexOf('scheduleEventRun(taskName, "изменение отслеживаемого файла")'),
+  runtimeSrc.indexOf(SUPPRESS_CALL) < runtimeSrc.indexOf(EVENT_RUN_CALL),
   "PL-130: подавление вызывается ПЕРЕД запуском задачи"
 );
 
@@ -179,7 +182,7 @@ assert(
   "PL-143: onChange логирует подавление с именем задачи и путём"
 );
 assert(
-  indexSrc.includes("[PL-143]") && indexSrc.includes("selfWriteSuppressMs"),
+  runtimeSrc.includes("[PL-143]") && runtimeSrc.includes("selfWriteSuppressMs"),
   "PL-143: обработчик файлового триггера логирует настроенное окно"
 );
 
