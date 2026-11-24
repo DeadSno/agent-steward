@@ -28,8 +28,6 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 
 ## QA-находки (проверка работоспособности плагина 24.11.2026)
 
-- QA-D315-1: ad-hoc-миссия без привязки к ОС (`agent-steward run "..."`) падает с `NOT NULL constraint failed: runs.started_at` на БД, где legacy-таблица `runs` создана с `started_at TEXT NOT NULL`: `createRun()` (`src/db/runs-repo.ts:261-262`) пишет `null` для статуса `pending`, хотя актуальная схема `src/db/schema.ts:215` допускает NULL — P2. Действие: при создании pending-запуска подставлять `startedAt = timestamp` (или добавить миграцию, снимающую NOT NULL) и покрыть регрессией `test-mission-run.mjs`; проверено реальным прогоном CLI 24.11.2026.
-
 - QA-PORT-16: запущенный процесс плагина не подхватывает собранный `dist/`: `schedule_task` с `triggerType:"mcp-event"` + `mcpEvent` отклоняется сообщением «исключены из core-профиля», хотя в свежей сборке поле присутствует; в каталоге инструментов сессии нет `emit_event`/`schedule_advanced`/`get_analytics`/`get_metrics` — P2. Действие: явно документировать обязательный перезапуск плагина после `npm run build` либо горячо перечитывать реестр инструментов. Обнаружено 24.11.2026.
 
 - QA-PORT-17: префлайт SCOPE ошибочно трактует прозу как пути: `schedule_task` с промптом «Scope: tp-audit-dev, branch dev.» (`src/core/scheduler/run-now.ts`, `extractCreateIntentPaths`/префлайт) отклонён PL-79/PL-82 с «несуществующие пути: tp-audit-dev, branch» — P2. Действие: извлекать только явные пути с расширением файла/списком `filesCreate`, игнорировать произвольную прозу после ключевого слова Scope. Обнаружено 24.11.2026.

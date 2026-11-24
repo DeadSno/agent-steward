@@ -101,7 +101,7 @@ export interface CreateRunOptions {
   metadata?: unknown;
   /** Начальный статус; по умолчанию pending. */
   status?: Extract<RunStatus, "pending" | "running">;
-  /** Момент старта; по умолчанию now, если статус running. */
+  /** Момент старта; по умолчанию now для running и для legacy-БД с NOT NULL. */
   startedAt?: string;
   /** Шаги создаются в той же транзакции, что и запуск. */
   steps?: CreateStepOptions[];
@@ -253,13 +253,34 @@ const INSERT_STEP_SQL = `INSERT INTO run_steps (
   started_at, finished_at, error, output_json, created_at, updated_at
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?)`;
 
+/**
+ * QA-D315-1: в старых пользовательских БД `runs.started_at` объявлен NOT NULL,
+ * хотя актуальная схема допускает NULL. such БД не мигрируются автоматически,
+ * поэтому pending-запуск должен получать timestamp, иначе ad-hoc миссия падает
+ * ещё до старта шагов. Проверяем ограничение через PRAGMA — на новой схеме
+ * поведение остаётся прежним (started_at === null до startRun).
+ */
+function legacyRunsRequireStartedAt(): boolean {
+  try {
+    const columns = getDb()
+      .prepare("PRAGMA table_info(runs)")
+      .all() as Array<{ name: string; notnull: number }>;
+    return columns.some(
+      (column) => column.name === "started_at" && Number(column.notnull) === 1,
+    );
+  } catch {
+    return false;
+  }
+}
+
 /** Создаёт запуск и (опционально) его шаги одной транзакцией. */
 export function createRun(options: CreateRunOptions): RunRecord {
   const id = randomUUID();
   const timestamp = nowIso();
   const status: RunStatus = options.status ?? "pending";
   const startedAt =
-    options.startedAt ?? (status === "running" ? timestamp : null);
+    options.startedAt ??
+    (status === "running" || legacyRunsRequireStartedAt() ? timestamp : null);
 
   withTransaction(() => {
     getDb()

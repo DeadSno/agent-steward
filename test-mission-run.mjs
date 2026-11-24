@@ -7,8 +7,8 @@ const root = fs.mkdtempSync(path.join(os.tmpdir(), "agent-steward-ab8-"));
 const dbPath = path.join(root, "mission.db");
 process.env.OPENCODE_SCHEDULER_DB = dbPath;
 
-const { initDb, closeDb } = await import("./dist/db/index.js");
-const { listRuns, listRunSteps } = await import("./dist/db/runs-repo.js");
+const { initDb, closeDb, getDb } = await import("./dist/db/index.js");
+const { listRuns, listRunSteps, createRun } = await import("./dist/db/runs-repo.js");
 const { runMission, normalizeMissionSpec, formatLogRunMarker, extractLastRunLog } = await import("./dist/core/mission.js");
 const { createRegisteredRunContext, createAdHocRunContext } = await import("./dist/core/execution.js");
 const { compilePermissionPolicy, RISK_CLASSES } = await import("./dist/core/permissions.js");
@@ -383,6 +383,47 @@ try {
   fs.rmSync(root, { recursive: true, force: true });
 } catch {
   // Windows может держать файл БД; временный каталог очистит ОС.
+}
+
+// QA-D315-1: старые БД пользователей создавали `runs.started_at TEXT NOT NULL`.
+// Pending-запуск должен создаваться и там, без нарушения контракта legacy-схемы.
+{
+  const legacyRoot = fs.mkdtempSync(path.join(os.tmpdir(), "agent-steward-d315-"));
+  const legacyDb = path.join(legacyRoot, "legacy.db");
+  process.env.OPENCODE_SCHEDULER_DB = legacyDb;
+  initDb(legacyDb);
+  getDb().exec("DROP TABLE IF EXISTS runs");
+  getDb().exec(`
+    CREATE TABLE runs (
+      id TEXT PRIMARY KEY,
+      task_name TEXT NOT NULL,
+      status TEXT NOT NULL,
+      parent_run_id TEXT,
+      workspace_id TEXT,
+      started_at TEXT NOT NULL,
+      finished_at TEXT,
+      error TEXT,
+      metadata_json TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `);
+  try {
+    const legacyRun = createRun({ taskName: "qa-d315-legacy" });
+    check(
+      "QA-D315-1: pending-запуск создаётся в legacy-БД с NOT NULL started_at",
+      typeof legacyRun.startedAt === "string" && legacyRun.startedAt.length > 0,
+      JSON.stringify(legacyRun),
+    );
+  } catch (err) {
+    check("QA-D315-1: pending-запуск создаётся в legacy-БД с NOT NULL started_at", false, String(err));
+  }
+  closeDb();
+  try {
+    fs.rmSync(legacyRoot, { recursive: true, force: true });
+  } catch {
+    // Windows может держать файл БД; временный каталог очистит ОС.
+  }
 }
 
 console.log(`\nМиссии: ${passed} ok, ${failed} fail`);
