@@ -1,0 +1,68 @@
+name: Dependabot auto-merge
+
+# X-4.2: включаем auto-merge только для minor/patch Dependabot PR'ов.
+# Не чекаутим код PR: событие pull_request_target даёт write-токен в контексте
+# базовой ветки, поэтому важно не выполнять ничего из головы PR.
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, labeled]
+
+concurrency:
+  group: dependabot-automerge-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  actions: read
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    name: Enable auto-merge
+    if: >-
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      github.repository == 'DeadSno/agent-steward'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # В репозитории нет branch protection с обязательными проверками, поэтому
+      # ждём зелёного CI явно: иначе auto-merge сработал бы до завершения тестов.
+      - name: Wait for green CI
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          runs='[]'
+          count=0
+          active=1
+          for i in $(seq 1 80); do
+            runs=$(gh run list --commit "$SHA" --workflow ci.yml --limit 20 \
+              --json status,conclusion --jq 'map({status, conclusion})')
+            count=$(printf '%s' "$runs" | jq 'length')
+            active=$(printf '%s' "$runs" | jq '[.[] | select(.status != "completed")] | length')
+            if [ "$count" -gt 0 ] && [ "$active" -eq 0 ]; then break; fi
+            sleep 15
+          done
+          if [ "$count" -eq 0 ]; then
+            echo "CI run for $SHA not found"; exit 1
+          fi
+          failed=$(printf '%s' "$runs" | jq '[.[] | select(.conclusion != "success")] | length')
+          if [ "$active" -ne 0 ] || [ "$failed" -ne 0 ]; then
+            echo "CI is not green for $SHA"; exit 1
+          fi
+
+      - name: Enable auto-merge for minor and patch updates
+        if: >-
+          steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
+          steps.metadata.outputs.update-type == 'version-update:semver-minor'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: gh pr merge --auto --squash "$PR_URL"
