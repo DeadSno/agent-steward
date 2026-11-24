@@ -415,6 +415,7 @@ SQLite-карта, и публичный сабпат `agent-steward/router`, к
 | `src/core/savings.ts` | Counterfactual savings report (`net_savings_usd`) for analytics/CSV |
 | `src/core/reliability-scorecard.ts` | Public reliability metric: objective gate outcomes, first-pass rate and saved-token share with methodology and sample size (S-3) |
 | `src/core/recipes.ts` | Gate-passed recipe library: pipeline YAML plus objective gate evidence, pure `verifyRecipe()`/`verifyAllRecipes()` (S-4) |
+| `src/core/verified-chat.ts` | Verified chat: answer only when an objective gate, source quote or gate-passed recipe is present; refusal otherwise (S-5) |
 | `src/core/execution.ts` | Execution plan, step executor, quality gate, ledger writes and escalation |
 | `src/core/mission.ts` | Ad-hoc mission → `RunContext`, approval and budget gates before `createRun` |
 | `src/core/scheduler/` | Platform backends, registry, logs |

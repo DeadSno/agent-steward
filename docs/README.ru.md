@@ -265,7 +265,7 @@ src/
 npm install
 npm run build        # tsc
 npm run build:gui    # vite
-npm test             # 125 сюита, 600+ проверок
+npm test             # 126 сюита, 600+ проверок
 npm run test:en      # те же сюиты с английской локалью
 ```
 
@@ -284,6 +284,7 @@ npm run test:en      # те же сюиты с английской локаль
 - [SAVINGS.md](SAVINGS.md) — как считается оценка «Сэкономлено $» (English).
 - [RELIABILITY.md](RELIABILITY.md) — публичная метрика объективных гейтов и сэкономленных токенов (S-3, English).
 - [RECIPES.md](RECIPES.md) — библиотека рецептов с подтверждёнными гейтами и доказательствами (S-4, English).
+- [VERIFIED-CHAT.md](VERIFIED-CHAT.md) — ответ чата только с объективным гейтом/источником (S-5, English).
 - [../CROSS_PLATFORM.md](../CROSS_PLATFORM.md) — различия и бэкенды Windows / macOS / Linux.
 - [Сайт документации (runbook GitHub Pages)](FEATURES.md#documentation-site-github-pages) — как собирается и публикуется документация.
 

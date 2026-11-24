@@ -11,6 +11,7 @@
  *   agent-steward scorecard <file.json> [--json]          # S-3 метрика надёжности
  *   agent-steward recipes list [--task-type <type>] [--json]  # S-4 библиотека рецептов
  *   agent-steward recipes verify [id] [--json]            # S-4 проверка доказательств гейтов
+ *   agent-steward chat verify <file.json> [--json]        # S-5 ответ только с проверкой
  *
  * Exit-коды: 0 — успех, 1 — ошибки валидации/применения, 2 — неверные аргументы.
  */
@@ -27,6 +28,7 @@ import {
   verifyAllRecipes,
   verifyRecipe,
 } from "./core/recipes.js";
+import { verifyChatAnswer } from "./core/verified-chat.js";
 import { executePipelineApply, planPipelineApply } from "./core/pipeline-apply.js";
 import { tasksToPipelineSpec } from "./core/pipeline-map.js";
 import { saveTaskDefinition, type TaskDefinition } from "./task-transfer.js";
@@ -44,6 +46,7 @@ const USAGE = `agent-steward — планировщик agent jobs
   agent-steward scorecard <file.json> [--json]
   agent-steward recipes list [--task-type <type>] [--json]
   agent-steward recipes verify [id] [--json]
+  agent-steward chat verify <file.json> [--json]
   agent-steward mcp
   agent-steward serve [--port <number>]
 
@@ -54,6 +57,7 @@ const USAGE = `agent-steward — планировщик agent jobs
   export    выгрузить задачи pipeline из БД обратно в YAML
   scorecard публичная метрика объективных гейтов и сэкономленных токенов (S-3)
   recipes   библиотека gate-passed рецептов и проверка их доказательств (S-4)
+  chat      верифицированный ответ только с гейтом/источником (S-5)
   mcp       поднять 34 инструмента как MCP-сервер на stdio
   serve     поднять локальный дашборд без OpenCode
 
@@ -357,6 +361,56 @@ async function runRecipes(args: string[]): Promise<number> {
   return 2;
 }
 
+/** S-5: печатает ответ чата только если он подтверждён гейтом/источником. */
+async function runChat(args: string[]): Promise<number> {
+  const [subcommand, ...rest] = args;
+  if (!subcommand || subcommand === "--help" || subcommand === "-h" || subcommand === "help") {
+    console.log(USAGE);
+    return subcommand ? 0 : 2;
+  }
+  if (subcommand !== "verify") {
+    console.error(`Неизвестная подкоманда chat «${subcommand}».\n`);
+    console.error(USAGE);
+    return 2;
+  }
+  const file = requireFile(rest);
+  const json = rest.includes("--json");
+  let input: unknown;
+  try {
+    input = JSON.parse(readFileSync(file, "utf8"));
+  } catch (err) {
+    console.error(`Не удалось прочитать JSON «${file}»: ${err instanceof Error ? err.message : String(err)}`);
+    return 1;
+  }
+  if (input === null || typeof input !== "object" || Array.isArray(input)) {
+    console.error("chat verify ожидает JSON-объект с полями answer и evidence.");
+    return 1;
+  }
+  let decision;
+  try {
+    decision = verifyChatAnswer(input as Parameters<typeof verifyChatAnswer>[0]);
+  } catch (err) {
+    console.error(`Некорректные данные чата: ${err instanceof Error ? err.message : String(err)}`);
+    return 1;
+  }
+  if (json) {
+    console.log(JSON.stringify(decision, null, 2));
+    return decision.delivered ? 0 : 1;
+  }
+  if (decision.delivered) {
+    console.log(
+      `OK ответ выдан (гейтов: ${decision.accepted.gates}, источников: ` +
+        `${decision.accepted.sources}, рецептов: ${decision.accepted.recipes})`,
+    );
+    console.log(decision.answer ?? "");
+  } else {
+    console.error(`ОТКАЗ: ${decision.refusal ?? "ответ не подтверждён"}`);
+    for (const reason of decision.reasons.slice(1)) console.error(`  - ${reason}`);
+  }
+  console.log(`Методика: ${decision.methodologyUrl}`);
+  return decision.delivered ? 0 : 1;
+}
+
 async function runExport(args: string[]): Promise<number> {
   const pipelineName = flagValue(args, "--pipeline");
   if (!pipelineName) {
@@ -601,6 +655,9 @@ async function main(argv: string[]): Promise<number> {
       return 0;
     }
     return runScorecard([command, ...rest].filter((value): value is string => Boolean(value)));
+  }
+  if (group === "chat") {
+    return runChat([command, ...rest].filter((value): value is string => Boolean(value)));
   }
   if (group === "recipes") {
     return runRecipes([command, ...rest].filter((value): value is string => Boolean(value)));

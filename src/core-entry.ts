@@ -78,6 +78,19 @@ export {
   type RecipeLibrary,
   type RecipeVerification,
 } from "./core/recipes.js";
+// S-5: верифицированный чат — ответ только при объективном гейте/источнике.
+export {
+  VERIFIED_CHAT_FORMAT,
+  VERIFIED_CHAT_METHODOLOGY_URL,
+  VERIFIED_CHAT_VERSION,
+  verifyChatAnswer,
+  type ChatGateEvidence,
+  type ChatSourceEvidence,
+  type VerifiedChatDecision,
+  type VerifiedChatEvidence,
+  type VerifiedChatInput,
+  type VerifiedChatOptions,
+} from "./core/verified-chat.js";
 export {
   TOOL_NAMES,
   buildToolSpecs,

@@ -44,7 +44,7 @@
 # Выполнять из корня чек-аута agent-steward (например, .steward-dev или tp-audit-dev)
 npm run build          # tsc: dist/ (сервер, RPC, ядро)
 npm run build:gui      # vite: gui-experimental.cjs (панель OpenCode)
-npm test               # 134 файлов test-*.mjs (126 npm-скриптов), полный регресс
+npm test               # 135 файлов test-*.mjs (128 npm-скриптов), полный регресс
 node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с сид-данными
 ```
 
@@ -53,7 +53,7 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 - MCP: 34 инструмента доступны агенту после подключения плагина (проверено через мост Code Mode: `list_tasks`, `get_dashboard_info`).
 - Дашборд: `http://127.0.0.1:3782/` (порт может отличаться, смотреть `get_dashboard_info`).
 - Логи прогона: вывод `npm test` (при необходимости перенаправить в `test-run.log`); артефакты GUI — `gui-experimental.cjs` (создаётся `npm run build:gui`).
-- Актуальная ветка плана: `dev` (34 инструмента, 126 npm-скриптов). Legacy-чек-аут `steward-work` содержит 30 инструментов и 113 npm-скриптов — его счётчики здесь не используются.
+- Актуальная ветка плана: `dev` (34 инструмента, 128 npm-скриптов). Legacy-чек-аут `steward-work` содержит 30 инструментов и 113 npm-скриптов — его счётчики здесь не используются.
 
 ### 0.3.1 Счётчики (TP-6.2, автогенерация)
 
@@ -63,9 +63,9 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 | MCP-инструментов | 34 | Приложение B |
 | RPC-методов | 61 | Приложение A |
 | HTTP-эндпоинтов | 19 | Приложение C |
-| Файлов test-*.mjs | 134 | корень репозитория |
-| npm-скриптов test* | 126 | package.json |
-| Покрытие в §5 | 134 | TEST-PLAN §5 |
+| Файлов test-*.mjs | 135 | корень репозитория |
+| npm-скриптов test* | 128 | package.json |
+| Покрытие в §5 | 135 | TEST-PLAN §5 |
 | SCHEMA_VERSION | 14 | src/db/schema.ts |
 <!-- counters:end -->
 
@@ -575,7 +575,7 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 | S16.1.1 | 🧪 tsc | `npm run build` | 0 ошибок |
 | S16.1.2 | 🧪 vite | `npm run build:gui` | `gui-experimental.cjs` создан, каталоги внутри |
 | S16.1.3 | 🧪 Экспорты | `package.json.exports` | `./gui-experimental` и основные точки входа валидны |
-| S16.1.4 | 🧪 Тесты | `npm test` | 134 файлов `test-*.mjs` (126 npm-скриптов), 0 падений |
+| S16.1.4 | 🧪 Тесты | `npm test` | 135 файлов `test-*.mjs` (128 npm-скриптов), 0 падений |
 | S16.1.5 | 🧪 Docs | `node test-docs.mjs` | Команды и ключи в README/CHANGELOG актуальны |
 | S16.1.6 | 🧪 Чистая установка | `npm pack` → установка в пустой проект | Плагин стартует, панель открывается |
 | S16.1.7 | 🧪 Версия | `version.ts` / CHANGELOG | Совпадают, дата и раздел Fixed на месте |
@@ -721,6 +721,12 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 
 | Набор | Детали |
 |---|---|
+| `test-open-spec.mjs` | Деталь 3.19 S-1 (открытый spec pipeline, CLI describe) |
+| `test-router.mjs` | Деталь 3.19 S-2 (capability-роутинг, сабпат `./router`) |
+| `test-scorecard.mjs` | Деталь 3.19 S-3 (публичная метрика объективных гейтов) |
+| `test-recipes.mjs` | Деталь 3.19 S-4 (gate-passed рецепты и верификатор) |
+| `test-verified-chat.mjs` | Деталь 3.19 S-5 (ответ только с гейтом/источником) |
+| `test-windows-list-dedup.mjs` | D01 (дедупликация вывода schtasks /list) |
 | `test-schedule-v2.mjs` | D01.1 |
 | `test-one-shot.mjs` | D01.4 |
 | `test-window-v3.mjs` | D01.1 (окна, дни) |
