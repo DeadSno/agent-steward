@@ -414,15 +414,43 @@ function parseLocalHostname(value: string | undefined): string | undefined {
 }
 
 /**
+ * QW-13: извлекает порт из Origin. Возвращает null для Origin без явного порта,
+ * не-HTTP-схемы и некорректного значения — такие Origin не доверяются.
+ */
+function parseOriginPort(value: string): number | null {
+  const raw = value.trim();
+  const scheme = /^([a-z][a-z0-9+.-]*):\/\//i.exec(raw);
+  if (!scheme || !/^https?$/i.test(scheme[1])) return null;
+  let rest = raw.slice(scheme[0].length);
+  const at = rest.lastIndexOf("@");
+  if (at >= 0) rest = rest.slice(at + 1);
+  rest = rest.split(/[/?#]/)[0];
+  let portText: string;
+  if (rest.startsWith("[")) {
+    const end = rest.indexOf("]");
+    if (end < 0) return null;
+    portText = rest.slice(end + 1).replace(/^:/, "");
+  } else {
+    const colon = rest.lastIndexOf(":");
+    if (colon < 0) return null;
+    portText = rest.slice(colon + 1);
+  }
+  if (!/^\d+$/.test(portText)) return null;
+  const port = Number(portText);
+  return Number.isInteger(port) && port > 0 && port <= 65535 ? port : null;
+}
+
+/**
  * Проверяет, что запрос к дашборду исходит из доверенного источника,
  * чтобы защититься от CSRF и DNS-ребиндинга.
  *
  * Правила:
- *  - при наличии Origin он ОБЯЗАН быть локальным — проверка Host при этом
- *    не спасает, потому что Host всегда равен адресату запроса;
+ *  - при наличии Origin он ОБЯЗАН быть локальным и иметь порт самого дашборда
+ *    (QW-13): любой другой localhost-порт — чужой dev-сервер, который иначе
+ *    мог бы читать /api/export-db и создавать задачи в обход CSP;
  *  - без Origin (не-браузерный клиент, curl, свои fetch) требуется локальный Host —
  *    это защита от DNS-rebinding;
- *  - Origin: null, чужие схемы и чужие хосты отклоняются;
+ *  - Origin: null, чужие схемы, чужие хосты и порты отклоняются;
  *  - X-Scheduler-Client — только дополнительное подтверждение: он не обходит
  *    проверку Origin и не превращает внешний запрос в доверенный.
  */
@@ -435,9 +463,17 @@ export function isDashboardRequestTrusted(req: http.IncomingMessage): boolean {
     // X-Scheduler-Client НЕ обходит эту проверку: заголовок можно подделать
     // через CORS с ошибкой в конфиге или XSS на странице дашборда.
     const originHost = parseLocalHostname(origin);
-    const localOrigin = Boolean(originHost && LOCAL_HOSTNAMES.has(originHost));
-    if (!localOrigin) return false;
-    // Локальный Origin — доверяем; X-Scheduler-Client — дополнительное подтверждение.
+    if (!originHost || !LOCAL_HOSTNAMES.has(originHost)) return false;
+    // QW-13: даже localhost Origin обязан прийти с порта самого дашборда.
+    // Иначе любой локальный dev-сервер может дергать /api/* со своей страницы.
+    const originPort = parseOriginPort(origin);
+    if (originPort === null) return false;
+    const livePort = getDashboardPort();
+    const allowed =
+      livePort !== null
+        ? originPort === livePort
+        : dashboardPortCandidates().includes(originPort);
+    if (!allowed) return false;
     return true;
   }
 

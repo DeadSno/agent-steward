@@ -77,6 +77,22 @@ check(
   "Origin: file:// → не доверяем",
   isDashboardRequestTrusted(request({ ...client, origin: "file://" })) === false
 );
+check(
+  "QW-13: чужой localhost-порт с заголовком → не доверяем",
+  isDashboardRequestTrusted(request({ ...client, origin: "http://localhost:3000" })) === false
+);
+check(
+  "QW-13: Origin без порта → не доверяем",
+  isDashboardRequestTrusted(request({ ...client, origin: "http://localhost" })) === false
+);
+check(
+  "QW-13: не-HTTP-схема на локальном порту → не доверяем",
+  isDashboardRequestTrusted(request({ ...client, origin: "ftp://localhost:3782" })) === false
+);
+check(
+  "QW-13: стандартный порт плагина без запущенного сервера → доверяем",
+  isDashboardRequestTrusted(request({ origin: "https://localhost:3782" })) === true
+);
 
 // Живые запросы к реальному серверу: unit-проверки выше не ловят
 // рассинхрон между isDashboardRequestTrusted и handleRequest.
@@ -117,6 +133,22 @@ try {
     headers: { origin: `http://127.0.0.1:${getDashboardPort()}` },
   });
   check("живой запрос с локальным Origin → 200", localOrigin.status === 200);
+
+  const foreignLocalOrigin = await fetch(`${base}/api/tasks`, {
+    headers: { ...client, origin: "http://localhost:3000" },
+  });
+  check(
+    "QW-13: живой запрос с чужим localhost-портом → 403",
+    foreignLocalOrigin.status === 403
+  );
+
+  const otherPluginPort = await fetch(`${base}/api/tasks`, {
+    headers: { origin: "http://localhost:3782" },
+  });
+  check(
+    "QW-13: живой запрос с портом другого дашборда → 403",
+    otherPluginPort.status === 403
+  );
 
   const evilRun = await fetch(`${base}/api/run`, {
     method: "POST",

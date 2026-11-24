@@ -970,6 +970,16 @@ Rules:
 ## Security model
 
 - The dashboard has **no authentication** and binds to localhost. Do not expose it.
+- **Dashboard source trust (QW-13).** Every `/api/*` request (except HMAC-authenticated
+  `/api/hooks/*`) must come from the dashboard itself: a browser `Origin` is accepted
+  only when its host is a loopback name **and** its port equals the port the dashboard
+  is actually listening on (or one of the plugin's standard ports before the server
+  starts). A page served by an unrelated local dev server (e.g. `http://localhost:3000`)
+  can no longer read `/api/export-db`, history or settings or trigger `/api/run`.
+  Requests without `Origin` (curl, in-process fetch) are checked by a loopback `Host`
+  instead, which also blocks DNS-rebinding. `X-Scheduler-Client` is supplementary only:
+  a foreign Origin is never rescued by that spoofable header. `test-dashboard-trust.mjs`
+  covers both the pure predicate and live 200/403 responses.
 - **Dashboard XSS hardening (B3):** every dynamic value passes through `esc()` before
   reaching text or attribute context; it escapes `&`, `<`, `>`, `"` and `'` (the old
   `div.innerHTML` trick left quotes intact). `GET /` also sends
