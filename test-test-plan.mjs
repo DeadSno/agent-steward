@@ -63,7 +63,7 @@ check(`§5: все ${testFiles.length} файлов test-*.mjs упомянут�
   testFiles.every((f) => mentioned.includes(f)));
 check(`§5: все ${mentioned.length} упомянутых файлов существуют`,
   mentioned.every((f) => testFiles.includes(f)));
-check("шапка: дата 20.11.2026", plan.includes("20.11.2026"));
+check("шапка: дата 24.11.2026", plan.includes("24.11.2026"));
 check(`шапка: счётчик файлов = ${testFiles.length}`, plan.includes(`${testFiles.length} файлов`));
 check(`шапка: счётчик npm-скриптов = ${npmTestScripts.length}`,
   plan.includes(`${npmTestScripts.length} npm-скриптов`));
