@@ -41,7 +41,7 @@
 ### 0.3 Подготовка окружения
 
 ```powershell
-cd agent-steward
+# Выполнять из корня чек-аута agent-steward (например, .steward-dev или tp-audit-dev)
 npm run build          # tsc: dist/ (сервер, RPC, ядро)
 npm run build:gui      # vite: gui-experimental.cjs (панель OpenCode)
 npm test               # 121 файлов test-*.mjs (114 npm-скриптов), полный регресс
@@ -50,9 +50,24 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 
 - Текущая схема БД: `SCHEMA_VERSION = 14` (таблицы обратной связи `feedback_outbox`/`feedback_spam`; историческая миграция 10 → 11 описана в S15.1.2).
 - GUI: OpenCode → боковая панель «Планировщик Windows». После пересборки панель перезагрузить.
-- MCP: 32 инструмента доступны агенту в этой же сессии.
+- MCP: 32 инструмента доступны агенту после подключения плагина (проверено через мост Code Mode: `list_tasks`, `get_dashboard_info`).
 - Дашборд: `http://127.0.0.1:3782/` (порт может отличаться, смотреть `get_dashboard_info`).
-- Логи прогона: `test-run.log`; артефакты GUI — `gui-experimental.cjs`.
+- Логи прогона: вывод `npm test` (при необходимости перенаправить в `test-run.log`); артефакты GUI — `gui-experimental.cjs` (создаётся `npm run build:gui`).
+- Актуальная ветка плана: `dev` (32 инструмента, 114 npm-скриптов). Legacy-чек-аут `steward-work` содержит 30 инструментов и 113 npm-скриптов — его счётчики здесь не используются.
+
+### 0.3.1 Счётчики (TP-6.2, автогенерация)
+
+<!-- counters:start -->
+| Счётчик | Значение | Источник |
+|---|---|---|
+| MCP-инструментов | 32 | Приложение B |
+| RPC-методов | 59 | Приложение A |
+| HTTP-эндпоинтов | 19 | Приложение C |
+| Файлов test-*.mjs | 121 | корень репозитория |
+| npm-скриптов test* | 114 | package.json |
+| Покрытие в §5 | 121 | TEST-PLAN §5 |
+| SCHEMA_VERSION | 14 | src/db/schema.ts |
+<!-- counters:end -->
 
 ### 0.4 Эталонная задача для ручных проверок
 
@@ -558,7 +573,7 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 | S16.1.1 | 🧪 tsc | `npm run build` | 0 ошибок |
 | S16.1.2 | 🧪 vite | `npm run build:gui` | `gui-experimental.cjs` создан, каталоги внутри |
 | S16.1.3 | 🧪 Экспорты | `package.json.exports` | `./gui-experimental` и основные точки входа валидны |
-| S16.1.4 | 🧪 Тесты | `npm test` | 119 файлов `test-*.mjs` (111 npm-скриптов), 0 падений |
+| S16.1.4 | 🧪 Тесты | `npm test` | 121 файлов `test-*.mjs` (114 npm-скриптов), 0 падений |
 | S16.1.5 | 🧪 Docs | `node test-docs.mjs` | Команды и ключи в README/CHANGELOG актуальны |
 | S16.1.6 | 🧪 Чистая установка | `npm pack` → установка в пустой проект | Плагин стартует, панель открывается |
 | S16.1.7 | 🧪 Версия | `version.ts` / CHANGELOG | Совпадают, дата и раздел Fixed на месте |
@@ -812,7 +827,7 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 | `test-dual-entry.mjs` | D16 (dual-export V1/V2: id/setup + server) |
 | `test-eslint-baseline.mjs` | D16 (baseline-гейт ESLint, QA-A2.0) |
 | `test-pipeline.mjs` | D18 (pipeline-as-code: схема/валидатор/CLI, S18.1.1–S18.1.7) |
-| `test-test-plan.mjs` | D16 (TP-6.1: качество TEST-PLAN.md, 19 проверок) |
+| `test-test-plan.mjs` | D16 (TP-6.1: качество TEST-PLAN.md, 21 проверка) |
 | `test-feedback.mjs` | D17 (обратная связь / report_bug, S17.1.1–S17.1.6; F-4.1) |
 | `test-feedback-worker.mjs` | D17 (приёмник: валидация, дедуп, rate-limit, honeypot; F-4.2) |
 | `test-v1-integration.mjs` | D16 (V1-адаптер без OpenCode CLI) |
@@ -827,6 +842,10 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 | `test-chaos-dag.mjs` | D05, D15 (nightly crash/kill-9 DAG) |
 | `test-task-logs.mjs` | D16 (PL-67: поиск лога задачи по короткому/префиксному имени) |
 
+> Исторические мета-задачи аудита плана закрыты и зафиксированы в `CHANGELOG.md`:
+> TP-1 (корректность счётчиков), TP-2 (полнота §5) и TP-3–TP-6 (верификация
+> TEST-PLAN.md). В таблице выше оставлен только текущий мета-гейт TP-6.1.
+
 ---
 
 ## 6. Чек-лист приёмки (финальный)
@@ -834,7 +853,7 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 - [ ] Все 18 деталей закрыты, у каждой выполнены 3 критерия (работает / доступ агента / доступ пользователя) + все `Sxx.BP.*` подзадачи.
 - [ ] Все 32 MCP-инструмента вызываются и валидируют аргументы (D04).
 - [ ] Все 59 RPC-методов доступны GUI (D14.1, приложение A).
-- [ ] Все 19 HTTP API эндпоинтов, задокументированных в Приложении C (21 уникальный маршрут в коде), отвечают корректно (D14.4).
+- [ ] Все 19 HTTP API эндпоинтов, задокументированных в Приложении C (21 уникальный маршрут в коде, включая статику `/`, `/favicon.ico`, `/index.html` и `/metrics`), отвечают корректно (D14.4).
 - [ ] Задача, созданная в GUI, видна агенту и на дашборде; и наоборот (E2E-4).
 - [ ] Каждая мутация имеет запись в аудите с правильным actor: `mcp`, `gui`, `http` (D10, D13).
 - [ ] Матрица: preview → создание → partial → cancel → cleanup без сирот (E2E-5).
@@ -855,14 +874,14 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 
 ### 7.1 Исправленные баги (реестр)
 
-> **Все четыре бага закрыты** коммитом `3e35d9c` (2026-11-20, `fix(qa): resolve QA-P3.5-P3.8 tool inconsistencies`), перенесены в `CHANGELOG.md:52–55` и покрыты регрессионными тестами. Статус ниже — ✅ исправлено; в колонке «Исправление» указано фактическое решение. Повторно исправлять не требуется.
+> **Все четыре бага закрыты** коммитом `3e35d9c` (2026-11-20, `fix(qa): resolve QA-P3.5-P3.8 tool inconsistencies`), перенесены в `CHANGELOG.md` (записи QA-P3.5–QA-P3.8) и покрыты регрессионными тестами. Статус ниже — ✅ исправлено; в колонке «Исправление» указано фактическое решение. Повторно исправлять не требуется.
 
 | ID | Деталь | Приоритет | Статус | Суть (была) | Исправление |
 |---|---|---|---|---|---|
-| QA-P3.5 | D13 | P3 | ✅ исправлено | `get_dashboard_info` после перезапуска сервера вернул `port:null, url:null`, но дашборд поднялся на порту 3782. Несоответствие reported port vs real. | `src/server.ts`: `observedPort`/`rememberDashboardPort()`/`dashboardPortCandidates()`/`discoverDashboardPort()` (зондирование маркера); `get_dashboard_info` (`src/index.ts`) проверяет доступность и возвращает поле `reachable`. Регрессия — `test-dashboard.mjs`. См. `3e35d9c`, `CHANGELOG.md:52`. |
-| QA-P3.6 | D03 | P3 | ✅ исправлено | `run_task_now({name:'__no_such_task__'})` возвращал сырую ошибку ОС вместо «задача не найдена». | `runTaskEntry()` (`src/index.ts`) до `scheduler.runTask()` проверяет наличие задачи в определениях и в ОС, иначе бросает `t("tool.error.taskNotFound")`. Регрессия — `test-run-now.mjs`. См. `3e35d9c`, `CHANGELOG.md:53`. |
-| QA-P3.7 | D06 | P3 | ✅ исправлено | `matrix_control({action:'results', name:'__no_such_matrix__'})` → `success:true, status=empty` вместо ошибки. | `isKnownMatrix()` (`src/core/matrix.ts`); обработчик `results` возвращает `{success:false, error:t("tool.error.matrixNotMatrix")}` как и `cancel`. Регрессия — `test-matrix.mjs` (27/27). См. `3e35d9c`, `CHANGELOG.md:54`. |
-| QA-P3.8 | D02 | P3 | ✅ исправлено | `pause_task`/`resume_task` для несуществующей задачи возвращали `success:false` но с полем `paused:true`/`paused:false`. | `pauseOrResumeTask()` (`src/index.ts`) в error-ветках возвращает реальное состояние: `paused:false` для отсутствующей задачи, иначе `definition.paused ?? false`. Регрессия — `test-pause-gui.mjs`. См. `3e35d9c`, `CHANGELOG.md:55`. |
+| QA-P3.5 | D13 | P3 | ✅ исправлено | `get_dashboard_info` после перезапуска сервера вернул `port:null, url:null`, но дашборд поднялся на порту 3782. Несоответствие reported port vs real. | `src/server.ts`: `observedPort`/`rememberDashboardPort()`/`dashboardPortCandidates()`/`discoverDashboardPort()` (зондирование маркера); `get_dashboard_info` (`src/index.ts`) проверяет доступность и возвращает поле `reachable`. Регрессия — `test-dashboard.mjs`. См. `3e35d9c`, `CHANGELOG.md` (запись QA-P3.5). |
+| QA-P3.6 | D03 | P3 | ✅ исправлено | `run_task_now({name:'__no_such_task__'})` возвращал сырую ошибку ОС вместо «задача не найдена». | `runTaskEntry()` (`src/index.ts`) до `scheduler.runTask()` проверяет наличие задачи в определениях и в ОС, иначе бросает `t("tool.error.taskNotFound")`. Регрессия — `test-run-now.mjs`. См. `3e35d9c`, `CHANGELOG.md` (запись QA-P3.6). |
+| QA-P3.7 | D06 | P3 | ✅ исправлено | `matrix_control({action:'results', name:'__no_such_matrix__'})` → `success:true, status=empty` вместо ошибки. | `isKnownMatrix()` (`src/core/matrix.ts`); обработчик `results` возвращает `{success:false, error:t("tool.error.matrixNotMatrix")}` как и `cancel`. Регрессия — `test-matrix.mjs` (27/27). См. `3e35d9c`, `CHANGELOG.md` (запись QA-P3.7). |
+| QA-P3.8 | D02 | P3 | ✅ исправлено | `pause_task`/`resume_task` для несуществующей задачи возвращали `success:false` но с полем `paused:true`/`paused:false`. | `pauseOrResumeTask()` (`src/index.ts`) в error-ветках возвращает реальное состояние: `paused:false` для отсутствующей задачи, иначе `definition.paused ?? false`. Регрессия — `test-pause-gui.mjs`. См. `3e35d9c`, `CHANGELOG.md` (запись QA-P3.8). |
 
 ### 7.2 Узкие места (bottlenecks) — требующие внимания
 
