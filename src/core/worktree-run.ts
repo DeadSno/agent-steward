@@ -15,8 +15,9 @@
  * При ошибке exit 1: обёртка обязана упасть fail-closed, а не работать в
  * основном дереве.
  */
+import fs from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import {
   cleanupStaleWorktrees,
   createRunWorktree,
@@ -189,8 +190,22 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
   return parsed.args.mode === "cleanup" ? runCleanup(parsed.args) : runCreate(parsed.args);
 }
 
-const invokedPath = process.argv[1] ? pathToFileURL(path.resolve(process.argv[1])).href : "";
-if (import.meta.url === invokedPath) {
+// QA-PORT-12: в свежем worktree `dist/` — junction на основной чек-аут. Без
+// --preserve-symlinks Node резолвит модуль по реальному пути, а process.argv[1]
+// остаётся путём через junction, поэтому проверка `import.meta.url ===
+// invokedPath` не срабатывала, main() не вызывался и helper молча выходил с
+// кодом 0. Сравниваем
+// реальные пути обоих файлов (realpath) — теперь работает и с junction, и без.
+const realPath = (value: string): string => {
+  try {
+    return fs.realpathSync(value);
+  } catch {
+    return path.resolve(value);
+  }
+};
+const invokedPath = process.argv[1] ? realPath(process.argv[1]) : "";
+const modulePath = realPath(fileURLToPath(import.meta.url));
+if (invokedPath && invokedPath === modulePath) {
   main().then(
     (code) => {
       process.exitCode = code;

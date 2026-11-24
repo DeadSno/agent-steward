@@ -279,6 +279,18 @@ let first;
     windowsHide: true,
   });
   check("CLI: неизвестный флаг → код 1", unknown.status === 1);
+
+  // QA-PORT-12: в worktree dist/ — junction, import.meta.url указывает на
+  // реальный путь, а argv[1] — на junction. Раньше main() не вызывался и helper
+  // молча выходил с 0, теперь ошибка обязана дойти до stderr.
+  const junction = spawnSync(process.execPath, [helper, "--repo", notRepo, "--task", "qa-port-12"], {
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  check(
+    "QA-PORT-12: helper запускается без --preserve-symlinks даже при junction dist/",
+    junction.status === 1 && (junction.stderr ?? "").includes("[worktree]"),
+  );
 }
 
 // 7. Windows-обёртка: worktree включается только по флагу.
