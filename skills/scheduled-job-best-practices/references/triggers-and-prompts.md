@@ -13,7 +13,7 @@ summary, last run.
 | --- | --- | --- |
 | "Every morning / every hour / weekly" | `schedule_task` with cron | Durable OS-level schedule, survives restarts |
 | "When this file changes" | `triggerType: "file"` + `watchPath` | No polling; the watcher debounces bursts |
-| "When my MCP server reports an event" | `schedule_advanced` (admin profile) with `triggerType: "mcp-event"` + `mcpEvent` | Event-driven, no wasted runs; `mcpEvent` is excluded from the core `schedule_task` profile (PL-129) |
+| "When my MCP server reports an event" | `schedule_task` with `triggerType: "mcp-event"` + `mcpEvent` (core), `emit_event` to fire subscribers | Event-driven, no wasted runs; after QA-PORT-4 `mcpEvent`/`emit_event` are in the core profile; only `nextTaskOnSuccess` chains need `schedule_advanced` (admin) |
 | "Same work in N repositories" | `matrix.workspaceIds` | One definition, isolated clones, aggregated status |
 | "A then B then C" | `dependsOn` + `nextTaskOnSuccess` / `nextTaskOnError` | Explicit DAG, failures stop the line |
 | "Try again if it fails" | `retryCount` + `retryDelay` | Handles flaky networks and rate limits |

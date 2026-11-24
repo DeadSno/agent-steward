@@ -390,22 +390,23 @@ check(
 const defaultNames = defaultSpecs.map((spec) => spec.name);
 const adminNames = adminSpecs.map((spec) => spec.name);
 check(
-  `T-1: дефолтный профиль core = 9 инструментов без manage_* и advanced (${defaultSpecs.length})`,
-  defaultSpecs.length === 9 &&
+  `QA-PORT-4/T-1: дефолтный профиль core = 10 инструментов, включая emit_event (${defaultSpecs.length})`,
+  defaultSpecs.length === 10 &&
     defaultNames.includes("schedule_task") &&
     defaultNames.includes("list_tasks") &&
+    defaultNames.includes("emit_event") &&
     !defaultNames.some((name) => name.startsWith("manage_") || name.endsWith("_advanced"))
 );
 check(
-  `T-1/T-3: профиль admin = core + manage_* + advanced (${adminSpecs.length})`,
-  adminSpecs.length === 18 &&
+  `QA-PORT-4/T-1/T-3: профиль admin = core + manage_* + advanced (${adminSpecs.length})`,
+  adminSpecs.length === 19 &&
     adminNames.filter((name) => name.startsWith("manage_")).length === 6 &&
     adminNames.includes("schedule_advanced") &&
     adminNames.includes("update_advanced")
 );
 check(
   "T-1: невалидное значение профиля безопасно падает в core",
-  createToolSpecs({}, { AGENT_STEWARD_TOOL_PROFILE: "bogus" }).length === 9
+  createToolSpecs({}, { AGENT_STEWARD_TOOL_PROFILE: "bogus" }).length === 10
 );
 
 // T-2: «толстые» поля доступны только в advanced-инструментах; базовые схемы
@@ -742,7 +743,7 @@ check(
 );
 check(
   `T-1.2/T-1.4: дефолтный профиль ≤ 6k токенов (факт: ${coreSurface.estimatedTokens})`,
-  coreSurface.tools === 9 &&
+  coreSurface.tools === 10 &&
     coreSurface.estimatedTokens > 0 &&
     coreSurface.estimatedTokens <= 6000 &&
     coreSurface.estimatedTokens < surface.estimatedTokens / 3
@@ -797,17 +798,18 @@ check(
   );
 }
 
-// PL-129: осознанное упрощение core-профиля — mcpEvent/nextTaskOnSuccess
-// вынесены в ADVANCED_SCHEMA_KEYS, а подсказка в локалях ведёт к schedule_advanced.
+// QA-PORT-4: event-driven задачи доступны в core-профиле. Короткое поле
+// mcpEvent и инструмент emit_event переведены в core; цепочки
+// nextTaskOnSuccess остаются admin-only (бывший PL-129).
 {
   const coreShape = coreScheduleTaskSchema.shape;
   const fullShape = scheduleTaskSchema.shape;
   check(
-    "PL-129: coreScheduleTaskSchema.shape не содержит mcpEvent/nextTaskOnSuccess",
-    !("mcpEvent" in coreShape) && !("nextTaskOnSuccess" in coreShape)
+    "QA-PORT-4: coreScheduleTaskSchema.shape содержит mcpEvent, но не nextTaskOnSuccess",
+    "mcpEvent" in coreShape && !("nextTaskOnSuccess" in coreShape)
   );
   check(
-    "PL-129: полная scheduleTaskSchema содержит mcpEvent и nextTaskOnSuccess",
+    "QA-PORT-4: полная scheduleTaskSchema содержит mcpEvent и nextTaskOnSuccess",
     "mcpEvent" in fullShape && "nextTaskOnSuccess" in fullShape
   );
   const localeHints = ["en", "ru", "zh", "tr"].map((locale) => {
@@ -817,9 +819,11 @@ check(
     return catalog["tool.error.mcpEventRequired"] ?? "";
   });
   check(
-    "PL-129: все 4 локали подсказывают schedule_advanced в tool.error.mcpEventRequired",
+    "QA-PORT-4: все 4 локали объясняют mcpEvent/emit_event в core и admin-only цепочки",
     localeHints.every(
       (hint) =>
+        hint.includes("mcpEvent") &&
+        hint.includes("emit_event") &&
         hint.includes("schedule_advanced") &&
         hint.includes("AGENT_STEWARD_TOOL_PROFILE=all") &&
         hint.includes("nextTaskOnSuccess")

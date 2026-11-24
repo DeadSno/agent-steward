@@ -36,7 +36,7 @@ dependencies, matrix summary and last run.
 | --- | --- |
 | Every morning / hour / week | `schedule_task` with cron (durable OS schedule) |
 | When a file changes | `triggerType: "file"` + `watchPath` |
-| When an MCP server reports an event | `schedule_advanced` (admin profile) with `triggerType: "mcp-event"` + `mcpEvent` — not in core `schedule_task` |
+| When an MCP server reports an event | `schedule_task` with `triggerType: "mcp-event"` + `mcpEvent` (core profile), then `emit_event` to fire subscribers; `schedule_advanced` (admin) is only needed for `nextTaskOnSuccess` chains |
 | Same work in N repositories | `matrix.workspaceIds` |
 | A then B then C | `dependsOn` or `nextTaskOnSuccess` — never both for one transition |
 | Try again on failure | `retryCount` + `retryDelay` |
