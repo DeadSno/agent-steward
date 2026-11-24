@@ -187,12 +187,7 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 ## Деталь 3.17 — Верификация аудита Qwen (QW)
 `src/runtime.ts`, `src/core/scheduler/mac.ts`, `src/core/permissions.ts`, `legacy/package.json`, `test-*.mjs`, `docs/*`
 
-> Отчёт Qwen от 24.11.2026 проверяется по коду: в ROADMAP попадают только подтверждённые находки. QW-1 (worktree isolation) закрыт и перенесён в CHANGELOG. Неподтверждённые пункты P2/P3 ведутся в QW-6 до воспроизведения.
-
-**Задача QW-3 — macOS 13+ пауза не переживает выход/вход в систему** · P1 · ⬜
-- [ ] QW-3.1 На modern launchctl вызывать `disable gui/<uid>/<label>` при паузе и `enable` при возобновлении/установке
-- [ ] QW-3.2 Пауза при установке уже приостановленной задачи должна оставлять агент выключенным
-- [ ] QW-3.3 Регрессия: `test-mac-launchctl.mjs` проверяет план аргументов для Darwin ≥ 22
+> Отчёт Qwen от 24.11.2026 проверяется по коду: в ROADMAP попадают только подтверждённые находки. QW-1 (worktree isolation), QW-2 (catch-up) и QW-3 (macOS pause) закрыты и перенесены в CHANGELOG. Неподтверждённые пункты P2/P3 ведутся в QW-6 до воспроизведения.
 
 **Задача QW-4 — `egress` в `OPENCODE_CONFIG_CONTENT` отсутствует в схеме OpenCode** · P1 · ⬜
 - [ ] QW-4.1 Убрать корневой `egress` из `buildOpencodeConfig`; runtime-guard `runEgressGuarded` сохранить

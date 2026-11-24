@@ -83,9 +83,9 @@ The factory picks an implementation from `process.platform`:
 - Tasks are LaunchAgent plists at `~/Library/LaunchAgents/com.opencode.scheduler.<name>.plist`.
 - Schedule: `StartInterval` for `* * * * *` and `*/N`, `StartCalendarInterval` for `M * * * *`,
   `M H * * *`, `M H * * D`.
-- Pause = `launchctl unload -w`, resume = `launchctl load -w`.
+- Pause = `launchctl unload -w` (legacy) or `bootout gui/<uid> <plist>` + `launchctl disable gui/<uid>/<label>` (macOS 13+); resume = `launchctl load -w` or `enable` + `bootstrap gui/<uid> <plist>`.
 - Installing a paused task writes the plist but never calls `load -w` (it would
-  clear the pause); `unload -w` keeps the agent disabled after the next login.
+  clear the pause). On legacy macOS `unload -w` writes `Disabled` to the override database, so the agent stays disabled after the next login; on macOS 13+ `bootout` only unloads the agent, therefore the plugin additionally calls `launchctl disable` — without it launchd would load the plist at the next login.
 - `launchctl load` failures are not swallowed: the install/resume error carries
   the command, exit code and stderr (e.g. `Invalid property list` for a broken plist).
 - Wrapper is the same `.sh` as on Linux; config paths:
@@ -116,7 +116,7 @@ The factory picks an implementation from `process.platform`:
 | Native cron subset | `* * * * *`, `*/N * * * *` (N ≤ 1439, 60 % N = 0), `M * * * *`, `M H * * *`, `M H * * D` | full cron | same subset as Windows |
 | Other cron expressions | minute-poll + schedule gate | native cron | minute-poll + schedule gate |
 | `*/N` in day-of-month / day-of-week | not native → poll | native | not native → poll |
-| Pause / resume | `schtasks /change /disable` / `/enable` | `# PAUSED:` line in the managed block | `launchctl unload -w` / `load -w` |
+| Pause / resume | `schtasks /change /disable` / `/enable` | `# PAUSED:` line in the managed block | legacy `unload -w` / `load -w`; macOS 13+ `bootout` + `disable` / `enable` + `bootstrap` |
 | File triggers | in-process `FileWatchManager` | same | same |
 | Task wrappers | `.cmd` + `.ps1` | `.sh` | `.sh` |
 | Logs | `%APPDATA%\opencode\agent-steward\logs` | `~/.config/opencode/agent-steward/logs` | same as Linux |

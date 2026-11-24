@@ -328,12 +328,32 @@ export function planLaunchctlInstall(
  * ML-1: macOS 13 (Darwin 22) заменяет `load`/`unload` на `bootstrap`/`bootout`
  * с явным доменом `gui/<uid>`. `-w` у legacy-команды здесь не нужен: bootstrap
  * сам регистрирует агент, а bootout — снимает регистрацию.
+ *
+ * QW-3: bootout только выгружает агент, но не пишет Disabled в override-базу.
+ * Поэтому на modern macOS пауза дополнительно вызывает `disable`, а
+ * возобновление/установка — `enable` перед bootstrap.
  */
 export function modernLaunchctlArgs(args: string[], uid: number = process.getuid?.() ?? 501): string[] {
   const [command, ...rest] = args;
   if (command !== "load" && command !== "unload") return args;
   const plist = rest.filter((part) => part !== "-w");
   return [command === "load" ? "bootstrap" : "bootout", `gui/${uid}`, ...plist];
+}
+
+/**
+ * QW-3: аргументы `launchctl disable/enable` для modern macOS.
+ * `paused=true` → disable (пауза), `false` → enable (возобновление).
+ * Принимает label или путь к plist — для удобства вызовов из installEntry.
+ */
+export function launchctlPauseOverrideArgs(
+  labelOrPlist: string,
+  paused: boolean,
+  uid: number = process.getuid?.() ?? 501,
+): string[] {
+  const label = labelOrPlist.toLowerCase().endsWith(".plist")
+    ? path.basename(labelOrPlist).replace(/\.plist$/i, "")
+    : labelOrPlist;
+  return [paused ? "disable" : "enable", `gui/${uid}/${label}`];
 }
 
 /** Современные команды доступны на macOS 13+ (Darwin 22+). */
@@ -442,6 +462,8 @@ export class MacScheduler extends PosixSchedulerBase {
   protected async installEntry(entry: RegistryEntry): Promise<void> {
     await fs.mkdir(LAUNCH_AGENTS_DIR, { recursive: true });
     const plistPath = this.plistPath(entry.name);
+    const label = this.label(entry.name);
+    const modern = supportsModernLaunchctl();
     const plan = planLaunchctlInstall(entry.paused, plistPath);
     // Агент мог быть не загружен — это не ошибка.
     await this.launchctl(plan.beforeWrite, { tolerateFailure: true });
@@ -458,7 +480,15 @@ export class MacScheduler extends PosixSchedulerBase {
       throw error;
     }
     if (plan.afterWrite) {
+      // QW-3: после прошлой паузы агент мог остаться disabled — снимаем флаг
+      // до bootstrap, иначе установка активной задачи не запустит её.
+      if (modern) {
+        await this.launchctl(launchctlPauseOverrideArgs(label, false));
+      }
       await this.launchctl(plan.afterWrite);
+    } else if (modern) {
+      // QW-3: bootout не пишет Disabled, поэтому пауза фиксируется явно.
+      await this.launchctl(launchctlPauseOverrideArgs(label, true));
     }
   }
 
@@ -470,6 +500,21 @@ export class MacScheduler extends PosixSchedulerBase {
 
   protected async applyPause(entry: RegistryEntry, paused: boolean): Promise<void> {
     const plistPath = this.plistPath(entry.name);
+    if (supportsModernLaunchctl()) {
+      const label = this.label(entry.name);
+      if (paused) {
+        // bootout выгружает агент, disable фиксирует паузу в override-базе:
+        // без него launchd загрузит plist при следующем входе в систему.
+        await this.launchctl(["unload", "-w", plistPath], { tolerateFailure: true });
+        await this.launchctl(launchctlPauseOverrideArgs(label, true));
+      } else {
+        // enable обязан идти до bootstrap: иначе агент останется disabled.
+        await this.launchctl(launchctlPauseOverrideArgs(label, false));
+        // Возобновление не должно «удаваться» молча при битом plist.
+        await this.launchctl(["load", "-w", plistPath]);
+      }
+      return;
+    }
     if (paused) {
       await this.launchctl(["unload", "-w", plistPath], { tolerateFailure: true });
     } else {

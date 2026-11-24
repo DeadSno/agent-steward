@@ -5,6 +5,7 @@
 import fs from "node:fs";
 import {
   describeLaunchctlError,
+  launchctlPauseOverrideArgs,
   MacScheduler,
   modernLaunchctlArgs,
   planLaunchctlInstall,
@@ -156,6 +157,106 @@ const plist = "/Users/test/Library/LaunchAgents/com.opencode.scheduler.demo.plis
   );
 }
 
+// --- QW-3: пауза переживает перелогин на macOS 13+ -------------------------
+{
+  const uid = process.getuid?.() ?? 501;
+  const label = "com.opencode.scheduler.demo";
+  check(
+    "QW-3: пауза = disable gui/<uid>/<label>",
+    JSON.stringify(launchctlPauseOverrideArgs(plist, true, uid)) ===
+      JSON.stringify(["disable", `gui/${uid}/${label}`]),
+    JSON.stringify(launchctlPauseOverrideArgs(plist, true, uid)),
+  );
+  check(
+    "QW-3: возобновление = enable gui/<uid>/<label>",
+    JSON.stringify(launchctlPauseOverrideArgs(plist, false, uid)) ===
+      JSON.stringify(["enable", `gui/${uid}/${label}`]),
+    JSON.stringify(launchctlPauseOverrideArgs(plist, false, uid)),
+  );
+}
+
+{
+  const scheduler = new MacScheduler("default");
+  const calls = [];
+  scheduler.launchctl = async (args) => void calls.push(args);
+  const entry = {
+    name: "qw3-pause",
+    schedule: "0 3 * * *",
+    command: "echo qw3",
+    triggerType: "cron",
+    paused: false,
+    createdAt: new Date().toISOString(),
+  };
+  await scheduler.applyPause(entry, true);
+  check(
+    "QW-3: applyPause(true) = unload -w (→ bootout) → disable",
+    calls.length === 2 && calls[0][0] === "unload" && calls[1][0] === "disable",
+    JSON.stringify(calls),
+  );
+  calls.length = 0;
+  await scheduler.applyPause(entry, false);
+  check(
+    "QW-3: applyPause(false) = enable → load -w (→ bootstrap)",
+    calls.length === 2 && calls[0][0] === "enable" && calls[1][0] === "load",
+    JSON.stringify(calls),
+  );
+}
+
+{
+  const scheduler = new MacScheduler("default");
+  const calls = [];
+  scheduler.launchctl = async (args) => void calls.push(args);
+  const entry = {
+    name: "qw3-install",
+    schedule: "0 3 * * *",
+    command: "echo qw3",
+    triggerType: "cron",
+    paused: true,
+    createdAt: new Date().toISOString(),
+  };
+  const real = {
+    mkdir: fs.promises.mkdir,
+    writeFile: fs.promises.writeFile,
+    rename: fs.promises.rename,
+  };
+  fs.promises.mkdir = async () => {};
+  fs.promises.writeFile = async () => {};
+  fs.promises.rename = async () => {};
+  try {
+    await scheduler.installEntry(entry);
+  } finally {
+    fs.promises.mkdir = real.mkdir;
+    fs.promises.writeFile = real.writeFile;
+    fs.promises.rename = real.rename;
+  }
+  check(
+    "QW-3: установка paused-задачи заканчивается disable",
+    calls.length === 2 && calls[0][0] === "unload" && calls[1][0] === "disable",
+    JSON.stringify(calls),
+  );
+
+  calls.length = 0;
+  entry.paused = false;
+  fs.promises.mkdir = async () => {};
+  fs.promises.writeFile = async () => {};
+  fs.promises.rename = async () => {};
+  try {
+    await scheduler.installEntry(entry);
+  } finally {
+    fs.promises.mkdir = real.mkdir;
+    fs.promises.writeFile = real.writeFile;
+    fs.promises.rename = real.rename;
+  }
+  check(
+    "QW-3: установка активной задачи = unload → enable → load -w",
+    calls.length === 3 &&
+      calls[0][0] === "unload" &&
+      calls[1][0] === "enable" &&
+      calls[2][0] === "load",
+    JSON.stringify(calls),
+  );
+}
+
 // --- O-2: ошибки уборки plist логируются и не подменяют исходную ошибку ---
 {
   const scheduler = new MacScheduler("default");
@@ -246,3 +347,4 @@ if (failures > 0) {
   process.exit(1);
 }
 console.log("Все проверки пройдены (mac launchctl).");
+
