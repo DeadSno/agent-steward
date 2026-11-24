@@ -1658,7 +1658,14 @@ try {
         $status = "error"
     } else {
         $status = $recordVerdict.Status
-        if ($recordVerdict.Reason -and ($recordVerdict.Status -ne "error" -or -not $script:errorMessage)) {
+        # QA-PORT-5: причина успешного вердикта (PL-81/PL-128) — диагностика,
+        # а не ошибка задачи. Раньше она попадала в error history-записи со
+        # статусом success. Реальную ошибку (pre/post-flight, гейт) не трогаем.
+        if ($recordVerdict.Status -eq "success") {
+            if ($recordVerdict.Reason -and $recordVerdict.Reason -notlike "PL-128:*" -and -not $script:errorMessage) {
+                Write-Log "[agent-steward] $($recordVerdict.Reason)"
+            }
+        } elseif ($recordVerdict.Reason -and ($recordVerdict.Status -ne "error" -or -not $script:errorMessage)) {
             $script:errorMessage = $recordVerdict.Reason
         }
         if ($recordVerdict.Status -eq "success" -and $recordVerdict.NormalizedExitCode -ne $script:exitCode) {

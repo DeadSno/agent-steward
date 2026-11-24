@@ -284,6 +284,15 @@ function readLog(file) {
   check("успешный запуск: запись истории есть", Boolean(record));
   check("успешный запуск: статус success", record?.status === "success", record?.status);
   check(
+    "QA-PORT-5: успех без quality gate не пишет PL-81 в error истории",
+    !record?.error,
+    `error=${record?.error}`
+  );
+  check(
+    "QA-PORT-5: причина PL-81 осталась в логе задачи",
+    readLog(logFile).includes("PL-81: успешное завершение без quality gate")
+  );
+  check(
     "кавычки в before-скрипте не ломают хук (маркер создан)",
     fs.existsSync(beforeMarker)
   );
@@ -1920,6 +1929,20 @@ try {
       psWrapperScript.includes("Get-RecordVerdict -TimedOut") &&
       psWrapperScript.includes("PL-128: завершено watchdog по таймауту, gate=pass") &&
       !psWrapperScript.includes("elseif ($script:timedOut)")
+  );
+  check(
+    "QA-PORT-5: причина успешного вердикта (PL-81) — диагностика, а не error истории",
+    psWrapperScript.includes('if ($recordVerdict.Status -eq "success")') &&
+      psWrapperScript.includes('Write-Log "[agent-steward] $($recordVerdict.Reason)"') &&
+      psWrapperScript.includes(
+        '} elseif ($recordVerdict.Reason -and ($recordVerdict.Status -ne "error" -or -not $script:errorMessage))'
+      ) &&
+      !/^\s*if \(\$recordVerdict\.Reason -and \(\$recordVerdict\.Status -ne "error"/m.test(
+        psWrapperScript
+      ) &&
+      noGateSuccess.reason === "PL-81: успешное завершение без quality gate" &&
+      noGateSuccess.status === "success",
+    `noGate=${JSON.stringify(noGateSuccess)}`
   );
   check(
     "PL-124: completion/idle-watcher снимает дерево, --finish вызывается сразу",
