@@ -55,10 +55,6 @@ Legacy: `opencode-windows-scheduler@1.5.8`.
 
 - [ ] PL-135 `scripts/pl-commit.ps1` коммитит и пушит даже при проваленном quality gate / сборке: после ручного вызова afterScript задачи B-2 коммит `135e0d3` ушёл в `dev` с `npm run build` = exit 2 (cherry-pick молча потерял поля `autoSelectModel`/`autoSelectedModel` в `TaskDefinition`), исправлено следующим коммитом — `scripts/pl-commit.ps1`, quality gate задачи — P2. Действие: перед пушем проверять exit-код `npm run build`/`lint` (или refuse push без маркера успешного gate) и не пушить при провале; добавить регрессию на расходящуюся ветку. Обнаружено 23.11.2026 на B-2.
 
-- [ ] PL-136 коммит `e45dfa0` (PL-124/PL-128) оставляет `npm run lint` с двумя ошибками в `src/core/record-history.ts:169,195` (шаблонная строка без интерполяции вместо кавычек и лишний `ownerPid!`) — `src/core/record-history.ts` — P3. Действие: заменить шаблонную строку на двойные кавычки и убрать избыточную ассерцию `!`, затем повторить lint. Обнаружено 23.11.2026 при проверке B-2 (blame указывает на e45dfa0).
-
-- [ ] PL-137 glob-класс `[^abc]` не отрицает, а совпадает с литералами `^`/`a`/`b`/`c`: `globToRegExp("[^abc]")` даёт `/^[\^abc]$/i`, поэтому `matchesGlob("d","[^abc]")` = false и `matchesGlob("a","[^abc]")` = true, хотя шапка `src/core/glob.ts` и синтаксис `[!abc]` обещают отрицание; маски файловых/git-триггеров с `[^...]` отбирают не те файлы — `src/core/glob.ts` (`globToRegExp`), воспроизведение inline-прогоном с импортом `dist/core/glob.js` (в `test-glob.mjs` покрыт только `[!abc]`) — P2. Действие: не экранировать ведущий `^` внутри класса, а компилировать его в regex-отрицание, как `!`, и добавить регрессию `[^abc]` в `test-glob.mjs`. Обнаружено 23.11.2026.
-
 ## Деталь 3.9 — Портабельность: OpenCode → MCP / dsh / ACP (0.2.x+)
 `src/core/`, `src/adapters/`, `src/invokers/`, `src/cli.ts`
 

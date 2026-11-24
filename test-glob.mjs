@@ -43,6 +43,7 @@ check("'**/*.md' подходит 'readme.md'", globToRegExp("**/*.md").test("re
 check("'?' подходит один символ (не /)", globToRegExp("?.ts").test("a.ts") && !globToRegExp("?.ts").test("ab.ts"));
 check("'[abc]' класс символов", globToRegExp("[abc]").test("b") && !globToRegExp("[abc]").test("d"));
 check("'[!abc]' отрицание класса", globToRegExp("[!abc]").test("d") && !globToRegExp("[!abc]").test("a"));
+check("'[^abc]' отрицание класса (PL-137)", globToRegExp("[^abc]").test("d") && !globToRegExp("[^abc]").test("a"));
 check("'{a,b}' альтернатива", globToRegExp("{a,b}").test("a") && globToRegExp("{a,b}").test("b") && !globToRegExp("{a,b}").test("c"));
 check("escaped '.' в маске", globToRegExp("file.txt").test("file.txt") && !globToRegExp("file.txt").test("filetxt"));
 // glob.ts регистронезависим только на Windows; на Linux/macOS маска точная.
@@ -58,6 +59,14 @@ check("matchesGlob 'a/b/c' по '**'", matchesGlob("a/b/c", "**"));
 check("matchesGlob каталога 'src' по 'src/**'", matchesGlob("src", "src/**"));
 check("matchesGlob 'src/sub/x.ts' по 'src/**'", matchesGlob("src/sub/x.ts", "src/**"));
 check("matchesGlob '' по чему-либо → false", !matchesGlob("", "*"));
+
+// --- 3a. PL-137: отрицание класса через [^...] -------------------------------
+check("matchesGlob 'd' по '[^abc]'", matchesGlob("d", "[^abc]"));
+check("matchesGlob 'a' по '[^abc]' → false", !matchesGlob("a", "[^abc]"));
+check("matchesGlob 'd' по '[!abc]'", matchesGlob("d", "[!abc]"));
+check("matchesGlob 'a' по '[!abc]' → false", !matchesGlob("a", "[!abc]"));
+check("matchesGlob 'd' по '[^a-c]' (диапазон с отрицанием)", matchesGlob("d", "[^a-c]"));
+check("matchesGlob 'b' по '[^a-c]' → false", !matchesGlob("b", "[^a-c]"));
 
 // --- 4. matchesAnyGlob (с ! отрицанием) --------------------------------------
 check("matchesAnyGlob по списку", matchesAnyGlob("src/a.ts", ["src/*.ts", "docs/*.md"]));

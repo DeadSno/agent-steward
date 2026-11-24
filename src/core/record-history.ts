@@ -166,7 +166,7 @@ export function recoverStaleRunningOnRecorderStart(
        duration_ms = ? WHERE id = ? AND finished_at IS NULL`,
   );
   const ownerOf = getDb().prepare(
-    `SELECT owner_pid, owner_host FROM history WHERE id = ?`,
+    "SELECT owner_pid, owner_host FROM history WHERE id = ?",
   );
 
   withTransaction(() => {
@@ -192,7 +192,7 @@ export function recoverStaleRunningOnRecorderStart(
         Number.isFinite(ownerPid) &&
         ownerPid > 0 &&
         ownerHost === hostname;
-      if (verifiableOwner && !isAlive(ownerPid!)) {
+      if (verifiableOwner && !isAlive(ownerPid)) {
         const error = `PL-124: владелец завершён (pid=${ownerPid}), запуск оставался running; возможны частичные правки в worktree; требуется явный повтор`;
         close.run(error, timestamp, ageMs, record.id);
         const durable = findRunByMetadata("registeredHistoryId", record.id);

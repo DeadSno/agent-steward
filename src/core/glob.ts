@@ -83,8 +83,10 @@ export function globToRegExp(pattern: unknown): RegExp {
           continue;
         }
         let body = text.slice(j + 1, close);
-        if (body.startsWith("!")) body = `^${body.slice(1)}`;
-        else if (body.startsWith("^")) body = `\\${body}`;
+        // PL-137: и `!`, и ведущий `^` внутри класса — отрицание (regex-`^`),
+        // а не экранированный литерал `^`. Остальное тело класса не трогаем:
+        // диапазоны, escape-символы и литеральный `^` не в начале работают как прежде.
+        if (body.startsWith("!") || body.startsWith("^")) body = `^${body.slice(1)}`;
         result += `[${body}]`;
         j = close + 1;
         continue;
