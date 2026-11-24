@@ -41,6 +41,8 @@ Legacy: `opencode-windows-scheduler@1.5.8`.
 - [ ] X-5.1 Привести теги к существующим релизам
 - [ ] X-5.2 GitHub release для каждого тега
 
+> Внешние действия X-* не выполнялись автоматически: пошаговый runbook —
+> [docs/RELEASE-RUNBOOK.md](./docs/RELEASE-RUNBOOK.md), факт выполнения — [reports/S3-D37-external.md](./reports/S3-D37-external.md).
 
 ### QA-находки, найденные при проверке работоспособности плагина
 
