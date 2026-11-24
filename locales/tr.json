@@ -779,7 +779,7 @@
   "tool.error.matrixNotMatrix": "\"{name}\" görevi bir matris değil.",
   "tool.error.matrixOverride": "\"{task}\" görevi: matrix.overrides, workspaceIds listesinde olmayan \"{workspace}\" çalışma alanını içeriyor.",
   "tool.error.modelInvalid": "Geçersiz model \"{model}\": {error}",
-  "tool.error.mcpEventRequired": "MCP tetikleyicisi bir olay adı gerektirir (mcpEvent.event veya mcpEvent.eventName). MCP-event tetikleyicileri ve nextTaskOnSuccess zincirleri için schedule_advanced (araç profili admin) veya AGENT_STEWARD_TOOL_PROFILE=all kullanın: mcpEvent ve nextTaskOnSuccess tam şemada bulunur, ancak core profilinin schedule_task aracından çıkarılmıştır.",
+  "tool.error.mcpEventRequired": "MCP tetikleyicisi bir olay adı gerektirir (mcpEvent.event veya mcpEvent.eventName). core profilinde schedule_task artık mcpEvent alanını kabul eder ve aboneler emit_event ile tetiklenebilir; nextTaskOnSuccess zincirleri hâlâ schedule_advanced (admin profili) veya AGENT_STEWARD_TOOL_PROFILE=all gerektirir.",
   "tool.error.onceFields": "runAt/delaySeconds yalnızca triggerType=once ile kullanılabilir.",
   "tool.error.onceMatrixSchema": "Tek seferlik çalıştırma matrisle birleştirilemez: matris yalnızca elle başlatılır.",
   "tool.error.onceMatrixUpdate": "Tek seferlik çalıştırma matrisle birleştirilemez.",

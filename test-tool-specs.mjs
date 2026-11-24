@@ -13,7 +13,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 
-import { createToolSpecs } from "./dist/index.js";
+import { coreScheduleTaskSchema, createToolSpecs } from "./dist/index.js";
 import { SchedulerRpc } from "./dist/rpc.js";
 
 const EXPECTED_NAMES = ["backup_db", "cleanup_history","delete_task","dry_run","emit_event","get_analytics","get_audit_log","get_dashboard_info","get_history","get_metrics","get_task_logs","list_tasks","manage_local_ai","manage_profiles","manage_secrets","manage_settings","manage_templates","manage_workspaces","matrix_control","pause_task","pipeline_apply","pipeline_export","pipeline_validate","report_bug","restore_db","resume_task","run_task_now","schedule_advanced","schedule_task","self_analysis","send_notification","transfer_tasks","update_advanced","update_task"];
@@ -47,12 +47,12 @@ const EXPECTED_HASHES = {
   "restore_db": "831883a897c117984f283a976654f320a4a6724171fc2016b7077344351f058a",
   "run_task_now": "adcfc004fce2d39ca95953df502b8f9587c475af4a377e7d7213b7ff83347e8a",
   "schedule_advanced": "a3f0f250efdbd3a6390f318b19fa4b85fcc4286cb7c1bec293a239eefa25f04b",
-  "schedule_task": "5c9c5e22f1f2853ca20e0ae8daf23f12aa06d3031bae3f4e4057181b23da64fb",
+  "schedule_task": "e054072d5661ae5900a1317ad334e4ac1f5bd8e35fd6f5962cb723c783309378",
   "self_analysis": "1455ca31e66913748fbf3803567919e1a0c0781b46ddaa25015d11e6d27973ab",
   "send_notification": "c212dcbf36e38363577dc1afc60a32a3b780e18bdc55c93aed609b9f38033b1d",
   "transfer_tasks": "5971ba4980ba58b6af7a519b629f9e6a5fd16ba0bbcbaeaee060d32ed0c9e2bd",
   "update_advanced": "844abfea03bdfa50cece13a2b8211ba3251a613c19f4b35d843511f6e933d374",
-  "update_task": "2510d8d71c297520464e222e7ddf08c096d25740f0ed881816d6f29b1cc6ca04",
+  "update_task": "92557e2d5bbc2c4fe2b98f6ad615bcbe441f08330af9485a79c07e07ea4c0e05",
 };
 
 const EXPECTED_RPC_METHODS = ["add_workspace","backup_db","cancel_matrix","cleanup_history","cleanup_matrix_orphans","compare_triage","create_profile","create_task","decide_approval","delete_profile","delete_secret","delete_task","delete_template","delete_workspace","discard_dlq","dry_run","dry_run_all","emit_event","expand_matrix_preview","export_tasks","get_analytics","get_audit","get_dashboard_port","get_history","get_matrix_results","get_metrics","get_platform","get_profiles","get_settings","get_shadow_report","get_task_logs","get_tasks","get_templates","get_workspaces","import_tasks","list_approvals","list_dlq","list_durable_runs","list_secrets","pause_durable_run","pause_task","pipeline_apply","pipeline_export","pipeline_validate","reset_shadow_report","restore_db","resume_durable_run","resume_task","retry_dlq","run_mission","run_task","save_secret","save_settings","save_template","self_analysis","send_digest","set_profile","test_local_ai","test_notification","update_task","update_workspace"];
@@ -187,6 +187,25 @@ check("P-1.2: все JSON-схемы инструментов валидны д�
     assert.equal(json.type, "object", `${spec.name}: input должен быть объектом`);
     assert.ok(json.properties, `${spec.name}: нет properties`);
   }
+});
+
+// QA-PORT-4: event-driven задачи доступны без admin-профиля.
+const coreSpecs = createToolSpecs({}, { AGENT_STEWARD_TOOL_PROFILE: "core" });
+check("QA-PORT-4: emit_event зарегистрирован в core-профиле", () => {
+  assert.ok(coreSpecs.some((spec) => spec.name === "emit_event"));
+});
+check("QA-PORT-4: core-профиль не тянет admin-инструменты", () => {
+  assert.equal(coreSpecs.length, 10);
+  assert.equal(coreSpecs.some((spec) => spec.name === "schedule_advanced"), false);
+});
+check("QA-PORT-4: coreScheduleTaskSchema сохраняет mcpEvent", () => {
+  const parsed = coreScheduleTaskSchema.parse({
+    name: "qa-port-4-probe",
+    prompt: "probe",
+    triggerType: "mcp-event",
+    mcpEvent: { server: "codebase-memory", event: "qa-port-4-probe" },
+  });
+  assert.deepEqual(parsed.mcpEvent, { server: "codebase-memory", event: "qa-port-4-probe" });
 });
 
 check("P-1.2: список RPC-методов совпадает со снимком (61 метод)", () => {

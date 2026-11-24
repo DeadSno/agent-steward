@@ -15,6 +15,9 @@ export const TOOL_PROFILE_ENV = "AGENT_STEWARD_TOOL_PROFILE";
 /** Минимальный рабочий набор: планирование, запуск, диагностика. */
 export const CORE_TOOL_NAMES = [
   "backup_db",
+  // QA-PORT-4: event-driven задачи создаются через schedule_task.mcpEvent и
+  // запускаются этим инструментом — без admin-профиля.
+  "emit_event",
   "schedule_task",
   "update_task",
   "list_tasks",
