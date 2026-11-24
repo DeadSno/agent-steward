@@ -97,6 +97,11 @@ import {
 import { stringify as yamlStringify } from "yaml";
 import { latestHistoryByTask, loadHistory, loadMetrics } from "./history.js";
 import {
+  resolveDeleteNames,
+  summarizeBatchDelete,
+  type DeleteOutcome,
+} from "./shared/batch-delete.js";
+import {
   defaultNotifications,
   loadSettings,
   saveSettings,
@@ -848,8 +853,15 @@ const listTasksOutputSchema = z.object({
   osError: z.string().optional(),
 });
 
-const deleteTaskSchema = z.object({
-  name: z.string().describe("Task name to delete."),
+export const deleteTaskSchema = z.object({
+  // D02 (IM-2): одно имя или пакет имён. Пакет удаляется с частичным успехом.
+  name: z.string().optional().describe("Task name to delete (single form)."),
+  names: z
+    .array(z.string())
+    .optional()
+    .describe("Batch of task names to delete (D02). Results are aggregated."),
+}).refine((args) => Boolean(args.name || (args.names && args.names.length > 0)), {
+  message: "Pass name or names.",
 });
 
 const runTaskNowSchema = z.object({
@@ -2396,29 +2408,78 @@ async function deleteTaskWithFamily(
   return { removed, existed };
 }
 
-/** delete_task — удаление задачи по имени (/f) */
+/** delete_task — удаление задачи по имени (/f) или пакета задач (IM-2). */
 const deleteTaskExecute = wrapExecute<DeleteArgs>(async (args) => {
-  const { name } = args;
+  const names = resolveDeleteNames(args);
+  if (names.length === 0) {
+    return {
+      content: JSON.stringify({
+        success: false,
+        error: "Task name is required: pass `name` or `names`.",
+      }),
+    };
+  }
 
   try {
-    const { removed, existed } = await deleteTaskWithFamily(name);
-    // Убираем watcher удалённой задачи, не дожидаясь перезапуска плагина.
-    await refreshTriggers();
-    if (!existed && removed.length === 0) {
+    // D02: пре-флайт всей транзакции — запрет удаления матрицы проверяется
+    // для всех имён до первого изменения, чтобы не оставить половинчатый пакет.
+    for (const name of names) {
+      const guard = getMatrixDeletionGuard(name);
+      if (guard) throw new Error(guard);
+    }
+
+    // Одиночная форма сохраняет прежний контракт ответа.
+    if (names.length === 1 && !args.names) {
+      const name = names[0];
+      const { removed, existed } = await deleteTaskWithFamily(name);
+      await refreshTriggers();
+      if (!existed && removed.length === 0) {
+        return {
+          content: JSON.stringify({
+            success: true,
+            message: t("tool.task.alreadyAbsent", { name }),
+          }),
+        };
+      }
       return {
         content: JSON.stringify({
           success: true,
-          message: t("tool.task.alreadyAbsent", { name }),
+          message:
+            removed.length > 0
+              ? t("tool.task.matrixDeletedList", { name, list: removed.join(", ") })
+              : t("tool.task.deleted", { name }),
         }),
       };
     }
+
+    // Пакетная форма: частичный успех, агрегированный отчёт.
+    const outcomes: DeleteOutcome[] = [];
+    for (const name of names) {
+      try {
+        const { removed, existed } = await deleteTaskWithFamily(name);
+        outcomes.push({ name, removed, existed });
+      } catch (err) {
+        outcomes.push({
+          name,
+          removed: [],
+          existed: false,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+    await refreshTriggers();
+    const summary = summarizeBatchDelete(outcomes);
+    const parts: string[] = [];
+    if (summary.deleted.length > 0) parts.push(`deleted: ${summary.deleted.join(", ")}`);
+    if (summary.missing.length > 0) parts.push(`already absent: ${summary.missing.join(", ")}`);
+    if (summary.failed.length > 0)
+      parts.push(
+        `failed: ${summary.failed.map((f) => `${f.name} (${f.error})`).join(", ")}`,
+      );
     return {
       content: JSON.stringify({
-        success: true,
-        message:
-          removed.length > 0
-            ? t("tool.task.matrixDeletedList", { name, list: removed.join(", ") })
-            : t("tool.task.deleted", { name }),
+        ...summary,
+        message: `Batch delete: ${parts.join("; ") || "no tasks"}`,
       }),
     };
   } catch (err) {
@@ -5172,8 +5233,13 @@ export function createToolSpecs(
       input: deleteTaskSchema,
       description:
         `Deletes a task from the scheduler (${scheduler.title}) by name. ` +
+        "Pass `names` to delete a batch with partial success. " +
         "Deleting a matrix parent also deletes its clones and aggregator; deleting a single clone is refused (delete the whole matrix instead).",
-      audit: (args: DeleteArgs) => ({ action: "task.delete", targetType: "task", target: args.name }),
+      audit: (args: DeleteArgs) => ({
+        action: "task.delete",
+        targetType: "task",
+        target: args.names?.join(", ") ?? args.name ?? "",
+      }),
       execute: handlers.delete_task,
     },
     {

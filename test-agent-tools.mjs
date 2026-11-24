@@ -15,6 +15,7 @@ process.env.OPENCODE_SCHEDULER_HOME = path.join(tempRoot, "opencode", "windows-s
 
 const {
   scheduleTaskSchema,
+  deleteTaskSchema,
   updateTaskSchema,
   matrixControlSchema,
   matrixSchema,
@@ -43,6 +44,9 @@ const {
   validateModelReference,
 } = await import("./dist/core/task-name.js");
 const { readStructuredLogs } = await import("./dist/core/structured-log.js");
+const { resolveDeleteNames, summarizeBatchDelete } = await import(
+  "./dist/shared/batch-delete.js"
+);
 const { LOG_DIR, sanitizeName } = await import("./dist/types.js");
 const { loadTemplates, saveTemplate, deleteTemplate } = await import("./dist/templates.js");
 
@@ -979,6 +983,38 @@ check(
     backend.deleteTask = originalBackend.deleteTask;
   }
 }
+
+// IM-2 / D02: пакетное удаление задач — чистые функции и частичный успех.
+check(
+  "IM-2: имена и пакет объединяются, дубли и пустоты отбрасываются",
+  JSON.stringify(resolveDeleteNames({ name: " B ", names: ["a", "", "A", "  ", "b", "C"] })) ===
+    JSON.stringify(["a", "b", "C"]) &&
+    resolveDeleteNames({}).length === 0
+);
+check(
+  "IM-2: частичный успех сохраняет удалённые задачи и ошибки",
+  (() => {
+    const s = summarizeBatchDelete([
+      { name: "ok", removed: ["ok [linux]"], existed: true },
+      { name: "absent", removed: [], existed: false },
+      { name: "bad", removed: [], existed: true, error: "PL-42 guard" },
+    ]);
+    return (
+      s.success === false &&
+      JSON.stringify(s.deleted) === JSON.stringify(["ok", "ok [linux]"]) &&
+      JSON.stringify(s.missing) === JSON.stringify(["absent"]) &&
+      s.failed.length === 1 &&
+      s.failed[0].error === "PL-42 guard" &&
+      s.requested === 3
+    );
+  })()
+);
+check(
+  "IM-2: delete_task объявляет пакетную форму names в схеме",
+  typeof deleteTaskSchema.safeParse({ names: ["a", "b"] }) !== "undefined" &&
+    deleteTaskSchema.safeParse({ names: ["a", "b"] }).success &&
+    !deleteTaskSchema.safeParse({}).success === true
+);
 
 const failed = results.filter((r) => !r.ok);
 console.log(`\nAgent tools: ${results.length - failed.length}/${results.length} проверок пройдено.`);

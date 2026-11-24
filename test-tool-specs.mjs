@@ -21,7 +21,7 @@ const EXPECTED_NAMES = ["backup_db", "cleanup_history","delete_task","dry_run","
 const EXPECTED_HASHES = {
   "backup_db": "73be63e5b6f4cad3f0506862685fe11272d43e86cae164e1d5ad44959f253b8b",
   "cleanup_history": "e0d8444307eee168d08818ceb0e36ce87b76be33e9594a346720a1b11cf5fac9",
-  "delete_task": "f96c50589c0b898f2f896f2287d90e602b897f61e89625d4441e019f21432d52",
+  "delete_task": "77272ebbe2d4bca7ec82ce966d5f8ecd7a78f561c40c239569d225fdb53536a8",
   "dry_run": "67b796bae3827c90edd3876793fcc642c1e10aad8c12fed6e36dbc1e74888214",
   "emit_event": "b9abb6a5a0401639869af52e05eda62e08126fbe9b8034b493075ff188bc6e89",
   "get_analytics": "670d13b7fa742830125f7858cadd7b2b0c5b5c891d430bca5503104f7fabfeaa",
