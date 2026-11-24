@@ -1715,6 +1715,59 @@ try {
     quotaVerdict.status === "error" && quotaVerdict.normalizedExitCode === 126,
     JSON.stringify(quotaVerdict)
   );
+  // PL-160: задача с нулевым результатом не должна быть success.
+  const pl160IdleVerdict = resolveWrapperRecordVerdict({
+    timedOut: false,
+    exitCode: 0,
+    gatePassed: true,
+    agentExitCode: 1,
+    idleCompleted: true,
+    workCompleted: false,
+  });
+  check(
+    "PL-160: idle-завершение без артефактов — error с причиной PL-160",
+    pl160IdleVerdict.status === "error" &&
+      pl160IdleVerdict.reason === "PL-160: агент завершён сторожем простоя без изменений" &&
+      pl160IdleVerdict.normalizedExitCode === 1,
+    JSON.stringify(pl160IdleVerdict)
+  );
+  const pl160WithWork = resolveWrapperRecordVerdict({
+    timedOut: false,
+    exitCode: 0,
+    gatePassed: true,
+    agentExitCode: 1,
+    idleCompleted: true,
+    workCompleted: true,
+  });
+  check(
+    "PL-160: idle с артефактами остаётся success (PL-81)",
+    pl160WithWork.status === "success" && pl160WithWork.normalizedExitCode === 0,
+    JSON.stringify(pl160WithWork)
+  );
+  const pl160CleanExit = resolveWrapperRecordVerdict({
+    timedOut: false,
+    exitCode: 0,
+    gatePassed: true,
+    agentExitCode: 0,
+    idleCompleted: true,
+    workCompleted: false,
+  });
+  check(
+    "PL-160: корректный выход агента без изменений остаётся success",
+    pl160CleanExit.status === "success" && pl160CleanExit.normalizedExitCode === 0,
+    JSON.stringify(pl160CleanExit)
+  );
+  check(
+    "PL-160: PowerShell-вердикт получает код агента, idle и артефакты",
+    psWrapperScript.includes("[int]$AgentExitCode = 0") &&
+      psWrapperScript.includes("[bool]$IdleCompleted = $false") &&
+      psWrapperScript.includes("[bool]$WorkCompleted = $false") &&
+      psWrapperScript.includes("-AgentExitCode ([int]$agentExitCode)") &&
+      psWrapperScript.includes("-IdleCompleted ([bool]$script:childIdleCompleted)") &&
+      psWrapperScript.includes("-WorkCompleted ([bool]$script:agentArtifactPresent)") &&
+      psWrapperScript.includes("git -C $Workdir status --porcelain --untracked-files=all") &&
+      psWrapperScript.includes("-not ($script:childIdleCompleted -and -not $script:agentArtifactPresent)")
+  );
   check(
     "PL-128: Get-RecordVerdict — единственное место вердикта в finally",
     psWrapperScript.includes("function Get-RecordVerdict") &&

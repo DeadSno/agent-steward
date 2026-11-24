@@ -545,9 +545,21 @@ function Get-RecordVerdict {
         [int]$ExitCode,
         [bool]$GatePassed,
         [bool]$GateEvaluated = $true,
-        [int]$WatchdogExitCode = 124
+        [int]$WatchdogExitCode = 124,
+        [int]$AgentExitCode = 0,
+        [bool]$IdleCompleted = $false,
+        [bool]$WorkCompleted = $false
     )
     $killedByWatchdog = $TimedOut -or ($ExitCode -eq $WatchdogExitCode)
+    # PL-160: сторож простоя убил агента, артефактов работы нет, а гейт прошёл
+    # на неизменённом дереве — это не успех, а пустой прогон (PL-81 его маскировал).
+    if ($GatePassed -and $AgentExitCode -ne 0 -and $IdleCompleted -and -not $WorkCompleted) {
+        return [pscustomobject]@{
+            Status = "error"
+            Reason = "PL-160: агент завершён сторожем простоя без изменений"
+            NormalizedExitCode = $AgentExitCode
+        }
+    }
     if ($GatePassed -and $killedByWatchdog) {
         return [pscustomobject]@{
             Status = "success"
@@ -1310,6 +1322,15 @@ try {
     # Гейт запускается и при ненулевом коде, если агент оставил артефакты/вывод
     # (workCompleted). Причину кода фиксируем в логе, но статус задачи defines
     # verdict гейта; post-flight в любом случае выполняется в finally.
+    # PL-160: «артефакт работы» — реальное изменение дерева, а не вывод агента.
+    # Разведка (2 шага без правок) создаёт строки в логе, но не изменения в git.
+    $script:agentArtifactPresent = $false
+    if ($Workdir) {
+        try {
+            $dirty = & git -C $Workdir status --porcelain --untracked-files=all 2>$null
+            if ($LASTEXITCODE -eq 0 -and @($dirty).Count -gt 0) { $script:agentArtifactPresent = $true }
+        } catch {}
+    }
     $agentWorkCompleted = $false
     if ($LogFile -and (Test-Path -LiteralPath $LogFile)) {
         try {
@@ -1321,12 +1342,7 @@ try {
             if ($agentLines.Count -gt 0) { $agentWorkCompleted = $true }
         } catch {}
     }
-    if (-not $agentWorkCompleted -and $Workdir) {
-        try {
-            $dirty = & git -C $Workdir status --porcelain 2>$null
-            if ($LASTEXITCODE -eq 0 -and @($dirty).Count -gt 0) { $agentWorkCompleted = $true }
-        } catch {}
-    }
+    if ($script:agentArtifactPresent) { $agentWorkCompleted = $true }
     $gatePassed = $null
     $runQualityGate = $QualityGate -and -not $quotaDetected -and
         ($script:exitCode -eq 0 -or $agentWorkCompleted)
@@ -1428,7 +1444,8 @@ try {
     # PL-81: разделяем "ошибку агента" и "ошибку верификации". Если гейт прошёл,
     # ненулевой код возврата агента не делает задачу error: причина кода
     # фиксируется в истории, а post-flight (коммит) выполняется в полном объёме.
-    if ($gatePassed -eq $true -and $agentExitCode -ne 0 -and $script:exitCode -ne 0) {
+    if ($gatePassed -eq $true -and $agentExitCode -ne 0 -and $script:exitCode -ne 0 -and
+        -not ($script:childIdleCompleted -and -not $script:agentArtifactPresent)) {
         $divergenceReason = "Код возврата $agentExitCode при пройденном qualityGate (PL-81)"
         Write-Log "[agent-steward] PL-81: расхождение: код выхода процесса агента $agentExitCode, qualityGate=pass — задача '$TaskName' считается успешной, причина кода зафиксирована"
         $script:errorMessage = $divergenceReason
@@ -1494,7 +1511,7 @@ try {
     # PL-81, PL-114 и watchdog; --finish вызывается сразу после разблокировки
     # конвейера completion/idle-watcher'ом, без ожидания 900 с.
     $gateEvaluated = $null -ne $gatePassed
-    $recordVerdict = Get-RecordVerdict -TimedOut ([bool]$script:timedOut) -ExitCode ([int]$script:exitCode) -GatePassed ([bool]$gatePassed) -GateEvaluated $gateEvaluated
+    $recordVerdict = Get-RecordVerdict -TimedOut ([bool]$script:timedOut) -ExitCode ([int]$script:exitCode) -GatePassed ([bool]$gatePassed) -GateEvaluated $gateEvaluated -AgentExitCode ([int]$agentExitCode) -IdleCompleted ([bool]$script:childIdleCompleted) -WorkCompleted ([bool]$script:agentArtifactPresent)
     if ($quotaDetected) {
         $status = "error"
     } else {
@@ -1503,6 +1520,9 @@ try {
             $script:errorMessage = $recordVerdict.Reason
         }
         if ($recordVerdict.Status -eq "success" -and $recordVerdict.NormalizedExitCode -ne $script:exitCode) {
+            $script:exitCode = $recordVerdict.NormalizedExitCode
+        }
+        if ($recordVerdict.Status -eq "error" -and $recordVerdict.NormalizedExitCode -ne 0 -and $script:exitCode -eq 0) {
             $script:exitCode = $recordVerdict.NormalizedExitCode
         }
     }
@@ -2167,6 +2187,12 @@ export interface WrapperRecordVerdictInput {
   quotaDetected?: boolean;
   /** Код watchdog, по умолчанию 124. */
   watchdogExitCode?: number;
+  /** Код завершения агента до нормализации PL-81/PL-128. */
+  agentExitCode?: number;
+  /** Агент убит completion/idle-сторожем (PL-124/PL-134). */
+  idleCompleted?: boolean;
+  /** В рабочем дереве появились изменения/новые файлы (артефакт работы). */
+  workCompleted?: boolean;
 }
 
 /** Результат вердикта записи: статус, причина и итоговый exit-код обёртки. */
@@ -2196,6 +2222,20 @@ export function resolveWrapperRecordVerdict(
       status: "error",
       reason: "PL-114: quota is the root cause",
       normalizedExitCode: input.exitCode,
+    };
+  }
+  // PL-160: гейт прошёл на неизменённом дереве, но агент был убит сторожем
+  // простоя и не оставил артефактов — пустой прогон не считается успехом.
+  if (
+    input.gatePassed &&
+    (input.agentExitCode ?? input.exitCode) !== 0 &&
+    input.idleCompleted === true &&
+    input.workCompleted !== true
+  ) {
+    return {
+      status: "error",
+      reason: "PL-160: агент завершён сторожем простоя без изменений",
+      normalizedExitCode: input.agentExitCode ?? input.exitCode,
     };
   }
   if (input.gatePassed && killedByWatchdog) {
