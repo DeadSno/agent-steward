@@ -79,6 +79,8 @@ const {
   writePromptFile,
   lockFilePath,
   ensureWrapper,
+  gateAllowPathsFromScope,
+  gateAllowPathsFromAfterScript,
   WRAPPER_SCRIPT: psWrapperScript,
 } = await import("./dist/core/ps-wrapper.js");
 const { buildBashWrapperScript } = await import("./dist/core/wrappers/bash.js");
@@ -1473,6 +1475,101 @@ try {
 } catch (err) {
   console.log("[diag] PL-140 section THREW:", err instanceof Error ? err.stack : String(err));
   check("PL-140: секция не выбросила исключение", false, "section threw");
+}
+
+// --- PL-150: в allow-пути гейта попадают SCOPE и filesCreate, а не только afterScript ---
+try {
+  check(
+    "PL-150: SCOPE-пути разрешены без afterScript",
+    gateAllowPathsFromScope(["src/core/ps-wrapper.ts", "test-execution-hardening.mjs"], []) ===
+      "src/core/ps-wrapper.ts|test-execution-hardening.mjs"
+  );
+  check(
+    "PL-150: filesCreate и afterScript объединяются с SCOPE без дублей",
+    gateAllowPathsFromScope(
+      ["src/core/ps-wrapper.ts"],
+      ["reports/new.md"],
+      '-Files "reports/new.md;scripts/pl-commit.ps1"'
+    ) === "src/core/ps-wrapper.ts|reports/new.md|scripts/pl-commit.ps1"
+  );
+  check(
+    "PL-150: пути нормализуются (слэши, ./, ведущий /, завершающий /)",
+    gateAllowPathsFromScope(["./src\\core/", "/docs/FEATURES.md"], []) ===
+      "src/core|docs/FEATURES.md"
+  );
+  check(
+    "PL-150: пустые источники дают пустую строку",
+    gateAllowPathsFromScope([], [], undefined) === ""
+  );
+  check(
+    "PL-150: исходная gateAllowPathsFromAfterScript не изменена",
+    gateAllowPathsFromAfterScript(
+      'powershell.exe -File pl-commit.ps1 -Files "src/index.ts;ROADMAP.md" -Marker "m"',
+    ) === "src/index.ts|ROADMAP.md" &&
+      gateAllowPathsFromAfterScript("echo OK>m") === ""
+  );
+  check(
+    "PL-150: null-входы и вложенные ./ нормализуются без дублей",
+    gateAllowPathsFromScope(null, null, undefined) === "" &&
+      gateAllowPathsFromScope(["src/core/./a.ts"], ["./src/core/a.ts"], undefined) ===
+        "src/core/a.ts"
+  );
+
+  // Реальный post-flight: СОБСТВЕННАЯ правка в SCOPE проходит, чужая — нет.
+  const wtRepo = path.join(tempRoot, "pl150-worktree-repo");
+  fs.mkdirSync(path.join(wtRepo, "src"), { recursive: true });
+  fs.mkdirSync(path.join(wtRepo, "docs"), { recursive: true });
+  const ownFile = path.join(wtRepo, "src", "own.ts");
+  const foreignFile = path.join(wtRepo, "docs", "foreign.md");
+  fs.writeFileSync(ownFile, "clean\n", "utf8");
+  fs.writeFileSync(foreignFile, "clean\n", "utf8");
+  const git = (args) =>
+    spawnSync("git", ["-C", wtRepo, ...args], { encoding: "utf8", windowsHide: true });
+  git(["init", "-q"]);
+  git(["config", "user.email", "qa@example.invalid"]);
+  git(["config", "user.name", "QA"]);
+  git(["add", "."]);
+  git(["commit", "-q", "-m", "clean"]);
+  const wtSnapshot = path.join(tempRoot, "pl150-worktree-snapshot.json");
+  const { captureWorktreeSnapshot, verifyWorktreeSnapshot } = await import(
+    "./dist/core/gate-integrity.js"
+  );
+  const guardEnv = {
+    ...process.env,
+    AGENT_STEWARD_GATE_GUARD_PATHS: "src|docs",
+    AGENT_STEWARD_GATE_ALLOW_PATHS: gateAllowPathsFromScope(["src"], [], undefined),
+  };
+  captureWorktreeSnapshot(wtRepo, wtSnapshot, guardEnv);
+  const noAllowEnv = { ...guardEnv, AGENT_STEWARD_GATE_ALLOW_PATHS: "" };
+
+  fs.writeFileSync(ownFile, "agent edit\n", "utf8");
+  check(
+    "PL-150: без allowlist правка SCOPE выглядит посторонней (контроль false-positive)",
+    verifyWorktreeSnapshot(wtRepo, wtSnapshot, noAllowEnv).ok === false
+  );
+  check(
+    "PL-150: правка в SCOPE проходит worktree-verify с объединённым allowlist",
+    verifyWorktreeSnapshot(wtRepo, wtSnapshot, guardEnv).ok === true
+  );
+
+  fs.writeFileSync(foreignFile, "foreign edit\n", "utf8");
+  const foreignVerify = verifyWorktreeSnapshot(wtRepo, wtSnapshot, guardEnv);
+  check(
+    "PL-150: чужой путь вне SCOPE/filesCreate/afterScript всё ещё отклоняется",
+    foreignVerify.ok === false && /защищённые пути/.test(foreignVerify.reason ?? ""),
+    foreignVerify.reason
+  );
+
+  const indexSrc = fs.readFileSync(path.resolve("src/index.ts"), "utf8");
+  check(
+    "PL-150: оба вызова wrapper используют объединённый список путей",
+    !indexSrc.includes("gateAllowPathsFromAfterScript(normalizedAfter)") &&
+      (indexSrc.match(/gateAllowPathsFromScope\(scopeCheck\.paths, filesCreate, normalizedAfter\)/g) || [])
+        .length === 2
+  );
+} catch (err) {
+  console.log("[diag] PL-150 section THREW:", err instanceof Error ? err.stack : String(err));
+  check("PL-150: секция не выбросила исключение", false, "section threw");
 }
 
 // --- PL-80/81/101/104/105: регрессии коммит-хелперов и обёртки (B4) ---

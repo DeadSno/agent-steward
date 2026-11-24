@@ -44,7 +44,7 @@ import {
   sessionStatePath,
   writeSessionStateFile,
 } from "./core/session.js";
-import { ensureWrapper, writePromptFile, writeWrapperCmd, lockFilePath, requestImmediateRun, gateAllowPathsFromAfterScript } from "./core/ps-wrapper.js";
+import { ensureWrapper, writePromptFile, writeWrapperCmd, lockFilePath, requestImmediateRun, gateAllowPathsFromScope } from "./core/ps-wrapper.js";
 import { getSchedulerBackend, LinuxScheduler } from "./core/scheduler/index.js";
 import { SCHEDULER_SKILL_ID, loadSchedulerSkill } from "./skill.js";
 import { getTaskLogs, resolveTaskLogPath } from "./core/scheduler/logs.js";
@@ -7825,7 +7825,7 @@ export async function schedulerCreateTask(
         worktreeHelperPath,
         normalizedGuards,
         guardHelperPath,
-        gateAllowPathsFromAfterScript(normalizedAfter),
+        gateAllowPathsFromScope(scopeCheck.paths, filesCreate, normalizedAfter),
       );
     } else {
       wrapperPath = await writeBashWrapper({
@@ -7855,7 +7855,7 @@ export async function schedulerCreateTask(
         worktreeHelper: worktreeHelperPath,
         guards: normalizedGuards,
         guardHelper: guardHelperPath,
-        gateAllowPaths: gateAllowPathsFromAfterScript(normalizedAfter),
+        gateAllowPaths: gateAllowPathsFromScope(scopeCheck.paths, filesCreate, normalizedAfter),
         ...(effectiveTriggerType === "once" && scheduler.platform === "darwin"
           ? { oneShotCleanupCommand: buildLaunchdOneShotCleanup(sanitized, getProfileName()) }
           : {}),

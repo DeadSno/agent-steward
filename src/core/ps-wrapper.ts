@@ -1605,6 +1605,47 @@ export function gateAllowPathsFromAfterScript(afterScript?: string): string {
 }
 
 /**
+ * PL-150: единый allow-список для post-flight `worktree-verify`.
+ *
+ * Раньше обёртка брала пути только из `-Files` afterScript; у задач без
+ * afterScript (PL-140/PL-143) список был пустым, и гейт отклонял СОБСТВЕННЫЕ
+ * правки агента как «защищённые пути (src) изменились с момента старта задачи».
+ * Теперь в allowlist попадают объявленные SCOPE-пути, `filesCreate` и пути из
+ * `gateAllowPathsFromAfterScript`. Пути вне этих трёх источников по-прежнему
+ * не попадают в список и отклоняются гейтом.
+ *
+ * Возвращает детерминированную строку `a|b` в порядке: SCOPE → filesCreate →
+ * afterScript; дубликаты отбрасываются. Пустые/отсутствующие входы дают ''.
+ * Функция чистая: ни аргументы, ни окружение не изменяются.
+ */
+export function gateAllowPathsFromScope(
+  scopePaths?: readonly string[] | null,
+  filesCreate?: readonly string[] | null,
+  afterScript?: string,
+): string {
+  // gate-integrity сравнивает относительные пути из `git status` в POSIX-форме:
+  // уводим '\\' → '/', снимаем сегменты './' и ведущие/ведомые '/'.
+  const normalize = (item: string): string =>
+    item
+      .trim()
+      .replace(/\\/g, "/")
+      .replace(/(^|\/)\.\//g, "$1")
+      .replace(/^\/+/, "")
+      .replace(/\/+$/, "")
+      .trim();
+
+  const fromAfterScript = gateAllowPathsFromAfterScript(afterScript)
+    .split("|")
+    .filter(Boolean);
+  const unique = new Set<string>();
+  for (const item of [...(scopePaths ?? []), ...(filesCreate ?? []), ...fromAfterScript]) {
+    const normalized = normalize(item);
+    if (normalized) unique.add(normalized);
+  }
+  return [...unique].join("|");
+}
+
+/**
  * Генерирует per-task .cmd-обёртку, которую schtasks вызывает через /tr.
  * Внутри .cmd — жёстко заданный вызов run-task.ps1 с задачей, промптом,
  * таймаутом и lock-файлом. schtasks получает только один путь (в кавычках),
