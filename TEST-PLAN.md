@@ -1,6 +1,6 @@
 # План тестирования плагина `agent-steward` (plugin id `opencode-windows-scheduler`)
 
-**Версия плагина:** 0.0.6 · **Платформа прогона:** Windows 11 · **Дата:** 20.11.2026  
+**Версия плагина:** 0.0.6 · **Платформа прогона:** Windows 11 · **Дата:** 24.11.2026  
 **Объект:** весь плагин — ядро, MCP-инструменты, GUI OpenCode, веб-дашборд, TUI, БД, интеграции, локальный ассистент триажа, самодиагностика, DLQ, durable-запуски, pipeline-as-code.  
 **Цель:** доказать три свойства для каждой детали:
 
@@ -812,7 +812,7 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 | `test-dual-entry.mjs` | D16 (dual-export V1/V2: id/setup + server) |
 | `test-eslint-baseline.mjs` | D16 (baseline-гейт ESLint, QA-A2.0) |
 | `test-pipeline.mjs` | D18 (pipeline-as-code: схема/валидатор/CLI, S18.1.1–S18.1.7) |
-| `test-test-plan.mjs` | D16 (TP-6.1: качество TEST-PLAN.md, 17 проверок) |
+| `test-test-plan.mjs` | D16 (TP-6.1: качество TEST-PLAN.md, 19 проверок) |
 | `test-feedback.mjs` | D17 (обратная связь / report_bug, S17.1.1–S17.1.6; F-4.1) |
 | `test-feedback-worker.mjs` | D17 (приёмник: валидация, дедуп, rate-limit, honeypot; F-4.2) |
 | `test-v1-integration.mjs` | D16 (V1-адаптер без OpenCode CLI) |
@@ -907,13 +907,13 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 | F-3 | D17 (прозрачность) | P2 | ✅ закрыто | Показ payload перед отправкой, consent/приватность, i18n ru/en/zh — перенесено в `CHANGELOG.md` |
 | F-4 | D17 (тесты и документация) | P3 | ✅ закрыто | `test-feedback.mjs`, тест Worker, **F-4.3: TEST-PLAN D17 + docs/FEATURES.md**, CHANGELOG + `test-docs` — перенесено в `CHANGELOG.md` |
 | E-1 / E-2.1 / E-2.2 | D08 (бюджеты) | P2 | ✅ закрыто | Бюджеты день/неделя, лимит токенов на задачу и остановка при превышении — перенесены в `CHANGELOG.md` [Unreleased] → Added |
-| E-3 | D08 | P3 | ⬜ | Token efficiency score |
-| E-4 | D08 | P3 | ⬜ | Прогноз затрат + экспорт в Grafana JSON |
-| E-5 | D08 | P3 | ⬜ | Разбивка запусков local vs cloud |
+| E-3 | D08 | P3 | ✅ закрыто | Token efficiency score — `E-3.1` в `CHANGELOG.md` |
+| E-4 | D08 | P3 | ✅ закрыто | Прогноз затрат + экспорт в Grafana JSON — `E-4.1`/`E-4.2` в `CHANGELOG.md` |
+| E-5 | D08 | P3 | ✅ закрыто | Разбивка запусков local vs cloud — `E-5.1` в `CHANGELOG.md` |
 | D-1 | D15 (runner) | P3 | ⬜ | Runner local/docker/ssh |
 | D-2 | D15 | P3 | ⬜ | Opt-in Docker, обратная совместимость |
 | D-3 | D15 | P3 | ⬜ | Детерминизм вердикта (та же спека → тот же вердикт) |
-| A-1 | D10 (approvals) | P2 | ⬜ | R2/R3 approval-гейт перед деплоем + аудит решений |
+| A-1 | D10 (approvals) | P2 | ✅ закрыто | R2/R3 approval-гейт перед деплоем + аудит решений — `PL-95`/`PL-103` в `CHANGELOG.md` |
 | A-2 | D11 (окружения) | P2 | ⬜ | dev/staging/prod изоляция + привязка задач к среде |
 | A-3 | D12 | P3 | ⬜ | Артефакты запуска (отчёты/coverage) |
 | A-4 | D16 | P3 | ⬜ | Docs-сайт (публикация документации) |
@@ -922,10 +922,10 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 | M-1..M-8 | D16 (оркестрация) | P3 | ⬜ | Мульти-агентная оркестрация: контекст, роли, self-correcting, fallback, tournament, CEP, cross-run memory, smart recipes |
 | X-1 | D16 | P1 | ⏸️ | `npm deprecate` legacy `opencode-windows-scheduler@1.5.8` |
 | X-2 | D16 | P1 | ⏸️ | Legacy 1.5.9 с `<0.1.0` upper bound |
-| X-3 | D16 | P3 | ⏸️ | Убрать `is_template: false` из `package.json` |
+| X-3 | D16 | P3 | ✅ закрыто | Убрать `is_template: false` из `package.json` — `X-3.1` в `CHANGELOG.md` |
 | X-4 | D16 | P2 | ⏸️ | Dependabot: мерж #4 (plugin 2.3.0), OpenTUI 0.9.0 |
 | X-5 | D16 | P2 | ⏸️ | Привести теги к релизам + GitHub release для каждого тега |
-| X-6 | D16 | P3 | ⏸️ | Убрать `systemd` из keywords (бэкенда нет) |
+| X-6 | D16 | P3 | ✅ закрыто | Убрать `systemd` из keywords (бэкенда нет) — `X-6.1` в `CHANGELOG.md` |
 
 ---
 

@@ -13,7 +13,7 @@ summary, last run.
 | --- | --- | --- |
 | "Every morning / every hour / weekly" | `schedule_task` with cron | Durable OS-level schedule, survives restarts |
 | "When this file changes" | `triggerType: "file"` + `watchPath` | No polling; the watcher debounces bursts |
-| "When my MCP server reports an event" | `triggerType: "mcp-event"` + `mcpEvent` | Event-driven, no wasted runs |
+| "When my MCP server reports an event" | `schedule_advanced` (admin profile) with `triggerType: "mcp-event"` + `mcpEvent` | Event-driven, no wasted runs; `mcpEvent` is excluded from the core `schedule_task` profile (PL-129) |
 | "Same work in N repositories" | `matrix.workspaceIds` | One definition, isolated clones, aggregated status |
 | "A then B then C" | `dependsOn` + `nextTaskOnSuccess` / `nextTaskOnError` | Explicit DAG, failures stop the line |
 | "Try again if it fails" | `retryCount` + `retryDelay` | Handles flaky networks and rate limits |
@@ -31,7 +31,7 @@ registers an enabled OS placeholder entry**: `ONCE 31.12.2099 00:00`, Status `Re
 (`src/core/scheduler/windows.ts`, the non-cron branch). The OS never fires it on its own;
 the entry exists only so manual start (`schtasks /run`), DAG dependencies and `runMatrix`
 have an OS object to run, and it is removed together with the task by `delete_task`.
-A fresh task `QV1-live-mcp-os-probe` with `mcpEvent:{server:'qv1probe',event:'qv1.live.probe'}`
+A fresh task `QV1-live-mcp-os-probe` created with `schedule_advanced` (admin profile) and `mcpEvent:{server:'qv1probe',event:'qv1.live.probe'}`
 was verified in `schtasks` on 20.11.2026 (QV-1) — the `31.12.2099` date is intentional,
 not an artifact of a paused task.
 
