@@ -215,6 +215,7 @@ steps:
 agent-steward pipeline validate opencode.pipeline.yaml
 agent-steward pipeline apply opencode.pipeline.yaml --dry-run
 agent-steward pipeline apply opencode.pipeline.yaml
+agent-steward apply -f opencode.pipeline.yaml          # GitOps-алиас
 agent-steward pipeline export --pipeline nightly-release --out opencode.pipeline.yaml
 ```
 

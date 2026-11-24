@@ -176,6 +176,7 @@ The CLI ships with the package (`agent-steward` binary):
 agent-steward pipeline validate opencode.pipeline.yaml
 agent-steward pipeline apply opencode.pipeline.yaml --dry-run
 agent-steward pipeline apply opencode.pipeline.yaml
+agent-steward apply -f opencode.pipeline.yaml
 agent-steward pipeline export --pipeline nightly-release
 agent-steward pipeline export --pipeline nightly-release --out opencode.pipeline.yaml
 ```
@@ -184,6 +185,7 @@ agent-steward pipeline export --pipeline nightly-release --out opencode.pipeline
 | --- | --- | --- |
 | `pipeline validate <file>` | `--json` | Parses and validates; never changes tasks. |
 | `pipeline apply <file>` | `--dry-run`, `--json` | Creates and updates tasks; `--dry-run` only prints the plan. |
+| `apply -f <file>` | `--dry-run`, `--json` | GitOps alias of `pipeline apply`; `--file` is also accepted. |
 | `pipeline export` | `--pipeline <name>`, `--out <file>` | Rebuilds YAML from tasks; stdout unless `--out` is given. |
 
 Exit codes: `0` success, `1` validation/apply errors (or an unknown pipeline on export),

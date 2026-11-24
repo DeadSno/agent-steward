@@ -6,6 +6,7 @@
  *   agent-steward pipeline validate <file> [--json]
  *   agent-steward pipeline apply <file> [--dry-run] [--json]
  *   agent-steward pipeline export --pipeline <name> [--out <file>]
+ *   agent-steward apply -f <file> [--dry-run] [--json]   # алиас pipeline apply
  *
  * Exit-коды: 0 — успех, 1 — ошибки валидации/применения, 2 — неверные аргументы.
  */
@@ -26,6 +27,7 @@ const USAGE = `agent-steward — планировщик agent jobs
   agent-steward pipeline validate <file> [--json]
   agent-steward pipeline apply <file> [--dry-run] [--json]
   agent-steward pipeline export --pipeline <name> [--out <file>]
+  agent-steward apply -f <file> [--dry-run] [--json]
   agent-steward mcp
   agent-steward serve [--port <number>]
 
@@ -39,6 +41,7 @@ const USAGE = `agent-steward — планировщик agent jobs
 Опции:
   --json        машинный вывод
   --dry-run     показать план apply без изменений
+  -f, --file    файл pipeline для алиаса apply
   --pipeline    имя pipeline для export
   --out         файл для export (по умолчанию stdout)
 `;
@@ -57,7 +60,18 @@ function printIssueList(label: string, issues: PrintedIssue[]): void {
 }
 
 function requireFile(args: string[]): string {
-  const file = args.find((arg) => !arg.startsWith("--"));
+  const flagIndex = args.findIndex((arg) => arg === "-f" || arg === "--file");
+  if (flagIndex !== -1) {
+    const flagged = args[flagIndex + 1];
+    if (!flagged || flagged.startsWith("-")) {
+      console.error("Опция -f/--file требует значение.");
+      console.error(USAGE);
+      process.exit(2);
+    }
+    return flagged;
+  }
+  // P-2.3: старый позиционный путь (pipeline apply <file>) остаётся рабочим.
+  const file = args.find((arg) => !arg.startsWith("-"));
   if (!file) {
     console.error("Не указан файл pipeline.\n");
     console.error(USAGE);
@@ -396,6 +410,14 @@ async function main(argv: string[]): Promise<number> {
     const { startStandaloneDashboard } = await import("./serve.js");
     await startStandaloneDashboard(rest);
     return 0;
+  }
+  // P-2.3: GitOps-алиас `agent-steward apply -f pipeline.yaml`.
+  if (group === "apply") {
+    if (command === "--help" || command === "-h" || command === "help") {
+      console.log(USAGE);
+      return 0;
+    }
+    return runApply([command, ...rest].filter((value): value is string => Boolean(value)));
   }
   if (group !== "pipeline") {
     console.error(`Неизвестная команда «${group}».\n`);

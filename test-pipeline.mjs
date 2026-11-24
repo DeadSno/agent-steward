@@ -5,6 +5,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ws-scheduler-pipeline-"));
 process.env.APPDATA = tempRoot;
@@ -576,6 +577,52 @@ function hasError(result, pathFragment, textFragment) {
   check(
     "QA-P3.2: только pipelineName принимается",
     pipelineExportSchema.safeParse({ pipelineName: "A" }).success,
+  );
+}
+
+// P-2.3: GitOps-алиас CLI `agent-steward apply -f pipeline.yaml`.
+{
+  const cli = path.resolve("dist/cli.js");
+  const yamlPath = path.join(tempRoot, "alias.pipeline.yaml");
+  fs.writeFileSync(
+    yamlPath,
+    [
+      "version: 1",
+      "name: ci-cli",
+      "defaults:",
+      '  schedule: "0 4 * * *"',
+      "steps:",
+      "  - id: lint",
+      "    prompt: make lint",
+    ].join("\n"),
+    "utf8",
+  );
+  const runCli = (args) =>
+    spawnSync(process.execPath, [cli, ...args], { encoding: "utf8", cwd: path.resolve(".") });
+
+  const alias = runCli(["apply", "-f", yamlPath, "--dry-run", "--json"]);
+  let summary;
+  try {
+    summary = JSON.parse(alias.stdout);
+  } catch {
+    summary = undefined;
+  }
+  check(
+    "P-2.3: `apply -f` — exit 0 и JSON-сводка без изменений в БД",
+    alias.status === 0 && summary?.pipeline === "ci-cli" && summary.dryRun === true &&
+      JSON.stringify(summary.creates) === JSON.stringify(["ci-cli lint"]),
+  );
+
+  const legacy = runCli(["pipeline", "apply", yamlPath, "--dry-run", "--json"]);
+  check(
+    "P-2.3: старый вызов `pipeline apply <file>` не сломан",
+    legacy.status === 0 && JSON.parse(legacy.stdout).pipeline === "ci-cli",
+  );
+
+  const noValue = runCli(["apply", "-f"]);
+  check(
+    "P-2.3: `apply -f` без значения — exit 2",
+    noValue.status === 2 && noValue.stderr.includes("требует значение"),
   );
 }
 
