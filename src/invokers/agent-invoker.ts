@@ -5,6 +5,7 @@
  * (wrapper, quality gate, история) остаётся общим для всех harness-ов.
  */
 import { spawn } from "node:child_process";
+import { resolveRunner, type RunnerConfig } from "../core/runner.js";
 
 /** Единственный источник правды для поля `harness` (схемы задач и импорт). */
 export const HARNESS_VALUES = [
@@ -22,6 +23,8 @@ export interface BuildCommandOptions {
   sessionMode?: "reuse" | "last" | "new";
   prompt?: string;
   env?: NodeJS.ProcessEnv;
+  /** D-2.1: локальный/docker/ssh runner; по умолчанию local, fail-open. */
+  runner?: RunnerConfig;
 }
 
 export interface BuiltCommand {
@@ -76,19 +79,29 @@ abstract class BaseInvoker implements AgentInvoker {
 
   invoke(options: BuildCommandOptions = {}): Promise<InvocationResult> {
     const cmd = this.buildCommand(options);
-    return new Promise((resolve, reject) => {
-      const child = spawn(cmd.commandPath, cmd.args, {
-        cwd: options.env?.AGENT_CWD ?? process.cwd(),
-        env: { ...process.env, ...cmd.env, AGENT_STEWARD_CHILD_RUN: "1" },
-        shell: false,
+    const cwd = options.env?.AGENT_CWD ?? process.cwd();
+    const env = { ...process.env, ...cmd.env, AGENT_STEWARD_CHILD_RUN: "1" } as NodeJS.ProcessEnv;
+    // D-2.1: runner (local/docker/ssh) получает команду, spawn сохраняет cwd/env.
+    const invoke = (command: string, args: readonly string[]) =>
+      new Promise<InvocationResult>((resolve, reject) => {
+        const child = spawn(command, args, { cwd, env, shell: false });
+        let stdout = "";
+        let stderr = "";
+        child.stdout?.on("data", (chunk) => { stdout += String(chunk); });
+        child.stderr?.on("data", (chunk) => { stderr += String(chunk); });
+        child.on("error", reject);
+        child.on("close", (code) => resolve({ exitCode: code ?? 1, stdout, stderr }));
       });
-      let stdout = "";
-      let stderr = "";
-      child.stdout?.on("data", (chunk) => { stdout += String(chunk); });
-      child.stderr?.on("data", (chunk) => { stderr += String(chunk); });
-      child.on("error", reject);
-      child.on("close", (code) => resolve({ exitCode: code ?? 1, stdout, stderr }));
-    });
+    return resolveRunner(options.runner)
+      .runner.execute(
+        { command: cmd.commandPath, args: cmd.args, workdir: cwd, env },
+        invoke,
+      )
+      .then((result) => ({
+        exitCode: result.exitCode,
+        stdout: result.stdout ?? "",
+        stderr: result.stderr ?? "",
+      }));
   }
 }
 

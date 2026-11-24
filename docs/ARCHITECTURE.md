@@ -242,10 +242,13 @@ applied through `PRAGMA user_version` on open. Step 11 adds functional indexes
   completion watcher writes the reason («агент не отвечает», idle window and no
   log/CPU progress) into the marker and `Write-Log`, while keeping PL-124 exit
   compatibility (the report is already written, exit code stays 0).
-- Durable steps currently execute through the same wrapper machinery. The
-  agent-executor abstraction (`src/core/agents.ts` / `agents-advanced.ts`) and the
-  runner abstraction (`runner.ts` / `runner-docker.ts` / `runner-ssh.ts`, fail-open
-  to local) exist, but are not wired into the production mission path.
+- Durable steps currently execute through the same wrapper machinery. The runner
+  abstraction (`runner.ts` / `runner-docker.ts` / `runner-ssh.ts`, fail-open to
+  local) is wired into the production path through the `AgentInvoker` seam
+  (P-3.2): explicit invocations use `resolveRunner(...).runner.execute(...)`.
+  The agent-executor abstraction (`src/core/agents.ts` / `agents-advanced.ts`) is
+  still re-exported from `execution.ts`; enabling its retry/post-mortem policies
+  remains opt-in and does not change the default mission loop.
 - `checkBudgetGate` / `checkRunBudgetGate` are called at tool/RPC/manual entry
   points and on the registered OS-scheduler path via the wrapper's `--budget-gate`
   check (B-1.1, PL-125); an over-limit run is recorded as `skipped` with a reason.
@@ -382,7 +385,7 @@ avg_cost / avg_time / last_10_runs`. Обучается на исходах ге
 | Path | Role |
 | --- | --- |
 | `src/index.ts` | Plugin lifecycle, 34 agent tools (filtered by tool profile), 61 RPC handlers, task CRUD, view assembly; `dry_run`, `compact` history and short core-tool schemas |
-| `src/core/tool-profile.ts` | Tool profiles `core` (8 read/control tools), `admin` (+8 advanced/manage tools), `all` (full 32); `AGENT_STEWARD_TOOL_PROFILE` selects the surface |
+| `src/core/tool-profile.ts` | Tool profiles `core` (10 read/control tools incl. `emit_event`), `admin` (+9 advanced/manage tools), `all` (full 34); `AGENT_STEWARD_TOOL_PROFILE` selects the surface |
 | `src/rpc.ts` | JSON-schema contracts for every RPC method |
 | `src/gui.tsx` | OpenCode sidebar panel (SolidJS, built to `gui-experimental.cjs`) |
 | `src/server.ts` | Local web dashboard HTTP server and HTML rendering |
@@ -414,7 +417,7 @@ avg_cost / avg_time / last_10_runs`. Обучается на исходах ге
 | `src/core/budget.ts` | Daily/weekly budget report and `checkBudgetGate`, 14-day `tokenEfficiencyScore` for `get_metrics` |
 | `src/core/approval-api.ts` | Approval queue facade (`list_approvals` / `decide_approval`) and auto-restart of approved plans |
 | `src/core/agents.ts`, `src/core/agents-advanced.ts` | Agent executor abstraction and advanced routing/execution paths |
-| `src/core/runner.ts`, `src/core/runner-docker.ts`, `src/core/runner-ssh.ts` | Runner abstraction and Docker/SSH implementations (`resolveRunner`, fail-open to local; not wired into the production path yet) |
+| `src/core/runner.ts`, `src/core/runner-docker.ts`, `src/core/runner-ssh.ts` | Runner abstraction and Docker/SSH implementations (`resolveRunner`, fail-open to local; wired into `AgentInvoker.invoke` — P-3.2) |
 | `src/core/environment.ts` | Environment resolver for runner/executor selection |
 | `src/core/matrix.ts` | Fan-out, aggregation, sync, cancel, orphan cleanup |
 | `src/core/dry-run.ts` | Pipeline simulation (topological order, commands, cwd, roles and estimates from recent runs; no execution) |
@@ -550,25 +553,24 @@ block and `GET /api/history/export` serves CSV/JSON.
 The 3.10/3.11 work reduced the agent's token bill without changing the execution
 semantics:
 
-- **Tool profiles** (`src/core/tool-profile.ts`): `core` exposes 8 tools
+- **Tool profiles** (`src/core/tool-profile.ts`): `core` exposes 10 tools
   (`schedule_task`, `update_task`, `list_tasks`, `run_task_now`, `get_history`,
-  `get_task_logs`, `dry_run`, `get_dashboard_info`), `admin` adds 8 advanced/manage
-  tools and `all` exposes all 32. `AGENT_STEWARD_TOOL_PROFILE` selects the profile and
-  `filterToolSpecsByProfile` applies it at registration time. The 18 "thick" schema
-  keys (`matrix`, `guards`, `dependsOn`, `retry*`, `nextTaskOn*`, `mcpEvent`,
+  `get_task_logs`, `dry_run`, `get_dashboard_info`, `backup_db`, `emit_event`),
+  `admin` adds 9 advanced/manage tools and `all` exposes all 34.
+  `AGENT_STEWARD_TOOL_PROFILE` selects the profile and
+  `filterToolSpecsByProfile` applies it at registration time. The 17 "thick" schema
+  keys (`matrix`, `guards`, `dependsOn`, `retry*`, `nextTaskOn*`,
   `watch*`, `git*`, `activeDays`, `windowPolicy`, `runWhenLoggedOff`,
   `sessionMaxRuns`, `workspaceId`) are declared only on `schedule_advanced` /
   `update_advanced`, saving about 4.5k tokens per core-profile request.
-  - **Core profile limit (PL-129)**: `triggerType: "mcp-event"` and
-    `nextTaskOnSuccess` (like the other 18 `ADVANCED_SCHEMA_KEYS` in
-    `src/index.ts`) exist in the full `scheduleTaskSchema` but are deliberately
-    absent from `coreScheduleTaskSchema`. Passing them to `schedule_task` in the
-    core profile drops the fields and fails with the `tool.error.mcpEventRequired`
-    error, whose message now points to the fix: use `schedule_advanced` (tool
-    profile `admin`) or set `AGENT_STEWARD_TOOL_PROFILE=all` for MCP-event
-    triggers and `nextTaskOnSuccess` chains. This is a conscious simplification —
-    the core schema field set, its digest and its token budget stay unchanged
-    (B-3.1).
+  - **QA-PORT-4 / PL-129 — event-driven tasks in the core profile**: `mcpEvent`
+    is a short field of `coreScheduleTaskSchema`, so `schedule_task` in the core
+    profile can create `triggerType: "mcp-event"` tasks, and `emit_event` is a
+    core tool that fires their subscribers. The remaining advanced fields
+    (`nextTaskOnSuccess` chains, matrix/DAG/retry/window policies) still live on
+    `schedule_advanced` / `update_advanced` in the `admin` profile (or require
+    `AGENT_STEWARD_TOOL_PROFILE=all`). `tool.error.mcpEventRequired` now only
+    means that the event name itself was omitted.
 - **Compact history**: `get_history` with `compact: true` truncates `error` to 300
   characters with an explicit `…[truncated]` marker. The SQLite row is untouched;
   `get_task_logs` still returns the full error and log.

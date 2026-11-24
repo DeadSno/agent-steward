@@ -20,7 +20,7 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 // QA-A2.7: безопасное приведение unknown к строке без no-base-to-string.
 import { safeStringify } from "./text.js";
-import { HARNESS_VALUES } from "./invokers/agent-invoker.js";
+import { HARNESS_VALUES, resolveInvoker, type HarnessName } from "./invokers/agent-invoker.js";
 import { applyModelRecommendation } from "./core/dry-run.js";
 import { LockManager } from "./core/lock.js";
 import {
@@ -1134,7 +1134,7 @@ const ADVANCED_SCHEMA_KEYS = [
   "retryDelay",
   "nextTaskOnSuccess",
   "nextTaskOnError",
-  "mcpEvent",
+  // QA-PORT-4: mcpEvent нужен в core — иначе event-driven задачи нельзя создать.
   "watchGlobs",
   "watchIgnore",
   "gitPaths",
@@ -1179,6 +1179,7 @@ const CORE_FIELD_DESCRIPTIONS: Record<string, string> = {
   allowedTools: "Tools the agent may use.",
   deniedTools: "Tools the agent must not use.",
   triggerType: "cron | once | file | mcp-event | git (default cron).",
+  mcpEvent: "MCP-event trigger {event|eventName, server?, filter?}; fire it with emit_event.",
   watchPath: "Path to watch for triggerType=file.",
   gitBranch: "Branch to watch for triggerType=git.",
 };
@@ -1908,6 +1909,7 @@ const scheduleTaskExecute = wrapExecute<ScheduleArgs>(async (args) => {
     worktree,
     guards,
     tokenBudget,
+    harness,
   } = args;
 
   // B-2: модель рекомендуется на write-пути, но явная модель всегда побеждает.
@@ -1987,6 +1989,7 @@ const scheduleTaskExecute = wrapExecute<ScheduleArgs>(async (args) => {
       filesCreate,
       autoSelectModel === true,
       modelChoice.autoSelected,
+      harness,
     );
   } catch (err) {
     return {
@@ -2174,6 +2177,11 @@ async function cancelMatrixRun(
         clone.guards,
         // QA-P0.1 (E-2.1): клон матрицы наследует tokenBudget родителя.
         clone.tokenBudget,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        clone.harness ?? definition.harness,
       );
     } catch (err) {
       warnings.push(
@@ -2731,6 +2739,8 @@ async function updateTaskFromInput(
       undefined, // filesCreate — в update не меняется
       autoSelectModel === true,
       modelChoice.autoSelected,
+      // P-3.2: харнесс переживает пересоздание задачи.
+      input.harness ?? previous.harness,
     );
 
     // Матрица отключена при обновлении — убираем клонов и агрегатор.
@@ -4167,6 +4177,11 @@ const transferTasksExecute = wrapExecute<TransferArgs>(async (args) => {
         def.guards,
         // QA-P0.1 (E-2.1): импорт через transfer_tasks сохраняет tokenBudget.
         def.tokenBudget,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        def.harness,
       );
       await saveTaskDefinition(def);
       imported.push(def.name);
@@ -7130,6 +7145,8 @@ export async function schedulerCreateTask(
   autoSelectModel?: boolean,
   /** B-2.2: модель выбрана эвристикой, а не задана пользователем. */
   autoSelectedModel?: boolean,
+  /** P-3.2: харнесс задачи; undefined = opencode (полная обратная совместимость). */
+  harness?: HarnessName,
 ): Promise<void> {
   // Спринт 27.5 (hotfix 1.5.1): проверяем имя до создания wrapper/prompt и записи
   // в БД. Недопустимые символы отклоняются с понятным сообщением, а не ошибкой
@@ -7600,6 +7617,15 @@ export async function schedulerCreateTask(
   // поэтому ротация подхватывается без пересоздания задачи.
   const sessionFile =
     effectiveSession === "reuse" ? sessionStatePath(name) : undefined;
+  // P-3.2: запекаем в обёртку только префикс команды не-opencode харнесса.
+  // Модель/сессию/промпт обёртка добавляет сама; env AGENT_* имеет приоритет.
+  const harnessDefaults =
+    harness && harness !== "opencode"
+      ? (() => {
+          const built = resolveInvoker(harness).buildCommand({ env: {} });
+          return { commandPath: built.commandPath, args: built.args };
+        })()
+      : undefined;
   let wrapperPath: string;
   try {
     if (scheduler.platform === "win32") {
@@ -7633,6 +7659,7 @@ export async function schedulerCreateTask(
         normalizedGuards,
         guardHelperPath,
         gateAllowPathsFromScope(scopeCheck.paths, filesCreate, normalizedAfter),
+        harnessDefaults,
       );
     } else {
       wrapperPath = await writeBashWrapper({
@@ -7655,6 +7682,7 @@ export async function schedulerCreateTask(
         legacyShell: legacyShell === true,
         scheduleGate: wrapperGate,
         envFile: taskEnvFile,
+        harnessDefaults,
         sessionMode: effectiveSession,
         sessionId: effectiveSessionId,
         sessionFile,
@@ -7815,6 +7843,8 @@ export async function schedulerCreateTask(
     worktree: normalizedWorktree,
     guards: normalizedGuards,
     tokenBudget: normalizedTokenBudget,
+    // P-3.2: харнесс задачи; undefined = opencode (обратная совместимость).
+    ...(harness ? { harness } : {}),
     matrix: normalizedMatrix,
     isMatrixParent: normalizedMatrix ? true : undefined,
     matrixParentId,
@@ -7901,6 +7931,11 @@ export async function schedulerCreateTask(
         clone.guards,
         // QA-P0.1 (E-2.1): клон матрицы наследует tokenBudget родителя.
         clone.tokenBudget,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        clone.harness ?? harness,
       );
     };
 
@@ -8118,6 +8153,11 @@ async function recreateTaskFromDefinition(definition: TaskDefinition): Promise<v
     definition.guards,
     // QA-P0.1 (E-2.1): откат update не теряет tokenBudget.
     definition.tokenBudget,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    definition.harness,
   );
 }
 

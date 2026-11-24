@@ -105,7 +105,10 @@ export const WRAPPER_SCRIPT = `param(
     [string]$ModelB64 = "",
     [string]$WorkspaceNameB64 = "",
     [string]$AllowedToolsB64 = "",
-    [string]$DeniedToolsB64 = ""
+    [string]$DeniedToolsB64 = "",
+    # P-3.2: запечённые харнесс-дефолты (деградируют в opencode при пустом значении).
+    [string]$HarnessCommandB64 = "",
+    [string]$HarnessArgsB64 = ""
 )
 
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -146,6 +149,12 @@ if ($ModelB64) { $Model = ConvertFrom-B64Text $ModelB64 }
 if ($WorkspaceNameB64) { $WorkspaceName = ConvertFrom-B64Text $WorkspaceNameB64 }
 if ($AllowedToolsB64) { $AllowedTools = ConvertFrom-B64Text $AllowedToolsB64 }
 if ($DeniedToolsB64) { $DeniedTools = ConvertFrom-B64Text $DeniedToolsB64 }
+
+# P-3.2: запечённый дефолт харнесса (env AGENT_* всё равно имеет приоритет).
+$HarnessCommandPath = ""
+$HarnessArgsBaked = ""
+if ($HarnessCommandB64) { $HarnessCommandPath = ConvertFrom-B64Text $HarnessCommandB64 }
+if ($HarnessArgsB64) { $HarnessArgsBaked = ConvertFrom-B64Text $HarnessArgsB64 }
 
 function Write-Log {
     param([string]$Message)
@@ -1330,6 +1339,8 @@ try {
     # $AgentCommandPath / $AgentArgs (env AGENT_COMMAND_PATH / AGENT_ARGS).
     $AgentCommandPath = $env:AGENT_COMMAND_PATH
     $AgentArgs = $env:AGENT_ARGS
+    if (-not $AgentCommandPath) { $AgentCommandPath = $HarnessCommandPath }
+    if (-not $AgentArgs) { $AgentArgs = $HarnessArgsBaked }
     if ($AgentCommandPath) {
         $opencodeCmd = $AgentCommandPath
     } else {
@@ -1907,6 +1918,8 @@ export async function writeWrapperCmd(
   guardHelperFile?: string,
   /** PL-47: RELATIVE-пути, которые задача вправе изменить (из -Files). */
   gateAllowPaths?: string,
+  /** P-3.2: запечённый дефолт не-opencode харнесса (env AGENT_* важнее). */
+  harnessDefaults?: { commandPath: string; args: string[] },
 ): Promise<string> {
   await fs.mkdir(WRAPPER_DIR, { recursive: true });
   const cmdPath = path.join(WRAPPER_DIR, `run-${sanitizedName}.cmd`);
@@ -2039,6 +2052,17 @@ export async function writeWrapperCmd(
     const safeEnvFile = envFile.replace(/[\r\n"]+/g, "").trim();
     if (safeEnvFile) {
       psArgs.push(`-EnvFile "${safeEnvFile}"`);
+    }
+  }
+
+  // P-3.2: запекаем только префикс команды; --model/--session/--prompt обёртка
+  // добавит сама. Base64 защищает путь с пробелами от разворачивания cmd.
+  if (harnessDefaults?.commandPath) {
+    const commandB64 = Buffer.from(harnessDefaults.commandPath, "utf8").toString("base64");
+    psArgs.push(`-HarnessCommandB64 "${commandB64}"`);
+    if (harnessDefaults.args.length > 0) {
+      const argsB64 = Buffer.from(harnessDefaults.args.join(" "), "utf8").toString("base64");
+      psArgs.push(`-HarnessArgsB64 "${argsB64}"`);
     }
   }
 

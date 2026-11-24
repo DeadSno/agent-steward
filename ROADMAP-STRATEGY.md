@@ -36,7 +36,7 @@ Scheduler, уведомления, аналитика — триггеры и о
 
 **Выпущено в 0.0.5:** pipeline-as-code (`opencode.pipeline.yaml`: парсер, валидатор, CLI `validate|apply|export`, 3 инструмента, 51 тест) и worktree-изоляция с guard-условиями.
 
-**Чего ещё нет в релизе:** Docker-runner и remote runners (код `src/core/runner*.ts` есть, но не подключён к execution-loop), capability-карта с LoRA-адаптерами. Approvals, изоляция окружений, артефакты и четвёртая локаль `tr` уже реализованы (CHANGELOG A-1…A-5).
+**Чего ещё нет в релизе:** Docker/SSH-runner как пользовательская опция (модули `src/core/runner*.ts` подключены к `AgentInvoker.invoke`, но по умолчанию fail-open на `local`; конфигурация runner пока не выставлена через схему задачи), capability-карта с LoRA-адаптерами. Approvals, изоляция окружений, артефакты и четвёртая локаль `tr` уже реализованы (CHANGELOG A-1…A-5).
 - P-1/P-2 в dev-линии частично реализованы (subpath exports, `src/mcp.ts`), но ещё не зафиксированы в релизе; P-1 считается незакрытой до фиксации регрессии `test-watch-paths.mjs`.
 
 ---
@@ -69,7 +69,7 @@ Scheduler, уведомления, аналитика — триггеры и о
 
 Вынести интерфейс исполнителя агента за пределы OpenCode-specific кода. Позволить запускать задачи не только через OpenCode, но и через других агентов / MCP / стандартные API.
 
-Спринт 38 (Approvals, окружения, артефакты) закрыт: A-1/A-2/A-3/A-5 реализованы и зафиксированы в CHANGELOG; A-4 — runbook docs-сайта (деплой внешним действием). Спринты 32 (Pipeline-as-code) и 36 (Durable DAG) выпущены в 0.0.5 / 0.0.3–0.0.4 (см. CHANGELOG). Абстракция исполнителя остаётся частичной: `runner*.ts`/`agents*.ts` есть в коде, но не подключены к `index.ts`/execution-loop (см. DS-4 в ARCHITECTURE.md).
+Спринт 38 (Approvals, окружения, артефакты) закрыт: A-1/A-2/A-3/A-5 реализованы и зафиксированы в CHANGELOG; A-4 — runbook docs-сайта (деплой внешним действием). Спринты 32 (Pipeline-as-code) и 36 (Durable DAG) выпущены в 0.0.5 / 0.0.3–0.0.4 (см. CHANGELOG). Абстракция исполнителя остаётся частичной: `runner*.ts` подключены к execution-пути через слой `AgentInvoker` (P-3.2, fail-open на `local`), `agents*.ts` остаются реэкспортом из `execution.ts` с opt-in политиками; пользовательской настройки runner в схеме задачи пока нет (см. DS-4 в ARCHITECTURE.md).
 
 Конкретные шаги (P-1…P-5) — в [ROADMAP.md](./ROADMAP.md), Деталь 3.9: изоляция ядра → MCP-адаптер (`agent-steward mcp`, ~80% ценности) → `AgentInvoker` + поле `harness` → нативный dsh-плагин → `agent-steward serve`. Один пакет с subpath exports `./core` / `./mcp` / `./dsh`, без монорепо. Экосистема 2026: Cursor / VS Code / IDEA — MCP-клиенты (IDEA — встроенный MCP Server с 2025.2), DeepSeek Harness — Cordis-платформа (`ctx.tools` / `ctx.jobs`, developer preview), ACP — в первую очередь транспорт исполнения. Адаптер OpenCode остаётся неизменным, dual-export V1/V2 не ломается.
 
@@ -131,7 +131,7 @@ Enforced `allowedTools` / `deniedTools` вместо advisory, scoped-инъек
 
 ### 8. Docker runner (P3)
 
-Локальный процесс, Docker, SSH-хост. Задача описывает *что* делать, runner — *где*. Изоляцию не изобретаем: Docker / Landstrip. Opt-in, по умолчанию выключен. Статус: модули `runner.ts`/`runner-docker.ts`/`runner-ssh.ts` и `resolveRunner` с fail-open на `local` написаны, но не подключены к `index.ts`/execution-loop — в релизе этого функционала нет. Версия присваивается по факту релиза.
+Локальный процесс, Docker, SSH-хост. Задача описывает *что* делать, runner — *где*. Изоляцию не изобретаем: Docker / Landstrip. Opt-in, по умолчанию выключен. Статус: модули `runner.ts`/`runner-docker.ts`/`runner-ssh.ts` и `resolveRunner` с fail-open на `local` подключены к execution-пути через `AgentInvoker.invoke` (P-3.2), но выбор runner пока доступен только программно (поле `runner` в `BuildCommandOptions`), не через схему задачи — в релизе пользовательской опции нет. Версия присваивается по факту релиза.
 
 ### 9. Durable DAG (P1 для 0.1.0) — 0.0.3–0.0.4 ✅
 
@@ -145,7 +145,7 @@ Enforced `allowedTools` / `deniedTools` вместо advisory, scoped-инъек
 
 Ручное подтверждение перед деплоем, dev / staging / prod, отчёты и coverage как артефакты запуска, docs-сайт и 4 локали (en/ru/zh/tr).
 
-Статус по факту (DS-3.3): approvals ✅ (A-1, включая RPC/GUI и автоперезапуск PL-103), окружения ✅ (A-2), артефакты ✅ (A-3), docs-сайт ✅ runbook (A-4, сам деплой — внешнее действие), 4-я локаль `tr` ✅ (A-5, 916 ключей). Остаток Этапа 2 — универсальный слой исполнения: `runner*.ts`/`agents*.ts` существуют, но не подключены к execution-пути; это честно описано в `docs/ARCHITECTURE.md` и `ARCHITECTURE-DIAGRAMS.md`.
+Статус по факту (DS-3.3): approvals ✅ (A-1, включая RPC/GUI и автоперезапуск PL-103), окружения ✅ (A-2), артефакты ✅ (A-3), docs-сайт ✅ runbook (A-4, сам деплой — внешнее действие), 4-я локаль `tr` ✅ (A-5, 916 ключей). Остаток Этапа 2 — универсальный слой исполнения: `runner*.ts` подключены к execution-пути через `AgentInvoker`, но без пользовательской конфигурации; `agents*.ts` остаются реэкспортом с opt-in политиками. Это честно описано в `docs/ARCHITECTURE.md` и `ARCHITECTURE-DIAGRAMS.md`.
 
 Это начало Этапа 2 стратегии (CONCEPT §13.2 — мультиагентная оркестрация с ролями и артефактами).
 
@@ -191,7 +191,7 @@ Enforced `allowedTools` / `deniedTools` вместо advisory, scoped-инъек
 | Pipeline-as-code | ✅ (0.0.5) | ✅ | ✅ |
 | MCP-адаптер (`agent-steward mcp`) | 🚧 наработки в dev-линии | ✅ в релизе | ✅ |
 | Subpath exports `./core` / `./mcp` | 🚧 | ✅ | ✅ |
-| Docker runner | 🚧 код есть, не подключён | 🚧 | ✅ |
+| Docker runner | 🚧 подключён через invoker, без UI-настройки | 🚧 | ✅ |
 | Загрузки npm / мес | первые | 300+ | 1500+ |
 | GitHub stars | единицы | 100+ | 500+ |
 
@@ -216,7 +216,7 @@ Enforced `allowedTools` / `deniedTools` вместо advisory, scoped-инъек
 
 1. P-1 — закрыть изоляцию ядра: регрессия `test-watch-paths.mjs`, публичный facade `./core`, контракт-тесты и `npm pack --dry-run`.
 2. P-2 — выпустить `agent-steward mcp` как стабильную точку входа, описать MCP-протокол и добавить CLI-алиас `agent-steward apply -f pipeline.yaml`.
-3. Подготовить P-3 — контракт `AgentInvoker` + поле `harness`, затем подключить `runner*.ts`/`agents*.ts` к execution-loop (DS-4).
+3. P-3 выполнено: контракт `AgentInvoker` + поле `harness` и подключение `runner*.ts` к execution-пути через invoker (DS-4); `agents*.ts` оставлены opt-in реэкспортом.
 
 **Критерий месяца:** пользователь ставит плагин одной командой, получает уведомление в Telegram о падении задачи, токены и доступы не лежат открытым текстом в `tasks.json`, а интерфейс говорит на его языке.
 

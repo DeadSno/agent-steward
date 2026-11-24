@@ -90,6 +90,8 @@ export interface BashWrapperOptions {
   guardHelper?: string;
   /** PL-47: пути, которые задача вправе изменить (из -Files afterScript). */
   gateAllowPaths?: string;
+  /** P-3.2: запечённый дефолт не-opencode харнесса (env AGENT_* важнее). */
+  harnessDefaults?: { commandPath: string; args: string[] };
 }
 
 /**
@@ -157,6 +159,7 @@ export function buildBashWrapperScript(options: BashWrapperOptions): string {
     guards,
     guardHelper,
     gateAllowPaths,
+    harnessDefaults,
   } = options;
 
   // G-1.2: фиксируем входы гейта при создании обёртки и передаём путь
@@ -197,6 +200,9 @@ export function buildBashWrapperScript(options: BashWrapperOptions): string {
     "set -u",
     "",
     `TASK_NAME=${shellQuote(taskName)}`,
+    // P-3.2: дефолты харнесса; env AGENT_COMMAND_PATH/AGENT_ARGS важнее.
+    `HARNESS_COMMAND_PATH=${shellQuote(harnessDefaults?.commandPath ?? "")}`,
+    `HARNESS_ARGS=${shellQuote(harnessDefaults?.args.join(" ") ?? "")}`,
     `PROMPT_FILE=${shellQuote(promptFile ?? "")}`,
     `LOG_FILE=${shellQuote(logFile ?? path.join(WRAPPER_DIR, "task.log"))}`,
     `LOCK_FILE=${shellQuote(lockFile)}`,
@@ -493,7 +499,8 @@ export function buildBashWrapperScript(options: BashWrapperOptions): string {
     '  log "[role-scoped] allowed=[$ALLOWED_TOOLS], denied=[$DENIED_TOOLS]"',
     "fi",
     "",
-    "if ! command -v opencode >/dev/null 2>&1; then",
+    "# P-3.2: для не-opencode харнесса проверять opencode в PATH не нужно.",
+    'if [ -z "${AGENT_COMMAND_PATH:-}" ] && [ -z "$HARNESS_COMMAND_PATH" ] && ! command -v opencode >/dev/null 2>&1; then',
     '  log "[scheduler] ОШИБКА: opencode не найден в PATH ($PATH)."',
     "  exit 127",
     "fi",
@@ -604,6 +611,12 @@ export function buildBashWrapperScript(options: BashWrapperOptions): string {
     "run_opencode() {",
     "  # P-3.2: параметризация harness; значения по умолчанию сохраняют",
     "  # прежнее поведение `opencode run --auto`.",
+    '  if [ -n "$HARNESS_COMMAND_PATH" ]; then',
+    '    AGENT_COMMAND_PATH="${AGENT_COMMAND_PATH:-$HARNESS_COMMAND_PATH}"',
+    "  fi",
+    '  if [ -n "$HARNESS_ARGS" ]; then',
+    "    AGENT_ARGS=${AGENT_ARGS-$HARNESS_ARGS}",
+    "  fi",
     '  AGENT_COMMAND_PATH="${AGENT_COMMAND_PATH:-opencode}"',
     "  AGENT_ARGS=${AGENT_ARGS-'run --auto'}",
     "  # QV-8: дочерний opencode run не загружает инструменты планировщика.",

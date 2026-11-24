@@ -22,6 +22,10 @@ const check = (name, fn) => {
   try { fn(); checks++; }
   catch (err) { console.error(`FAIL ${name}: ${err.message}`); process.exitCode = 1; }
 };
+const checkAsync = async (name, fn) => {
+  try { await fn(); checks++; }
+  catch (err) { console.error(`FAIL ${name}: ${err.message}`); process.exitCode = 1; }
+};
 
 check("P-3.3: четыре инвокера доступны и переключаются", () => {
   assert.deepEqual(HARNESS_NAMES.sort(), ["acp", "cursor-cli", "dsh-headless", "opencode"]);
@@ -106,6 +110,41 @@ check("P-3.4: harness сохраняется в definition и импорте", (
   const tt = read("src/task-transfer.ts");
   assert.match(tt, /harness\?: HarnessName/);
   assert.match(tt, /HARNESS_VALUES/);
+});
+
+check("P-3.2: harness доходит до definition и обёрток", () => {
+  const idx = read("src/index.ts");
+  assert.match(idx, /\.\.\.\(harness \? \{ harness \} : \{\}\)/);
+  assert.match(idx, /input\.harness \?\? previous\.harness/);
+  assert.match(idx, /harnessDefaults/);
+  const ps = read("src/core/ps-wrapper.ts");
+  assert.match(ps, /HarnessCommandB64/);
+  assert.match(ps, /HarnessArgsBaked/);
+  const bash = read("src/core/wrappers/bash.ts");
+  assert.match(bash, /HARNESS_COMMAND_PATH/);
+  assert.match(bash, /HARNESS_ARGS/);
+});
+
+check("P-3.2: не-opencode харнесс запекает только префикс команды", () => {
+  const cmd = resolveInvoker("dsh-headless").buildCommand({ env: {} });
+  assert.equal(cmd.commandPath, "dsh");
+  assert.deepEqual(cmd.args, ["--headless", "run"]);
+  assert.ok(!cmd.args.some((arg) => arg === "--model" || arg === "--"));
+});
+
+check("P-3.2: runner.ts подключён к AgentInvoker.invoke", () => {
+  const src = read("src/invokers/agent-invoker.ts");
+  assert.match(src, /resolveRunner\(options\.runner\)/);
+  assert.match(src, /\.runner\.execute\(/);
+});
+
+await checkAsync("P-3.2: invoke_execution через local runner", async () => {
+  const result = await new OpencodeCliInvoker().invoke({
+    env: { AGENT_COMMAND_PATH: process.execPath, AGENT_ARGS: "--version" },
+    runner: { kind: "local" },
+  });
+  assert.equal(result.exitCode, 0, result.stderr);
+  assert.match(result.stdout, /^v\d+\.\d+\.\d+/);
 });
 
 console.log(`test-invokers: ${checks} checks passed`);
