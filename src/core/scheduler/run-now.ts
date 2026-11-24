@@ -201,9 +201,13 @@ export function detectStaleTask(input: {
   const roadmap = input.roadmap ?? "";
   const changelog = input.changelog ?? "";
   const gitDiff = input.gitDiff ?? "";
-  const inRoadmap = roadmap.includes(id);
-  const inChangelog = changelog.includes(id);
-  const inDiff = gitDiff.includes(id);
+  // QW-8: includes("PL-1") матчился внутри PL-10/PL-100, из-за чего закрытая
+  // находка считалась открытой. Ищем ID только по границам слова.
+  const escaped = id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const idPattern = new RegExp(`(?<![A-Za-z0-9_-])${escaped}(?![A-Za-z0-9_-])`);
+  const inRoadmap = idPattern.test(roadmap);
+  const inChangelog = idPattern.test(changelog);
+  const inDiff = idPattern.test(gitDiff);
   if (!inRoadmap && (inChangelog || inDiff)) {
     return {
       stale: true,

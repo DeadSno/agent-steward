@@ -95,19 +95,26 @@ function formatStartBoundary(date: Date): string {
  * @param dayOfMonth — день месяца 1..31 из cron-поля дня месяца.
  * @param month — номер месяца 1..12 для годового расписания, null — каждый месяц.
  * @param now — момент создания задачи (локальное время ОС).
+ * @param hour — час тика cron (по умолчанию 0, обратная совместимость).
+ * @param minute — минута тика cron (по умолчанию 0).
  * @returns дата DD.MM.YYYY для флага `/sd` schtasks.
  */
 export function nextMonthlyStartBoundary(
   dayOfMonth: number,
   month: number | null,
   now: Date = new Date(),
+  hour = 0,
+  minute = 0,
 ): string {
   const maxYear = now.getFullYear() + 2;
   for (let year = now.getFullYear(); year <= maxYear; year++) {
     const firstMonth = year === now.getFullYear() && month === null ? now.getMonth() : 0;
     const lastMonth = month === null ? 11 : month - 1;
     for (let monthIndex = firstMonth; monthIndex <= lastMonth; monthIndex++) {
-      const candidate = new Date(year, monthIndex, dayOfMonth, 0, 0, 0, 0);
+      // QW-8: граница — момент фактического тика, а не полночь. Иначе задача
+      // `0 23 15 * *`, созданная 15-го в 10:00, получает /sd следующего месяца
+      // и теряет сегодняшний запуск.
+      const candidate = new Date(year, monthIndex, dayOfMonth, hour, minute, 0, 0);
       // new Date(year, m, 31) перетекает в следующий месяц — такие месяцы
       // не подходят: schtasks просто не сработает 31-го в 30-дневном месяце.
       if (
@@ -304,7 +311,10 @@ export function convertCronToSchTasks(cron: string): CronConversion {
       extraFlags.push("/m", MONTH_MAP[String(parsedMonth)]);
       monthNumber = parsedMonth;
     }
-    extraFlags.push("/sd", nextMonthlyStartBoundary(dom, monthNumber));
+    extraFlags.push(
+      "/sd",
+      nextMonthlyStartBoundary(dom, monthNumber, undefined, Number(h), Number(m)),
+    );
     return {
       sc: "MONTHLY",
       extraFlags,

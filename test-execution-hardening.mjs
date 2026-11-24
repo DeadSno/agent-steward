@@ -1386,6 +1386,37 @@ try {
     closedFinding.stale === true && closedFinding.action === "disable",
     JSON.stringify(closedFinding),
   );
+  // QW-8: ID не должен матчиться как подстрока более длинного ID.
+  const collision10 = detectStaleTask({
+    id: "PL-1",
+    roadmap: "- [ ] PL-10: другая находка",
+    changelog: "- **PL-1 — закрыта.**",
+  });
+  check(
+    "QW-8: PL-1 не считается открытой из-за PL-10",
+    collision10.stale === true,
+    JSON.stringify(collision10),
+  );
+  const collision100 = detectStaleTask({
+    id: "PL-1",
+    roadmap: "- [ ] PL-100: другая находка",
+    changelog: "- **PL-1 — закрыта.**",
+  });
+  check(
+    "QW-8: PL-1 не считается открытой из-за PL-100",
+    collision100.stale === true,
+    JSON.stringify(collision100),
+  );
+  const exactOpen = detectStaleTask({
+    id: "PL-1",
+    roadmap: "- [ ] PL-1: ещё открыта",
+    changelog: "- **PL-1 — закрыта.**",
+  });
+  check(
+    "QW-8: точное совпадение ID в ROADMAP по-прежнему считается открытым",
+    exactOpen.stale === false,
+    JSON.stringify(exactOpen),
+  );
 } catch (err) {
   console.log("[diag] PL-77/79/82/86/87/99 section THREW:", err instanceof Error ? err.stack : String(err));
   check("PL-77/79/82/86/87/99: секция не выбросила исключение", false, "section threw");

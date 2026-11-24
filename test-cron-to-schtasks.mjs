@@ -180,6 +180,25 @@ check(
   nextMonthlyStartBoundary(31, null, new Date(2026, 0, 31, 5, 0, 0, 0)) === "31.03.2026",
 );
 
+// QW-8: MONTHLY-граница обязана учитывать время тика, иначе создание
+// `0 23 15 * *` 15-го числа в 10:00 откладывает первый запуск на месяц.
+check(
+  "QW-8: 0 23 15 * *, создано 15-го в 10:00 -> /sd того же дня",
+  nextMonthlyStartBoundary(15, null, new Date(2026, 10, 15, 10, 0, 0, 0), 23, 0) === "15.11.2026",
+);
+check(
+  "QW-8: граница строго будущая даже в момент тика",
+  nextMonthlyStartBoundary(15, null, new Date(2026, 10, 15, 23, 0, 0, 0), 23, 0) === "15.12.2026",
+);
+check(
+  "QW-8: cronStartBoundary передаёт час и минуту тика",
+  cronStartBoundary("0 23 15 * *", new Date(2026, 10, 15, 10, 0, 0, 0)) === "15.11.2026",
+);
+check(
+  "QW-8: годовое выражение с тиком остаётся в будущем",
+  nextMonthlyStartBoundary(1, 1, new Date(2026, 11, 1, 3, 0, 0, 0), 4, 0) === "01.01.2027",
+);
+
 const pl57Before = Date.now();
 const pl57Flags = buildScheduleFlags(convertCronToSchTasks("0 5 1 * *"));
 const pl57SdIndex = pl57Flags.indexOf("/sd");

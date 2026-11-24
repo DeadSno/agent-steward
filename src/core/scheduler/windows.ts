@@ -89,7 +89,13 @@ export function cronStartBoundary(schedule: string, now: Date = new Date()): str
         (Number.isInteger(monthNumber) && monthNumber >= 1 && monthNumber <= 12)
       ) {
         try {
-          return nextMonthlyStartBoundary(Number(dayOfMonth), monthNumber, now);
+          return nextMonthlyStartBoundary(
+            Number(dayOfMonth),
+            monthNumber,
+            now,
+            Number(hour),
+            Number(minute),
+          );
         } catch {
           // 31-е число в коротком месяце и т.п. — fallback на общую дату ниже.
         }
