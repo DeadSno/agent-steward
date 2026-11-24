@@ -348,7 +348,16 @@ try {
         }
     }
     if (-not $script:checkoutLockAcquired) {
-        Write-Log "[agent-steward] PL-121: в чек-ауте $Workdir уже идёт другая задача — запуск пропущен."
+        $checkoutSkipReason = "PL-121: в чек-ауте $Workdir уже идёт другая задача — запуск пропущен"
+        Write-Log "[agent-steward] $checkoutSkipReason"
+        # PL-146: пропуск должен остаться в истории, иначе файловый триггер
+        # теряет событие бесследно (get_history пуст, повторный touch нужен).
+        if ($RecorderFile) {
+            try {
+                $checkoutSkipB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($checkoutSkipReason))
+                & node "$RecorderFile" --skip "$TaskName" "$checkoutSkipB64" "$LogFile" 2>$null | Out-Null
+            } catch {}
+        }
         $script:skipMainTask = $true
         $script:exitCode = 0
         # afterScript не запускаем: иначе коммитим чужой diff. Снимаем свой lock задачи.

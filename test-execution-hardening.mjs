@@ -1413,6 +1413,30 @@ try {
   check("PL-121: секция не выбросила исключение", false, "section threw");
 }
 
+// --- PL-146: пропуск по PL-121 оставляет durable-запись skipped с причиной ---
+try {
+  const skipReasonAt = psWrapperScript.indexOf("$checkoutSkipReason = \"PL-121:");
+  const skipB64At = psWrapperScript.indexOf("$checkoutSkipB64 = [Convert]::ToBase64String");
+  const skipRecordAt = psWrapperScript.indexOf('--skip "$TaskName" "$checkoutSkipB64"');
+  const skipExitAt = psWrapperScript.indexOf("$script:skipMainTask = $true", skipReasonAt);
+  check(
+    "PL-146: причина PL-121 кодируется в base64 и пишется в историю через --skip",
+    skipReasonAt >= 0 &&
+      skipB64At > skipReasonAt &&
+      skipRecordAt > skipB64At &&
+      psWrapperScript.includes("[Text.Encoding]::UTF8.GetBytes($checkoutSkipReason)") &&
+      psWrapperScript.includes("if ($RecorderFile)"),
+    `reason=${skipReasonAt}, b64=${skipB64At}, skip=${skipRecordAt}`
+  );
+  check(
+    "PL-146: запись skipped выполняется до выхода с кодом 0",
+    skipExitAt > skipRecordAt && psWrapperScript.slice(skipExitAt, skipExitAt + 400).includes("exit 0")
+  );
+} catch (err) {
+  console.log("[diag] PL-146 section THREW:", err instanceof Error ? err.stack : String(err));
+  check("PL-146: секция не выбросила исключение", false, "section threw");
+}
+
 // --- PL-130: причина падения агента вместо «Код возврата 1» (строковые регрессии) ---
 // Без реального powershell: проверяем WRAPPER_SCRIPT из dist, поэтому тест
 // детерминирован и не зависит от OC-планировщика.
