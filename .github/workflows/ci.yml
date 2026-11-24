@@ -52,6 +52,11 @@ jobs:
       - name: Build GUI
         run: npm run build:gui
 
+      # P-1.3: упаковка проверяется на всех трёх ОС матрицы — subpath-артефакты
+      # и доки обязаны попадать в tarball независимо от платформы.
+      - name: Verify package contents
+        run: npm pack --dry-run
+
       - name: Test
         run: npm run test:parallel
 

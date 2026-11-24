@@ -35,6 +35,8 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 
 ## QA-находки (проверка работоспособности плагина 24.11.2026)
 
+- [ ] QA-PORT-9: `npm pack --dry-run --json` из worktree, где `dist/` — junction на основной чек-аут (PL-109/W-1), вообще не включает `dist/*` в tarball (`npm` не упаковывает симлинки/джункшены): publish из такого worktree даст битый пакет без entrypoint'ов — P2. Действие: проверять состав tarball в CI на реальной сборке (добавлено в P-1.3) и публиковать только из чистого чек-аута; локальный тест при junction проверяет только доки и скилл. Обнаружено 24.11.2026.
+
 - [ ] QA-PORT-1: дочерний запуск задачи плагина не укладывается в `timeoutSeconds`: задача `P-1 - Core isolation` (`schedule_task`, `timeoutSeconds: 2400`, `allowedTools: ["shell"]`, `qualityGate` с `npm run build`) остаётся в статусе `running` более 3 часов (старт 09:23 UTC, проверка 12:26 UTC), лог застыл на трёх строках рассуждений, `get_history` показывает `durationMs: 0` — P1. Действие: добавить в `ps-wrapper.ts` heartbeat/тихий watchdog, который отдельно проверяет возраст запуска и отсутствие новых строк в логе, принудительно завершает процесс по `timeoutSeconds` и пишет `error`-запись с причиной таймаута. Обнаружено 24.11.2026.
 - [ ] QA-PORT-2: `schedule_task` отклоняет SCOPE-пути новых файлов, даже если они прямо перечислены в промпте как «создать»; обход — duplication их в `filesCreate` (PL-79/PL-82) — P2. Действие: в pre-flight распознавать конструкции «новый файл», «создать файл» и не требовать уже существующий путь, либо добавить явный флаг `allowCreate` в схему `schedule_task`. Обнаружено 24.11.2026.
 - [ ] QA-PORT-3: `dry_run({ name: "ARCH-1" })` через MCP/Code Mode стабильно падает с `Error: Tool result declared output without an output schema` (2/2 повтора), тогда как `dry_run()` без аргументов работает; `dryRunSchema` в `src/index.ts:1105` содержит `name?: string` — P2. Действие: зарегистрировать outputSchema для dry_run или убрать обязательность output schema в адаптере MCP. Обнаружено 24.11.2026.
@@ -166,7 +168,6 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 > P-1 в dev-линии частично реализован (subpath exports `./core` / `./mcp` / `./dsh`, `src/mcp.ts`), но в релизе ещё не зафиксирован. Жёсткий порядок: P-1 → P-2 → P-3; P-2 без закрытого P-1 не начинать.
 
 **Задача P-1 — изоляция ядра** · P1 · 🔄
-- [ ] P-1.3 Регрессия: `test-portability-exports.mjs`, `npm pack --dry-run`, CI на 3 ОС
 
 **Задача P-2 — MCP-адаптер (~80% ценности клина)** · P1 · ⬜
 - [ ] P-2.1 Выпустить `agent-steward mcp` как стабильную точку входа (stdio MCP, полный реестр инструментов)

@@ -1,5 +1,6 @@
 // P-5.3: subpath exports работают из одного пакета, без монорепо.
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,7 +10,6 @@ import { fileURLToPath } from "node:url";
 // @modelcontextprotocol/sdk в чужом node_modules. Перезапускаемся с флагом,
 // чтобы и `node test-portability-exports.mjs`, и `npm test` работали одинаково.
 if (!process.execArgv.includes("--preserve-symlinks")) {
-  const { spawnSync } = await import("node:child_process");
   const child = spawnSync(
     process.execPath,
     ["--preserve-symlinks", ...process.execArgv, fileURLToPath(import.meta.url)],
@@ -74,6 +74,27 @@ check("P-5.3: ./mcp даёт createMcpServer/startMcpServer", () => {
 check("P-5.3: ./dsh даёт defineDshTools и зафиксированную версию", () => {
   assert.equal(typeof dsh.defineDshTools, "function");
   assert.match(dsh.DSH_ADAPTER_VERSION, /^dsh-developer-preview-/);
+});
+
+check("P-1.3: npm pack --dry-run включает все точки входа и доки", () => {
+  const packed = spawnSync("npm pack --dry-run --json", {
+    cwd: root,
+    encoding: "utf8",
+    shell: true,
+  });
+  assert.equal(packed.status, 0, packed.stderr || "npm pack --dry-run завершился ошибкой");
+  const files = Object.values(JSON.parse(packed.stdout))[0].files.map((entry) => entry.path);
+  const required = ["docs/portability.md", "docs/mcp-setup.md", "skills/scheduled-job-best-practices/SKILL.md"];
+  // QA-PORT-9: npm не упаковывает junction dist/ (свежий worktree W-1).
+  // В CI dist/ — реальная папка после npm run build, поэтому там проверяем и его.
+  if (fs.lstatSync(path.join(root, "dist")).isSymbolicLink()) {
+    console.warn("dist/ — junction: npm pack локально не включает dist; проверка артефактов ниже в CI (QA-PORT-9)");
+  } else {
+    required.push("dist/index.js", "dist/core-entry.js", "dist/mcp.js", "dist/dsh.js", "dist/cli.js", "dist/serve.js");
+  }
+  for (const file of required) {
+    assert(files.includes(file), `в tarball нет ${file}`);
+  }
 });
 
 check("P-5.1: CLI объявляет команды mcp и serve", () => {

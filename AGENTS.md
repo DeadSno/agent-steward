@@ -42,7 +42,7 @@
 - Правка i18n → `test:i18n`, `test:en`, `test:zh` (все три локали равноправны).
 - Правка GUI/RPC → `test:dlq-gui`, `test:pause-gui`, `test:gui-bundle` + smoke в Playwright.
 - Новый модуль в `src/core` → новый `test-*.mjs` в корне.
-- Задача в свежем worktree (W-1): сначала подготовить окружение — junction `node_modules` и `dist` из основного чек-аута через `cmd /c mklink /J` либо `npm ci` внутри worktree; иначе `npm run build` и `node test-*.mjs` падают (PL-109). Если `dist/` — junction, self-reference `agent-steward/*` резолвится по реальному пути и не находит зависимости в `node_modules` текущего worktree (QA-PORT-8): тест `test-portability-exports.mjs` сам перезапускается с флагом `--preserve-symlinks` (или дайте worktree собственный `dist`).
+- Задача в свежем worktree (W-1): сначала подготовить окружение — junction `node_modules` и `dist` из основного чек-аута через `cmd /c mklink /J` либо `npm ci` внутри worktree; иначе `npm run build` и `node test-*.mjs` падают (PL-109). Если `dist/` — junction, self-reference `agent-steward/*` резолвится по реальному пути и не находит зависимости в `node_modules` текущего worktree (QA-PORT-8): тест `test-portability-exports.mjs` сам перезапускается с флагом `--preserve-symlinks` (или дайте worktree собственный `dist`). `npm pack` не упаковывает junction `dist/` (QA-PORT-9): публиковать только из чистого чек-аута, состав tarball проверяет CI.
 - Не редактировать вручную `dist/`, `gui-experimental.cjs`, `legacy/gui-experimental.cjs` — это артефакты сборки.
 - Коммиты: `type(scope): description` латиницей. CHANGELOG/ROADMAP обновлять в той же правке,
   если меняется поведение.
