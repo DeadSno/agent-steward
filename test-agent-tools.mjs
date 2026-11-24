@@ -47,6 +47,9 @@ const { readStructuredLogs } = await import("./dist/core/structured-log.js");
 const { resolveDeleteNames, summarizeBatchDelete } = await import(
   "./dist/shared/batch-delete.js"
 );
+const { executeBatchCalls, BATCH_CALL_LIMIT } = await import(
+  "./dist/shared/batch-call.js"
+);
 const { LOG_DIR, sanitizeName } = await import("./dist/types.js");
 const { loadTemplates, saveTemplate, deleteTemplate } = await import("./dist/templates.js");
 
@@ -1015,6 +1018,56 @@ check(
     deleteTaskSchema.safeParse({ names: ["a", "b"] }).success &&
     !deleteTaskSchema.safeParse({}).success === true
 );
+
+// IM-4: батч MCP-вызовов с изоляцией результатов и лимитом пакета.
+{
+  const { z } = await import("zod");
+  const specs = [
+    {
+      name: "echo",
+      input: z.object({ value: z.string() }),
+      execute: async (args) => ({ content: [{ type: "text", text: args.value }] }),
+    },
+    {
+      name: "boom",
+      input: z.object({}),
+      execute: async () => { throw new Error("PL-TEST: boom"); },
+    },
+  ];
+  const batch = await executeBatchCalls(specs, [
+    { name: "echo", args: { value: "ok" } },
+    { name: "unknown", args: {} },
+    { name: "boom", args: {} },
+    { name: "echo", args: { value: 42 } },
+  ]);
+  check(
+    "IM-4: батч изолирует ошибки вызовов",
+    batch.length === 4 &&
+      batch[0].ok === true &&
+      batch[0].result?.[0] === "ok" &&
+      batch[1].ok === false &&
+      batch[1].error?.includes("неизвестный инструмент") === true &&
+      batch[2].ok === false &&
+      batch[2].error?.includes("PL-TEST: boom") === true &&
+      batch[3].ok === false
+  );
+  const overLimit = await executeBatchCalls(
+    specs,
+    Array.from({ length: BATCH_CALL_LIMIT + 1 }, () => ({ name: "echo", args: { value: "x" } })),
+  );
+  check(
+    "IM-4: лимит пакета отклоняется",
+    overLimit.length === 1 && overLimit[0].ok === false &&
+      overLimit[0].error?.includes(String(BATCH_CALL_LIMIT)) === true
+  );
+  const mcpSource = fs.readFileSync(new URL("./src/mcp.ts", import.meta.url), "utf8");
+  check(
+    "IM-4: batch_call зарегистрирован в MCP",
+    mcpSource.includes('"batch_call"') &&
+      mcpSource.includes("executeBatchCalls(") &&
+      mcpSource.includes("BATCH_CALL_LIMIT")
+  );
+}
 
 const failed = results.filter((r) => !r.ok);
 console.log(`\nAgent tools: ${results.length - failed.length}/${results.length} проверок пройдено.`);

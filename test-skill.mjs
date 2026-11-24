@@ -46,6 +46,7 @@ if (skill) {
   check("skill content references matrix", skill.content.includes("matrix"));
   check("skill content references dependsOn", skill.content.includes("dependsOn"));
   check("skill content references diagnostics tools", skill.content.includes("get_task_logs"));
+  check("IM-4: skill documents batch_call isolation", skill.content.includes("batch_call"));
   check(
     "skill content links the recipes reference",
     skill.content.includes("references/recipes.md")

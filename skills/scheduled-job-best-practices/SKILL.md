@@ -105,6 +105,12 @@ snapshot (PL-25).
 2. `schedule_task`, then one `run_task_now` and inspect `get_history` / `get_task_logs`.
 3. Only then call it ready; state the cron in plain language.
 
+MCP transports additionally expose `batch_call`: several tool calls can be
+sent in one message (the exact limit is declared in the tool schema). Each
+call is parsed with its own schema and its result/error is isolated, so one
+bad name never aborts the rest. Use it for bulk diagnostics, not for
+mutations that depend on each other.
+
 Diagnosis: filter `get_history` by task/status; tail the wrapper log to separate
 model failure, gate failure, timeout and lock-skip. Structured journal stores
 stdout/stderr **separately** with the real exit code (PL-7.2) — git writes to

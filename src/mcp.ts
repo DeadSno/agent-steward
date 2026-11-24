@@ -9,8 +9,9 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import type { z } from "zod";
+import { z } from "zod";
 import { createToolSpecs } from "./index.js";
+import { BATCH_CALL_LIMIT, executeBatchCalls } from "./shared/batch-call.js";
 import type { ToolSpec } from "./tool-specs.js";
 import type { SchedulerRuntime } from "./runtime.js";
 import { CHILD_RUN_ENV } from "./core/run-mode.js";
@@ -59,6 +60,38 @@ export function createMcpServer(env: NodeJS.ProcessEnv = process.env): McpServer
       }) as never,
     );
   }
+
+  // D04 / IM-4: один MCP-вызов на несколько инструментов. Реестровые спеки
+  // остаются прежними (34, совместимо с V1/V2 Plugin.define); батч — хелпер
+  // транспорта, результаты изолированы по вызовам.
+  server.registerTool(
+    "batch_call",
+    {
+      description:
+        "Выполнить до 20 инструментов agent-steward в одном сообщении. Каждый результат изолирован: ошибка одного вызова не отменяет остальные.",
+      inputSchema: {
+        calls: z
+          .array(
+            z.object({
+              name: z.string().min(1),
+              args: z.record(z.string(), z.unknown()),
+            }),
+          )
+          .min(1)
+          .max(BATCH_CALL_LIMIT) as never,
+      },
+    },
+    (async (args: unknown) => {
+      const calls = (args as { calls?: { name: string; args?: Record<string, unknown> }[] })?.calls ?? [];
+      const results = await executeBatchCalls(
+        specs,
+        calls.map((call) => ({ name: call.name, args: call.args ?? {} })),
+      );
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify({ results }, null, 2) }],
+      };
+    }) as never,
+  );
 
   // P-2.2: SKILL.md как ресурс + как промпт.
   server.registerResource(
