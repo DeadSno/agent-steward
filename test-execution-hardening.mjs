@@ -1653,6 +1653,57 @@ try {
   check("PL-127/PL-132: секция не выбросила исключение", false, "section threw");
 }
 
+// --- PL-131/PL-135: self-exec real-path guard + build-before-commit (source-only) ---
+// No real gate, git or push: we assert the two helper sources so a regression
+// to symlink-blind self-exec or to commit-without-build fails deterministically.
+try {
+  const gateSrc = fs.readFileSync(path.resolve("src/core/gate-integrity.ts"), "utf8");
+  const gateTail = gateSrc.slice(-1200);
+  check(
+    "PL-131: self-exec-ветка нормализует реальные пути через fs.realpathSync",
+    gateTail.includes("fs.realpathSync(p)") &&
+      gateTail.includes("realPathWithFallback(process.argv[1])") &&
+      gateTail.includes("realPathWithFallback(fileURLToPath(import.meta.url))"),
+    `tail@${gateSrc.length - 1200}`
+  );
+  check(
+    "PL-131: safe-fallback на path.resolve и выставление exitCode сохранены",
+    gateTail.includes("path.resolve(p)") && /process\.exitCode\s*=\s*await main\(\)/.test(gateTail)
+  );
+  check(
+    "PL-131: CLI-контракт не сломан — неверные аргументы дают return 2",
+    gateSrc.includes("process.exitCode = await main()") &&
+      gateSrc.includes("return 2;") &&
+      gateSrc.includes("поддерживаются verify, worktree-snapshot, worktree-verify")
+  );
+
+  const helper = fs.readFileSync(path.resolve("scripts/pl-commit.ps1"), "utf8");
+  const buildPos = helper.indexOf("& npm run build 2>&1");
+  const commitPos = helper.indexOf("@('commit', '-m', $Message, '--')");
+  const pushPos = helper.indexOf("@('push', 'origin', 'HEAD:dev')");
+  const failPos = helper.indexOf("FAIL build (npm run build exit");
+  check(
+    "PL-135: npm run build вызывается до commit и push",
+    buildPos >= 0 && commitPos > buildPos && pushPos > buildPos,
+    `build@${buildPos}, commit@${commitPos}, push@${pushPos}`
+  );
+  check(
+    "PL-135: провал сборки пишет лог и выходит с кодом 2 до commit/push",
+    failPos > buildPos && failPos < commitPos && /exit 2/.test(helper.slice(failPos, failPos + 160)),
+    `fail@${failPos}`
+  );
+  check(
+    "PL-135: сохранены cherry-pick, проверка маркера и pathspec-коммит",
+    helper.includes("@('cherry-pick', $local)") &&
+      helper.includes("Test-Path -LiteralPath $markerPath") &&
+      helper.includes("@('commit', '-m', $Message, '--')") &&
+      helper.includes("PL-127/PL-132:")
+  );
+} catch (err) {
+  console.log("[diag] PL-131/PL-135 section THREW:", err instanceof Error ? err.stack : String(err));
+  check("PL-131/PL-135: секция не выбросила исключение", false, "section threw");
+}
+
 // --- PL-112: prompt destructive-command guard ---
 try {
   const { inspectPromptSafety } = await import("./dist/core/guard.js");

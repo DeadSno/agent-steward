@@ -69,6 +69,26 @@ try {
     exit 0
   }
 
+  # PL-135: verify the build BEFORE staging/committing/pushing. The gate marker
+  # alone is not enough - it can be left over from an older run or created by
+  # hand, so a failing build (e.g. npm run build = exit 2) must never reach dev.
+  # A non-zero build code aborts with exit 2: no commit, no push.
+  $oldBuild = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try {
+    $buildOutput = & npm run build 2>&1
+    $buildCode = $LASTEXITCODE
+    foreach ($line in $buildOutput) { Log ("[build] {0}" -f [string]$line) }
+  }
+  finally {
+    $ErrorActionPreference = $oldBuild
+  }
+  if ($buildCode -ne 0) {
+    Log "FAIL build (npm run build exit $buildCode): commit/push aborted: $Message"
+    exit 2
+  }
+  Log "OK build (npm run build): $Message"
+
   # Task manifest is the only source of file ownership. Normalize separators
   # to forward slashes so comparison is stable on Windows.
   $manifest = @{}

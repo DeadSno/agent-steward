@@ -744,6 +744,20 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   return 0;
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))) {
+// PL-131: self-exec-гвард сравнивает РЕАЛЬНЫЕ пути. При запуске через
+// symlink/junction process.argv[1] может быть символическим, а
+// fileURLToPath(import.meta.url) — реальным; без нормализации CLI вообще не
+// выполнялся и возвращал 0 даже на неверных аргументах.
+function realPathWithFallback(p: string): string {
+  try {
+    return fs.realpathSync(p);
+  } catch {
+    return path.resolve(p);
+  }
+}
+
+const cliPath = process.argv[1] ? realPathWithFallback(process.argv[1]) : "";
+const modulePath = realPathWithFallback(fileURLToPath(import.meta.url));
+if (cliPath && cliPath === modulePath) {
   process.exitCode = await main();
 }
