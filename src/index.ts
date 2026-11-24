@@ -101,6 +101,7 @@ import {
   summarizeBatchDelete,
   type DeleteOutcome,
 } from "./shared/batch-delete.js";
+import { buildAuditFilename, formatAuditCsv } from "./shared/audit-csv.js";
 import {
   defaultNotifications,
   loadSettings,
@@ -1714,6 +1715,10 @@ export const getAuditLogSchema = z.object({
   since: z.string().optional().describe("ISO timestamp lower bound."),
   until: z.string().optional().describe("ISO timestamp upper bound."),
   limit: z.number().int().min(1).max(5000).optional().describe("Max records (default 200)."),
+  format: z
+    .enum(["json", "csv"])
+    .optional()
+    .describe('D10: вывести CSV (с BOM) вместо JSON. Секреты в details маскируются.'),
 });
 
 type ScheduleArgs = z.infer<typeof scheduleTaskSchema>;
@@ -4664,6 +4669,18 @@ const getAuditLogExecute = wrapExecute<AuditLogArgs>(async (args) => {
     until: args.until,
     limit: args.limit,
   });
+  if (args.format === "csv") {
+    const csv = formatAuditCsv(result.records);
+    return {
+      content: JSON.stringify({
+        success: true,
+        format: "csv",
+        filename: buildAuditFilename(),
+        csv,
+        total: result.total,
+      }),
+    };
+  }
   return { content: JSON.stringify({ success: true, ...result }) };
 });
 

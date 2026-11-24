@@ -582,7 +582,22 @@ check(
 );
 clearStructuredLogs();
 
-// --- 9. Итог ------------------------------------------------------------------
+// --- 9. D10 (IM-9): экспорт аудита в CSV ---------------------------------------
+const csv = await import("./dist/shared/audit-csv.js");
+check("D10: escapeCsvCell экранирует кавычки и переводы строк", csv.escapeCsvCell('a,"b\nc"') === '"a,""b\nc"""');
+check("D10: escapeCsvCell нейтрализует формулы", csv.escapeCsvCell("=SUM(A1)") === "'=SUM(A1)" && csv.escapeCsvCell("@cmd") === "'@cmd");
+const csvText = csv.formatAuditCsv([
+  { ts: "2026-11-24T10:00:00Z", action: "task.create", target: "deploy", actor: "mcp", details: { token: "SUPERSECRET", cron: "0 9 * * *" } },
+]);
+check("D10: CSV начинается с BOM и CRLF-заголовка", csvText.startsWith("\uFEFFtimestamp,action,targetType,target,actor,source,remote,details\r\n"));
+check("D10: секреты в details маскируются", csvText.includes("token: ****") && !csvText.includes("SUPERSECRET"));
+check("D10: имя файла содержит дату", /^audit-\d{4}-\d{2}-\d{2}\.csv$/.test(csv.buildAuditFilename(new Date("2026-11-24T10:00:00Z"))));
+const indexSource = fs.readFileSync(new URL("./src/index.ts", import.meta.url), "utf8");
+const guiSourceAudit = fs.readFileSync(new URL("./src/gui.tsx", import.meta.url), "utf8");
+check("D10: get_audit_log поддерживает format csv", indexSource.includes('format: z') && indexSource.includes('args.format === "csv"'));
+check("D10: GUI выгружает CSV по кнопке", guiSourceAudit.includes('data-audit-export="csv"') && guiSourceAudit.includes("exportAuditCsvGui()"));
+
+// --- 10. Итог ------------------------------------------------------------------
 const failures = results.filter((item) => !item.ok);
 console.log(`\nAudit: ${results.length - failures.length}/${results.length} проверок пройдено.`);
 if (failures.length > 0) {

@@ -68,6 +68,7 @@
   "gui.auditDeletedFrom": "Удалён с",
   "gui.auditEmpty": "Записей аудита нет.",
   "gui.auditEnable": "Включить аудит",
+  "gui.auditExportCsv": "📥 Экспорт CSV",
   "gui.auditHeading": "📜 Журнал аудита",
   "gui.auditHint": "Записываются мутации задач, настроек, шаблонов, профилей, рабочих зон, секретов, импорта и очистки истории. Детали маскируются (секреты заменены на {redacted}).",
   "gui.auditSource": "Источник",

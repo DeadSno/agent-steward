@@ -68,6 +68,7 @@
   "gui.auditDeletedFrom": "Deleted from",
   "gui.auditEmpty": "No audit records.",
   "gui.auditEnable": "Enable audit",
+  "gui.auditExportCsv": "📥 Export CSV",
   "gui.auditHeading": "📜 Audit log",
   "gui.auditHint": "Records mutations of tasks, settings, templates, profiles, workspaces, secrets, imports and history cleanup. Details are masked (secrets replaced with {redacted}).",
   "gui.auditSource": "Source",

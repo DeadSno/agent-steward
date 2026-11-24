@@ -68,6 +68,7 @@
   "gui.auditDeletedFrom": "Silindiği yer",
   "gui.auditEmpty": "Denetim kaydı yok.",
   "gui.auditEnable": "Denetimi etkinleştir",
+  "gui.auditExportCsv": "📥 CSV dışa aktar",
   "gui.auditHeading": "📜 Denetim günlüğü",
   "gui.auditHint": "Görev, ayar, şablon, profil, çalışma alanı, sır, içe aktarma ve geçmiş temizleme değişiklikleri kaydedilir. Ayrıntılar maskelenir (sırlar {redacted} ile değiştirilir).",
   "gui.auditSource": "Kaynak",

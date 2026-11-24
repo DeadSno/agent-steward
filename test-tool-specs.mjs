@@ -25,7 +25,7 @@ const EXPECTED_HASHES = {
   "dry_run": "67b796bae3827c90edd3876793fcc642c1e10aad8c12fed6e36dbc1e74888214",
   "emit_event": "b9abb6a5a0401639869af52e05eda62e08126fbe9b8034b493075ff188bc6e89",
   "get_analytics": "670d13b7fa742830125f7858cadd7b2b0c5b5c891d430bca5503104f7fabfeaa",
-  "get_audit_log": "3810746a61da06c07a4ff741373a56cecd9660ef9d4f8681d2907798dde859f0",
+  "get_audit_log": "941d5f39efa358bf77deb3e139650b2417de344c4322cc6cf98eae45f5cfaccf",
   "get_dashboard_info": "35585e2d07b4e1a4be6e4363578356e8f4c9f122b9b932d109bc0551e0adfe0b",
   "get_history": "d493aca4a2d50598b1320c006bb74b01ab82ab9cb1cb31b364b9666b5d71c11d",
   "get_metrics": "6cc97118655743a29c01757ab200ed3dc1152eddf6e77c314c88034dff1fdd71",

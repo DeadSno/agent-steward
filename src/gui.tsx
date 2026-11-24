@@ -2,6 +2,7 @@ import { createEffect, createSignal, onCleanup, ErrorBoundary } from "solid-js"
 import { Panel, Plugin } from "@opencode/plugin/gui"
 import { SchedulerRpc } from "./rpc.js"
 import { loadHistory, loadMetrics, type HistoryRecord } from "./history.js"
+import { buildAuditFilename, formatAuditCsv } from "./shared/audit-csv.js"
 import { DEFAULT_LOCALE, DEFAULT_LOCALE_MODE, normalizeLocale, normalizeLocaleMode, registerCatalog, setLocale, t, type LocaleMode, type TranslateParams, type Locale } from "./i18n.js"
 // Каталоги встраиваются в бандл на этапе сборки: в webview OpenCode нет
 // доступа к файлам пакета, поэтому ленивый fs-загрузчик из i18n.ts не работает.
@@ -1122,6 +1123,25 @@ export default Plugin.define({
       } finally {
         setAuditBusy(false)
       }
+    }
+
+    /** D10 (IM-9): выгружает текущий журнал аудита в CSV без секретов. */
+    function exportAuditCsvGui() {
+      const csv = formatAuditCsv(auditRecords())
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8" })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement("a")
+      a.href = url
+      a.download = buildAuditFilename()
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+      ctx.toast.show({
+        title: gt("gui.auditExportCsv"),
+        variant: "success",
+        description: String(auditRecords().length),
+      })
     }
 
     /** Сохраняет настройки аудита. */
@@ -4837,6 +4857,14 @@ export default Plugin.define({
                   <span>{gt("gui.auditHeading")}</span>
                   <span style="font-size:11px;font-weight:400;color:#8e8e93">{auditRecords().length}</span>
                   <span style="font-size:11px;color:#8e8e93">{auditCollapsed() ? "▾" : "▴"}</span>
+                </button>
+                <button
+                  data-audit-export="csv"
+                  onClick={() => exportAuditCsvGui()}
+                  title={gt("gui.auditExportCsv")}
+                  style="padding:5px 10px;border-radius:6px;cursor:pointer;font-size:11px;border:1px solid #333;background:#1e1e1e;color:#e0e0e0"
+                >
+                  {gt("gui.auditExportCsv")}
                 </button>
               </div>
 
