@@ -1,5 +1,7 @@
 // Тесты группировки задач матрицы для TUI.
 // Запуск: node test-jobs-view.mjs (после npm run build).
+import fs from "node:fs";
+
 const { groupJobsForDisplay, buildJobsView, nextJobSelection, formatJobLog } =
   await import("./dist/shared/jobs-view.js");
 
@@ -133,6 +135,25 @@ check("пустой лог без ошибки даёт пояснение", for
 check(
   "CRLF нормализуется",
   formatJobLog("первая\r\nвторая", undefined, 10) === "первая\nвторая"
+);
+
+// BN-6: дашборд обновляет только изменившиеся строки, а не весь tbody.
+const serverSource = fs.readFileSync(new URL("./src/server.ts", import.meta.url), "utf8");
+check(
+  "BN-6: reconcileTaskRows заменяет полную перерисовку строк",
+  serverSource.includes("function reconcileTaskRows(") &&
+    serverSource.includes("data-row-key") &&
+    !serverSource.includes("rows.innerHTML = html;")
+);
+check(
+  "BN-6: неизменившиеся строки не трогаются",
+  serverSource.includes("node._bn6Html === item.html") &&
+    serverSource.includes("oldCells[c].innerHTML !== newCells[c].innerHTML") &&
+    serverSource.includes("rows.removeChild(rows.lastElementChild)")
+);
+check(
+  "BN-6: ключи строк стабильны для задач и клонов матрицы",
+  serverSource.includes("'task:' + key") && serverSource.includes("'clone:' + key")
 );
 
 if (failed > 0) {

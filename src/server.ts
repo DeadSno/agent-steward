@@ -2566,6 +2566,47 @@ function renderPage(nonce: string): string {
     box.innerHTML = html;
   }
 
+  // BN-6: обновляем только изменившиеся строки таблицы задач. Раньше каждый
+  // опрос (раз в 5 с) перезаписывал rows.innerHTML целиком — это уничтожало
+  // DOM-узлы, сбрасывало фокус/скролл и заставляло браузер пересчитывать
+  // всю таблицу даже тогда, когда статус ни одной задачи не изменился.
+  function parseTaskRow(html) {
+    var tpl = document.createElement('template');
+    tpl.innerHTML = html;
+    return tpl.content.firstElementChild;
+  }
+
+  function reconcileTaskRows(desired) {
+    var children = rows.children;
+    for (var i = 0; i < desired.length; i++) {
+      var item = desired[i];
+      var node = children[i];
+      if (!node || node.nodeName !== 'TR' || node.getAttribute('data-row-key') !== item.key) {
+        var fresh = parseTaskRow(item.html);
+        if (!fresh) continue;
+        fresh.setAttribute('data-row-key', item.key);
+        fresh._bn6Html = item.html;
+        if (node) rows.replaceChild(fresh, node); else rows.appendChild(fresh);
+        continue;
+      }
+      if (node._bn6Html === item.html) continue;
+      var next = parseTaskRow(item.html);
+      if (!next) continue;
+      var oldCells = node.cells;
+      var newCells = next.cells;
+      for (var c = 0; c < newCells.length; c++) {
+        if (!oldCells[c]) {
+          node.appendChild(newCells[c].cloneNode(true));
+        } else if (oldCells[c].innerHTML !== newCells[c].innerHTML) {
+          oldCells[c].innerHTML = newCells[c].innerHTML;
+        }
+      }
+      if (node.className !== next.className) node.className = next.className;
+      node._bn6Html = item.html;
+    }
+    while (rows.children.length > desired.length) rows.removeChild(rows.lastElementChild);
+  }
+
   function renderTasks(tasks) {
     var all = tasks || [];
     var clonesByParent = {};
@@ -2595,10 +2636,10 @@ function renderPage(nonce: string): string {
     }
 
     if (visible.length === 0) {
-      rows.innerHTML = '<tr><td colspan="9" class="empty">' + EMPTY_TASKS_HTML + '</td></tr>';
+      reconcileTaskRows([{ key: '__empty__', html: '<tr><td colspan="9" class="empty">' + EMPTY_TASKS_HTML + '</td></tr>' }]);
       return;
     }
-    var html = '';
+    var desired = [];
     var shown = 0;
     for (var i = 0; i < visible.length; i++) {
       var t = visible[i];
@@ -2606,20 +2647,23 @@ function renderPage(nonce: string): string {
       var key = String(t.name).toLowerCase();
       var clones = clonesByParent[key] || [];
       var expanded = !!expandedMatrixParents[key];
-      html += taskRow(t, false, clones.length, expanded);
+      desired.push({ key: 'task:' + key, html: taskRow(t, false, clones.length, expanded) });
       shown++;
       if (clones.length > 0 && expanded) {
         for (var j = 0; j < clones.length; j++) {
-          html += taskRow(clones[j], true, 0, false);
+          desired.push({
+            key: 'clone:' + key + ':' + String(clones[j].name).toLowerCase(),
+            html: taskRow(clones[j], true, 0, false),
+          });
           shown++;
         }
       }
     }
     if (shown === 0) {
-      rows.innerHTML = '<tr><td colspan="9" class="empty">' + EMPTY_TASKS_HTML + '</td></tr>';
+      reconcileTaskRows([{ key: '__empty__', html: '<tr><td colspan="9" class="empty">' + EMPTY_TASKS_HTML + '</td></tr>' }]);
       return;
     }
-    rows.innerHTML = html;
+    reconcileTaskRows(desired);
   }
 
   /** Строка таблицы задач; клоны матрицы помечаются ↳ matrix <parent>. */
