@@ -7,5 +7,6 @@ import { gui } from "@opencode/plugin/gui/vite"
 //   (outFile "./gui-experimental.cjs" разрешается от корня, не от dist/);
 // - держит предоставляемые приложением модули (solid-js, @opencode/plugin/gui, effect) внешними.
 export default defineConfig({
+  cacheDir: "node_modules/.cache/vite",
   plugins: [gui({ outFile: "./gui-experimental.cjs" })],
 })

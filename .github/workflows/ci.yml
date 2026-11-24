@@ -37,6 +37,15 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Restore incremental build cache
+        uses: actions/cache@v4
+        with:
+          path: node_modules/.cache
+          key: ${{ runner.os }}-node${{ matrix.node }}-build-${{ hashFiles('tsconfig.json', 'vite.config.ts', 'package-lock.json') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-node${{ matrix.node }}-build-${{ hashFiles('tsconfig.json', 'vite.config.ts', 'package-lock.json') }}-
+            ${{ runner.os }}-node${{ matrix.node }}-build-
+
       - name: Build backend
         run: npm run build
 

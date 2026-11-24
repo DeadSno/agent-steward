@@ -42,6 +42,23 @@ function check(name, condition, details = "") {
   }
 }
 
+// BN-8: инкрементальная сборка и кэш артефактов.
+const tsconfig = fs.readFileSync(path.join(root, "tsconfig.json"), "utf8");
+const viteConfig = fs.readFileSync(path.join(root, "vite.config.ts"), "utf8");
+const ciWorkflow = fs.readFileSync(path.join(root, ".github", "workflows", "ci.yml"), "utf8");
+check(
+  "BN-8: tsc использует инкрементальный tsbuildinfo",
+  /"incremental"\s*:\s*true/.test(tsconfig) && tsconfig.includes("tsBuildInfoFile")
+);
+check(
+  "BN-8: Vite использует постоянный cacheDir",
+  /cacheDir\s*:\s*["']node_modules\/\.cache\/vite["']/.test(viteConfig)
+);
+check(
+  "BN-8: CI восстанавливает кэш сборки между прогонами",
+  ciWorkflow.includes("actions/cache@") && ciWorkflow.includes("node_modules/.cache")
+);
+
 if (!bundlePath) {
   console.log("SKIP gui bundle not built (run: npm run build:gui)");
   console.log("\n0 passed, 0 failed");
