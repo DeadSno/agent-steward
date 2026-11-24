@@ -32,6 +32,8 @@ qa-a2-gate.passed
 
 # Editors and OS
 .vscode/
+!examples/.vscode/
+!examples/.vscode/mcp.json
 .idea/
 .DS_Store
 Thumbs.db

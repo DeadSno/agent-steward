@@ -810,6 +810,20 @@ check(
   !/\[[xX]\]\s/.test(roadmapText) && !/QA-A2\.[56]/.test(roadmapText)
 );
 
+// QA-PORT-10: документация MCP ссылается на оба готовых сниппета — файлы
+// должны существовать и описывать stdio-подключение к `agent-steward mcp`.
+const mcpSnippetPaths = ["examples/.cursor/mcp.json", "examples/.vscode/mcp.json"];
+const mcpSnippets = mcpSnippetPaths.map((rel) => {
+  const text = fs.readFileSync(path.join(root, rel), "utf8");
+  const parsed = JSON.parse(text);
+  const server = parsed.mcpServers?.["agent-steward"] ?? parsed.servers?.["agent-steward"];
+  return Boolean(server) && JSON.stringify(server).includes("mcp");
+});
+check(
+  `QA-PORT-10: сниппеты MCP для Cursor/VS Code на месте (${mcpSnippets.filter(Boolean).length}/${mcpSnippetPaths.length})`,
+  mcpSnippets.every(Boolean)
+);
+
 // DS-5.3: счётчики инструментов/RPC и список модулей в ARCHITECTURE.md и
 // диаграмме сверяются с кодом, чтобы дрейф ловился в CI (без ручного аудита).
 const listTsModules = (dir, prefix) => {

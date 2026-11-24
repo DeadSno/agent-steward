@@ -1,0 +1,9 @@
+{
+  "servers": {
+    "agent-steward": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["node_modules/agent-steward/dist/cli.js", "mcp"]
+    }
+  }
+}

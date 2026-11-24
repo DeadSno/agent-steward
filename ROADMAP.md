@@ -168,7 +168,6 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 **Задача P-1 — изоляция ядра** · P1 · 🔄
 
 **Задача P-2 — MCP-адаптер (~80% ценности клина)** · P1 · ⬜
-- [ ] P-2.2 Документация MCP-протокола: подключение в Cursor / VS Code / IDEA, ресурс SKILL.md, ограничения
 - [ ] P-2.3 CLI-алиас `agent-steward apply -f pipeline.yaml` для GitOps-пути
 
 **Задача P-3 — AgentInvoker и `harness`** · P1 · ⬜
