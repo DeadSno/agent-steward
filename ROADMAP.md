@@ -29,7 +29,6 @@ Legacy: `opencode-windows-scheduler@1.5.8`.
 
 
 **Задача X-1 — `npm deprecate` legacy** · P1 · ⏸️
-- [ ] X-1.1 Депрекейт `opencode-windows-scheduler@1.5.8`
 
 **Задача X-2 — Legacy 1.5.9 с `<0.1.0`** · P1 · ⏸️
 - [ ] X-2.1 Upper bound, чтобы breaking 0.1.0 не прилетел
