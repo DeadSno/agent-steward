@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
-import { pathToFileURL } from "node:url";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { runTaskNow } from "./scheduler/run-now.js";
 import { createSchedulerBackend } from "./scheduler/index.js";
 import { notifyTaskCompletion } from "../notifications.js";
@@ -1322,17 +1323,28 @@ async function handleCompletion(
 /**
  * Скрипт вызывается и как CLI (node record-history.js ...), и импортируется
  * тестами. main() запускаем только при прямом вызове файла.
+ *
+ * PL-161: сравниваем РЕАЛЬНЫЕ пути, а не URL. При запуске через junction/symlink
+ * (рекомендованный PL-109 способ подключить dist в свежем worktree)
+ * process.argv[1] содержит символический путь, а import.meta.url — реальный.
+ * Старое сравнение URL молча возвращало false: --start/--finish ничего не
+ * делали, обёртки получали пустой stdout, crash recovery не работал.
+ * Аналогичный фикс уже есть в core/gate-integrity.ts (PL-131).
  */
+function realPathWithFallback(p: string): string {
+  try {
+    return fs.realpathSync(p);
+  } catch {
+    return path.resolve(p);
+  }
+}
+
 function isDirectInvocation(): boolean {
   const entry = process.argv[1];
   if (!entry) return false;
-  try {
-    return (
-      pathToFileURL(entry).href.toLowerCase() === import.meta.url.toLowerCase()
-    );
-  } catch {
-    return false;
-  }
+  const cliPath = realPathWithFallback(entry);
+  const modulePath = realPathWithFallback(fileURLToPath(import.meta.url));
+  return cliPath === modulePath;
 }
 
 if (isDirectInvocation()) {

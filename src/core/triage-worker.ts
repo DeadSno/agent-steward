@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { decideTriage, type TriageDecision } from "./triage-chain.js";
 import { recordTriageOutcome } from "./triage-shadow.js";
 import { isShadowActive, type TriageSettings } from "../settings.js";
@@ -329,14 +329,21 @@ async function drainQueue(first: string): Promise<void> {
   }
 }
 
+function realPathWithFallback(p: string): string {
+  try {
+    return fs.realpathSync(p);
+  } catch {
+    return path.resolve(p);
+  }
+}
+
+/** PL-161: junction/symlink в dist — сравнение URL молча отключало CLI. */
 function isDirectInvocation(): boolean {
   const entry = process.argv[1];
   if (!entry) return false;
-  try {
-    return pathToFileURL(entry).href.toLowerCase() === import.meta.url.toLowerCase();
-  } catch {
-    return false;
-  }
+  const cliPath = realPathWithFallback(entry);
+  const modulePath = realPathWithFallback(fileURLToPath(import.meta.url));
+  return cliPath === modulePath;
 }
 
 if (isDirectInvocation()) {

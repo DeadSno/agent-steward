@@ -402,5 +402,24 @@ assert(
   "PL-138: контракт ownerPid/ownerHost зафиксирован в исходнике history-repo.ts",
 );
 
+// --- 8. PL-161: CLI-гурд выживает junction/symlink dist -------------------
+// Воспроизведение: dist — junction на .steward-dev/dist (PL-109), старое
+// сравнение URL pathToFileURL(argv[1]) === import.meta.url давало false,
+// main() не запускалась, --start молча возвращал пустой stdout (id=0),
+// обёртка не получала runId → вечный running после kill-9. Реджерессия
+// проверяет и контракт CLI (см. §2), и нормализацию реальных путей в исходнике.
+const recorderSrc = fs.readFileSync(path.resolve("src/core/record-history.ts"), "utf8");
+assert(
+  recorderSrc.includes("fs.realpathSync(p)") &&
+    recorderSrc.includes("fileURLToPath(import.meta.url)") &&
+    recorderSrc.includes("cliPath === modulePath"),
+  "PL-161: CLI-гурд сравнивает реальные пути (junction/symlink)",
+);
+const workerSrc = fs.readFileSync(path.resolve("src/core/triage-worker.ts"), "utf8");
+assert(
+  workerSrc.includes("fs.realpathSync(p)") && workerSrc.includes("cliPath === modulePath"),
+  "PL-161: triage-worker использует тот же нормализованный гурд",
+);
+
 closeDb();
 console.log("\nCrash Recovery test completed.");
