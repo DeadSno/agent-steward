@@ -4,6 +4,7 @@
  *
  * Команды:
  *   agent-steward pipeline validate <file> [--json]
+ *   agent-steward pipeline describe <file> [--json]
  *   agent-steward pipeline apply <file> [--dry-run] [--json]
  *   agent-steward pipeline export --pipeline <name> [--out <file>]
  *   agent-steward apply -f <file> [--dry-run] [--json]   # алиас pipeline apply
@@ -15,6 +16,7 @@ import { stringify } from "yaml";
 import { closeDb, initDb } from "./db/index.js";
 import { listTasks } from "./db/tasks-repo.js";
 import { loadPipelineFile } from "./core/pipeline-io.js";
+import { toOpenPipelineSpec } from "./core/pipeline-open-spec.js";
 import { executePipelineApply, planPipelineApply } from "./core/pipeline-apply.js";
 import { tasksToPipelineSpec } from "./core/pipeline-map.js";
 import { saveTaskDefinition, type TaskDefinition } from "./task-transfer.js";
@@ -25,6 +27,7 @@ const USAGE = `agent-steward — планировщик agent jobs
 
 Использование:
   agent-steward pipeline validate <file> [--json]
+  agent-steward pipeline describe <file> [--json]
   agent-steward pipeline apply <file> [--dry-run] [--json]
   agent-steward pipeline export --pipeline <name> [--out <file>]
   agent-steward apply -f <file> [--dry-run] [--json]
@@ -33,6 +36,7 @@ const USAGE = `agent-steward — планировщик agent jobs
 
 Команды:
   validate  проверить opencode.pipeline.yaml, не меняя задачи
+  describe  открытое описание DAG, гейтов и бюджетов (S-1)
   apply     создать/обновить задачи из файла (идемпотентно)
   export    выгрузить задачи pipeline из БД обратно в YAML
   mcp       поднять 34 инструмента как MCP-сервер на stdio
@@ -183,6 +187,32 @@ async function runValidate(args: string[]): Promise<number> {
   }
 
   return result.ok ? 0 : 1;
+}
+
+/** S-1: печатает открытый spec без изменений в БД и планировщике. */
+async function runDescribe(args: string[]): Promise<number> {
+  const file = requireFile(args);
+  const json = args.includes("--json");
+  const result = await loadPipelineFile(file);
+  if (!result.ok || !result.spec) {
+    printIssueList("Ошибки:", result.errors);
+    printIssueList("Предупреждения:", result.warnings);
+    return 1;
+  }
+  const open = toOpenPipelineSpec(result.spec);
+  if (json) {
+    console.log(JSON.stringify(open, null, 2));
+    return 0;
+  }
+  console.log(`Pipeline: ${open.name} (${open.format} v${open.version})`);
+  console.log(`DAG: ${open.dag.nodes.length} узлов, ${open.dag.edges.length} рёбер`);
+  console.log(`Гейты: ${open.gates.length}, шагов: ${open.budgets.steps}`);
+  console.log(
+    `Бюджет: timeout ${open.budgets.totalTimeoutSeconds ?? "—"} с суммарно, ` +
+      `максимум ${open.budgets.maxTimeoutSeconds ?? "—"} с на шаг, повторов ≤ ${open.budgets.maxRetries}`,
+  );
+  console.log(`Методика: ${open.methodologyUrl}`);
+  return 0;
 }
 
 async function runExport(args: string[]): Promise<number> {
@@ -436,6 +466,8 @@ async function main(argv: string[]): Promise<number> {
       return 0;
     case "validate":
       return runValidate(rest);
+    case "describe":
+      return runDescribe(rest);
     case "apply":
       return runApply(rest);
     case "export":

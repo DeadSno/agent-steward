@@ -30,6 +30,20 @@ export {
   type BuiltCommand,
   type InvocationResult,
 } from "./invokers/agent-invoker.js";
+// S-1: открытый spec pipeline (DAG/гейты/бюджеты) без OpenCode-контекста.
+export {
+  parsePipelineYaml,
+  type PipelineParseResult,
+} from "./core/pipeline-io.js";
+export {
+  OPEN_PIPELINE_FORMAT,
+  OPEN_PIPELINE_SPEC_VERSION,
+  toOpenPipelineSpec,
+  type OpenPipelineSpec,
+  type OpenPipelineNode,
+  type OpenPipelineEdge,
+  type OpenPipelineBudget,
+} from "./core/pipeline-open-spec.js";
 export {
   TOOL_NAMES,
   buildToolSpecs,

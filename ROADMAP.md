@@ -28,6 +28,8 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 
 ## QA-находки (проверка работоспособности плагина 24.11.2026)
 
+- B-3.1: профильные бейзлайны `test-profiles.mjs` не обновлены после QA-PORT-4 (`emit_event` переведён в core-профиль): `node test-profiles.mjs` даёт 71/74 — surface admin 14536 токенов против лимита 14500, `coreSpecs.length` стал 10 вместо 9, admin — 19 вместо 18 — P2. Действие: пересчитать `B31_BASELINE` (coreDigest, adminTokens, ожидаемые размеры профилей) или явно пересмотреть ограничение B-3.1 с обоснованием в CHANGELOG. Обнаружено 24.11.2026.
+
 ---
 
 ## Деталь 3.15 — Улучшения продукта из TEST-PLAN §7.3
@@ -127,7 +129,6 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 ## Деталь 3.19 — Новые ставки поверх клина (24.11.2026)
 `docs/*`, `src/core/*`, `package.json`
 
-- [ ] S-1 Открытый spec pipeline (`opencode.pipeline.yaml` → общее описание DAG/гейтов/бюджетов)
 - [ ] S-2 Subpath `./router`: capability-роутинг с `first_pass_rate` и flywheel-обучением
 - [ ] S-3 Reliability scorecard: публичная метрика объективных гейтов и сэкономленных токенов
 - [ ] S-4 Библиотека рецептов: gate-passed примеры вместо «примеров ради примеров»

@@ -9,7 +9,7 @@ turns every step into a task, and applies it idempotently.
 - [Triggers](#triggers)
 - [Defaults](#defaults)
 - [Matrix fan-out](#matrix-fan-out)
-- [Validate, apply, export](#validate-apply-export)
+- [Validate, describe, apply, export](#validate-apply-export)
 - [Apply semantics](#apply-semantics)
 - [Agent tools](#agent-tools)
 - [Validation rules](#validation-rules)
@@ -174,6 +174,7 @@ The CLI ships with the package (`agent-steward` binary):
 
 ```bash
 agent-steward pipeline validate opencode.pipeline.yaml
+agent-steward pipeline describe opencode.pipeline.yaml --json
 agent-steward pipeline apply opencode.pipeline.yaml --dry-run
 agent-steward pipeline apply opencode.pipeline.yaml
 agent-steward apply -f opencode.pipeline.yaml
@@ -184,6 +185,7 @@ agent-steward pipeline export --pipeline nightly-release --out opencode.pipeline
 | Command | Flags | Result |
 | --- | --- | --- |
 | `pipeline validate <file>` | `--json` | Parses and validates; never changes tasks. |
+| `pipeline describe <file>` | `--json` | Emits the [open pipeline spec](./OPEN-SPEC.md): DAG, gates, budgets. |
 | `pipeline apply <file>` | `--dry-run`, `--json` | Creates and updates tasks; `--dry-run` only prints the plan. |
 | `apply -f <file>` | `--dry-run`, `--json` | GitOps alias of `pipeline apply`; `--file` is also accepted. |
 | `pipeline export` | `--pipeline <name>`, `--out <file>` | Rebuilds YAML from tasks; stdout unless `--out` is given. |

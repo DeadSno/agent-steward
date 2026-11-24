@@ -49,6 +49,7 @@ src/core/permissions.ts
 src/core/pipeline-apply.ts
 src/core/pipeline-io.ts
 src/core/pipeline-map.ts
+src/core/pipeline-open-spec.ts
 src/core/pipeline-spec.ts
 src/core/prometheus.ts
 src/core/ps-wrapper.ts
@@ -116,7 +117,7 @@ src/db/tasks-repo.ts
 src/db/templates-repo.ts
 ```
 
-**Что видно:** 81 модулей в `src/core/` (из них 4 — `router/`, 10 — `scheduler/`, 1 — `wrappers/`) и 18 модулей в `src/db/`. Durable-слой вынесен в `src/db/`, оркестрация — в `src/core/`. Счётчик сверен с `src/core/**/*.ts` 24.11.2026 (71 → 80 после D-1/D-3, M-1…M-4, A-2, T-1, S3-D36 и QW-2; 81 после QW-9; 18 в `src/db/` после BN-7).
+**Что видно:** 82 модулей в `src/core/` (из них 4 — `router/`, 10 — `scheduler/`, 1 — `wrappers/`) и 18 модулей в `src/db/`. Durable-слой вынесен в `src/db/`, оркестрация — в `src/core/`. Счётчик сверен с `src/core/**/*.ts` 24.11.2026 (71 → 80 после D-1/D-3, M-1…M-4, A-2, T-1, S3-D36 и QW-2; 81 после QW-9; 82 после S-1; 18 в `src/db/` после BN-7).
 
 **Ключевые выводы:** Принцип «ядро не зависит от транспорта» реализован через [`execution.ts`](src/core/execution.ts): исполнитель (`StepExecutor`) передаётся в `executeExecutionPlan` снаружи. Отдельного `gate-repo.ts` не существует — операции с `gate_outcomes` распределены между [`execution.ts`](src/core/execution.ts), [`runs-repo.ts`](src/db/runs-repo.ts) и [`capability-repo.ts`](src/db/capability-repo.ts).
 
