@@ -208,6 +208,7 @@ import {
   setActiveProfile,
 } from "./profiles.js";
 import { closeDb, initDb } from "./db/index.js";
+import { backupDatabase, restoreDatabase } from "./db/backup.js";
 import { migrateJsonToDb } from "./db/migrate.js";
 import { checkJsonBackups, recoverInterruptedRuns } from "./db/recovery.js";
 import { getTask, listMatrixClones, listTasks as listTaskDefinitions, saveTask } from "./db/tasks-repo.js";
@@ -1239,6 +1240,23 @@ export const getTaskLogsSchema = z.object({
     .number()
     .optional()
     .describe("Return only the last N log lines (default 200)."),
+});
+
+/** BN-7: полный онлайн-бэкап БД планировщика. */
+export const backupDbSchema = z.object({
+  file: z
+    .string()
+    .optional()
+    .describe("Destination .db backup file (default: <scheduler db>.backup)."),
+});
+
+/** BN-7: восстановление БД из файла с проверкой SHA-256. */
+export const restoreDbSchema = z.object({
+  file: z.string().min(1).describe("Backup file to restore from."),
+  sha256: z
+    .string()
+    .optional()
+    .describe("Expected SHA-256 checksum (sha256=<hex> or raw hex); verified before restore."),
 });
 
 const dryRunSchema = z.object({
@@ -3131,6 +3149,16 @@ const getTaskLogsExecute = wrapExecute<TaskLogsArgs>(async (args) => {
   };
 });
 
+/** BN-7: backup_db — онлайн-снимок всей БД (без остановки дашборда). */
+const backupDbExecute = wrapExecute<{ file?: string }>(async (args) => ({
+  content: JSON.stringify(backupDatabase(args.file)),
+}));
+
+/** BN-7: restore_db — восстановление с обязательной проверкой SHA-256. */
+const restoreDbExecute = wrapExecute<{ file: string; sha256?: string }>(async (args) => ({
+  content: JSON.stringify(restoreDatabase(args.file, args.sha256)),
+}));
+
 /** dry_run — симуляция пайплайна без выполнения. */
 /**
  * PL-76: список доступных моделей для проверки в `dry_run`.
@@ -4634,6 +4662,8 @@ const RPC_AUDIT_RULES: Record<
     target: (i) => i.name ?? "",
   },
   import_tasks: { action: "tasks.import", targetType: "tasks", target: () => "snapshot" },
+  backup_db: { action: "db.backup", targetType: "database", target: () => "scheduler" },
+  restore_db: { action: "db.restore", targetType: "database", target: () => "scheduler" },
   save_settings: { action: "settings.update", targetType: "settings", target: () => "global" },
   save_template: {
     action: "template.save",
@@ -4855,6 +4885,8 @@ export async function createRuntime(ctxLike: RuntimeContextLike): Promise<Schedu
  * не зависит от версии OpenCode.
  */
 export interface ToolHandlers {
+  backup_db: typeof backupDbExecute;
+  restore_db: typeof restoreDbExecute;
   schedule_task: typeof scheduleTaskExecute;
   schedule_advanced: typeof scheduleTaskExecute;
   list_tasks: typeof listTasksExecute;
@@ -4898,6 +4930,8 @@ export interface ToolHandlers {
  */
 export function createToolHandlers(_runtime: SchedulerRuntime): ToolHandlers {
   return {
+    backup_db: backupDbExecute,
+    restore_db: restoreDbExecute,
     schedule_task: scheduleTaskExecute,
     schedule_advanced: scheduleTaskExecute,
     list_tasks: listTasksExecute,
@@ -5121,6 +5155,22 @@ export function createToolSpecs(
       description:
         "Returns the tail of a task's log file written by the run wrapper. Use it to diagnose failed runs.",
       execute: handlers.get_task_logs,
+    },
+    {
+      name: "backup_db",
+      input: backupDbSchema,
+      description:
+        "Creates a full online backup of the scheduler SQLite database (all tasks, history, settings) as a single file with a SHA-256 checksum. The dashboard stays online; no task run is interrupted.",
+      audit: () => ({ action: "db.backup", targetType: "database", target: "scheduler" }),
+      execute: handlers.backup_db,
+    },
+    {
+      name: "restore_db",
+      input: restoreDbSchema,
+      description:
+        "Restores the scheduler database from a backup file. The SHA-256 checksum is verified first; a corrupt or mismatched file is rejected. The live connection is reused, so the dashboard does not go down.",
+      audit: () => ({ action: "db.restore", targetType: "database", target: "scheduler" }),
+      execute: handlers.restore_db,
     },
     {
       name: "dry_run",
@@ -6627,6 +6677,14 @@ const v2Plugin = Plugin.define({
             error: err instanceof Error ? err.message : String(err),
           };
         }
+      },
+      backup_db: async (input: unknown) => {
+        const { file } = input as { file?: string };
+        return backupDatabase(file);
+      },
+      restore_db: async (input: unknown) => {
+        const { file, sha256 } = input as { file?: string; sha256?: string };
+        return restoreDatabase(file ?? "", sha256);
       },
       export_tasks: async (_input: unknown) => {
         try {

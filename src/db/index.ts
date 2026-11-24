@@ -37,6 +37,8 @@ export interface SqliteDatabase {
   exec(sql: string): void;
   prepare(sql: string): SqliteStatement;
   close(): void;
+  /** BN-7: онлайн-снимок БД (node:sqlite, доступен с Node 22.x). */
+  serialize?(): Uint8Array;
 }
 
 type DatabaseSyncCtor = new (

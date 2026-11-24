@@ -41,6 +41,7 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 - [ ] QA-PORT-4: `emit_event` и `schedule_advanced` есть в исходниках плагина (`src/index.ts:5376`, `:1105`), но отсутствуют в доступном MCP-инструментарии (core-профиль): event-driven задачи невозможно ни создать, ни запустить событием; `schedule_task` с `mcpEvent` отвергается с подсказкой про admin-профиль (PL-145) — P2. Действие: либо экспортировать `emit_event` в core-профиль, либо явно документировать и добавить инструмент «create event task» в core. Обнаружено 24.11.2026.
 - [ ] QA-PORT-5: history дочерней задачи `BN-PROBE-OS` (успешный запуск 24.11.2026, файл-артефакт создан) содержит `status: "success"` одновременно с `error: "PL-81: успешное завершение без quality gate"` — P2. Действие: либо не писать `error` для успешных записей, либо вынести диагностику PL-81 в отдельное поле. Обнаружено 24.11.2026.
 - [ ] QA-PORT-6: дочерний `explore`-суб-агент (максимум 1 по заданию) прервался сообщением `Free usage limit reached` и не вернул результат; обёртка плагина не отличила лимит Free от обычной ошибки и не записала диагностику (аналог PL-87) — P2. Действие: классифицировать ошибку квоты отдельным статусом/причиной и сохранять частичный результат суб-агента. Обнаружено 24.11.2026.
+- [ ] QA-PORT-7: изоляция ядра (P-1.1) сломала регрессию `test-watch-paths.mjs`: проверка `src/index.ts:96-103` требует литерал `fileWatcherManager?.suppressForTask(taskName)` перед `scheduleEventRun(taskName, "изменение отслеживаемого файла")`, но обработчик перенесён в `src/runtime.ts:266-267` (`deps.getFileWatcherManager()?.suppressForTask(taskName)`); реальный прогон `node test-watch-paths.mjs` — exit 1, `AssertionError` в строке 96 — P0 (CI красный на всех платформах). Действие: обновить `test-watch-paths.mjs` — читать `src/runtime.ts` (или оба файла) и проверять порядок `getFileWatcherManager()?.suppressForTask(taskName)` → `scheduleEventRun(taskName, "изменение отслеживаемого файла")`; не возвращать фрагмент обратно в `index.ts`. Обнаружено 24.11.2026.
 
 ---
 
@@ -48,11 +49,6 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 `src/core/schedule-v2.ts`, `src/core/ps-wrapper.ts`, `src/notifications.ts`, `src/core/structured-log.ts`, `src/gui.tsx`, `src/db/*`, `package.json`
 
 > Перенесено из `TEST-PLAN.md` §7.2. Исключён только `BP-D08-1` — закрыт QA-A3 и зафиксирован в CHANGELOG. Исходные ID сохранены в заголовках задач; префикс `BN` введён для сквозной нумерации ROADMAP (PL-100).
-
-**Задача BN-7 — BP-D15-1: нет MCP-инструмента полного бэкапа БД** · D15 · P2 · ⬜
-- [ ] BN-7.1 Воспроизвести: подтвердить отсутствие `backup_db`/`restore_db` и гарантий целостности (см. §6 п.1)
-- [ ] BN-7.2 Реализовать: инструменты `backup_db`/`restore_db` с проверкой контрольной суммы и без простоя дашборда
-- [ ] BN-7.3 Регрессия и документация: `test-sqlite.mjs`, `test-integrations.mjs`, обновить D15, §6 и §7.2
 
 **Задача BN-8 — BP-D16-1: медленная сборка `build` + `build:gui`** · D16 · P3 · ⬜
 - [ ] BN-8.1 Измерить: время `npm run build` и `npm run build:gui` на чистом и повторном прогоне

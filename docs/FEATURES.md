@@ -760,7 +760,7 @@ the `cleanup_history` RPC and the GUI's **Clear now** button. Aggregates in
 
 ## Agent interface
 
-Thirty-two tools: `schedule_task`, `list_tasks`, `update_task`, `schedule_advanced`, `update_advanced`, `delete_task`,
+Thirty-four tools: `schedule_task`, `list_tasks`, `update_task`, `schedule_advanced`, `update_advanced`, `delete_task`,
 `run_task_now`, `pause_task`, `resume_task`, `get_history`, `get_task_logs`, `dry_run`,
 `manage_workspaces`, `matrix_control` (results/cancel/cleanup/preview), `get_metrics`,
 `get_analytics`, `self_analysis` (health score, anomalies, trends), `manage_settings`,
@@ -768,7 +768,8 @@ Thirty-two tools: `schedule_task`, `list_tasks`, `update_task`, `schedule_advanc
 `transfer_tasks`, `send_notification`, `report_bug`, `get_dashboard_info`, `cleanup_history`,
 `manage_secrets`, `get_audit_log`,
 `emit_event`,
-`pipeline_validate`, `pipeline_apply`, `pipeline_export`.
+`pipeline_validate`, `pipeline_apply`, `pipeline_export`,
+`backup_db`, `restore_db` (online SQLite snapshot with SHA-256 and logical restore).
 
 A bundled skill, `scheduled-job-best-practices`, teaches the agent safe defaults:
 least privilege, Quality Gates, timeout, matrix concurrency, DAG rules and a

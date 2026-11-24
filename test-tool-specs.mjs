@@ -16,9 +16,10 @@ import { z } from "zod";
 import { createToolSpecs } from "./dist/index.js";
 import { SchedulerRpc } from "./dist/rpc.js";
 
-const EXPECTED_NAMES = ["cleanup_history","delete_task","dry_run","emit_event","get_analytics","get_audit_log","get_dashboard_info","get_history","get_metrics","get_task_logs","list_tasks","manage_local_ai","manage_profiles","manage_secrets","manage_settings","manage_templates","manage_workspaces","matrix_control","pause_task","pipeline_apply","pipeline_export","pipeline_validate","report_bug","resume_task","run_task_now","schedule_advanced","schedule_task","self_analysis","send_notification","transfer_tasks","update_advanced","update_task"];
+const EXPECTED_NAMES = ["backup_db", "cleanup_history","delete_task","dry_run","emit_event","get_analytics","get_audit_log","get_dashboard_info","get_history","get_metrics","get_task_logs","list_tasks","manage_local_ai","manage_profiles","manage_secrets","manage_settings","manage_templates","manage_workspaces","matrix_control","pause_task","pipeline_apply","pipeline_export","pipeline_validate","report_bug","restore_db","resume_task","run_task_now","schedule_advanced","schedule_task","self_analysis","send_notification","transfer_tasks","update_advanced","update_task"];
 
 const EXPECTED_HASHES = {
+  "backup_db": "73be63e5b6f4cad3f0506862685fe11272d43e86cae164e1d5ad44959f253b8b",
   "cleanup_history": "e0d8444307eee168d08818ceb0e36ce87b76be33e9594a346720a1b11cf5fac9",
   "delete_task": "f96c50589c0b898f2f896f2287d90e602b897f61e89625d4441e019f21432d52",
   "dry_run": "67b796bae3827c90edd3876793fcc642c1e10aad8c12fed6e36dbc1e74888214",
@@ -43,6 +44,7 @@ const EXPECTED_HASHES = {
   "pipeline_validate": "1e5793f4446041b7403c5a89894f7f6a65e5dba685910b79f76e9cbe149e3568",
   "report_bug": "cbed52370760f1e9629b55d868b8dc7f746eb653e90f3e5d62c978797eda17ca",
   "resume_task": "37a8eb0da28e78a7c8bb58cc43b9c68a10a428cce0014fe94e13170fb1b17311",
+  "restore_db": "831883a897c117984f283a976654f320a4a6724171fc2016b7077344351f058a",
   "run_task_now": "adcfc004fce2d39ca95953df502b8f9587c475af4a377e7d7213b7ff83347e8a",
   "schedule_advanced": "a3f0f250efdbd3a6390f318b19fa4b85fcc4286cb7c1bec293a239eefa25f04b",
   "schedule_task": "5c9c5e22f1f2853ca20e0ae8daf23f12aa06d3031bae3f4e4057181b23da64fb",
@@ -53,7 +55,7 @@ const EXPECTED_HASHES = {
   "update_task": "2510d8d71c297520464e222e7ddf08c096d25740f0ed881816d6f29b1cc6ca04",
 };
 
-const EXPECTED_RPC_METHODS = ["add_workspace","cancel_matrix","cleanup_history","cleanup_matrix_orphans","compare_triage","create_profile","create_task","decide_approval","delete_profile","delete_secret","delete_task","delete_template","delete_workspace","discard_dlq","dry_run","dry_run_all","emit_event","expand_matrix_preview","export_tasks","get_analytics","get_audit","get_dashboard_port","get_history","get_matrix_results","get_metrics","get_platform","get_profiles","get_settings","get_shadow_report","get_task_logs","get_tasks","get_templates","get_workspaces","import_tasks","list_approvals","list_dlq","list_durable_runs","list_secrets","pause_durable_run","pause_task","pipeline_apply","pipeline_export","pipeline_validate","reset_shadow_report","resume_durable_run","resume_task","retry_dlq","run_mission","run_task","save_secret","save_settings","save_template","self_analysis","send_digest","set_profile","test_local_ai","test_notification","update_task","update_workspace"];
+const EXPECTED_RPC_METHODS = ["add_workspace","backup_db","cancel_matrix","cleanup_history","cleanup_matrix_orphans","compare_triage","create_profile","create_task","decide_approval","delete_profile","delete_secret","delete_task","delete_template","delete_workspace","discard_dlq","dry_run","dry_run_all","emit_event","expand_matrix_preview","export_tasks","get_analytics","get_audit","get_dashboard_port","get_history","get_matrix_results","get_metrics","get_platform","get_profiles","get_settings","get_shadow_report","get_task_logs","get_tasks","get_templates","get_workspaces","import_tasks","list_approvals","list_dlq","list_durable_runs","list_secrets","pause_durable_run","pause_task","pipeline_apply","pipeline_export","pipeline_validate","reset_shadow_report","restore_db","resume_durable_run","resume_task","retry_dlq","run_mission","run_task","save_secret","save_settings","save_template","self_analysis","send_digest","set_profile","test_local_ai","test_notification","update_task","update_workspace"];
 
 /**
  * Соответствие MCP-инструментов RPC-методам — многие-ко-многим.
@@ -61,6 +63,7 @@ const EXPECTED_RPC_METHODS = ["add_workspace","cancel_matrix","cleanup_history",
  * RPC-операций, а часть RPC доступна только через GUI.
  */
 const TOOL_TO_RPC = {
+  backup_db: ["backup_db"],
   cleanup_history: ["cleanup_history"],
   delete_task: ["delete_task"],
   dry_run: ["dry_run"],
@@ -85,6 +88,7 @@ const TOOL_TO_RPC = {
   pipeline_validate: ["pipeline_validate"],
   report_bug: ["test_notification"],
   resume_task: ["resume_task"],
+  restore_db: ["restore_db"],
   run_task_now: ["run_task"],
   schedule_advanced: ["create_task"],
   schedule_task: ["create_task"],
@@ -153,8 +157,8 @@ function check(label, fn) {
   }
 }
 
-check("P-1.2: реестр содержит ровно 32 инструмента", () => {
-  assert.equal(specs.length, 32);
+check("P-1.2: реестр содержит ровно 34 инструмента", () => {
+  assert.equal(specs.length, 34);
 });
 check("P-1.2: имена и порядок (детерминированная сортировка) совпадают со снимком", () => {
   assert.deepEqual(specs.map((spec) => spec.name), EXPECTED_NAMES);
@@ -185,7 +189,7 @@ check("P-1.2: все JSON-схемы инструментов валидны д�
   }
 });
 
-check("P-1.2: список RPC-методов совпадает со снимком (59 методов)", () => {
+check("P-1.2: список RPC-методов совпадает со снимком (61 метод)", () => {
   assert.deepEqual(rpcMethods, EXPECTED_RPC_METHODS);
   assert.deepEqual([...EXPECTED_RPC_METHODS].sort(sortNames), EXPECTED_RPC_METHODS);
   assert.equal(new Set(rpcMethods).size, rpcMethods.length);

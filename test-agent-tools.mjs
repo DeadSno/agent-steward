@@ -378,27 +378,27 @@ const defaultSpecs = createToolSpecs({}, {});
 const adminSpecs = createToolSpecs({}, { AGENT_STEWARD_TOOL_PROFILE: "admin" });
 check(
   `QV-8: поверхность инструментов ${parentSpecs.length} → ${childSpecs.length} в дочернем прогоне`,
-  parentSpecs.length === 32 && Array.isArray(childSpecs) && childSpecs.length === 0
+  parentSpecs.length === 34 && Array.isArray(childSpecs) && childSpecs.length === 0
 );
 const defaultNames = defaultSpecs.map((spec) => spec.name);
 const adminNames = adminSpecs.map((spec) => spec.name);
 check(
-  `T-1: дефолтный профиль core = 8 инструментов без manage_* и advanced (${defaultSpecs.length})`,
-  defaultSpecs.length === 8 &&
+  `T-1: дефолтный профиль core = 9 инструментов без manage_* и advanced (${defaultSpecs.length})`,
+  defaultSpecs.length === 9 &&
     defaultNames.includes("schedule_task") &&
     defaultNames.includes("list_tasks") &&
     !defaultNames.some((name) => name.startsWith("manage_") || name.endsWith("_advanced"))
 );
 check(
   `T-1/T-3: профиль admin = core + manage_* + advanced (${adminSpecs.length})`,
-  adminSpecs.length === 16 &&
+  adminSpecs.length === 18 &&
     adminNames.filter((name) => name.startsWith("manage_")).length === 6 &&
     adminNames.includes("schedule_advanced") &&
     adminNames.includes("update_advanced")
 );
 check(
   "T-1: невалидное значение профиля безопасно падает в core",
-  createToolSpecs({}, { AGENT_STEWARD_TOOL_PROFILE: "bogus" }).length === 8
+  createToolSpecs({}, { AGENT_STEWARD_TOOL_PROFILE: "bogus" }).length === 9
 );
 
 // T-2: «толстые» поля доступны только в advanced-инструментах; базовые схемы
@@ -727,7 +727,7 @@ console.log(
 );
 check(
   "QV-11.1: оценка поверхности инструментов детерминирована",
-  surface.tools === 32 &&
+  surface.tools === 34 &&
     surface.descriptionCount > 0 &&
     surface.descriptionCount <= surface.tools &&
     surface.descriptionChars > 0 &&
@@ -735,7 +735,7 @@ check(
 );
 check(
   `T-1.2/T-1.4: дефолтный профиль ≤ 6k токенов (факт: ${coreSurface.estimatedTokens})`,
-  coreSurface.tools === 8 &&
+  coreSurface.tools === 9 &&
     coreSurface.estimatedTokens > 0 &&
     coreSurface.estimatedTokens <= 6000 &&
     coreSurface.estimatedTokens < surface.estimatedTokens / 3

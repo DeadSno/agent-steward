@@ -44,28 +44,28 @@
 # Выполнять из корня чек-аута agent-steward (например, .steward-dev или tp-audit-dev)
 npm run build          # tsc: dist/ (сервер, RPC, ядро)
 npm run build:gui      # vite: gui-experimental.cjs (панель OpenCode)
-npm test               # 126 файлов test-*.mjs (119 npm-скриптов), полный регресс
+npm test               # 129 файлов test-*.mjs (122 npm-скриптов), полный регресс
 node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с сид-данными
 ```
 
 - Текущая схема БД: `SCHEMA_VERSION = 14` (таблицы обратной связи `feedback_outbox`/`feedback_spam`; историческая миграция 10 → 11 описана в S15.1.2).
 - GUI: OpenCode → боковая панель «Планировщик Windows». После пересборки панель перезагрузить.
-- MCP: 32 инструмента доступны агенту после подключения плагина (проверено через мост Code Mode: `list_tasks`, `get_dashboard_info`).
+- MCP: 34 инструмента доступны агенту после подключения плагина (проверено через мост Code Mode: `list_tasks`, `get_dashboard_info`).
 - Дашборд: `http://127.0.0.1:3782/` (порт может отличаться, смотреть `get_dashboard_info`).
 - Логи прогона: вывод `npm test` (при необходимости перенаправить в `test-run.log`); артефакты GUI — `gui-experimental.cjs` (создаётся `npm run build:gui`).
-- Актуальная ветка плана: `dev` (32 инструмента, 119 npm-скриптов). Legacy-чек-аут `steward-work` содержит 30 инструментов и 113 npm-скриптов — его счётчики здесь не используются.
+- Актуальная ветка плана: `dev` (34 инструмента, 122 npm-скриптов). Legacy-чек-аут `steward-work` содержит 30 инструментов и 113 npm-скриптов — его счётчики здесь не используются.
 
 ### 0.3.1 Счётчики (TP-6.2, автогенерация)
 
 <!-- counters:start -->
 | Счётчик | Значение | Источник |
 |---|---|---|
-| MCP-инструментов | 32 | Приложение B |
-| RPC-методов | 59 | Приложение A |
+| MCP-инструментов | 34 | Приложение B |
+| RPC-методов | 61 | Приложение A |
 | HTTP-эндпоинтов | 19 | Приложение C |
-| Файлов test-*.mjs | 126 | корень репозитория |
-| npm-скриптов test* | 119 | package.json |
-| Покрытие в §5 | 126 | TEST-PLAN §5 |
+| Файлов test-*.mjs | 129 | корень репозитория |
+| npm-скриптов test* | 122 | package.json |
+| Покрытие в §5 | 129 | TEST-PLAN §5 |
 | SCHEMA_VERSION | 14 | src/db/schema.ts |
 <!-- counters:end -->
 
@@ -547,7 +547,7 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 ### D15. Данные: SQLite, миграции, восстановление
 
 **Критерии приёмки:** схема создаётся с нуля и мигрирует со старых версий; WAL включён; падение не оставляет «вечный running»; экспорт БД валиден.  
-**Доступ агента:** косвенно (все операции идут через БД); прямого tool для бэкапа БД нет — только `transfer_tasks` (задачи) и `get_history`.  
+**Доступ агента:** ✅ `backup_db` / `restore_db` — полный онлайн-снимок БД с SHA-256 и логическое восстановление без закрытия соединения; логический restore через `ATTACH` + `BEGIN IMMEDIATE` (node:sqlite не умеет `backup()`, а `deserialize()` ломает WAL-соединение).  
 **Доступ пользователя:** «Скачать БД» в дашборде.
 
 | ID | Подзадача | Шаги | Ожидаемый результат |
@@ -559,7 +559,7 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 | S15.1.5 | 🧪 Повторный старт | после краша | Плагин стартует, история читается |
 | S15.1.6 | 🌐 Бэкап | `/api/export-db` | Файл открывается, все таблицы на месте |
 | S15.1.7 | 🧪 Битые JSON | settings/templates повреждены | Используются дефолты, файл не теряется молча |
-| S15.1.BP.1 | 🧪 Узкое место: бэкап БД только через дашборд | нет MCP-инструмента бэкапа | Агент не может сделать полный бэкап БД — ограничение (см. §4) |
+| S15.1.BP.1 | ✅ Закрыто BN-7: бэкап БД только через дашборд | `backup_db` → файл `<db>.backup` + SHA-256 → `restore_db` (с проверкой суммы) | Агент делает полный бэкап/восстановление; дашборд продолжает отвечать (`/api/health`). Регрессия: `test-sqlite.mjs`, `test-integrations.mjs`, `test-tool-specs.mjs` |
 | S15.1.BP.2 | 🧪 Улучшение: авто-бэкап перед миграцией | миграция версии | Автоматическая копия БД перед применением миграции |
 
 ---
@@ -575,7 +575,7 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 | S16.1.1 | 🧪 tsc | `npm run build` | 0 ошибок |
 | S16.1.2 | 🧪 vite | `npm run build:gui` | `gui-experimental.cjs` создан, каталоги внутри |
 | S16.1.3 | 🧪 Экспорты | `package.json.exports` | `./gui-experimental` и основные точки входа валидны |
-| S16.1.4 | 🧪 Тесты | `npm test` | 126 файлов `test-*.mjs` (119 npm-скриптов), 0 падений |
+| S16.1.4 | 🧪 Тесты | `npm test` | 129 файлов `test-*.mjs` (122 npm-скриптов), 0 падений |
 | S16.1.5 | 🧪 Docs | `node test-docs.mjs` | Команды и ключи в README/CHANGELOG актуальны |
 | S16.1.6 | 🧪 Чистая установка | `npm pack` → установка в пустой проект | Плагин стартует, панель открывается |
 | S16.1.7 | 🧪 Версия | `version.ts` / CHANGELOG | Совпадают, дата и раздел Fixed на месте |
@@ -700,7 +700,7 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 | D11 Профили/workspace | `manage_profiles`, `manage_workspaces` | ✅ | ✅ табы | — | `get_profiles`, `set_profile`, `create_profile`, `delete_profile`, `get_workspaces`, `add/update/delete_workspace` |
 | D12 Шаблоны/перенос | `manage_templates`, `transfer_tasks` | ✅ | — | — | `get_templates`, `save_template`, `delete_template`, `export_tasks`, `import_tasks` |
 | D13 Наблюдаемость | `get_audit_log`, `get_dashboard_info` | ✅ аудит | ✅ health/logs | — | `get_audit`, `/api/health`, `/api/logs` |
-| D14 Интерфейсы | через RPC | ✅ | ✅ | ✅ | 59 RPC-методов |
+| D14 Интерфейсы | через RPC | ✅ | ✅ | ✅ | 61 RPC-методов |
 | D15 Данные | ⚠️ косвенно (`transfer_tasks` — только задачи) | ✅ история | ✅ экспорт БД | — | `/api/export-db` |
 | D16 Поставка | ✅ после сборки | ✅ | — | — | — |
 | D17 Обратная связь | `report_bug`, `self_analysis` | ✅ кнопка в отчёте/хуке | ✅ форма отчёта | — | `report_bug`, `self_analysis` |
@@ -708,7 +708,7 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 
 **Выявленные ограничения (не блокируют приёмку, но должны быть в отчёте):**
 
-1. **D15:** у агента нет отдельного инструмента для бэкапа/восстановления всей БД — только экспорт задач (`transfer_tasks`) и история. Бэкап БД — только дашборд.
+1. **D15:** ✅ снято BN-7 — у агента есть `backup_db` / `restore_db` (SHA-256, онлайн-снимок, логический restore без простоя дашборда); экспорт задач (`transfer_tasks`) и история остаются для частичного переноса.
 2. **D13:** OTel/Prometheus включаются переменными окружения процесса, отдельного MCP-tool нет. Проверка — ручная/юнит-тестами.
 3. **D01:** macOS/Linux-бэкенды на Windows проверяются только юнит-тестами выбора бэкенда; реальный смок — на целевых ОС.
 4. **D14:** TUI умеет только run/pause/resume/log; CRUD, матрицы и настройки — через GUI, дашборд или агента.
@@ -731,6 +731,7 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 | `test-at-e2e.mjs` | D01.4 (one-shot с реальным `at`, Linux/WSL) |
 | `test-posix-create-rollback.mjs` | D01 (POSIX: откат createTask при ошибке installEntry, P2-17) |
 | `test-posix-cron.mjs` | D01 (POSIX: crontab Vixie-синтаксис, P3-31) |
+| `test-posix-defer.mjs` | D01 (POSIX: defer-файл с PID и реактивация, QW-9) |
 | `test-posix-e2e.mjs` | D01 (POSIX: e2e bash-обёртки, T-10) |
 | `test-schtasks-errors.mjs` | D01.2 (разбор кодов и текстов ошибок schtasks) |
 | `test-schtasks-locales.mjs` | D01.2 (локали `schtasks /query /fo LIST`, P2-12.T3) |
@@ -743,6 +744,7 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 | `test-path-safety.mjs` | D02 (path-safety: writePromptFile / lockFilePath) |
 | `test-task-name-limit-profile.mjs` | D02.1.15 (лимит имени для не-default профиля, T-04) |
 | `test-validation.mjs` | D02 (отклонение невалидных значений create/update, QA-P2.1) |
+| `test-catch-up.mjs` | D01, D03 (пропущенные тики: пауза, triggerType, история — QW-2) |
 | `test-crash-recovery.mjs` | D03, D15 |
 | `test-session-continuity.mjs` | D03.9 |
 | `test-ps-watchdog.mjs` | D03 (watchdog, fail-closed kill) |
@@ -756,6 +758,7 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 | `test-capability-map.mjs` | D03 (роутер слой 2: capability_map, 0 токенов) |
 | `test-escalation.mjs` | D03 (роутер: эскалация после Quality Gate) |
 | `test-execution-hardening.mjs` | D03 (исполнение: timeout / lock / retry / хуки) |
+| `test-quota-scope.mjs` | D03 (определение квоты только по текущему прогону лога, QW-7) |
 | `test-guards.mjs` | D03 (guard-условия shell и семантические, CLI, обёртки) |
 | `test-planner.mjs` | D03 (роутер слой 3: декомпозиция миссии) |
 | `test-router-dispatch.mjs` | D03 (роутер: маршрутизация известных типов без модели) |
@@ -859,7 +862,7 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 
 - [ ] Все 18 деталей закрыты, у каждой выполнены 3 критерия (работает / доступ агента / доступ пользователя) + все `Sxx.BP.*` подзадачи.
 - [ ] Все 32 MCP-инструмента вызываются и валидируют аргументы (D04).
-- [ ] Все 59 RPC-методов доступны GUI (D14.1, приложение A).
+- [ ] Все 61 RPC-методов доступны GUI (D14.1, приложение A).
 - [ ] Все 19 HTTP API эндпоинтов, задокументированных в Приложении C (21 уникальный маршрут в коде, включая статику `/`, `/favicon.ico`, `/index.html` и `/metrics`), отвечают корректно (D14.4).
 - [ ] Задача, созданная в GUI, видна агенту и на дашборде; и наоборот (E2E-4).
 - [ ] Каждая мутация имеет запись в аудите с правильным actor: `mcp`, `gui`, `http` (D10, D13).
@@ -901,7 +904,7 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 | BP-D09-1 | D09 | ✅ Закрыто BN-4: уведомление на каждый запуск при высокой частоте | Спам в канале | Дедупликация по `taskName\|status` уже была (31.2); добавлен опциональный батчинг `notifications.batch` (окно 30 с, лимит 10, сброс по таймеру/лимиту/`beforeExit`/`flushNotificationBatch()`), по умолчанию выключен. Регрессия: `test-notifications-dedup.mjs`, `test-notifications-v3.mjs` |
 | BP-D13-1 | D13 | ✅ Закрыто BN-5: логи писались синхронно (`appendFileSync` на каждое событие) | Блокировка основного потока | Буфер до 512 строк + один асинхронный `appendFile` на порцию (`setImmediate`); гарантированный сброс через `flushStructuredLog()` / `flushStructuredLogSync()` / `beforeExit` / `exit` и при чтении; API подсчёта буфера `getStructuredLogBufferSize()`. Регрессия: `test-audit.mjs`, `test-integrations.mjs` |
 | BP-D14-1 | D14 | ✅ Закрыто BN-6: перерисовка панели GUI при каждом изменении статуса | Мерцание UI | В дашборде `reconcileTaskRows()` сравнивает ключи строк (`data-row-key`) и обновляет только изменившиеся ячейки; неизменившиеся `<tr>` и фокус сохраняются. Регрессия: `test-jobs-view.mjs` |
-| BP-D15-1 | D15 | Нет MCP-инструмента полного бэкапа БД | Агент не может сделать бэкап | Добавить `backup_db` / `restore_db` инструменты |
+| BP-D15-1 | D15 | ✅ Закрыто BN-7: нет MCP-инструмента полного бэкапа БД | Агент не мог сделать бэкап | Добавлены `backup_db` / `restore_db` (MCP + RPC): онлайн `serialize()` + SHA-256, логический restore через ATTACH/INSERT без закрытия соединения. Регрессия: `test-sqlite.mjs`, `test-integrations.mjs`, `test-tool-specs.mjs` |
 | BP-D16-1 | D16 | Сборка (`build` + `build:gui`) занимает много времени | Медленная CI | Инкрементальная сборка, кэширование |
 
 ### 7.3 Улучшения продукта (предложения из отчётов §9)
@@ -1018,15 +1021,15 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 
 ---
 
-## Приложение A. 59 RPC-методов (пользовательский контур GUI)
+## Приложение A. 61 RPC-методов (пользовательский контур GUI)
 
-`get_tasks`, `create_task`, `delete_task`, `run_task`, `run_mission`, `pause_task`, `resume_task`, `update_task`, `get_task_logs`, `get_history`, `get_metrics`, `get_dashboard_port`, `get_platform`, `dry_run`, `dry_run_all`, `pipeline_validate`, `pipeline_apply`, `pipeline_export`, `get_matrix_results`, `cancel_matrix`, `cleanup_matrix_orphans`, `cleanup_history`, `get_analytics`, `self_analysis`, `expand_matrix_preview`, `get_workspaces`, `add_workspace`, `update_workspace`, `delete_workspace`, `get_profiles`, `set_profile`, `create_profile`, `delete_profile`, `export_tasks`, `import_tasks`, `get_settings`, `save_settings`, `get_templates`, `save_template`, `delete_template`, `emit_event`, `test_notification`, `send_digest`, `list_secrets`, `save_secret`, `delete_secret`, `get_audit`, `list_dlq`, `retry_dlq`, `discard_dlq`, `list_durable_runs`, `pause_durable_run`, `resume_durable_run`, `list_approvals`, `decide_approval`, `compare_triage`, `get_shadow_report`, `reset_shadow_report`, `test_local_ai`.
+`get_tasks`, `create_task`, `delete_task`, `run_task`, `run_mission`, `pause_task`, `resume_task`, `update_task`, `get_task_logs`, `get_history`, `get_metrics`, `get_dashboard_port`, `get_platform`, `dry_run`, `dry_run_all`, `pipeline_validate`, `pipeline_apply`, `pipeline_export`, `get_matrix_results`, `cancel_matrix`, `cleanup_matrix_orphans`, `cleanup_history`, `get_analytics`, `self_analysis`, `expand_matrix_preview`, `get_workspaces`, `add_workspace`, `update_workspace`, `delete_workspace`, `get_profiles`, `set_profile`, `create_profile`, `delete_profile`, `export_tasks`, `import_tasks`, `get_settings`, `save_settings`, `get_templates`, `save_template`, `delete_template`, `emit_event`, `test_notification`, `send_digest`, `list_secrets`, `save_secret`, `delete_secret`, `get_audit`, `list_dlq`, `retry_dlq`, `discard_dlq`, `list_durable_runs`, `pause_durable_run`, `resume_durable_run`, `list_approvals`, `decide_approval`, `compare_triage`, `get_shadow_report`, `reset_shadow_report`, `test_local_ai`, `backup_db`, `restore_db`.
 
 ---
 
-## Приложение B. 32 MCP-инструмента (контур агента)
+## Приложение B. 34 MCP-инструмента (контур агента)
 
-`schedule_task`, `schedule_advanced`, `list_tasks`, `update_task`, `update_advanced`, `delete_task`, `run_task_now`, `pause_task`, `resume_task`, `get_history`, `get_task_logs`, `dry_run`, `manage_workspaces`, `matrix_control`, `get_metrics`, `get_analytics`, `self_analysis`, `manage_settings`, `manage_local_ai`, `manage_templates`, `manage_profiles`, `transfer_tasks`, `send_notification`, `get_dashboard_info`, `cleanup_history`, `manage_secrets`, `get_audit_log`, `pipeline_validate`, `pipeline_apply`, `pipeline_export`, `emit_event`, `report_bug`.
+`schedule_task`, `schedule_advanced`, `list_tasks`, `update_task`, `update_advanced`, `delete_task`, `run_task_now`, `pause_task`, `resume_task`, `get_history`, `get_task_logs`, `dry_run`, `manage_workspaces`, `matrix_control`, `get_metrics`, `get_analytics`, `self_analysis`, `manage_settings`, `manage_local_ai`, `manage_templates`, `manage_profiles`, `transfer_tasks`, `send_notification`, `get_dashboard_info`, `cleanup_history`, `manage_secrets`, `get_audit_log`, `pipeline_validate`, `pipeline_apply`, `pipeline_export`, `emit_event`, `report_bug`, `backup_db`, `restore_db`.
 
 ---
 

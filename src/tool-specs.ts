@@ -83,11 +83,13 @@ export function buildToolSpecs<T extends ToolSpec>(
 }
 
 /**
- * P-1.2/P-2.4/P-4.1: контрактный снимок имён всех 32 инструментов.
+ * P-1.2/P-2.4/P-4.1: контрактный снимок имён всех 34 инструментов.
  * Используется MCP/dsh-адаптерами и тестами паритета; порядок — порядок
  * регистрации в адаптере `src/index.ts`.
  */
 export const TOOL_NAMES = [
+  "backup_db",
+  "restore_db",
   "schedule_task",
   "schedule_advanced",
   "list_tasks",

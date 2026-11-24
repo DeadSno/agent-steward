@@ -510,6 +510,39 @@ const ImportTasksOutput = {
   required: ["success"],
 } as const;
 
+/** BN-7: онлайн-бэкап/восстановление БД (дублируются MCP-инструментами). */
+const BackupDbInput = {
+  type: "object" as const,
+  properties: {
+    file: { type: "string" },
+  },
+  additionalProperties: false,
+} as const;
+
+const BackupDbOutput = {
+  type: "object" as const,
+  properties: {
+    success: { type: "boolean" },
+    file: { type: "string" },
+    bytes: { type: "number" },
+    sha256: { type: "string" },
+    error: { type: "string" },
+  },
+  required: ["success"],
+} as const;
+
+const RestoreDbInput = {
+  type: "object" as const,
+  properties: {
+    file: { type: "string" },
+    sha256: { type: "string" },
+  },
+  required: ["file"],
+  additionalProperties: false,
+} as const;
+
+const RestoreDbOutput = BackupDbOutput;
+
 const GetSettingsInput = {
   type: "object" as const,
   properties: {},
@@ -2149,6 +2182,8 @@ export const SchedulerRpc = Rpc.define({
     delete_profile: { input: DeleteProfileInput, output: DeleteProfileOutput },
     export_tasks: { input: ExportTasksInput, output: ExportTasksOutput },
     import_tasks: { input: ImportTasksInput, output: ImportTasksOutput },
+    backup_db: { input: BackupDbInput, output: BackupDbOutput },
+    restore_db: { input: RestoreDbInput, output: RestoreDbOutput },
     get_settings: { input: GetSettingsInput, output: GetSettingsOutput },
     save_settings: { input: SaveSettingsInput, output: SaveSettingsOutput },
     get_templates: { input: GetTemplatesInput, output: GetTemplatesOutput },

@@ -49,7 +49,7 @@ Want to see it without installing OpenCode? `node scripts/demo-dashboard.mjs` st
 | Multi-repo | workspaces with path validation, per-workspace runs, matrix over one parent task |
 | Observability | SQLite history (success / error / timeout / partial / running), metrics (duration, tokens, cost), JSONL run logs with `/api/logs`, Prometheus `/metrics`, OTLP export, per-task logs, local web dashboard with 14-day analytics, history retention and CSV/JSON export |
 | Operations | dry-run preview, export/import JSON, templates, multi-channel notifications (webhook, Telegram, native OS toasts), quiet hours, digest, encrypted secrets (`${secret:NAME}`), audit log, settings |
-| Interfaces | OpenCode GUI panel, web dashboard, 32 agent tools, built-in agent skill |
+| Interfaces | OpenCode GUI panel, web dashboard, 34 agent tools, built-in agent skill |
 
 ### Language
 
@@ -127,7 +127,7 @@ npm run build && npm run build:gui
 
 ## Agent tools
 
-The agent gets the full feature set — 32 tools covering scheduling, pipelines, operations, observability and administration:
+The agent gets the full feature set — 34 tools covering scheduling, pipelines, operations, observability and administration:
 
 | Tool | Arguments | What it does |
 |---|---|---|
@@ -143,6 +143,8 @@ The agent gets the full feature set — 32 tools covering scheduling, pipelines,
 | `get_history` | `taskName?`, `status?`, `limit?` | Recent runs with duration, tokens, cost, model, quality gate and hooks |
 | `get_task_logs` | `name` or `taskName`, `lines?` | Tail of the run log |
 | `dry_run` | `name?` | Simulates a pipeline (or every task): order, DAG, matrix fan-out, estimates |
+| `backup_db` | `file?` | Online SQLite snapshot to `<db>.backup` with SHA-256 checksum and size |
+| `restore_db` | `file`, `sha256?` | Restores a verified snapshot in place without closing the dashboard connection |
 | `manage_workspaces` | `action`, `id?`, `name?`, `path?`, `color?` | Multi-repo workspaces: list, add, update, delete |
 | `matrix_control` | `action`, `name?` | Matrix results, cancel pending clones, clean up orphans, preview clones |
 | `get_metrics` | — | Aggregate runs, successes and failures |

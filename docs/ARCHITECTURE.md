@@ -381,7 +381,7 @@ avg_cost / avg_time / last_10_runs`. Обучается на исходах ге
 
 | Path | Role |
 | --- | --- |
-| `src/index.ts` | Plugin lifecycle, 32 agent tools (filtered by tool profile), 59 RPC handlers, task CRUD, view assembly; `dry_run`, `compact` history and short core-tool schemas |
+| `src/index.ts` | Plugin lifecycle, 34 agent tools (filtered by tool profile), 61 RPC handlers, task CRUD, view assembly; `dry_run`, `compact` history and short core-tool schemas |
 | `src/core/tool-profile.ts` | Tool profiles `core` (8 read/control tools), `admin` (+8 advanced/manage tools), `all` (full 32); `AGENT_STEWARD_TOOL_PROFILE` selects the surface |
 | `src/rpc.ts` | JSON-schema contracts for every RPC method |
 | `src/gui.tsx` | OpenCode sidebar panel (SolidJS, built to `gui-experimental.cjs`) |
@@ -922,9 +922,9 @@ resume preparation, rejection of a repeated resume, end-to-end comment delivery 
 
 | Interface | Audience | Entry point |
 | --- | --- | --- |
-| Agent tools | AI agent | 32 tools registered via `ctx.tool.transform` |
+| Agent tools | AI agent | 34 tools registered via `ctx.tool.transform` |
 | Agent skill | AI agent | `skills/scheduled-job-best-practices` |
-| RPC | Sidebar GUI | `src/rpc.ts` contracts, 59 methods |
+| RPC | Sidebar GUI | `src/rpc.ts` contracts, 61 methods |
 | Sidebar GUI | Human | `gui-experimental.cjs` |
 | Web dashboard | Human | `startDashboardServer` (localhost, random/fixed port) |
 

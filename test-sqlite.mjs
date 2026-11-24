@@ -90,6 +90,8 @@ const assert = (cond, msg) => {
 const { initDb, closeDb, getDb, getDbFile, isDatabaseEmpty, getDbStatus } =
   await import("./dist/db/index.js");
 const { migrateJsonToDb } = await import("./dist/db/migrate.js");
+const { backupDatabase, restoreDatabase, verifyDbBackup, defaultBackupPath } =
+  await import("./dist/db/backup.js");
 const { recoverInterruptedRuns } = await import("./dist/db/recovery.js");
 const tasksRepo = await import("./dist/db/tasks-repo.js");
 const historyRepo = await import("./dist/db/history-repo.js");
@@ -476,6 +478,53 @@ const p15Analytics = buildAnalytics(
 assert(
   p15Analytics.errors.length === 1 && p15Analytics.errors[0].message === "(без текста)",
   "QA-P1.5: '-' не попадает в топ ошибок аналитики"
+);
+
+// --- 8. BN-7: онлайн-бэкап/восстановление всей БД ----------------------
+const backupPath = path.join(tempRoot, "scheduler.backup.db");
+const backup = backupDatabase(backupPath);
+assert(
+  backup.success &&
+    backup.bytes > 0 &&
+    /^[a-f0-9]{64}$/.test(backup.sha256 || "") &&
+    fs.existsSync(backupPath),
+  "BN-7: backup_db создаёт файл с SHA-256"
+);
+assert(defaultBackupPath().endsWith(".backup"), "BN-7: путь бэкапа по умолчанию <db>.backup");
+const verified = verifyDbBackup(backupPath, backup.sha256);
+assert(
+  verified.ok && verified.sha256 === backup.sha256,
+  "BN-7: контрольная сумма бэкапа подтверждается"
+);
+
+const tasksBeforeBackup = tasksRepo.countTasks();
+tasksRepo.saveTask({ name: "After Backup", schedule: "0 4 * * *", prompt: "probe" });
+assert(
+  tasksRepo.countTasks() === tasksBeforeBackup + 1,
+  "BN-7: после бэкапа БД изменилась (проверка восстановления)"
+);
+const restored = restoreDatabase(backupPath, backup.sha256);
+assert(
+  restored.success && restored.sha256 === backup.sha256,
+  "BN-7: restore_db восстанавливает снимок с той же контрольной суммой"
+);
+assert(
+  tasksRepo.countTasks() === tasksBeforeBackup,
+  "BN-7: после восстановления данные вернулись к моменту бэкапа"
+);
+
+const corruptPath = path.join(tempRoot, "corrupt.backup.db");
+fs.writeFileSync(corruptPath, "not a sqlite backup", "utf8");
+const badRestore = restoreDatabase(corruptPath, "0".repeat(64));
+assert(
+  !badRestore.success && /SHA-256|совпал/i.test(badRestore.error || ""),
+  "BN-7: restore_db отклоняет файл с неверной контрольной суммой"
+);
+
+const healthAfterRestore = await (await fetch(base + "/api/health")).json();
+assert(
+  healthAfterRestore.db && healthAfterRestore.db.engine === "sqlite",
+  "BN-7: дашборд отвечает после restore — соединение не закрывалось"
 );
 
 await closeDashboardServer();

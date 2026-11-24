@@ -26,7 +26,7 @@ const dsh = await import("agent-steward/dsh");
 check("P-5.3: ./core даёт createRuntime/createToolSpecs/TOOL_NAMES", () => {
   assert.equal(typeof core.createRuntime, "function");
   assert.equal(typeof core.createToolSpecs, "function");
-  assert.equal(core.TOOL_NAMES.length, 32);
+  assert.equal(core.TOOL_NAMES.length, 34);
 });
 check("P-5.3: ./mcp даёт createMcpServer/startMcpServer", () => {
   assert.equal(typeof mcp.createMcpServer, "function");

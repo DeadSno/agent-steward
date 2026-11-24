@@ -551,6 +551,32 @@ const disabled = await fetch(`${disabledBase}/api/hooks/hook-task?token=${encode
 assert(disabled.status === 403, "выключенные hooks -> 403");
 await closeDashboardServer();
 
+// --- 9. BN-7: MCP- и RPC-инструменты полного бэкапа БД -----------------
+const { createToolSpecs } = await import("./dist/index.js");
+const { TOOL_NAMES } = await import("./dist/tool-specs.js");
+const { SchedulerRpc } = await import("./dist/rpc.js");
+const allSpecs = createToolSpecs({}, { AGENT_STEWARD_TOOL_PROFILE: "all" });
+assert(
+  allSpecs.some((spec) => spec.name === "backup_db") &&
+    allSpecs.some((spec) => spec.name === "restore_db") &&
+    TOOL_NAMES.includes("backup_db") &&
+    TOOL_NAMES.includes("restore_db"),
+  "BN-7: backup_db/restore_db зарегистрированы как MCP-инструменты"
+);
+assert(
+  Object.keys(SchedulerRpc.methods).includes("backup_db") &&
+    Object.keys(SchedulerRpc.methods).includes("restore_db"),
+  "BN-7: backup_db/restore_db доступны и через RPC (GUI)"
+);
+const backupSource = fs.readFileSync(new URL("./dist/db/backup.js", import.meta.url), "utf8");
+assert(
+  backupSource.includes("serialize()") &&
+    backupSource.includes("ATTACH DATABASE") &&
+    backupSource.includes("BEGIN IMMEDIATE") &&
+    backupSource.includes("createHash"),
+  "BN-7: онлайн-снимок, логический restore и проверка SHA-256 присутствуют в реализации"
+);
+
 closeDb();
 try {
   fs.rmSync(tempRoot, { recursive: true, force: true });

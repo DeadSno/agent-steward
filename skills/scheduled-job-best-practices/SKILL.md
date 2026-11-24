@@ -49,8 +49,8 @@ one-minute OS poll with a schedule gate (QV-10); a yearly cron is native
 
 **Child runs (QV-8):** the wrapper exports `AGENT_STEWARD_CHILD_RUN=1`, so the
 plugin skips V2/V1 registration in the child process. The parent exposes
-32 tools, the child sees 0 — this is intentional, not a missing tool. A scheduled
-agent must not see the same 32 tools recursively and race the parent for the
+34 tools, the child sees 0 — this is intentional, not a missing tool. A scheduled
+agent must not see the same 34 tools recursively and race the parent for the
 dashboard port.
 
 **Names (PL-9.1):** letters, digits, space, dot, underscore and ASCII hyphen are
