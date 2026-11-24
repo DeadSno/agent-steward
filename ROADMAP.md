@@ -35,10 +35,12 @@ Legacy: `opencode-windows-scheduler@1.5.8`.
 **Задача X-4 — Dependabot** · P2 · ⏸️
 - [ ] X-4.1 Мерж #4 (plugin 2.3.0)
 - [ ] X-4.2 OpenTUI 0.9.0
+  > Блокировка (2026-11-24): PR #4 открыт (base `main` отстаёт от `dev` на 138 коммитов, head `89c2b89`), но в CI 2 из 10 джобов отменены (macOS, node 22/24) — по `docs/RELEASE-RUNBOOK.md` при незелёном CI мерж запрещён. `gh` CLI и `GH_TOKEN` отсутствуют; обновление OpenTUI 0.9.0 по runbook разрешено только после зелёного PR #4.
 
 **Задача X-5 — Теги/релизы/версии** · P2 · ⏸️
 - [ ] X-5.1 Привести теги к существующим релизам
 - [ ] X-5.2 GitHub release для каждого тега
+  > Блокировка (2026-11-24): нет `gh` CLI и `GH_TOKEN`, а runbook требует явного одобрения на `git push --tags` / `gh release create`. Расхождение по факту: npm-версии `0.0.0-stage` и `0.0.1` без тегов; теги `v0.0.2`, `v1.0.0`, `v1.5.1`, `v1.5.2` без GitHub release. Новая запись — в `CHANGELOG.md`.
 
 > Внешние действия X-* не выполнялись автоматически: пошаговый runbook —
 > [docs/RELEASE-RUNBOOK.md](./docs/RELEASE-RUNBOOK.md), факт выполнения — [reports/S3-D37-external.md](./reports/S3-D37-external.md).
