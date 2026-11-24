@@ -170,8 +170,12 @@ check(
 check(
   "BN-3: обе обёртки ротируют лог перед маркером Run started",
   psSource.includes("Invoke-TaskLogRotation") &&
-    psSource.indexOf("Invoke-TaskLogRotation -Path") < psSource.indexOf("=== Run started") &&
-    bashSource.indexOf("Log rotated (size limit)") < bashSource.indexOf("=== Run started") &&
+    // QW-7 добавил комментарий со строкой «=== Run started» раньше ротации —
+    // ищем именно место записи маркера, а не первое упоминание в комментарии.
+    psSource.indexOf("Invoke-TaskLogRotation -Path") <
+      psSource.indexOf('Add-Content -Path $LogFile -Value ("[agent-steward] === Run started') &&
+    bashSource.indexOf("Log rotated (size limit)") <
+      bashSource.indexOf("=== Run started %s (%s)") &&
     psSource.includes(TASK_LOG_TRIM_MARKER),
 );
 
