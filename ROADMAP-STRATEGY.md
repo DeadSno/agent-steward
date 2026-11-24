@@ -1,6 +1,6 @@
 # 🎯 Стратегический роадмап — agent-steward
 
-> Цель: **стать лучшим фреймворком-супервизором для OpenCode, оставаясь бесплатным и open source.**  
+> Цель: **стать лучшим фреймворком по работе с агентами — супервизором для OpenCode и других харнессов, оставаясь бесплатным и open source.**  
 > North Star: [docs/CONCEPT.md](./docs/CONCEPT.md) — верифицируемая локально-первая оркестрация агент-задач.  
 > Тактический спринт-план — в [ROADMAP.md](./ROADMAP.md), выпущенные изменения — в [CHANGELOG.md](./CHANGELOG.md).
 
@@ -27,7 +27,7 @@ Scheduler, уведомления, аналитика — триггеры и о
 - Опубликован в npm, CI зелёный на Windows / macOS / Linux
 - `plugin id` не меняется: `opencode-windows-scheduler` — имена SQLite/логов и ID действий TUI без изменений; каталог данных — `agent-steward` (legacy мигрирует автоматически)
 - Dual-support: один пакет работает с OpenCode V1 (≥ 1.18.29) и V2 (≥ 2.2.7)
-- 32 инструментов агента ↔ 59 RPC-методов — паритет surface (счётчики сверены с кодом; DS-3.3)
+- 34 инструментов агента ↔ 61 RPC-методов — паритет surface (счётчики сверены с кодом; DS-3.3)
 - Локальный триаж + shadow mode, `manage_local_ai`, блок настроек в GUI — есть
 - Одноразовые запуски, непрерывность сессий, профили, webhooks, Telegram и нативные toast, тихие часы, Prometheus и OTLP — есть
 - Зашифрованные секреты (`${secret:NAME}`) и журнал аудита — есть
@@ -37,6 +37,21 @@ Scheduler, уведомления, аналитика — триггеры и о
 **Выпущено в 0.0.5:** pipeline-as-code (`opencode.pipeline.yaml`: парсер, валидатор, CLI `validate|apply|export`, 3 инструмента, 51 тест) и worktree-изоляция с guard-условиями.
 
 **Чего ещё нет в релизе:** Docker-runner и remote runners (код `src/core/runner*.ts` есть, но не подключён к execution-loop), capability-карта с LoRA-адаптерами. Approvals, изоляция окружений, артефакты и четвёртая локаль `tr` уже реализованы (CHANGELOG A-1…A-5).
+- P-1/P-2 в dev-линии частично реализованы (subpath exports, `src/mcp.ts`), но ещё не зафиксированы в релизе; P-1 считается незакрытой до фиксации регрессии `test-watch-paths.mjs`.
+
+---
+
+## Решение 24.11.2026: стратегический клин
+
+Три варианта из внешнего анализа — не конкуренты, а три входа в одну дверь. Разница лишь в том, где стоит пользователь: в репозитории, в GUI или в чужом агенте.
+
+| Вариант | Что уже есть | Почему не отдельный путь | Куда ведёт |
+|---------|--------------|--------------------------|------------|
+| GitOps для AI-агентов | pipeline-as-code, CLI `validate/apply/export`, 0.0.5 | Уже сдан; дальше — только Spec (S-1) и CLI-алиас (P-2.3) | Язык описания запусков |
+| Локальный Control Plane | GUI, DAG, durable runs, RPC, budgets | Требует того же слоя исполнения; без него — дашборд над cron | P-1 → P-3, `AgentInvoker` |
+| MCP-нативный оркестратор | Реестр инструментов, subpath exports в dev-линии | Это дистрибуция ядра, а не ядро; без гейта/учёта — просто MCP-сервер | P-2, `agent-steward mcp` |
+
+**Выбор:** P-1 (изоляция ядра) → P-2 (MCP-адаптер, ~80% ценности) → P-3 (универсальный `harness`), P-4/P-5 в бэклог P3. Суть — `agent-steward/core`: объективный hard-гейт, savings-ledger, capability-роутинг с `first_pass_rate` и flywheel. Дистрибуция — `agent-steward mcp` + subpath exports. Детали и новые ставки — [ROADMAP.md](./ROADMAP.md), детали 3.18/3.19.
 
 ---
 
@@ -57,6 +72,8 @@ Scheduler, уведомления, аналитика — триггеры и о
 Спринт 38 (Approvals, окружения, артефакты) закрыт: A-1/A-2/A-3/A-5 реализованы и зафиксированы в CHANGELOG; A-4 — runbook docs-сайта (деплой внешним действием). Спринты 32 (Pipeline-as-code) и 36 (Durable DAG) выпущены в 0.0.5 / 0.0.3–0.0.4 (см. CHANGELOG). Абстракция исполнителя остаётся частичной: `runner*.ts`/`agents*.ts` есть в коде, но не подключены к `index.ts`/execution-loop (см. DS-4 в ARCHITECTURE.md).
 
 Конкретные шаги (P-1…P-5) — в [ROADMAP.md](./ROADMAP.md), Деталь 3.9: изоляция ядра → MCP-адаптер (`agent-steward mcp`, ~80% ценности) → `AgentInvoker` + поле `harness` → нативный dsh-плагин → `agent-steward serve`. Один пакет с subpath exports `./core` / `./mcp` / `./dsh`, без монорепо. Экосистема 2026: Cursor / VS Code / IDEA — MCP-клиенты (IDEA — встроенный MCP Server с 2025.2), DeepSeek Harness — Cordis-платформа (`ctx.tools` / `ctx.jobs`, developer preview), ACP — в первую очередь транспорт исполнения. Адаптер OpenCode остаётся неизменным, dual-export V1/V2 не ломается.
+
+Приоритет 24.11.2026: сначала закрыть изоляцию ядра (P-1), затем MCP-адаптер (P-2), затем универсальный `harness` (P-3); P-4/P-5 — бэклог P3. Конкретные задачи — [ROADMAP.md](./ROADMAP.md), детали 3.18/3.19.
 
 ### Этап 3: универсальный фреймворк оркестрации (долгосрочно, 0.2.x+)
 
@@ -172,6 +189,8 @@ Enforced `allowedTools` / `deniedTools` вместо advisory, scoped-инъек
 | Secrets / audit | ✅ | ✅ | ✅ |
 | Git-триггеры | ✅ | ✅ | ✅ |
 | Pipeline-as-code | ✅ (0.0.5) | ✅ | ✅ |
+| MCP-адаптер (`agent-steward mcp`) | 🚧 наработки в dev-линии | ✅ в релизе | ✅ |
+| Subpath exports `./core` / `./mcp` | 🚧 | ✅ | ✅ |
 | Docker runner | 🚧 код есть, не подключён | 🚧 | ✅ |
 | Загрузки npm / мес | первые | 300+ | 1500+ |
 | GitHub stars | единицы | 100+ | 500+ |
@@ -187,15 +206,17 @@ Enforced `allowedTools` / `deniedTools` вместо advisory, scoped-инъек
 | Bus factor = 1 | >5 issues без ответа | Сузить scope, заморозить P3, искать мейнтейнеров |
 | API OpenCode v2 меняется | Breaking change в `@opencode/plugin` | Держать адаптер, следить за релизами, CI ловит первым |
 | Новые харнессы меняют MCP/dsh API | Breaking change в `@modelcontextprotocol/server` или dsh | Тонкие адаптеры + контракт-тест 32 инструментов ловят первыми; версию dsh пинить |
+| P-2 без закрытого P-1 | MCP-адаптер поверх OpenCode-зависимого ядра | Не выпускать до P-1; контракт-тест `./core` |
+| Нет спроса на MCP | Нет подключений из Cursor / VS Code / IDEA за 2 мес | Оставить MCP дистрибуцией, сместить фокус на `./core` и рецепты |
 | Расползание scope | Спринт длиннее 2 недель | Резать на вертикальные срезы, P3 — в бэклог |
 
 ---
 
 ## Ближайшие две недели
 
-1. Durable DAG (0.0.3–0.0.4, закрыт) — 36.1–36.8 выполнены и выпущены: state-машина, resume, идемпотентность, DLQ, роутер.
-2. Pipeline-as-code (0.0.5) — спецификация формата, парсер, CLI — выпущено.
-3. Worktree-изоляция (выпущена в 0.0.5) и экономика v2 (0.0.7) — после релиза Pipeline-as-code.
+1. P-1 — закрыть изоляцию ядра: регрессия `test-watch-paths.mjs`, публичный facade `./core`, контракт-тесты и `npm pack --dry-run`.
+2. P-2 — выпустить `agent-steward mcp` как стабильную точку входа, описать MCP-протокол и добавить CLI-алиас `agent-steward apply -f pipeline.yaml`.
+3. Подготовить P-3 — контракт `AgentInvoker` + поле `harness`, затем подключить `runner*.ts`/`agents*.ts` к execution-loop (DS-4).
 
 **Критерий месяца:** пользователь ставит плагин одной командой, получает уведомление в Telegram о падении задачи, токены и доступы не лежат открытым текстом в `tasks.json`, а интерфейс говорит на его языке.
 

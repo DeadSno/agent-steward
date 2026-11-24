@@ -10,8 +10,8 @@
 > **В ROADMAP только открытые задачи.** Закрытые задачи и подзадачи удаляются отсюда
 > и фиксируются в [CHANGELOG.md](./CHANGELOG.md) — больше нигде.
 >
-> **Нумерация.** Нумерация сохранена для преемственности ссылок: первая открытая
-> деталь — 3.9, следующий раздел — 4.
+> **Нумерация.** Нумерация сохранена для преемственности ссылок: открытые детали —
+> 3.14, 3.15, 3.16, 3.17 и новые стратегические 3.18/3.19; следующий раздел — 4.
 
 Текущая версия: **agent-steward 0.0.7** (24.11.2026).
 Legacy: `opencode-windows-scheduler@1.5.9`.
@@ -21,6 +21,8 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 - Устройство и возможности — [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md), [docs/FEATURES.md](./docs/FEATURES.md).
 
 Обозначения: ⬜ не начато · 🔄 в работе · ⏸️ внешнее действие.
+
+> **Стратегический клин (24.11.2026).** Три варианта — GitOps для агентов, локальный Control Plane и MCP-нативный оркестратор — не альтернативы, а три входа в одну дверь: GitOps уже сдан в 0.0.5 (pipeline-as-code), а Control Plane и MCP упираются в один и тот же слой исполнения. Жёсткий порядок: **P-1 (изоляция ядра) → P-2 (MCP-адаптер, ~80% ценности) → P-3 (универсальный `harness`)**; P-4/P-5 — бэклог P3. Суть (moat) — `agent-steward/core`: объективный гейт, savings-ledger, capability-роутинг с `first_pass_rate` и flywheel; дистрибуция — `agent-steward mcp` + subpath exports. Детали — 3.18 и 3.19.
 
 ---
 
@@ -166,6 +168,44 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 - [ ] QW-14.3 `sanitizeName`: CJK-коллизии, `one-shot`: секунды и MMM из Intl
 - [ ] QW-14.4 Доки: tr-locale vs «три языка», `AGENTS.md` счётчики, `COMPATIBILITY` 1.19.6, MIGRATION/FAQ/SAFETY, релизные теги, `index.js`/dev-скрипты в тарболе, lint-промпт pipeline
 - [ ] QW-14.5 Опровергнутые пункты Qwen и дубли зафиксировать в CHANGELOG
+
+---
+
+## Деталь 3.18 — Стратегический клин: портабельность (24.11.2026)
+`src/core/*`, `src/tool-specs.ts`, `src/mcp.ts`, `src/core-entry.ts`, `src/core/execution*`, `package.json`
+
+> P-1 в dev-линии частично реализован (subpath exports `./core` / `./mcp` / `./dsh`, `src/mcp.ts`), но в релизе ещё не зафиксирован. Жёсткий порядок: P-1 → P-2 → P-3; P-2 без закрытого P-1 не начинать.
+
+**Задача P-1 — изоляция ядра** · P1 · 🔄
+- [ ] P-1.1 Закрыть регрессию `test-watch-paths.mjs`: обработчик перенесён в `src/runtime.ts`, тест всё ещё ищет литерал в `src/index.ts`; обновить проверку под новый путь, не возвращая код назад
+- [ ] P-1.2 Зафиксировать публичный facade `./core` без утечки OpenCode-контекста
+- [ ] P-1.3 Регрессия: `test-portability-exports.mjs`, `npm pack --dry-run`, CI на 3 ОС
+
+**Задача P-2 — MCP-адаптер (~80% ценности клина)** · P1 · ⬜
+- [ ] P-2.1 Выпустить `agent-steward mcp` как стабильную точку входа (stdio MCP, полный реестр инструментов)
+- [ ] P-2.2 Документация MCP-протокола: подключение в Cursor / VS Code / IDEA, ресурс SKILL.md, ограничения
+- [ ] P-2.3 CLI-алиас `agent-steward apply -f pipeline.yaml` для GitOps-пути
+
+**Задача P-3 — AgentInvoker и `harness`** · P1 · ⬜
+- [ ] P-3.1 Ввести контракт `AgentInvoker` и поле `harness` в спецификации задачи
+- [ ] P-3.2 Подключить `runner*.ts` / `agents*.ts` к execution-loop (разрыв DS-4)
+- [ ] P-3.3 Контракт-тест: смена харнесса без правки ядра
+
+**Задача P-4/P-5 — нативный dsh и `serve`** · P3 · ⬜ · бэклог
+- [ ] P-4.1 Нативный dsh-адаптер поверх `AgentInvoker`
+- [ ] P-5.1 `agent-steward serve` как универсальная точка входа
+
+---
+
+## Деталь 3.19 — Новые ставки поверх клина (24.11.2026)
+`docs/*`, `src/core/*`, `package.json`
+
+- [ ] S-1 Открытый spec pipeline (`opencode.pipeline.yaml` → общее описание DAG/гейтов/бюджетов)
+- [ ] S-2 Subpath `./router`: capability-роутинг с `first_pass_rate` и flywheel-обучением
+- [ ] S-3 Reliability scorecard: публичная метрика объективных гейтов и сэкономленных токенов
+- [ ] S-4 Библиотека рецептов: gate-passed примеры вместо «примеров ради примеров»
+- [ ] S-5 Верифицированный чат: ответ только с проверкой через гейт/источник
+- [ ] S-6 Scaffolding проекта из gate-passed рецептов одной командой
 
 ---
 
