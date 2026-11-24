@@ -29,7 +29,11 @@ const settingsModule = await import("./dist/settings.js");
 const dbModule = await import("./dist/db/index.js");
 const { t } = await import("./dist/i18n.js");
 
-const { notifyTaskCompletion } = notifications;
+const {
+  notifyTaskCompletion,
+  flushNotificationBatch,
+  getPendingNotificationBatchSize,
+} = notifications;
 
 let passed = 0;
 let failed = 0;
@@ -203,7 +207,76 @@ await withWebhook({}, async (calls) => {
   );
 });
 
+// 9. BN-4: лимит items сбрасывает сводку раньше таймера
+await withWebhook(
+  { batch: { enabled: true, windowSeconds: 30, maxItems: 3 } },
+  async (calls) => {
+    for (const name of ["BN4-Alpha", "BN4-Beta", "BN4-Gamma"]) {
+      await notifyTaskCompletion(name, "success", 1000, null, 0, 0, {
+        asyncTriage: false,
+      });
+    }
+    check("batch #9: три уведомления — одна сводка", calls.length === 1);
+    check(
+      "batch #9: сводка содержит счётчик и все задачи",
+      calls[0]?.text?.includes("Batch summary (3)") &&
+        calls[0]?.text?.includes("BN4-Alpha") &&
+        calls[0]?.text?.includes("BN4-Beta") &&
+        calls[0]?.text?.includes("BN4-Gamma")
+    );
+    check(
+      "batch #9: буфер опустошён после сброса",
+      getPendingNotificationBatchSize() === 0
+    );
+  }
+);
+
+// 10. BN-4: гарантированный сброс до истечения окна
+await withWebhook(
+  { batch: { enabled: true, windowSeconds: 60, maxItems: 10 } },
+  async (calls) => {
+    await notifyTaskCompletion("BN4-Delta", "error", 1000, "boom", 0, 0, {
+      asyncTriage: false,
+    });
+    await notifyTaskCompletion("BN4-Epsilon", "success", 1000, null, 0, 0, {
+      asyncTriage: false,
+    });
+    check("batch #10: до сброса доставок нет", calls.length === 0);
+    check(
+      "batch #10: два уведомления накоплены в буфере",
+      getPendingNotificationBatchSize() === 2
+    );
+    const ok = await flushNotificationBatch();
+    check(
+      "batch #10: flushNotificationBatch доставил сводку",
+      ok === true &&
+        calls.length === 1 &&
+        calls[0]?.text?.includes("Batch summary (2)") &&
+        calls[0]?.text?.includes("BN4-Delta") &&
+        calls[0]?.text?.includes("BN4-Epsilon")
+    );
+    check(
+      "batch #10: повторный flush ничего не отправляет",
+      (await flushNotificationBatch()) === false && calls.length === 1
+    );
+  }
+);
+
+// 11. BN-4: значения по умолчанию и нормализация настроек
+await withWebhook({}, async () => {
+  const settings = await settingsModule.loadSettings();
+  check(
+    "batch #11: дефолты выключены, окно 30 с, лимит 10",
+    settings.notifications.batch?.enabled === false &&
+      settings.notifications.batch?.windowSeconds === 30 &&
+      settings.notifications.batch?.maxItems === 10
+  );
+});
+
 // --- Очистка ----------------------------------------------------------------
+try {
+  await flushNotificationBatch();
+} catch (_) {}
 try {
   await dbModule.closeDb();
 } catch (_) {}

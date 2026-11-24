@@ -5,6 +5,7 @@ import {
   type DigestSettings,
   type NotificationFilters,
   type NotificationSettings,
+  type NotificationBatchSettings,
   type NotificationTemplates,
   isShadowActive,
   type TriageSettings,
@@ -500,6 +501,116 @@ async function deliver(config: NotificationSettings, message: string): Promise<b
   const results = await deliverDetailed(config, message);
   return results.some((item) => item.ok);
 }
+
+/**
+ * BN-4: батчинг уведомлений при высокой частоте запусков.
+ *
+ * Уведомления, прошедшие rule-based/embedding-дедуп, попадают в короткое
+ * окно и доставляются одной сводкой вместо N отдельных сообщений. Таймер
+ * unref'ен, поэтому не держит процесс; полная гарантия сброса — через
+ * `flushNotificationBatch()` и обработчик `beforeExit`.
+ */
+interface PendingBatchItem {
+  text: string;
+  taskName: string;
+  status: string;
+}
+
+const DEFAULT_BATCH_SETTINGS: NotificationBatchSettings = {
+  enabled: false,
+  windowSeconds: 30,
+  maxItems: 10,
+};
+
+let pendingBatch: PendingBatchItem[] = [];
+let pendingBatchConfig: NotificationSettings | null = null;
+let batchTimer: NodeJS.Timeout | null = null;
+let batchWindowMs = DEFAULT_BATCH_SETTINGS.windowSeconds * 1000;
+let batchMaxItems = DEFAULT_BATCH_SETTINGS.maxItems;
+
+/** Текущее число накопленных уведомлений (для диагностики и тестов). */
+export function getPendingNotificationBatchSize(): number {
+  return pendingBatch.length;
+}
+
+/**
+ * Сбрасывает накопленную сводку синхронно по отношению к вызвавшему:
+ * возвращает Promise доставки. Повторный вызов без(items) — no-op.
+ */
+export async function flushNotificationBatch(): Promise<boolean> {
+  if (batchTimer) {
+    clearTimeout(batchTimer);
+    batchTimer = null;
+  }
+  if (pendingBatch.length === 0 || !pendingBatchConfig) return false;
+  const items = pendingBatch;
+  const config = pendingBatchConfig;
+  pendingBatch = [];
+  pendingBatchConfig = null;
+  const lines = items.map(
+    (item, index) => `${index + 1}) ${item.taskName} — ${item.status}: ${item.text}`,
+  );
+  const message = `[agent-steward] Batch summary (${items.length}):\n${lines.join("\n")}`;
+  try {
+    return await deliver(config, message);
+  } catch (err) {
+    console.error(
+      `[agent-steward] Не удалось отправить сводку уведомлений: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+    return false;
+  }
+}
+
+/**
+ * Тестовая/сервисная настройка батча. Позволяет задать короткое окно и
+ * лимит, не перезаписывая settings.json; enabled=false сбрасывает состояние.
+ */
+export function configureNotificationBatch(
+  enabled: boolean,
+  windowSeconds = DEFAULT_BATCH_SETTINGS.windowSeconds,
+  maxItems = DEFAULT_BATCH_SETTINGS.maxItems,
+): void {
+  batchWindowMs = Math.max(1, Math.min(300, Math.floor(windowSeconds))) * 1000;
+  batchMaxItems = Math.max(2, Math.min(100, Math.floor(maxItems)));
+  if (!enabled) {
+    void flushNotificationBatch();
+  }
+}
+
+/** Планирует сброс сводки по таймеру (без block'а event loop). */
+function scheduleBatchFlush(): void {
+  if (batchTimer) return;
+  batchTimer = setTimeout(() => {
+    batchTimer = null;
+    void flushNotificationBatch();
+  }, batchWindowMs);
+  batchTimer.unref?.();
+}
+
+/**
+ * Кладёт уведомление в сводку. При достижении лимита сброс ожидается —
+ * вызывающий может быть короткоживущим CLI-процессом record-history.
+ */
+async function enqueueNotificationBatch(
+  config: NotificationSettings,
+  item: PendingBatchItem,
+): Promise<boolean> {
+  pendingBatchConfig = config;
+  pendingBatch.push(item);
+  scheduleBatchFlush();
+  if (pendingBatch.length >= batchMaxItems) {
+    return await flushNotificationBatch();
+  }
+  return true;
+}
+
+// Гарантированный сброс при завершении короткоживущего процесса
+// (record-history / CLI), где таймер может не успеть сработать.
+process.on?.("beforeExit", () => {
+  if (pendingBatch.length > 0) void flushNotificationBatch();
+});
 
 /** E-1.3: окно дедупа бюджетного алерта — не чаще одного раза в сутки. */
 const BUDGET_ALERT_WINDOW_MINUTES = 24 * 60;
@@ -1071,6 +1182,19 @@ export async function notifyTaskCompletion(
           dedupCount,
         );
       }
+    }
+    // BN-4: при включённом батчинге отдельные сообщения заменяются одной
+    // сводкой. Важные статусы тоже батчатся, но окно короткое (по умолчанию
+    // 30 с), а достигший лимита items сбрасывает сводку немедленно.
+    if (config.batch?.enabled) {
+      batchWindowMs = config.batch.windowSeconds * 1000;
+      batchMaxItems = config.batch.maxItems;
+      await enqueueNotificationBatch(config, {
+        text: finalMessage,
+        taskName,
+        status,
+      });
+      return;
     }
     await deliver(config, finalMessage);
   } catch (err: unknown) {

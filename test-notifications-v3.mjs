@@ -487,6 +487,36 @@ check(
     updated.notifications.quietHours?.from === "23:00"
 );
 
+// --- 5. BN-4: батчинг уведомлений (статические гурды) ---------------------
+const notificationsSource = fs.readFileSync(
+  new URL("./src/notifications.ts", import.meta.url),
+  "utf8"
+);
+const settingsSource = fs.readFileSync(
+  new URL("./src/settings.ts", import.meta.url),
+  "utf8"
+);
+check(
+  "BN-4: flush/накопление определены в notifications.ts",
+  notificationsSource.includes("export async function flushNotificationBatch") &&
+    notificationsSource.includes("function enqueueNotificationBatch") &&
+    notificationsSource.includes('process.on?.("beforeExit"')
+);
+check(
+  "BN-4: батчинг подключён к notifyTaskCompletion",
+  notificationsSource.includes("if (config.batch?.enabled)")
+);
+check(
+  "BN-4: схема и нормализация настроек batch в settings.ts",
+  settingsSource.includes("export interface NotificationBatchSettings") &&
+    settingsSource.includes("function normalizeBatchSettings") &&
+    settingsSource.includes("batch: normalizeBatchSettings(")
+);
+check(
+  "BN-4: дефолтный батчинг выключен (обратная совместимость)",
+  settingsSource.includes("batch: {\n      enabled: false,\n      windowSeconds: 30,\n      maxItems: 10,\n    }")
+);
+
 // --- Итог ----------------------------------------------------------------
 const failures = results.filter((item) => !item.ok);
 console.log(`\nNotifications v3: ${results.length - failures.length}/${results.length} проверок пройдено.`);

@@ -237,6 +237,8 @@ export interface NotificationSettings {
   triage?: TriageSettings;
   /** Дедуп уведомлений (Спринт 31.2). */
   dedup?: NotificationDedupSettings;
+  /** Батчинг уведомлений при высокой частоте запусков (BN-4). */
+  batch?: NotificationBatchSettings;
   /** Семантический дедуп через эмбеддинги (Спринт 31.1). */
   embedding?: NotificationEmbeddingSettings;
   /** Краткое саммари уведомления (Спринт 31.3). */
@@ -273,6 +275,20 @@ export interface NotificationDedupSettings {
   importantStatuses: string[];
   /** Максимальный счётчик в сообщении. */
   maxCount: number;
+}
+
+/**
+ * Батчинг уведомлений (BN-4): вместо одного сообщения на каждое завершение
+ * задачи собирает уведомления в короткое окно и отправляет одной сводкой.
+ * По умолчанию выключен — существующие сценарии дедупа не меняются.
+ */
+export interface NotificationBatchSettings {
+  /** Включён ли батчинг. По умолчанию false. */
+  enabled: boolean;
+  /** Окно накопления в секундах (1..300). По умолчанию 30. */
+  windowSeconds: number;
+  /** Максимум уведомлений в одной сводке (2..100). По умолчанию 10. */
+  maxItems: number;
 }
 
 /**
@@ -726,6 +742,11 @@ export function defaultNotifications(): NotificationSettings {
       importantStatuses: ["error", "timeout"],
       maxCount: 999,
     },
+    batch: {
+      enabled: false,
+      windowSeconds: 30,
+      maxItems: 10,
+    },
     embedding: {
       enabled: false,
       suppressDuplicates: false,
@@ -1007,6 +1028,27 @@ function normalizeDedupSettings(
         ? raw.importantStatuses.map((s) => String(s)).slice(0, 32)
         : fallback.importantStatuses,
     maxCount: normalizeIntInRange(raw.maxCount, fallback.maxCount, 1, 10_000),
+  };
+}
+
+/** Нормализация настроек батчинга (BN-4). */
+function normalizeBatchSettings(
+  value: unknown,
+  fallback: NotificationBatchSettings,
+): NotificationBatchSettings {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { ...fallback };
+  }
+  const raw = value as Partial<NotificationBatchSettings>;
+  return {
+    enabled: typeof raw.enabled === "boolean" ? raw.enabled : fallback.enabled,
+    windowSeconds: normalizeIntInRange(
+      raw.windowSeconds,
+      fallback.windowSeconds,
+      1,
+      300,
+    ),
+    maxItems: normalizeIntInRange(raw.maxItems, fallback.maxItems, 2, 100),
   };
 }
 
@@ -1335,6 +1377,10 @@ function normalizeNotifications(
     dedup: normalizeDedupSettings(
       raw.dedup,
       fallback.dedup ?? defaultNotifications().dedup!,
+    ),
+    batch: normalizeBatchSettings(
+      raw.batch,
+      fallback.batch ?? defaultNotifications().batch!,
     ),
     embedding: normalizeEmbeddingSettings(
       raw.embedding,
