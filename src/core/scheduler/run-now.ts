@@ -67,6 +67,44 @@ export interface ScopeCheck {
  */
 export interface ScopeCheckOptions {
   filesCreate?: string[];
+  /**
+   * QA-PORT-2: явный флаг «все SCOPE-пути могут быть созданы задачей».
+   * Полезен, когда намерение создания выражено не текстом промпта.
+   */
+  allowCreate?: boolean;
+  /**
+   * QA-PORT-2: распознавать в промпте фразы «создай файл X» / «new file X»
+   * и считать такой SCOPE-путь ожидаемо создаваемым. По умолчанию включено;
+   * `false` возвращает строгое поведение PL-79/PL-82.
+   */
+  recognizeCreateIntent?: boolean;
+}
+
+/**
+ * QA-PORT-2: цель создания файла, прямо выраженная в промпте.
+ *
+ * Разбираем только предложения с явным глаголом создания; пути берём из того
+ * же предложения, чтобы «создай docs/new.md» работало, а случайное упоминание
+ * SCOPE без глагола — нет. Отрицания («не создавай», "do not create") не
+ * считаются намерением создать файл.
+ */
+export function extractCreateIntentPaths(prompt: string): string[] {
+  const createVerb =
+    /(?:созда(?:й|ть|ём|ете|л|ли|в)?|нов(?:ый|ая|ое)\s+файл|добав(?:ь|ить)\s+файл|create|new\s+file)(?=\s|$|[.,:;!?])/iu;
+  const negation = /(?:^|\s)(?:не|not|never|dont|don't)\s+(?:созда|добав|create|add)/iu;
+  const pathLike = /[A-Za-z0-9_@.+\/\\-]+/g;
+  const result: string[] = [];
+  // Точку НЕ используем как разделитель: она часть расширения файла (foo.md).
+  for (const segment of prompt.split(/[\r\n]+|[!?;]+/)) {
+    if (!createVerb.test(segment) || negation.test(segment)) continue;
+    for (const match of segment.matchAll(pathLike)) {
+      const token = match[0].replace(/^[.]+|[.]+$/g, "");
+      // Путь должен быть похож на файл: разделитель каталогов или расширение.
+      if (!/[/\\]|\.[A-Za-z0-9]{1,8}$/.test(token)) continue;
+      if (!result.includes(token)) result.push(token);
+    }
+  }
+  return result;
 }
 
 /** PL-119: один и тот же ключ для SCOPE-пути и создаваемого файла. */
@@ -80,6 +118,11 @@ export function validateScopePaths(
   root: string,
   opts?: ScopeCheckOptions | string[],
 ): ScopeCheck {
+  // QA-PORT-2: явный флаг разрешает любые отсутствующие SCOPE-пути (например,
+  // намерение создания expressed не текстом промпта).
+  if (!Array.isArray(opts) && opts?.allowCreate === true) {
+    return { ok: true, paths, missing: [] };
+  }
   const filesCreate = Array.isArray(opts) ? opts : opts?.filesCreate;
   const created = new Set((filesCreate ?? []).map((item) => scopePathKey(item, root)));
   const missing = paths.filter((item) => {
@@ -97,7 +140,19 @@ export function preflightScope(
   root: string,
   opts?: ScopeCheckOptions | string[],
 ): ScopeCheck {
-  return validateScopePaths(extractScopePaths(prompt), root, opts);
+  const options: ScopeCheckOptions = Array.isArray(opts)
+    ? { filesCreate: opts }
+    : (opts ?? {});
+  // QA-PORT-2: «создай новый файл X» + «SCOPE: X» — X ещё не существует, но
+  // это ожидаемо. Объединяем с явным filesCreate; strict-режим можно вернуть
+  // через recognizeCreateIntent: false.
+  const inferred = options.recognizeCreateIntent === false
+    ? []
+    : extractCreateIntentPaths(prompt);
+  return validateScopePaths(extractScopePaths(prompt), root, {
+    ...options,
+    filesCreate: [...(options.filesCreate ?? []), ...inferred],
+  });
 }
 
 /** PL-77: решение о параллельном запуске и изоляции worktree. */

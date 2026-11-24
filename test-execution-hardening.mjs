@@ -1178,6 +1178,7 @@ try {
 try {
   const {
     extractScopePaths,
+    extractCreateIntentPaths,
     validateScopePaths,
     preflightScope,
     planParallelExecution,
@@ -1325,6 +1326,61 @@ try {
       emptyCreateCheck.missing.includes("test-not-exists-marker.zzz") &&
       emptyCreateOkCheck.ok === true,
     JSON.stringify({ emptyCreateCheck, emptyCreateOkCheck }),
+  );
+
+  // QA-PORT-2: «создай новый файл X» + «SCOPE: X» проходит pre-flight без
+  // дублирования пути в filesCreate; строгий режим и отрицания сохраняются.
+  const qaPort2RuPrompt = [
+    "Создай новый файл docs/qa-port-2-probe.md с однострочным содержанием.",
+    "SCOPE: docs/qa-port-2-probe.md",
+  ].join("\n");
+  const qaPort2RuIntent = extractCreateIntentPaths(qaPort2RuPrompt);
+  check(
+    "QA-PORT-2: extractCreateIntentPaths находит путь из фразы «создай файл»",
+    JSON.stringify(qaPort2RuIntent) === JSON.stringify(["docs/qa-port-2-probe.md"]),
+    JSON.stringify(qaPort2RuIntent),
+  );
+  const qaPort2RuCheck = preflightScope(qaPort2RuPrompt, process.cwd());
+  check(
+    "QA-PORT-2: SCOPE нового файла проходит pre-flight без filesCreate",
+    qaPort2RuCheck.ok === true && qaPort2RuCheck.missing.length === 0,
+    JSON.stringify(qaPort2RuCheck),
+  );
+  const qaPort2EnCheck = preflightScope(
+    ["Create a new file docs/qa-port-2-en.md.", "SCOPE: docs/qa-port-2-en.md"].join("\n"),
+    process.cwd(),
+  );
+  check(
+    "QA-PORT-2: английский create-intent тоже распознаётся",
+    qaPort2EnCheck.ok === true,
+    JSON.stringify(qaPort2EnCheck),
+  );
+  const qaPort2NegCheck = preflightScope(
+    ["Не создавай файл docs/qa-port-2-no.md.", "SCOPE: docs/qa-port-2-no.md"].join("\n"),
+    process.cwd(),
+  );
+  check(
+    "QA-PORT-2: отрицание «не создавай» не снимает pre-flight",
+    qaPort2NegCheck.ok === false,
+    JSON.stringify(qaPort2NegCheck),
+  );
+  const qaPort2StrictCheck = preflightScope(qaPort2RuPrompt, process.cwd(), {
+    recognizeCreateIntent: false,
+  });
+  check(
+    "QA-PORT-2: recognizeCreateIntent=false возвращает строгое поведение",
+    qaPort2StrictCheck.ok === false,
+    JSON.stringify(qaPort2StrictCheck),
+  );
+  const qaPort2AllowCheck = validateScopePaths(
+    ["test-not-exists-marker.zzz"],
+    process.cwd(),
+    { allowCreate: true },
+  );
+  check(
+    "QA-PORT-2: allowCreate разрешает отсутствующие SCOPE-пути",
+    qaPort2AllowCheck.ok === true && qaPort2AllowCheck.missing.length === 0,
+    JSON.stringify(qaPort2AllowCheck),
   );
 
   // PL-77: параллельные агенты не делят worktree, maxConcurrent не нарушается.
