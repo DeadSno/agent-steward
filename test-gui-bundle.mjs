@@ -59,6 +59,58 @@ check(
   ciWorkflow.includes("actions/cache@") && ciWorkflow.includes("node_modules/.cache")
 );
 
+// D16 (IM-15): отладочная сборка и флаг --debug.
+const pkgForDebug = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
+const cliSrc = fs.readFileSync(path.join(root, "src", "cli.ts"), "utf8");
+const debugSrc = fs.readFileSync(path.join(root, "src", "shared", "debug.ts"), "utf8");
+check(
+  "D16: build:debug собирает отдельный бандл с source map",
+  typeof pkgForDebug.scripts["build:debug"] === "string" &&
+    pkgForDebug.scripts["build:debug"].includes("--mode debug") &&
+    viteConfig.includes("gui-experimental.debug.cjs") &&
+    viteConfig.includes("sourcemap")
+);
+check(
+  "D16: CLI принимает --debug, секреты редактируются",
+  cliSrc.includes("parseDebugArgs(rawArgv)") &&
+    cliSrc.includes("setDebugEnabled(true)") &&
+    debugSrc.includes('arg === "--debug"') &&
+    debugSrc.includes("<redacted>") &&
+    debugSrc.includes('typeof process !== "undefined"')
+);
+
+const debugDistPath = path.join(root, "dist", "shared", "debug.js");
+if (fs.existsSync(debugDistPath)) {
+  const { DEBUG_ENV, redactDebug, parseDebugArgs, isDebugEnabled, setDebugEnabled } = await import(
+    "./dist/shared/debug.js"
+  );
+  const redacted = redactDebug({ apiKey: "k-123", password: "p-456", task: "build", note: "Bearer TOKENVALUE" });
+  check(
+    "D16: redactDebug скрывает ключи и Bearer",
+    DEBUG_ENV === "AGENT_STEWARD_DEBUG" &&
+      redacted.includes("<redacted>") &&
+      redacted.includes("build") &&
+      !redacted.includes("k-123") &&
+      !redacted.includes("p-456") &&
+      !redacted.includes("TOKENVALUE"),
+    redacted
+  );
+  const parsedDebug = parseDebugArgs(["--debug", "pipeline", "validate", "spec.yaml", "--json"]);
+  check(
+    "D16: --debug убирается из argv других команд",
+    parsedDebug.debug === true && !parsedDebug.args.includes("--debug") && parsedDebug.args.length === 4,
+    JSON.stringify(parsedDebug)
+  );
+  setDebugEnabled(false);
+  const wasEnabled = isDebugEnabled();
+  setDebugEnabled(true);
+  const nowEnabled = isDebugEnabled();
+  setDebugEnabled(false);
+  check("D16: режим логов управляется флагом", wasEnabled === false && nowEnabled === true);
+} else {
+  console.log("SKIP debug module not built (run: npm run build)");
+}
+
 if (!bundlePath) {
   console.log("SKIP gui bundle not built (run: npm run build:gui)");
   console.log("\n0 passed, 0 failed");

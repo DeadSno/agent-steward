@@ -100,6 +100,7 @@
     "lint:baseline": "node scripts/check-eslint-baseline.mjs",
     "lint:baseline:update": "node scripts/check-eslint-baseline.mjs --update",
     "build:gui": "vite build",
+    "build:debug": "npm run build && vite build --mode debug",
     "demo": "node scripts/demo-dashboard.mjs",
     "bench:local": "node scripts/bench-local.mjs",
     "prepare": "npm run build",

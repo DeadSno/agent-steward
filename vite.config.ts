@@ -1,12 +1,13 @@
 import { defineConfig } from "vite"
 import { gui } from "@opencode/plugin/gui/vite"
 
-// Официальный gui()-плагин сам:
-// - подключает vite-plugin-solid и компилирует Solid JSX;
-// - пишет один CommonJS-бандл gui-experimental.cjs в корень проекта
-//   (outFile "./gui-experimental.cjs" разрешается от корня, не от dist/);
-// - держит предоставляемые приложением модули (solid-js, @opencode/plugin/gui, effect) внешними.
-export default defineConfig({
-  cacheDir: "node_modules/.cache/vite",
-  plugins: [gui({ outFile: "./gui-experimental.cjs" })],
+// D16 (IM-15): debug-сборка пишет отдельный бандл и source map,
+// не перезаписывая релизный gui-experimental.cjs.
+export default defineConfig(({ mode }) => {
+  const debug = mode === "debug" || process.env.AGENT_STEWARD_DEBUG === "1"
+  return {
+    cacheDir: "node_modules/.cache/vite",
+    plugins: [gui({ outFile: debug ? "./gui-experimental.debug.cjs" : "./gui-experimental.cjs" })],
+    build: debug ? { sourcemap: true } : {},
+  }
 })

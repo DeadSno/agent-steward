@@ -253,6 +253,8 @@ The OpenCode sidebar shows jobs, history, logs, dry-run, templates, import/expor
 
 ```bash
 npm run build:gui   # produces gui-experimental.cjs
+npm run build:debug # separate gui-experimental.debug.cjs + source map (release bundle untouched)
+agent-steward pipeline validate opencode.pipeline.yaml --debug  # verbose stderr logs, secrets redacted
 ```
 
 ## How it works

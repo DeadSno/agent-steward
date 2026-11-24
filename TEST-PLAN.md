@@ -581,7 +581,7 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 | S16.1.7 | 🧪 Версия | `version.ts` / CHANGELOG | Совпадают, дата и раздел Fixed на месте |
 | S16.1.8 | 🧪 Бенчмарк | `npm run bench:local -- --help` и прогон без Ollama | Выходит валидный JSON, exit 2 при отсутствии Ollama, справка на русском |
 | S16.1.BP.1 | ✅ Закрыто BN-8: сборка занимает долго | замер чистого/повторного `npm run build` + `build:gui` (до: 4.76 с / 4.76 с и 3.86 с / 2.44 с) | `tsc --incremental` с `tsBuildInfoFile` в `node_modules/.cache`, Vite `cacheDir` там же; CI восстанавливает кэш через `actions/cache`. Регрессия: `test-gui-bundle.mjs` |
-| S16.1.BP.2 | 🧪 Улучшение: отладочная сборка | флаг `--debug` | Включаются подробные логи, не влияют на продакшн |
+| S16.1.BP.2 | ✅ Закрыто IM-15: отладочная сборка | `npm run build:debug`, флаг `agent-steward ... --debug` или `AGENT_STEWARD_DEBUG=1` | Подробные логи в stderr без секретов; отдельный `gui-experimental.debug.cjs` + source map, релизный бандл не меняется. Регрессия: `test-gui-bundle.mjs` |
 
 ---
 
@@ -702,7 +702,7 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 | D13 Наблюдаемость | `get_audit_log`, `get_dashboard_info` | ✅ аудит | ✅ health/logs | — | `get_audit`, `/api/health`, `/api/logs` |
 | D14 Интерфейсы | через RPC | ✅ | ✅ | ✅ | 61 RPC-методов |
 | D15 Данные | ✅ авто-бэкап перед миграцией (IM-14) | ✅ история | ✅ экспорт БД | — | `/api/export-db` |
-| D16 Поставка | ✅ после сборки | ✅ | — | — | — |
+| D16 Поставка | ✅ после сборки | ✅ | — | ✅ `--debug` без влияния на релиз (IM-15) | `build:debug` → отдельный бандл + source map |
 | D17 Обратная связь | `report_bug`, `self_analysis` | ✅ кнопка в отчёте/хуке | ✅ форма отчёта | — | `report_bug`, `self_analysis` |
 | D18 Pipeline-as-code | `pipeline_validate`, `pipeline_apply`, `pipeline_export` | ✅ конфиг `opencode.pipeline.yaml` | — | — | `pipeline_validate`, `pipeline_apply`, `pipeline_export` |
 
@@ -714,6 +714,7 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 4. **D14:** TUI умеет только run/pause/resume/log; CRUD, матрицы и настройки — через GUI, дашборд или агента.
 5. **D10:** дашборд отдаёт аудит только через API (`/api/audit`), отдельного экрана аудита в нём нет.
 6. **D14.4:** HTTP API привязан к `127.0.0.1` (loopback); каждый запрос проверяет заголовки `Origin`/`Host` по списку `LOCAL_HOSTNAMES = [127.0.0.1, localhost, ::1, [::1]]` — чужие хосты и `Origin: null` отклоняются; webhook `POST /api/hooks/:name` дополнительно защищён токеном, HMAC-подписью и timestamp. Доступ к API — только локальный контур с проверкой заголовков; отдельной учётной записи пользователя нет, но запрос извне не принимается.
+7. **D16:** отладочный режим включается флагом `--debug` любой CLI-команды или `AGENT_STEWARD_DEBUG=1`; подробные логи идут в stderr с редактированием секретов. `npm run build:debug` создаёт отдельный `gui-experimental.debug.cjs` с source map и не перезаписывает релизный бандл (IM-15).
 
 ---
 
@@ -932,7 +933,7 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 | IMP-D13-1 | D13 | Корреляция логов по `runId` для многошаговых запусков — ✅ закрыто IM-12 | Средний | Агент |
 | IMP-D14-1 | D14 | Быстрый фильтр задач в GUI без перезагрузки данных — ✅ закрыто IM-13 | Низкий | Человек |
 | IMP-D15-1 | D15 | Авто-бэкап БД перед миграцией — ✅ закрыто IM-14 (`<db>.migration-backups/`, SHA-256 + integrity_check, удержание 5) | Средний | Агент |
-| IMP-D16-1 | D16 | Отладочная сборка с подробными логами (`--debug`) | Низкий | Агент |
+| IMP-D16-1 | D16 | Отладочная сборка с подробными логами (`--debug`) — ✅ закрыто IM-15 | Низкий | Агент |
 
 ### 7.4 Доработки из ROADMAP.md (бэклог)
 

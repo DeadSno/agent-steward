@@ -4,6 +4,8 @@ node_modules/
 # Build output
 dist/
 gui-experimental.cjs
+gui-experimental.debug.cjs
+gui-experimental.debug.cjs.map
 
 # Logs
 *.log

@@ -36,6 +36,7 @@ import { tasksToPipelineSpec } from "./core/pipeline-map.js";
 import { saveTaskDefinition, type TaskDefinition } from "./task-transfer.js";
 import { listWorkspaces } from "./workspaces.js";
 import { runMission, type MissionSpec } from "./core/mission.js";
+import { DEBUG_ENV, debugLog, parseDebugArgs, setDebugEnabled } from "./shared/debug.js";
 
 const USAGE = `agent-steward — планировщик agent jobs
 
@@ -73,6 +74,7 @@ const USAGE = `agent-steward — планировщик agent jobs
   --out         файл для export или каталог проекта для scaffold
   --force       перезаписать существующие файлы при scaffold
   --task-type   фильтр рецептов по типу задачи (recipes list)
+  --debug       подробные диагностические логи в stderr (без секретов)
 `;
 
 interface PrintedIssue {
@@ -657,7 +659,18 @@ async function runAdHoc(args: string[]): Promise<number> {
   }
 }
 
-async function main(argv: string[]): Promise<number> {
+async function main(rawArgv: string[]): Promise<number> {
+  // D16 (IM-15): `--debug` снимается до разбора команд, чтобы флаг можно было
+  // передать в любой подкоманде; env дублируется для дочерних процессов.
+  const parsedArgs = parseDebugArgs(rawArgv);
+  const argv = parsedArgs.args;
+  if (parsedArgs.debug) {
+    setDebugEnabled(true);
+    if (typeof process !== "undefined" && typeof process.env === "object") {
+      process.env[DEBUG_ENV] = "1";
+    }
+  }
+  debugLog("cli", "start", { argv, cwd: typeof process !== "undefined" ? process.cwd() : undefined });
   const [group, command, ...rest] = argv;
   if (group === "--help" || group === "-h" || group === "help" || !group) {
     console.log(USAGE);
