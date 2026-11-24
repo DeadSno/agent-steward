@@ -3,7 +3,7 @@
  * Запуск: node test-metrics.mjs (после npm run build).
  * Чистые функции — БД и сервер не нужны.
  */
-import { buildAnalytics, csvCell, historyToCsv, recordCost, recordDate, ESTIMATED_COST_PER_1K_TOKENS_USD } from "./dist/core/analytics.js";
+import { buildAnalytics, buildDailyBuckets, csvCell, historyToCsv, recordCost, recordDate, ESTIMATED_COST_PER_1K_TOKENS_USD } from "./dist/core/analytics.js";
 
 const results = [];
 function check(name, cond) {
@@ -135,6 +135,25 @@ check("CSV использует CRLF и по строке на запись",
   csv.split("\r\n").length === 3);
 check("CSV экранирует пустые значения",
   csv.includes(";build;success;"));
+
+// IM-7 / D08: агрегированные дневные метрики без полного скана истории.
+const dailyRows = [
+  { date: "2026-06-15", total: 2, success: 1, error: 1, partial: 0, tokens: 300, costUsd: 0.25, avgDurationMs: 1500 },
+  { date: "2026-06-13", total: 1, success: 0, error: 0, partial: 1, tokens: 50, costUsd: 0, avgDurationMs: 0 },
+];
+const dailyBuckets = buildDailyBuckets(dailyRows, 3, now);
+check("IM-7: дневные бакеты заполняют пропущенные дни нулями",
+  dailyBuckets.length === 3 &&
+    dailyBuckets[0].date === "2026-06-13" &&
+    dailyBuckets[1].total === 0 &&
+    dailyBuckets[2].total === 2);
+check("IM-7: агрегаты переносят токены/стоимость/длительность",
+  dailyBuckets[0].partial === 1 && dailyBuckets[0].tokens === 50 &&
+    dailyBuckets[2].error === 1 && dailyBuckets[2].costUsd === 0.25 &&
+    dailyBuckets[2].avgDurationMs === 1500);
+check("IM-7: некорректные даты строк игнорируются",
+  buildDailyBuckets([{ date: "bad", total: 9, success: 9, error: 0, partial: 0 }], 2, now)
+    .every((day) => day.total === 0));
 
 const failed = results.filter((r) => !r.ok);
 console.log(`\nAnalytics: ${results.length - failed.length}/${results.length} проверок пройдено.`);

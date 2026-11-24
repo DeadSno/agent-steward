@@ -21,7 +21,7 @@ process.env.OPENCODE_SCHEDULER_HOME = home.pluginDir;
 
 const { initDb, getDb, closeDb } = await import("./dist/db/index.js");
 const { getHistory, countHistory, pruneHistory } = await import("./dist/db/history-repo.js");
-const { getTotals } = await import("./dist/db/metrics-repo.js");
+const { getTotals, getDailyMetrics } = await import("./dist/db/metrics-repo.js");
 
 const ROWS = 100_500;
 const TASK_COUNT = 50;
@@ -157,6 +157,23 @@ try {
     assert.ok(pruned.ms < PRUNE_BUDGET_MS, `${pruned.ms.toFixed(1)} мс`);
     assert.equal(pruned.result.kept, 100);
     assert.equal(countHistory(), 100);
+  });
+
+  // --- IM-7: дневная агрегация в SQL, без полного скана history ------------
+  const daily = timed("getDailyMetrics(14)", () => getDailyMetrics(14));
+  check(`getDailyMetrics < ${QUERY_BUDGET_MS} мс на ${ROWS} записях`, () => {
+    assert.ok(daily.ms < QUERY_BUDGET_MS, `${daily.ms.toFixed(1)} мс`);
+    assert.ok(daily.result.length > 0 && daily.result.length <= 14);
+    assert.ok(daily.result.every((row) => /^\d{4}-\d{2}-\d{2}$/.test(row.date)));
+  });
+  check("IM-7: план getDailyMetrics использует индекс started_at", () => {
+    const plan = db
+      .prepare(
+        "EXPLAIN QUERY PLAN SELECT substr(started_at,1,10) AS day, COUNT(*) FROM history WHERE started_at >= ? AND status <> 'running' AND task_name NOT LIKE '\\_\\_%' ESCAPE '\\' GROUP BY day",
+      )
+      .all(new Date(Date.now() - 14 * 86400000).toISOString());
+    const text = JSON.stringify(plan);
+    assert.ok(text.includes("idx_history_started_at"), text);
   });
 
   // --- 5. Граничные состояния после очистки --------------------------------

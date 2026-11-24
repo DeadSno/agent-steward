@@ -169,6 +169,76 @@ export function getTotals(includeInternal = false): MetricsTotals {
   };
 }
 
+/**
+ * IM-7 / D08: одна строка дневной агрегации из SQL-группировки history.
+ * `date` — UTC-день (`substr(started_at,1,10)`), остальные поля — счётчики.
+ */
+export interface DailyMetricsRow {
+  date: string;
+  total: number;
+  success: number;
+  error: number;
+  partial: number;
+  skipped: number;
+  tokens: number;
+  costUsd: number;
+  avgDurationMs: number;
+}
+
+function isDailyRow(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Дневные метрики за последние `days` дней — без загрузки всей истории в память.
+ *
+ * Группировка делается внутри SQLite по индексу `idx_history_started_at`;
+ * служебные задачи (`__*`) и незавершённые (`running`) исключаются так же,
+ * как в `getTotals()`, чтобы дневные срезы совпадали с общими итогами.
+ */
+export function getDailyMetrics(days = 14, now = new Date()): DailyMetricsRow[] {
+  const windowDays = Math.min(366, Math.max(1, Math.floor(Number(days) || 14)));
+  const since = new Date(
+    Date.UTC(
+      now.getUTCFullYear(),
+      now.getUTCMonth(),
+      now.getUTCDate() - windowDays + 1,
+    ),
+  ).toISOString();
+  const rows: unknown[] = getDb()
+    .prepare(
+      `SELECT
+         substr(started_at, 1, 10) AS day,
+         COUNT(*) AS total,
+         COALESCE(SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END), 0) AS success,
+         COALESCE(SUM(CASE WHEN status = 'partial' THEN 1 ELSE 0 END), 0) AS partial,
+         COALESCE(SUM(CASE WHEN status = 'skipped' THEN 1 ELSE 0 END), 0) AS skipped,
+         COALESCE(SUM(CASE WHEN status NOT IN ('success', 'partial', 'running', 'skipped')
+                            THEN 1 ELSE 0 END), 0) AS error,
+         COALESCE(SUM(CASE WHEN tokens > 0 THEN CAST(tokens AS INTEGER) ELSE 0 END), 0) AS tokens,
+         COALESCE(SUM(CASE WHEN cost_usd > 0 THEN cost_usd ELSE 0 END), 0) AS cost_usd,
+         COALESCE(AVG(CASE WHEN duration_ms > 0 THEN duration_ms END), 0) AS avg_duration_ms
+       FROM history
+       WHERE started_at >= ?
+         AND status <> 'running'
+         AND task_name NOT LIKE '\\_\\_%' ESCAPE '\\'
+       GROUP BY day
+       ORDER BY day ASC`,
+    )
+    .all(since);
+  return rows.filter(isDailyRow).map((row) => ({
+    date: String(row.day),
+    total: Number(row.total) || 0,
+    success: Number(row.success) || 0,
+    error: Number(row.error) || 0,
+    partial: Number(row.partial) || 0,
+    skipped: Number(row.skipped) || 0,
+    tokens: Number(row.tokens) || 0,
+    costUsd: Number(row.cost_usd) || 0,
+    avgDurationMs: Math.round(Number(row.avg_duration_ms) || 0),
+  }));
+}
+
 /** Старый appendMetric(status) без имени задачи. */
 export function incrementGlobalMetrics(status: TaskStatus): void {
   incrementMetricsUnsafe(GLOBAL_TASK, status);

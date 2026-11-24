@@ -123,7 +123,7 @@ import {
   resolvePermissions,
 } from "./core/permissions.js";
 import { runHistoryRetention, maybeRunHistoryRetention } from "./core/retention.js";
-import { buildAnalytics } from "./core/analytics.js";
+import { buildAnalytics, buildDailyBuckets } from "./core/analytics.js";
 import {
   buildBudgetReport,
   evaluateRunBudgetGate,
@@ -143,7 +143,7 @@ import {
   recordRun,
 } from "./db/history-repo.js";
 import { appendStructuredLog } from "./core/structured-log.js";
-import { getAllMetrics } from "./db/metrics-repo.js";
+import { getAllMetrics, getDailyMetrics } from "./db/metrics-repo.js";
 import { discardDlq, listDlq, retryDlqExecution } from "./core/dlq-api.js";
 import {
   listRunPanel,
@@ -3877,6 +3877,8 @@ const getMetricsExecute = wrapExecute<MetricsArgs>(async () => {
     content: JSON.stringify({
       success: true,
       metrics: withTokenEfficiency({ ...metrics, toolBlocked }),
+      // IM-7 / D08: дневные срезы агрегируются в SQL, а не полным сканом истории.
+      daily: buildDailyBuckets(getDailyMetrics(14), 14),
     }),
   };
 });

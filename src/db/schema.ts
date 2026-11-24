@@ -708,6 +708,10 @@ export function applySchema(db: SchemaDb): void {
   // Поэтому создаём его после миграций — заодно лечим БД, где индекс потерян.
   db.exec("CREATE INDEX IF NOT EXISTS idx_run_steps_position ON run_steps(run_id, position)");
 
+  // IM-7 / D08: дневные агрегаты считаются SQL-группировкой по started_at.
+  // Отдельный индекс позволяет покрыть range-фильтр без полного SCAN history.
+  db.exec("CREATE INDEX IF NOT EXISTS idx_history_started_at ON history(started_at)");
+
   if (fromVersion !== SCHEMA_VERSION) {
     // PRAGMA не принимает параметры — подставляем проверенное число.
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);

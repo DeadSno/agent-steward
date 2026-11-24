@@ -48,6 +48,57 @@ export interface DailyBucket {
   avgDurationMs: number;
 }
 
+/** Строка дневной агрегации (приходит из SQL-группировки history). */
+export interface DailyAggregateInput {
+  /** YYYY-MM-DD (UTC). */
+  date: string;
+  total: number;
+  success: number;
+  error: number;
+  partial: number;
+  tokens?: number;
+  costUsd?: number;
+  avgDurationMs?: number;
+}
+
+/**
+ * IM-7 / D08: разворачивает разреженную SQL-агрегацию в полный набор дней.
+ *
+ * Дни без запусков получают нули — как и в `buildAnalytics()`. Чистая функция:
+ * не обращается к БД, поэтому тестируется на синтетических строках.
+ */
+export function buildDailyBuckets(
+  rows: readonly DailyAggregateInput[],
+  days = 14,
+  now = new Date(),
+): DailyBucket[] {
+  const windowDays = Math.min(366, Math.max(1, Math.floor(Number(days) || 14)));
+  const byDate = new Map<string, DailyAggregateInput>();
+  for (const row of rows) {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(row.date)) byDate.set(row.date, row);
+  }
+  const buckets: DailyBucket[] = [];
+  for (let offset = windowDays - 1; offset >= 0; offset -= 1) {
+    const day = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - offset),
+    )
+      .toISOString()
+      .slice(0, 10);
+    const row = byDate.get(day);
+    buckets.push({
+      date: day,
+      total: row?.total ?? 0,
+      success: row?.success ?? 0,
+      error: row?.error ?? 0,
+      partial: row?.partial ?? 0,
+      tokens: row?.tokens ?? 0,
+      costUsd: row?.costUsd ?? 0,
+      avgDurationMs: row?.avgDurationMs ?? 0,
+    });
+  }
+  return buckets;
+}
+
 export interface TaskAnalyticsRow {
   taskName: string;
   total: number;
