@@ -19,6 +19,7 @@ delete process.env.OPENCODE_SCHEDULER_PORT;
 
 const profiles = await import("./dist/profiles.js");
 const types = await import("./dist/types.js");
+const profileTransfer = await import("./dist/shared/profile-transfer.js");
 
 const {
   DEFAULT_PROFILE,
@@ -300,6 +301,29 @@ check(
     MANAGE_NAMES.every((name) =>
       adminSpecs.some((s) => s.name === name) && allSpecs.some((s) => s.name === name)
     )
+);
+
+// --- IM-10: перенос профиля между машинами ---------------------------------
+const bundle = profileTransfer.buildProfileBundle(
+  "work",
+  { maxConcurrent: 3, notifications: { telegram: { botToken: "sekret-123" } }, locale: "ru" },
+  new Date("2026-11-24T10:00:00.000Z"),
+);
+check("IM-10: бандл содержит версию, имя и дату", bundle.version === 1 && bundle.profile === "work" && bundle.exportedAt === "2026-11-24T10:00:00.000Z" && bundle.secretsExcluded === true);
+check("IM-10: секреты вырезаны из экспорта", bundle.settings.notifications.telegram.botToken === "<redacted>" && bundle.settings.maxConcurrent === 3);
+const parsedBundle = profileTransfer.parseProfileBundle(profileTransfer.serializeProfileBundle(bundle));
+check("IM-10: round-trip JSON сохраняет настройки", parsedBundle.profile === "work" && parsedBundle.settings.locale === "ru");
+check("IM-10: патч содержит только поддерживаемые ключи", Object.keys(profileTransfer.profileSettingsPatch(parsedBundle)).sort().join(",") === "locale,maxConcurrent,notifications");
+let badBundle = false;
+try { profileTransfer.parseProfileBundle('{"version":99}'); } catch { badBundle = true; }
+check("IM-10: чужой формат отклоняется", badBundle);
+const guiSource = fs.readFileSync(new URL("./src/gui.tsx", import.meta.url), "utf8");
+check(
+  "IM-10: GUI предлагает экспорт/импорт профиля",
+  guiSource.includes('data-profile-export="json"') &&
+    guiSource.includes('data-profile-import="json"') &&
+    guiSource.includes("parseProfileBundle(") &&
+    guiSource.includes("buildProfileBundle(")
 );
 
 // --- Итог ----------------------------------------------------------------

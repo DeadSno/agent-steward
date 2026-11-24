@@ -3,6 +3,7 @@ import { Panel, Plugin } from "@opencode/plugin/gui"
 import { SchedulerRpc } from "./rpc.js"
 import { loadHistory, loadMetrics, type HistoryRecord } from "./history.js"
 import { buildAuditFilename, formatAuditCsv } from "./shared/audit-csv.js"
+import { buildProfileBundle, parseProfileBundle, profileSettingsPatch, serializeProfileBundle } from "./shared/profile-transfer.js"
 import { DEFAULT_LOCALE, DEFAULT_LOCALE_MODE, normalizeLocale, normalizeLocaleMode, registerCatalog, setLocale, t, type LocaleMode, type TranslateParams, type Locale } from "./i18n.js"
 // Каталоги встраиваются в бандл на этапе сборки: в webview OpenCode нет
 // доступа к файлам пакета, поэтому ленивый fs-загрузчик из i18n.ts не работает.
@@ -1848,6 +1849,45 @@ export default Plugin.define({
       }
     }
 
+    // D11 (IM-10): перенос настроек профиля между машинами. Секреты не экспортируются.
+    async function exportProfileGui() {
+      try {
+        const settings = (await rpc.get_settings({})) as unknown as Record<string, unknown>
+        const bundle = buildProfileBundle(profileCurrent(), settings)
+        const blob = new Blob([serializeProfileBundle(bundle)], { type: "application/json" })
+        const url = URL.createObjectURL(blob)
+        const anchor = document.createElement("a")
+        anchor.href = url
+        anchor.download = `profile-${bundle.profile}-${bundle.exportedAt.slice(0, 10)}.json`
+        anchor.click()
+        URL.revokeObjectURL(url)
+        ctx.toast.show({ title: gt("gui.profileExportDone"), variant: "success" })
+      } catch (err: any) {
+        console.error("Profile export failed:", err)
+        ctx.toast.show({ title: gt("gui.profileExportFailed"), variant: "error", description: shortError(errorMessage(err)) })
+      }
+    }
+
+    async function importProfileFile(event: any) {
+      const file = event?.currentTarget?.files?.[0]
+      if (!file) return
+      setProfileBusy(true)
+      try {
+        const bundle = parseProfileBundle(await file.text())
+        const patch = profileSettingsPatch(bundle) as any
+        if (Object.keys(patch).length === 0) throw new Error("В бандле нет переносимых настроек")
+        await rpc.save_settings(patch)
+        await loadSettingsGui()
+        ctx.toast.show({ title: gt("gui.profileImportDone", { name: bundle.profile }), variant: "success" })
+      } catch (err: any) {
+        console.error("Profile import failed:", err)
+        ctx.toast.show({ title: gt("gui.profileImportFailed"), variant: "error", description: shortError(errorMessage(err)) })
+      } finally {
+        setProfileBusy(false)
+        if (event?.currentTarget) event.currentTarget.value = ""
+      }
+    }
+
     // ---- Env-переменные workspace (Спринт 21) ----
 
     /** Строки `KEY=VALUE` из объекта env (для textarea). */
@@ -3352,6 +3392,24 @@ export default Plugin.define({
               <div style="background:#1e1e1e;border:1px solid #333;border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:8px">
                 <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
                   <div style="font-size:12px;font-weight:600;color:#e0e0e0">{gt("gui.profilesHeading")}</div>
+                  <div style="display:flex;align-items:center;gap:6px">
+                    <button
+                      data-profile-export="json"
+                      onClick={() => void exportProfileGui()}
+                      title={gt("gui.profileExportTitle")}
+                      style="padding:4px 10px;border-radius:6px;border:1px solid #333;background:#262626;color:#e0e0e0;font-size:11px;cursor:pointer"
+                    >
+                      {gt("gui.profileExport")}
+                    </button>
+                    <label
+                      data-profile-import="json"
+                      title={gt("gui.profileImportTitle")}
+                      style="padding:4px 10px;border-radius:6px;border:1px solid #333;background:#262626;color:#e0e0e0;font-size:11px;cursor:pointer"
+                    >
+                      {gt("gui.profileImport")}
+                      <input type="file" accept=".json,application/json" style="display:none" onChange={(e) => void importProfileFile(e)} />
+                    </label>
+                  </div>
                   <button
                     onClick={() => void handleCreateProfile()}
                     disabled={profileBusy()}
