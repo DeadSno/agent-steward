@@ -939,30 +939,30 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 
 | ID | Деталь | Приоритет | Статус | Суть |
 |---|---|---|---|---|
-| F-1 | D17 (обратная связь) | P2 | ✅ закрыто | Клиент: контракт payload, `feedback.ts`, настройки, редакция секретов, `report_bug` (`destination`/`dryRun`), outbox, антиспам — перенесено в `CHANGELOG.md` |
-| F-2 | D17 (приёмник) | P2 | ✅ закрыто (кроме деплоя) | Cloudflare Worker → GitHub Issues: валидация, rate-limit, PAT `issues:write`, дедуп по `reportId`; F-2.5 (deploy + секреты) остаётся в ROADMAP |
-| F-3 | D17 (прозрачность) | P2 | ✅ закрыто | Показ payload перед отправкой, consent/приватность, i18n ru/en/zh — перенесено в `CHANGELOG.md` |
-| F-4 | D17 (тесты и документация) | P3 | ✅ закрыто | `test-feedback.mjs`, тест Worker, **F-4.3: TEST-PLAN D17 + docs/FEATURES.md**, CHANGELOG + `test-docs` — перенесено в `CHANGELOG.md` |
-| E-1 / E-2.1 / E-2.2 | D08 (бюджеты) | P2 | ✅ закрыто | Бюджеты день/неделя, лимит токенов на задачу и остановка при превышении — перенесены в `CHANGELOG.md` [Unreleased] → Added |
-| E-3 | D08 | P3 | ✅ закрыто | Token efficiency score — `E-3.1` в `CHANGELOG.md` |
-| E-4 | D08 | P3 | ✅ закрыто | Прогноз затрат + экспорт в Grafana JSON — `E-4.1`/`E-4.2` в `CHANGELOG.md` |
-| E-5 | D08 | P3 | ✅ закрыто | Разбивка запусков local vs cloud — `E-5.1` в `CHANGELOG.md` |
-| D-1 | D15 (runner) | P3 | ⬜ | Runner local/docker/ssh |
-| D-2 | D15 | P3 | ⬜ | Opt-in Docker, обратная совместимость |
-| D-3 | D15 | P3 | ⬜ | Детерминизм вердикта (та же спека → тот же вердикт) |
-| A-1 | D10 (approvals) | P2 | ✅ закрыто | R2/R3 approval-гейт перед деплоем + аудит решений — `PL-95`/`PL-103` в `CHANGELOG.md` |
-| A-2 | D11 (окружения) | P2 | ⬜ | dev/staging/prod изоляция + привязка задач к среде |
-| A-3 | D12 | P3 | ⬜ | Артефакты запуска (отчёты/coverage) |
-| A-4 | D16 | P3 | ⬜ | Docs-сайт (публикация документации) |
-| A-5 | D14 | P3 | ⬜ | 4-я локаль (tr) + тесты локалей |
-| A-6 | D09 | P3 | ⬜ | Telegram pause/resume (команды бота + привязка к запускам) |
-| M-1..M-8 | D16 (оркестрация) | P3 | ⬜ | Мульти-агентная оркестрация: контекст, роли, self-correcting, fallback, tournament, CEP, cross-run memory, smart recipes |
-| X-1 | D16 | P1 | ⏸️ | `npm deprecate` legacy `opencode-windows-scheduler@1.5.8` |
-| X-2 | D16 | P1 | ⏸️ | Legacy 1.5.9 с `<0.1.0` upper bound |
-| X-3 | D16 | P3 | ✅ закрыто | Убрать `is_template: false` из `package.json` — `X-3.1` в `CHANGELOG.md` |
+| F-1 | D17 (обратная связь) | P2 | ✅ закрыто | Клиент: контракт payload, `feedback.ts`, настройки, редакция секретов, `report_bug` (`destination`/`dryRun`), outbox, антиспам — перенесено в `CHANGELOG.md` (записи `Деталь 3.8` (F-1), `UX-3.8.2`, `PL-148`) |
+| F-2 | D17 (приёмник) | P2 | ✅ закрыто | Cloudflare Worker → GitHub Issues: валидация, rate-limit, PAT `issues:write`, дедуп по `reportId`; деплой воркера и F-2.5 тоже закрыты — `CHANGELOG.md` (записи `Деталь 3.8 (F-2)`, `QA-3.8.5`, `Деталь 3.8 / F-2.5 — деплой воркера без KV-заглушек`, `Деталь 3.8 / F-2.5 — живой деплой и сквозная проверка`); оговорка «кроме деплоя» устарела |
+| F-3 | D17 (прозрачность) | P2 | ✅ закрыто | Показ payload перед отправкой, consent/приватность, i18n ru/en/zh — перенесено в `CHANGELOG.md` (запись `Деталь 3.8 (F-3/F-4)`) |
+| F-4 | D17 (тесты и документация) | P3 | ✅ закрыто | `test-feedback.mjs`, тест Worker, **F-4.3: TEST-PLAN D17 + docs/FEATURES.md**, CHANGELOG + `test-docs` — перенесено в `CHANGELOG.md` (запись `Деталь 3.8 (F-3/F-4)`) |
+| E-1 / E-2.1 / E-2.2 | D08 (бюджеты) | P2 | ✅ закрыто | Бюджеты день/неделя, лимит токенов на задачу и остановка при превышении — перенесены в `CHANGELOG.md` [Unreleased] → Added (записи `E-1.1`, `E-1.2`, `E-1.3`, `E-2.1`, `E-2.2`, `QA-P0.1`) |
+| E-3 | D08 | P3 | ✅ закрыто | Token efficiency score — закрыто по записи `CHANGELOG.md` (запись `E-3.1`) |
+| E-4 | D08 | P3 | ✅ закрыто | Прогноз затрат + экспорт в Grafana JSON — закрыто по записи `CHANGELOG.md` (записи `E-4.1`, `E-4.2`) |
+| E-5 | D08 | P3 | ✅ закрыто | Разбивка запусков local vs cloud — закрыто по записи `CHANGELOG.md` (запись `E-5.1`) |
+| D-1 | D15 (runner) | P3 | ✅ закрыто | Runner local/docker/ssh — закрыто по записи `CHANGELOG.md` (записи `D-1.1`, `D-1.2`, `D-1.3`) |
+| D-2 | D15 | P3 | ✅ закрыто | Opt-in Docker, обратная совместимость — закрыто по записи `CHANGELOG.md` (запись `D-2.1`) |
+| D-3 | D15 | P3 | ✅ закрыто | Детерминизм вердикта (та же спека → тот же вердикт) — закрыто по записи `CHANGELOG.md` (запись `D-3.1`) |
+| A-1 | D10 (approvals) | P2 | ✅ закрыто | R2/R3 approval-гейт перед деплоем + аудит решений — закрыто по записи `CHANGELOG.md` (записи `PL-95`, `PL-103`, `PL-148`) |
+| A-2 | D11 (окружения) | P2 | ✅ закрыто | dev/staging/prod изоляция + привязка задач к среде — закрыто по записи `CHANGELOG.md` (записи `A-2.1`, `A-2.2`) |
+| A-3 | D12 | P3 | ✅ закрыто | Артефакты запуска (отчёты/coverage) — закрыто по записи `CHANGELOG.md` (запись `A-3.1`) |
+| A-4 | D16 | P3 | ✅ закрыто | Docs-сайт (публикация документации): runbook — закрыто по записи `CHANGELOG.md` (запись `A-4.1`); реальный деплой — внешнее действие |
+| A-5 | D14 | P3 | ✅ закрыто | 4-я локаль (tr) + тесты локалей — закрыто по записи `CHANGELOG.md` (запись `A-5.1`) |
+| A-6 | D09 | P3 | ✅ закрыто | Telegram pause/resume (команды бота + привязка к запускам) — закрыто по записи `CHANGELOG.md` (записи `A-6.1`, `A-6.2`) |
+| M-1..M-8 | D16 (оркестрация) | P3 | ✅ закрыто | Мульти-агентная оркестрация: контекст, роли, self-correcting, fallback, tournament, CEP, cross-run memory, smart recipes — закрыто по записи `CHANGELOG.md` (записи `M-1.1`, `M-2.1`, `M-3.1`, `M-4.1`, `M-5.1`, `M-6.1`, `M-7.1`, `M-8.1`) |
+| X-1 | D16 | P1 | ✅ закрыто | `npm deprecate` legacy `opencode-windows-scheduler@1.5.8` — закрыто по записи `CHANGELOG.md` (записи `X-1.1`, `QW-5`) |
+| X-2 | D16 | P1 | ✅ закрыто | Legacy 1.5.9 с `<0.1.0` upper bound — закрыто по записи `CHANGELOG.md` (записи `X-2.1`, `QW-5`) |
+| X-3 | D16 | P3 | ✅ закрыто | Убрать `is_template: false` из `package.json` — закрыто по записи `CHANGELOG.md` (записи `X-3.1`, `PL-148`) |
 | X-4 | D16 | P2 | 🔄 | Dependabot: PR #4 закрыт, #7/#5 замержены в `main`; auto-merge включён, осталась гонка lock-файла (X-4.3) |
-| X-5 | D16 | P2 | ⏸️ | Привести теги к релизам + GitHub release для каждого тега |
-| X-6 | D16 | P3 | ✅ закрыто | Убрать `systemd` из keywords (бэкенда нет) — `X-6.1` в `CHANGELOG.md` |
+| X-5 | D16 | P2 | ✅ закрыто | Привести теги к релизам + GitHub release для каждого тега — закрыто по записи `CHANGELOG.md` (записи `X-5`, `QW-14.4`) |
+| X-6 | D16 | P3 | ✅ закрыто | Убрать `systemd` из keywords (бэкенда нет) — закрыто по записи `CHANGELOG.md` (записи `X-6.1`, `PL-148`) |
 
 ---
 
