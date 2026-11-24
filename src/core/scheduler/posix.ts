@@ -75,9 +75,24 @@ export abstract class PosixSchedulerBase implements SchedulerBackend {
 
   async deleteTask(name: string): Promise<void> {
     const entry = await this.registry.find(name);
+    if (!entry) {
+      // QW-9: нет записи — убираем возможную осиротевшую запись реестра.
+      await this.registry.remove(name);
+      return;
+    }
+    // QW-9: Linux пересобирает crontab из реестра, поэтому запись удаляется
+    // ДО uninstall. Если uninstall упадёт, реестр откатывается — иначе строка
+    // останется в crontab, а повторный delete уже не сможет её найти.
     await this.registry.remove(name);
-    if (entry) {
+    try {
       await this.uninstallEntry(entry);
+    } catch (err) {
+      try {
+        await this.registry.upsert(entry);
+      } catch {
+        // Не маскируем исходную ошибку uninstall ошибкой отката.
+      }
+      throw err;
     }
   }
 

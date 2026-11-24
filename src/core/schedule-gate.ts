@@ -38,7 +38,10 @@ import {
   validateLaunchWindow,
 } from "./schedule-v2.js";
 
-const STALE_DEFER_MS = 25 * 60 * 60 * 1000;
+// QW-9: чистые defer-хелперы вынесены в отдельный модуль, чтобы их можно
+// было тестировать без запуска CLI-гейта (schedule-gate вызывает main() на import).
+import { acquireDefer, deferFileBusy, MAX_POSTPONE_MS, releaseDefer } from "./defer.js";
+export { acquireDefer, deferFileBusy, MAX_POSTPONE_MS, releaseDefer, STALE_DEFER_MS } from "./defer.js";
 
 /**
  * BN-1 / BP-D01-1: горизонт буферизации пропущенных cron-тиков в poll-режиме.
@@ -50,9 +53,6 @@ const CATCHUP_LOOKBACK_MS = 25 * 60 * 60 * 1000;
 /** Сколько живёт маркер ручного запуска. */
 const FORCE_TTL_MS = 2 * 60 * 1000;
 
-/** Дольше 12 часов перенос не ждём — тик просто пропускается. */
-const MAX_POSTPONE_MS = 12 * 60 * 60 * 1000;
-
 function argValue(args: string[], name: string): string | undefined {
   const idx = args.indexOf(name);
   if (idx === -1 || idx + 1 >= args.length) return undefined;
@@ -61,40 +61,6 @@ function argValue(args: string[], name: string): string | undefined {
 
 function sleepMs(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-/** true, если defer-файл сейчас занят другим отложенным запуском. */
-function deferFileBusy(path: string, nowMs: number): boolean {
-  try {
-    const raw = fs.readFileSync(path, "utf8").trim();
-    const ts = Date.parse(raw);
-    if (Number.isFinite(ts) && nowMs - ts < STALE_DEFER_MS) return true;
-    // Протухший файл — удаляем и занимаем сами.
-    fs.unlinkSync(path);
-    return false;
-  } catch {
-    return false;
-  }
-}
-
-/** Атомарно занимает defer-слот; true, если занят успешно. */
-function acquireDefer(path: string, nowMs: number): boolean {
-  try {
-    const fd = fs.openSync(path, "wx");
-    fs.writeSync(fd, new Date(nowMs).toISOString());
-    fs.closeSync(fd);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function releaseDefer(path: string): void {
-  try {
-    fs.unlinkSync(path);
-  } catch {
-    /* удалён раньше — не страшно */
-  }
 }
 
 /**

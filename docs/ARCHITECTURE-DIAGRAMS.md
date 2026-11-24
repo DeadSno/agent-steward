@@ -23,6 +23,7 @@ src/core/audit.ts
 src/core/budget.ts
 src/core/catch-up.ts
 src/core/cron-to-schtasks.ts
+src/core/defer.ts
 src/core/dlq-api.ts
 src/core/dry-run.ts
 src/core/environment.ts
@@ -114,7 +115,7 @@ src/db/tasks-repo.ts
 src/db/templates-repo.ts
 ```
 
-**Что видно:** 80 модулей в `src/core/` (из них 4 — `router/`, 10 — `scheduler/`, 1 — `wrappers/`) и 17 модулей в `src/db/`. Durable-слой вынесен в `src/db/`, оркестрация — в `src/core/`. Счётчик сверен с `src/core/**/*.ts` 24.11.2026 (71 → 80 после D-1/D-3, M-1…M-4, A-2, T-1, S3-D36 и QW-2).
+**Что видно:** 81 модулей в `src/core/` (из них 4 — `router/`, 10 — `scheduler/`, 1 — `wrappers/`) и 17 модулей в `src/db/`. Durable-слой вынесен в `src/db/`, оркестрация — в `src/core/`. Счётчик сверен с `src/core/**/*.ts` 24.11.2026 (71 → 80 после D-1/D-3, M-1…M-4, A-2, T-1, S3-D36 и QW-2; 81 после QW-9).
 
 **Ключевые выводы:** Принцип «ядро не зависит от транспорта» реализован через [`execution.ts`](src/core/execution.ts): исполнитель (`StepExecutor`) передаётся в `executeExecutionPlan` снаружи. Отдельного `gate-repo.ts` не существует — операции с `gate_outcomes` распределены между [`execution.ts`](src/core/execution.ts), [`runs-repo.ts`](src/db/runs-repo.ts) и [`capability-repo.ts`](src/db/capability-repo.ts).
 
@@ -129,6 +130,7 @@ src/db/templates-repo.ts
 | [src/core/router/dispatch.ts](src/core/router/dispatch.ts) | ✅ | Capability-map routing: `routeStep`, `compileContextForRoute`, `recompileContextForRouteEscalation`. |
 | [src/core/router/escalation.ts](src/core/router/escalation.ts) | ✅ | Escalation logic: `gateVerdict`, `runGateWithRetry`, `resolveGateOutcome`, `escalateAfterGate`. |
 | [src/core/budget.ts](src/core/budget.ts) | ✅ | Budget gates: `evaluateBudgetGate`, `evaluateTaskTokenBudgetGate`, `buildBudgetReport`. |
+| [src/core/defer.ts](src/core/defer.ts) | ✅ | Defer-file liveness: `acquireDefer`, `deferFileBusy`, `releaseDefer` — `ISO|PID`, мёртвый владелец не блокирует тик (QW-9). |
 | [src/core/gate-integrity.ts](src/core/gate-integrity.ts) | ✅ | Snapshot hash verification: `gateInputsHash`, `createGateSnapshot`, `verifyGateSnapshot`, `verifyWorktreeSnapshot` + saga эффектов. |
 | [src/db/runs-repo.ts](src/db/runs-repo.ts) | ✅ | runs/run_steps: `createRun`, `startRun`, `finishStep`, `renewStepLease`; ledger: `recordGateOutcome`, `readGateOutcomeLedger`, `verifyGateOutcomeChain`. |
 | [src/db/run-journal.ts](src/db/run-journal.ts) | ✅ | Step journal: `beginStepAttempt`, `renewStepLease`, `recordStepSuccess`, `runStepStatefullyAsync`, `recoverInterruptedSteps`. |

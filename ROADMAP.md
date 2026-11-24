@@ -161,15 +161,10 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 ## Деталь 3.17 — Верификация аудита Qwen (QW)
 `src/runtime.ts`, `src/core/scheduler/mac.ts`, `src/core/permissions.ts`, `legacy/package.json`, `test-*.mjs`, `docs/*`
 
-> Отчёт Qwen от 24.11.2026 проверен по коду: в ROADMAP попадают только подтверждённые находки. QW-1 (worktree isolation), QW-2 (catch-up), QW-3 (macOS pause), QW-4 (egress), QW-5 (legacy-шим npm), QW-7 (quota-детектор) и QW-8 (MONTHLY/ID) закрыты и перенесены в CHANGELOG. Верификация P2/P3 выполнена 24.11.2026: подтверждённые пункты оформлены задачами QW-9…QW-14; пункт «quota-diff/gate смотрят в main-репо» — дубль уже закрытого QW-1, отдельной задачи не требует; претензия к комментарию про `X-Scheduler-Client` опровергнута (комментарий сам называет его «бонусом»), но слабое место Origin реально и вынесено в QW-13.
+> Отчёт Qwen от 24.11.2026 проверен по коду: в ROADMAP попадают только подтверждённые находки. QW-1 (worktree isolation), QW-2 (catch-up), QW-3 (macOS pause), QW-4 (egress), QW-5 (legacy-шим npm), QW-7 (quota-детектор), QW-8 (MONTHLY/ID) и QW-9 (POSIX delete/defer) закрыты и перенесены в CHANGELOG. Верификация P2/P3 выполнена 24.11.2026: подтверждённые пункты оформлены задачами QW-10…QW-14; пункт «quota-diff/gate смотрят в main-репо» — дубль уже закрытого QW-1, отдельной задачи не требует; претензия к комментарию про `X-Scheduler-Client` опровергнута (комментарий сам называет его «бонусом»), но слабое место Origin реально и вынесено в QW-13.
 
 **Задача QW-6 — верификация P2/P3 отчёта Qwen** · P2 · ⬜
 - [ ] QW-6.3 Опровергнутые пункты и дубли зафиксировать в CHANGELOG в рамках QW-14
-
-**Задача QW-9 — POSIX delete оставляет ghost-cron; осиротевший defer блокирует сутки** · P2 · ⬜
-- [ ] QW-9.1 `PosixSchedulerBase.deleteTask`: сначала uninstall, при ошибке — откат реестра
-- [ ] QW-9.2 `deferFileBusy`: PID владельца + проверка живости или TTL с запасом вместо 25 ч
-- [ ] QW-9.3 Регрессии: сбой crontab не теряет запись, мёртвый PID не блокирует тик
 
 **Задача QW-10 — poll без node и Windows-семантика на POSIX** · P2 · ⬜
 - [ ] QW-10.1 bash-обёртка: fail-closed, если задан `SCHEDULE_CRON`, а `node` недоступен

@@ -141,6 +141,7 @@
     "test:worktree": "node test-worktree.mjs",
     "test:catch-up": "node test-catch-up.mjs",
     "test:quota-scope": "node test-quota-scope.mjs",
+    "test:posix-defer": "node test-posix-defer.mjs",
     "test:guards": "node test-guards.mjs",
     "test:w4": "node test-w4.mjs",
     "test:notifications-v2": "node test-notifications-v2.mjs",
