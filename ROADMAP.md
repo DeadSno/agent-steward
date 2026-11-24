@@ -22,26 +22,15 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 
 Обозначения: ⬜ не начато · 🔄 в работе · ⏸️ внешнее действие.
 
-> **Стратегический клин (24.11.2026).** Три варианта — GitOps для агентов, локальный Control Plane и MCP-нативный оркестратор — не альтернативы, а три входа в одну дверь: GitOps уже сдан в 0.0.5 (pipeline-as-code), а Control Plane и MCP упираются в один и тот же слой исполнения. Жёсткий порядок: **P-1 (изоляция ядра) → P-2 (MCP-адаптер, ~80% ценности) → P-3 (универсальный `harness`)**; P-4/P-5 — бэклог P3. Суть (moat) — `agent-steward/core`: объективный гейт, savings-ledger, capability-роутинг с `first_pass_rate` и flywheel; дистрибуция — `agent-steward mcp` + subpath exports. Детали — 3.18 и 3.19.
 
 ---
 
-
-**Задача X-4 — Dependabot** · P2 · 🔄
 
 ## QA-находки (проверка работоспособности плагина 24.11.2026)
 
 - [ ] QA-PORT-12: CLI-помощник `dist/core/worktree-run.js` молча ничего не делает, когда `dist/` — junction на основной чек-аут (W-1): проверка `import.meta.url === pathToFileURL(path.resolve(process.argv[1]))` не срабатывает, `main()` не вызывается, exit 0 и пустой stdout (`node test-worktree.mjs` в таком worktree — 104/113, в чек-ауте с реальным `dist/` — 107/107); с флагами `--preserve-symlinks --preserve-symlinks-main` помощник работает — P2. Действие: сравнивать реальные пути (`fs.realpathSync`) при определении entrypoint'а либо запускать helper в тестах с флагами симлинков, как в `test-mcp-adapter.mjs`. Обнаружено 24.11.2026.
 - [ ] QA-PORT-13: `node test-i18n.mjs` в worktree, где `dist/` — junction на `.steward-dev/dist` (W-1), падает: `catalogPath()` (`src/i18n.ts`) ищет каталоги рядом с модулем, то есть в `.steward-dev/locales`, где есть `ru/en/zh.json`, но нет `tr.json`; `absentKeys('tr')` не пуст, `availableLocales()` = `[ru,en,zh]`, а дальше тест падает с `ERR_INVALID_ARG_TYPE` на `fs.readFileSync(null)` (`test-i18n.mjs:144`) — P2. Действие: синхронизировать `locales/tr.json` в dev-установку при создании worktree или расширить `candidateCatalogDirs()` поиском каталога рядом с тестом/корнем репозитория; в чистом чек-ауте с реальным `dist/` дефект не проявляется. Обнаружено 24.11.2026.
-- [ ] QA-PORT-11: `tools.get_history` молча игнорирует неизвестные ключи аргумента: `get_history({name:"НЕСУЩЕСТВУЮЩАЯ",limit:3})` возвращает те же 3 записи, что и вызов без фильтра, тогда как правильный ключ `taskName` (`get_history({taskName:"НЕСУЩЕСТВУЮЩАЯ"})`) корректно даёт пустой результат — P2. Действие: отклонять неизвестные аргументы в схеме инструмента или явно документировать точную сигнатуру (`taskName`/`status`/`limit`/`compact`) в `.opencode/skills/roadmap-plugin-workflow/SKILL.md`, чтобы не делать ложный вывод «фильтр сломан». Обнаружено 24.11.2026.
 
-
----
-
-## Деталь 3.14 — Узкие места из TEST-PLAN §7.2 (bottlenecks)
-`src/core/schedule-v2.ts`, `src/core/ps-wrapper.ts`, `src/notifications.ts`, `src/core/structured-log.ts`, `src/gui.tsx`, `src/db/*`, `package.json`
-
-> Перенесено из `TEST-PLAN.md` §7.2. Исключён только `BP-D08-1` — закрыт QA-A3 и зафиксирован в CHANGELOG. Исходные ID сохранены в заголовках задач; префикс `BN` введён для сквозной нумерации ROADMAP (PL-100).
 
 ---
 
@@ -130,34 +119,12 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 ## Деталь 3.16 — Сверка статусов TEST-PLAN §7.4 с CHANGELOG
 `TEST-PLAN.md`, `test-test-plan.mjs`, `CHANGELOG.md`
 
-> При переносе открытых задач выявлено расхождение: строки `D-1…D-3`, `A-2…A-6`, `M-1…M-8`, `X-1/X-2/X-5`, `F-2.5` в §7.4 всё ещё помечены ⬜/⏸️, хотя CHANGELOG содержит закрытые подзадачи (`D-1.1…`, `A-2.1/A-2.2`, `A-3.1`, `A-4.1/A-5.1/A-6.1/A-6.2`, `M-1.1…M-8.1`, `X-1.1/X-2.1/X-5`, `F-2.5`). Открытой остаётся только `X-4` (уже есть в ROADMAP).
+> При переносе открытых задач выявлено расхождение: строки `D-1…D-3`, `A-2…A-6`, `M-1…M-8`, `X-1/X-2/X-5`, `F-2.5` в §7.4 всё ещё помечены ⬜/⏸️, хотя CHANGELOG содержит закрытые подзадачи (`D-1.1…`, `A-2.1/A-2.2`, `A-3.1`, `A-4.1/A-5.1/A-6.1/A-6.2`, `M-1.1…M-8.1`, `X-1.1/X-2.1/X-5`, `F-2.5`). Все перечисленные ID закрыты в CHANGELOG; `X-4` (X-4.1/4.2/4.3) тоже закрыт и удалён из ROADMAP.
 
 **Задача TPS-1 — статусы §7.4 не совпадают с CHANGELOG** · D16 · P2 · ⬜
 - [ ] TPS-1.1 Сверить каждую строку §7.4 с записью CHANGELOG и зафиксировать расхождения
 - [ ] TPS-1.2 Обновить статусы в TEST-PLAN.md на ✅ со ссылками на CHANGELOG, оставив `X-4` открытой
 - [ ] TPS-1.3 Добавить проверку в `test-test-plan.mjs`, чтобы закрытые ID из §7.4 не могли вернуться как ⬜
-
----
-
-## Деталь 3.17 — Верификация аудита Qwen (QW)
-`src/runtime.ts`, `src/core/scheduler/mac.ts`, `src/core/permissions.ts`, `legacy/package.json`, `test-*.mjs`, `docs/*`
-
-> Отчёт Qwen от 24.11.2026 проверен по коду: в ROADMAP попадают только подтверждённые находки. QW-1 (worktree isolation), QW-2 (catch-up), QW-3 (macOS pause), QW-4 (egress), QW-5 (legacy-шим npm), QW-7 (quota-детектор), QW-8 (MONTHLY/ID), QW-9 (POSIX delete/defer), QW-10 (poll без node / POSIX-семантика), QW-11 (one-shot cleanup/стампы), QW-12 (SSH/Docker runner), QW-13 (доверие Origin дашборда), QW-14.4 (доку/конфиги: tr-локаль, счётчики, MIGRATION/SAFETY, тарбол, lint-промпт), QW-14.5 (опровергнутые пункты и дубли) и QW-15 (дополнительные находки: миграция каталога, приоритет новой папки в `listTasks`, TOCTOU в lock) закрыты и перенесены в CHANGELOG. Верификация P2/P3 выполнена 24.11.2026: подтверждённые пункты оформлены задачами QW-11…QW-14; пункт «quota-diff/gate смотрят в main-репо» — дубль уже закрытого QW-1, отдельной задачи не требует; претензия к комментарию про `X-Scheduler-Client` опровергнута (комментарий сам называет его «бонусом»), но слабое место Origin реально и вынесено в QW-13.
-
----
-
-## Деталь 3.18 — Стратегический клин: портабельность (24.11.2026)
-`src/core/*`, `src/tool-specs.ts`, `src/mcp.ts`, `src/core-entry.ts`, `src/core/execution*`, `package.json`
-
-> P-1 в dev-линии частично реализован (subpath exports `./core` / `./mcp` / `./dsh`, `src/mcp.ts`), но в релизе ещё не зафиксирован. Жёсткий порядок: P-1 → P-2 → P-3; P-2 без закрытого P-1 не начинать.
-
-**Задача P-1 — изоляция ядра** · P1 · ✅
-
-**Задача P-2 — MCP-адаптер (~80% ценности клина)** · P1 · ✅
-
-**Задача P-3 — AgentInvoker и `harness`** · P1 · ✅
-
-**Задача P-4/P-5 — нативный dsh и `serve`** · P3 · ✅
 
 ---
 
