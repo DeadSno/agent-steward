@@ -1393,6 +1393,27 @@ try {
         # падения терялась (например, при отказе модели до вывода в лог).
         if (-not $script:errorMessage) {
             $script:errorMessage = "Код возврата $($script:exitCode)"
+            # PL-130: последняя осмысленная строка хвоста лога объясняет,
+            # почему агент упал, вместо голого «Код возврата 1».
+            $reasonLines = @()
+            if ($LogFile -and (Test-Path -LiteralPath $LogFile)) {
+                try {
+                    $reasonLines = @(Get-Content -LiteralPath $LogFile -Tail 80 -Encoding UTF8 -ErrorAction Stop |
+                        Where-Object { $_ -match 'error|ERROR|Error|ошибка|OOM|limit|quota|ENOTFOUND|ECONNRESET' } |
+                        Select-Object -Last 1)
+                } catch {}
+            }
+            if ($reasonLines.Count -gt 0) {
+                $errorReason = [string]$reasonLines[0]
+                # Санитизация ANSI/управляющих символов и ограничение длины (как в PL-83).
+                $errorReason = [regex]::Replace($errorReason, "$esc\\[[0-9;?]*[A-Za-z]", "")
+                $errorReason = ($errorReason -replace '[^\x20-\x7EА-Яа-яЁё]', '').Trim()
+                if ($errorReason.Length -gt 200) { $errorReason = $errorReason.Substring(0, 200) + '...' }
+                if ($errorReason) {
+                    $script:errorMessage = "$($script:errorMessage). Причина: $errorReason"
+                    Write-Log "[agent-steward] PL-130: причина ошибки агента: $errorReason"
+                }
+            }
         }
         Write-Log "[agent-steward] ОШИБКА: задача '$TaskName' завершилась с кодом $($script:exitCode). $script:errorMessage"
     } else {

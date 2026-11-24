@@ -1384,6 +1384,40 @@ try {
   check("PL-121: секция не выбросила исключение", false, "section threw");
 }
 
+// --- PL-130: причина падения агента вместо «Код возврата 1» (строковые регрессии) ---
+// Без реального powershell: проверяем WRAPPER_SCRIPT из dist, поэтому тест
+// детерминирован и не зависит от OC-планировщика.
+try {
+  check(
+    "PL-130: причина извлекается из хвоста лога агента (-Tail 80 -Encoding UTF8 + фильтр)",
+    psWrapperScript.includes("Get-Content -LiteralPath $LogFile -Tail 80 -Encoding UTF8") &&
+      psWrapperScript.includes(
+        "error|ERROR|Error|ошибка|OOM|limit|quota|ENOTFOUND|ECONNRESET"
+      ) &&
+      psWrapperScript.includes("Select-Object -Last 1")
+  );
+  check(
+    "PL-130: причина подставляется в errorMessage после «Код возврата N» и дублируется в Write-Log",
+    psWrapperScript.includes('$script:errorMessage = "Код возврата $($script:exitCode)"') &&
+      psWrapperScript.includes("$($script:errorMessage). Причина: $errorReason") &&
+      psWrapperScript.includes("PL-130: причина ошибки агента: $errorReason")
+  );
+  check(
+    "PL-130: причина санитизируется (ANSI/управляющие) и обрезается до 200 символов",
+    psWrapperScript.includes(
+      '$errorReason = [regex]::Replace($errorReason, "$esc\\[[0-9;?]*[A-Za-z]", "")'
+    ) && psWrapperScript.includes("$errorReason.Substring(0, 200)")
+  );
+  check(
+    "PL-130: ветка квоты PL-83 не переписана под общую причину",
+    psWrapperScript.includes("PL-83: квота модели исчерпана ($quotaReason)") &&
+      psWrapperScript.includes("$script:exitCode = 126")
+  );
+} catch (err) {
+  console.log("[diag] PL-130 section THREW:", err instanceof Error ? err.stack : String(err));
+  check("PL-130: секция не выбросила исключение", false, "section threw");
+}
+
 // --- PL-80/81/101/104/105: регрессии коммит-хелперов и обёртки (B4) ---
 try {
   const repoRoot = process.cwd();

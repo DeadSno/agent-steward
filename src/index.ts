@@ -5022,6 +5022,10 @@ export async function createRuntime(ctxLike: RuntimeContextLike): Promise<Schedu
   // запускаются при изменении watchPath через chokidar (с дебаунсом).
   fileWatcherManager = new FileWatchManager(async (taskName) => {
     try {
+      // PL-130: задачу уже запустили — последующие правки наблюдаемого файла
+      // сделаны этим же агентом и не должны вызывать самоповтор (11 лишних
+      // запусков в зонде DS313-FILE-PROBE).
+      fileWatcherManager?.suppressForTask(taskName);
       await scheduleEventRun(taskName, "изменение отслеживаемого файла");
     } catch (err) {
       console.error(

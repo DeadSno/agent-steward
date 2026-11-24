@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import path from "node:path";
 
 const { normalizeWatchPath, validateWatchGlobs } = await import("./dist/core/watch-paths.js");
@@ -61,6 +62,39 @@ assert.throws(
   () => validateWatchGlobs(["bad\nmask"]),
   /управляющих символов/,
   "glob-маска с переводом строки отклонена"
+);
+
+// PL-130: файловый триггер должен подавлять собственные записи агента.
+// Проверки по исходникам детерминированы: реальный chokidar в тесте не поднимаем.
+const watcherSrc = fs.readFileSync(path.resolve("src/core/file-watcher.ts"), "utf8");
+assert(
+  watcherSrc.includes("export const FILE_TRIGGER_SELF_WRITE_SUPPRESS_MS = 15000"),
+  "PL-130: объявлена константа окна подавления с значением по умолчанию 15000 мс"
+);
+assert(
+  watcherSrc.includes(
+    "suppressForTask(\n    taskName: string,\n    ms: number = FILE_TRIGGER_SELF_WRITE_SUPPRESS_MS,\n  ): void"
+  ),
+  "PL-130: FileWatchManager объявляет публичный suppressForTask(taskName, ms?)"
+);
+assert(
+  watcherSrc.includes("this.suppressUntil.set(taskName.toLowerCase()"),
+  "PL-130: задача помечается по имени в нижнем регистре до now+ms"
+);
+assert(
+  watcherSrc.includes("Date.now() < until") &&
+    watcherSrc.indexOf("Date.now() < until") < watcherSrc.indexOf("clearTimeout(entry.timer)"),
+  "PL-130: onChange игнорирует изменение до истечения окна, не трогая дебаунс-таймер"
+);
+const indexSrc = fs.readFileSync(path.resolve("src/index.ts"), "utf8");
+assert(
+  indexSrc.includes("fileWatcherManager?.suppressForTask(taskName)"),
+  "PL-130: обработчик файлового триггера подавляет запись до scheduleEventRun"
+);
+assert(
+  indexSrc.indexOf("fileWatcherManager?.suppressForTask(taskName)") <
+    indexSrc.indexOf('scheduleEventRun(taskName, "изменение отслеживаемого файла")'),
+  "PL-130: подавление вызывается ПЕРЕД запуском задачи"
 );
 
 console.log("Watch paths: все проверки пройдены.");

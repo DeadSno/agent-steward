@@ -11,6 +11,14 @@ import { hasPathControlChars } from "./watch-paths.js";
  */
 export const FILE_TRIGGER_DEBOUNCE_MS = 2000;
 
+/**
+ * PL-130: окно, в котором изменения наблюдаемого файла игнорируются после
+ * запуска задачи. Запущенный агент сам редактирует файл (например, ROADMAP.md),
+ * и без подавления эти правки порождают каскад самоповторов (11 лишних запусков
+ * в зонде DS313-FILE-PROBE).
+ */
+export const FILE_TRIGGER_SELF_WRITE_SUPPRESS_MS = 15000;
+
 export type FileTriggerHandler = (
   taskName: string,
   changedPath: string
@@ -36,6 +44,8 @@ interface WatchedTask {
 export class FileWatchManager {
   private entries = new Map<string, WatchedTask>();
   private stopped = false;
+  /** PL-130: задача → момент, до которого её собственные записи игнорируются. */
+  private suppressUntil = new Map<string, number>();
 
   constructor(
     private readonly handler: FileTriggerHandler,
@@ -45,6 +55,20 @@ export class FileWatchManager {
   /** Сколько задач сейчас отслеживается. */
   get size(): number {
     return this.entries.size;
+  }
+
+  /**
+   * PL-130: помечает задачу как «ожидает собственной записи» на `ms` мс.
+   * Изменения watchPath в это окно не запускают задачу и не сбрасывают таймер
+   * дебаунса — иначе агент, отредактировав наблюдаемый файл, перезапускает сам
+   * себя. Ключ — имя задачи в нижнем регистре, как и в `entries`.
+   */
+  suppressForTask(
+    taskName: string,
+    ms: number = FILE_TRIGGER_SELF_WRITE_SUPPRESS_MS,
+  ): void {
+    if (!taskName) return;
+    this.suppressUntil.set(taskName.toLowerCase(), Date.now() + Math.max(0, ms));
   }
 
   /**
@@ -179,6 +203,10 @@ export class FileWatchManager {
 
     const onChange = (changedPath: string) => {
       if (this.stopped) return;
+      // PL-130: пока задача активна, её собственные правки наблюдаемого файла
+      // не запускают новый прогон и не перезапускают дебаунс-таймер.
+      const until = this.suppressUntil.get(name.toLowerCase());
+      if (until !== undefined && Date.now() < until) return;
       if (!accepts(changedPath)) return;
       if (entry.timer) clearTimeout(entry.timer);
       entry.timer = setTimeout(() => {
