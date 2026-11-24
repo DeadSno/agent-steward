@@ -3,7 +3,8 @@
  * Запуск: node test-test-plan.mjs
  *
  * Проверяет: покрытие §5, actual-счётчики, дату, SCHEMA_VERSION,
- * языковые артефакты, новые детали D17/D18, статус TP-задач в ROADMAP.
+ * языковые артефакты, новые детали D17/D18, статус TP-задач в ROADMAP,
+ * а также закрытые ID §7.4 и устойчивость guard-а к регрессиям (TPS-1.3).
  */
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -101,6 +102,66 @@ check("PL-3.2: Деталь 1.4 / TP-3…TP-6 зафиксированы в CHAN
   /Деталь 1\.4/.test(changelog) &&
     /TP-3\s*[–—-]\s*TP-6/.test(changelog) &&
     /удалена из ROADMAP/i.test(changelog));
+
+// TPS-1.3 (Деталь 3.16): guard против возврата закрытых ID §7.4 в открытые статусы.
+const s74 = section(plan, "### 7.4 Доработки из ROADMAP.md (бэклог)", "## 8.");
+
+// Закрытые ID привязаны к строке таблицы §7.4. Составные строки дают несколько
+// ID на одну строку: E-1/E-2.1/E-2.2, M-1..M-8, F-2/F-2.5 (F-2.5 — в «Сути»).
+const CLOSED_74 = [
+  ["F-1", "F-1"], ["F-2", "F-2"], ["F-2.5", "F-2.5"], ["F-3", "F-3"], ["F-4", "F-4"],
+  ["E-1", "E-1"], ["E-2", "E-2.1"], ["E-3", "E-3"], ["E-4", "E-4"], ["E-5", "E-5"],
+  ["A-1", "A-1"],
+  ["D-1", "D-1"], ["D-2", "D-2"], ["D-3", "D-3"],
+  ["A-2", "A-2"], ["A-3", "A-3"], ["A-4", "A-4"], ["A-5", "A-5"], ["A-6", "A-6"],
+  ...Array.from({ length: 8 }, (_, i) => [`M-${i + 1}`, "M-1..M-8"]),
+  ["X-1", "X-1"], ["X-2", "X-2"], ["X-3", "X-3"], ["X-5", "X-5"], ["X-6", "X-6"],
+];
+
+const escRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+// Токен с границами: "F-2" не должен матчить "F-2.5", а "E-2.1"/"M-1..M-8"
+// привязывают составные ID к их единственной строке таблицы.
+const rowFor = (text, key) => {
+  const re = new RegExp(`(?<![\\w.])${escRe(key)}(?![\\w.])`);
+  return text.split("\n").find((line) => /^\s*\|/.test(line) && re.test(line));
+};
+const cellsOf = (row) => row.split("|").map((c) => c.trim());
+
+function auditClosed74(text) {
+  const issues = [];
+  for (const [id, key] of CLOSED_74) {
+    const row = rowFor(text, key);
+    if (!row) {
+      issues.push(`${id}: строка §7.4 не найдена (${key})`);
+      continue;
+    }
+    const status = cellsOf(row)[4] ?? "";
+    const essence = cellsOf(row)[5] ?? "";
+    if (!status.includes("✅")) issues.push(`${id}: статус «${status}» — ожидается ✅`);
+    if (!/CHANGELOG/i.test(essence)) issues.push(`${id}: нет ссылки на CHANGELOG в «Сути»`);
+  }
+  return issues;
+}
+
+const s74Issues = auditClosed74(s74);
+check(`TPS-1.3: ${CLOSED_74.length} закрытых ID §7.4 имеют ✅ и ссылку на CHANGELOG`,
+  s74Issues.length === 0);
+if (s74Issues.length) console.error(s74Issues.map((s) => " - " + s).join("\n"));
+
+// X-4 намеренно исключён из обязательных: ему разрешено оставаться 🔄.
+const x4Row = rowFor(s74, "X-4");
+check("TPS-1.3: X-4 разрешён оставаться 🔄 (не требует закрытия)",
+  !!x4Row && /[✅🔄]/.test(cellsOf(x4Row)[4] ?? ""));
+
+// Негативный тест: подменяем статус F-1 на ⬜ и убеждаемся, что guard это ловит.
+const f1Row = rowFor(s74, "F-1");
+const mutated = f1Row ? s74.replace(f1Row, f1Row.replace("✅", "⬜")) : s74;
+check("TPS-1.3: негативный тест — регрессия F-1 → ⬜ обнаруживается guard-ом",
+  mutated !== s74 && auditClosed74(mutated).some((s) => s.startsWith("F-1:")));
+// Восстановление: правка была только в памяти, на диске §7.4 не менялся.
+const restored = s74;
+check("TPS-1.3: исходное состояние §7.4 восстановлено",
+  restored === s74 && auditClosed74(restored).length === 0);
 
 const failed = results.filter((r) => !r.ok);
 console.log(`\nИТОГО: ${results.length - failed.length}/${results.length} проверок пройдено.`);
