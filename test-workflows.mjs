@@ -149,6 +149,88 @@ if (releaseName) {
   );
 }
 
+// X-4.2: auto-merge для minor/patch Dependabot PR. Проверяем и workflow, и
+// конфигурацию Dependabot: в dependabot.yml нет нативного ключа auto-merge,
+// поэтому поведение задаётся workflow и настройкой репозитория.
+const autoMergeFile = files.find(
+  (name) => name === "dependabot-automerge.yml" || name === "dependabot-automerge.yaml",
+);
+check(Boolean(autoMergeFile), "X-4.2: есть workflow dependabot-automerge.yml");
+if (autoMergeFile) {
+  const doc = parse(fs.readFileSync(path.join(workflowsDir, autoMergeFile), "utf8"));
+  const trigger = doc?.on?.pull_request_target;
+  check(
+    Boolean(trigger) &&
+      ["opened", "reopened", "synchronize", "labeled"].every((type) =>
+        (Array.isArray(trigger.types) ? trigger.types : []).includes(type),
+      ),
+    "X-4.2: workflow реагирует на PR dependabot (opened/reopened/synchronize/labeled)",
+  );
+  const job = doc?.jobs?.["auto-merge"];
+  const steps = Array.isArray(job?.steps) ? job.steps : [];
+  const runOf = (step) => String(step?.run ?? "");
+  check(
+    /dependabot\[bot\]/.test(String(job?.if ?? "")) &&
+      /github\.repository/.test(String(job?.if ?? "")),
+    "X-4.2: job ограничен PR от dependabot[bot] в этом репозитории",
+  );
+  check(
+    job?.permissions?.contents === "write" && job?.permissions?.["pull-requests"] === "write",
+    "X-4.2: job получает contents/pull-requests write",
+  );
+  check(
+    steps.every((step) => !/\buses\s*:\s*actions\/checkout\b/.test(String(step?.uses ?? ""))),
+    "X-4.2: код из head PR не чекаутится (pull_request_target safety)",
+  );
+  check(
+    steps.some((step) => /dependabot\/fetch-metadata/.test(String(step?.uses ?? ""))),
+    "X-4.2: используется dependabot/fetch-metadata для update-type",
+  );
+  check(
+    steps.some(
+      (step) =>
+        /gh run list/.test(runOf(step)) &&
+        /--workflow ci\.yml/.test(runOf(step)) &&
+        /conclusion/.test(runOf(step)),
+    ),
+    "X-4.2: перед мержем ждём зелёного ci.yml для head SHA",
+  );
+  const mergeStep = steps.find((step) => /gh pr merge/.test(runOf(step)));
+  check(
+    Boolean(mergeStep) && /--auto/.test(runOf(mergeStep)) && /--squash/.test(runOf(mergeStep)),
+    "X-4.2: шаг мержа вызывает gh pr merge --auto --squash",
+  );
+  check(
+    Boolean(mergeStep) &&
+      /semver-patch/.test(String(mergeStep.if ?? "")) &&
+      /semver-minor/.test(String(mergeStep.if ?? "")) &&
+      !/semver-major/.test(String(mergeStep.if ?? "")),
+    "X-4.2: auto-merge только для minor/patch, major исключён",
+  );
+}
+
+const dependabotPath = path.join(process.cwd(), ".github", "dependabot.yml");
+check(fs.existsSync(dependabotPath), "X-4.2: .github/dependabot.yml существует");
+if (fs.existsSync(dependabotPath)) {
+  const raw = fs.readFileSync(dependabotPath, "utf8");
+  const doc = parse(raw);
+  const npmUpdate = (Array.isArray(doc?.updates) ? doc.updates : []).find(
+    (update) => update?.["package-ecosystem"] === "npm",
+  );
+  check(
+    npmUpdate?.["target-branch"] === "dev" &&
+      Boolean(npmUpdate?.groups?.opencode) &&
+      Boolean(npmUpdate?.groups?.["dev-dependencies"]),
+    "X-4.2: сохраняем target-branch dev и группы @opencode/* + dev-зависимостей",
+  );
+  check(
+    !Object.prototype.hasOwnProperty.call(npmUpdate ?? {}, "auto-merge") &&
+      /dependabot-automerge\.yml/.test(raw) &&
+      /Allow auto-merge/.test(raw),
+    "X-4.2: зависимость от workflow и настройки Allow auto-merge задокументирована",
+  );
+}
+
 if (failed > 0) {
   console.error(`\nПровалено проверок: ${failed} из ${checks}`);
   process.exit(1);

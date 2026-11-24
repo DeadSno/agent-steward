@@ -1,3 +1,8 @@
+# X-4.2: в dependabot.yml нет нативного ключа auto-merge. Minor/patch-PR
+# мержуются workflow .github/workflows/dependabot-automerge.yml через
+# `gh pr merge --auto --squash` после зелёного ci.yml; major-обновления ручные.
+# Дополнительно включите Settings → General → Pull Requests → Allow auto-merge:
+# без настройки репозитория workflow не сможет поставить PR в авто-мерж.
 # P3-1: обновления зависимостей приходят PR-ами, а не «внезапным» дрейфом лока.
 # PR создаются против `dev` (target-branch), чтобы обновления не оседали только в main.
 # Группировка держит шум в разумных пределах: один PR на dev-зависимости,

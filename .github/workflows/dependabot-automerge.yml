@@ -11,13 +11,15 @@ concurrency:
   group: dependabot-automerge-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
-permissions:
-  actions: read
-  contents: write
-  pull-requests: write
+permissions: {}
 
 jobs:
   auto-merge:
+    # X-4.2: write-права выдаём только этому job — futures jobs не наследуют токен.
+    permissions:
+      actions: read
+      contents: write
+      pull-requests: write
     name: Enable auto-merge
     if: >-
       github.event.pull_request.user.login == 'dependabot[bot]' &&

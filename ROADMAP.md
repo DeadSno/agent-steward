@@ -28,8 +28,6 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 
 
 **Задача X-4 — Dependabot** · P2 · 🔄
-- [ ] X-4.2 Включить auto-merge для minor/patch в `.github/dependabot.yml`
-  > Чтобы patch/minor не копились руками: GitHub Settings → Enable auto-merge; в `.github/dependabot.yml` оставить текущую группировку `@opencode/*` и dev-зависимостей. Мажоры по-прежнему вручную.
 - [ ] X-4.3 Устранить гонку за lock-файл в `test-registry-resilience.mjs`
   > Флейк: `EPERM: operation not permitted, open '...\locks\registry-p2-16-parallel.lock'` при параллельном доступе 32 задач к registry lock (Windows, Node 22). Действие: сериализовать доступ/добавить retry с экспоненциальной задержкой вокруг `LockManager.acquire` в тесте, чтобы PR с dev-зависимостями не краснели случайно.
 
