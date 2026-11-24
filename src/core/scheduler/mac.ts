@@ -245,6 +245,11 @@ function buildPlist(label: string, entry: RegistryEntry): string {
     "  <key>RunAtLoad</key>",
     "  <false/>",
     ...scheduleXml,
+    // QW-11: однозапусковые задачи оставляют фоновую очистку
+    // `(sleep 2; launchctl bootout ...) &`. Без AbandonProcessGroup launchd
+    // убивает остатки process group после выхода джобы, и plist/стампы копятся.
+    "  <key>AbandonProcessGroup</key>",
+    "  <true/>",
     "</dict>",
     "</plist>",
     "",
@@ -496,6 +501,14 @@ export class MacScheduler extends PosixSchedulerBase {
     const plistPath = this.plistPath(entry.name);
     await this.launchctl(["unload", "-w", plistPath], { tolerateFailure: true });
     await fs.unlink(plistPath).catch((error: unknown) => warnCleanupFailure(plistPath, error));
+    // QW-11: one-shot-стампы живут отдельно от plist и раньше оставались навсегда.
+    const label = this.label(entry.name);
+    const cleanupNames = await fs.readdir(LAUNCH_AGENTS_DIR).catch(() => [] as string[]);
+    for (const name of cleanupNames) {
+      if (!name.startsWith(`${label}.once-`) || !name.endsWith(".done")) continue;
+      const stampPath = path.join(LAUNCH_AGENTS_DIR, name);
+      await fs.unlink(stampPath).catch((error: unknown) => warnCleanupFailure(stampPath, error));
+    }
   }
 
   protected async applyPause(entry: RegistryEntry, paused: boolean): Promise<void> {

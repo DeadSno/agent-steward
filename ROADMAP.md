@@ -156,15 +156,10 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 ## Деталь 3.17 — Верификация аудита Qwen (QW)
 `src/runtime.ts`, `src/core/scheduler/mac.ts`, `src/core/permissions.ts`, `legacy/package.json`, `test-*.mjs`, `docs/*`
 
-> Отчёт Qwen от 24.11.2026 проверен по коду: в ROADMAP попадают только подтверждённые находки. QW-1 (worktree isolation), QW-2 (catch-up), QW-3 (macOS pause), QW-4 (egress), QW-5 (legacy-шим npm), QW-7 (quota-детектор), QW-8 (MONTHLY/ID), QW-9 (POSIX delete/defer) и QW-10 (poll без node / POSIX-семантика) закрыты и перенесены в CHANGELOG. Верификация P2/P3 выполнена 24.11.2026: подтверждённые пункты оформлены задачами QW-10…QW-14; пункт «quota-diff/gate смотрят в main-репо» — дубль уже закрытого QW-1, отдельной задачи не требует; претензия к комментарию про `X-Scheduler-Client` опровергнута (комментарий сам называет его «бонусом»), но слабое место Origin реально и вынесено в QW-13.
+> Отчёт Qwen от 24.11.2026 проверен по коду: в ROADMAP попадают только подтверждённые находки. QW-1 (worktree isolation), QW-2 (catch-up), QW-3 (macOS pause), QW-4 (egress), QW-5 (legacy-шим npm), QW-7 (quota-детектор), QW-8 (MONTHLY/ID), QW-9 (POSIX delete/defer), QW-10 (poll без node / POSIX-семантика) и QW-11 (one-shot cleanup/стампы) закрыты и перенесены в CHANGELOG. Верификация P2/P3 выполнена 24.11.2026: подтверждённые пункты оформлены задачами QW-11…QW-14; пункт «quota-diff/gate смотрят в main-репо» — дубль уже закрытого QW-1, отдельной задачи не требует; претензия к комментарию про `X-Scheduler-Client` опровергнута (комментарий сам называет его «бонусом»), но слабое место Origin реально и вынесено в QW-13.
 
 **Задача QW-6 — верификация P2/P3 отчёта Qwen** · P2 · ⬜
 - [ ] QW-6.3 Опровергнутые пункты и дубли зафиксировать в CHANGELOG в рамках QW-14
-
-**Задача QW-11 — macOS one-shot cleanup и мусор в LaunchAgents** · P2 · ⬜
-- [ ] QW-11.1 `AbandonProcessGroup=true` в plist или синхронная очистка после recorder
-- [ ] QW-11.2 `uninstallEntry` удаляет стампы `*.once-*.done`
-- [ ] QW-11.3 Регрессия: cleanup переживает выход джобы, стампы не копятся
 
 **Задача QW-12 — SSH-runner инъекция и неполный Docker-runner** · P2 · ⬜
 - [ ] QW-12.1 Запрет ведущего `-`/`--` в host ssh-runner

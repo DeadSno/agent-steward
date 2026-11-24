@@ -342,6 +342,52 @@ const plist = "/Users/test/Library/LaunchAgents/com.opencode.scheduler.demo.plis
   );
 }
 
+// QW-11: фоновый cleanup one-shot должен переживать выход launchd-джобы,
+// а стампы *.once-*.done не должны копиться в ~/Library/LaunchAgents.
+{
+  const scheduler = new MacScheduler("default");
+  const entry = {
+    name: "demo",
+    schedule: "0 3 * * *",
+    command: "echo demo",
+    triggerType: "cron",
+    paused: false,
+    createdAt: new Date().toISOString(),
+  };
+  const macSource = fs.readFileSync(new URL("./dist/core/scheduler/mac.js", import.meta.url), "utf8");
+  check(
+    "QW-11: plist содержит AbandonProcessGroup=true",
+    macSource.includes("<key>AbandonProcessGroup</key>") && macSource.includes("<true/>"),
+  );
+
+  const label = "com.opencode.scheduler.demo";
+  const real = { readdir: fs.promises.readdir, unlink: fs.promises.unlink };
+  const unlinked = [];
+  fs.promises.readdir = async () => [
+    `${label}.once-123.done`,
+    `${label}.other`,
+    `com.opencode.scheduler.other.once-456.done`,
+    `${label}.once-789.txt`,
+  ];
+  fs.promises.unlink = async (target) => {
+    unlinked.push(String(target));
+  };
+  scheduler.launchctl = async () => {};
+  try {
+    await scheduler.uninstallEntry(entry);
+  } finally {
+    fs.promises.readdir = real.readdir;
+    fs.promises.unlink = real.unlink;
+  }
+  check(
+    "QW-11: uninstallEntry удаляет только свои *.once-*.done стампы",
+    unlinked.some((p) => p.endsWith(`${label}.once-123.done`)) &&
+      !unlinked.some((p) => p.includes(".other")) &&
+      !unlinked.some((p) => p.includes(".once-789.txt")),
+    unlinked.join(" | "),
+  );
+}
+
 if (failures > 0) {
   console.error(`\n${failures} проверка(и) провалена.`);
   process.exit(1);
