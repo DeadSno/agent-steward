@@ -311,6 +311,19 @@ are rewritten; existing tasks and history are preserved.
    `get_history` for the latest runs. Task behaviour should not change; after the first
    start your data appears in the new state directory.
 
+5. **Re-register OS entries after an automatic directory migration (QW-15.1).**
+   The one-time copy from `.../opencode/windows-scheduler` to
+   `.../opencode/agent-steward` rewrites absolute paths inside the copied wrapper
+   scripts, but it does **not** re-register `schtasks` / `crontab` / `launchd`
+   entries: those still point at the legacy wrapper paths. Until the entries are
+   recreated, scheduled runs can keep writing history and logs into the legacy
+   state directory while the plugin reads the new one. To complete the migration,
+   re-save **every** existing task with `update_task` (it performs delete + create
+   and regenerates the OS entry), or delete and recreate it. `dry_run` alone does
+   not update the OS registration. If you cannot re-register immediately, keep the
+   legacy directory intact and treat the automatic copy as a data backup, not as a
+   fully seamless migration.
+
 ### Rollback
 
 The `plugin id`, SQLite filename and log names are identical before and after the

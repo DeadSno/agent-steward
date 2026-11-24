@@ -206,6 +206,14 @@ export class LockManager {
             );
             continue;
           }
+          // QW-15.3: между stat() и rename() владелец мог заново захватить
+          // lock. Перепроверяем токен непосредственно перед вытеснением,
+          // чтобы не снести живую критическую секцию.
+          const currentOwnerPid = await readLockOwnerPid(fullPath, isLockDir);
+          if (currentOwnerPid !== null && isProcessAlive(currentOwnerPid)) {
+            continue;
+          }
+
           // T-03: не удаляем lock напрямую. Два воркера могли одновременно
           // снести один и тот же файл, после чего один из них удалял свежий
           // lock, созданный другим, и задача запускалась повторно. Атомарный
@@ -278,8 +286,23 @@ export class LockManager {
    * после создания. Несколько коротких повторов решают гонку; ENOENT — уже
    * удалён, это не ошибка.
    */
-  private async unlinkWithRetry(lockPath: string, attempts = 6): Promise<boolean> {
+  private async unlinkWithRetry(
+    lockPath: string,
+    expectedToken: string,
+    attempts = 6,
+  ): Promise<boolean> {
     for (let i = 0; i < attempts; i += 1) {
+      // QW-15.3: read→unlink не атомарен. Перед КАЖДОЙ попыткой удаления
+      // перепроверяем токен: если lock уже перехвачен новым владельцем,
+      // удалять чужой файл нельзя (TOCTOU между readFile и unlink).
+      let current: string;
+      try {
+        current = await fs.readFile(lockPath, "utf8");
+      } catch (err: unknown) {
+        if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
+        throw err;
+      }
+      if (current !== expectedToken) return false;
       try {
         await fs.unlink(lockPath);
         return true;
@@ -317,7 +340,8 @@ export class LockManager {
     if (current !== token) return false;
     // P3-39: на Windows unlink может кратковременно упасть EPERM, пока
     // другие процессы читают lock для проверки владельца.
-    return this.unlinkWithRetry(lockPath);
+    // QW-15.3: unlinkWithRetry сам повторно проверяет токен перед unlink.
+    return this.unlinkWithRetry(lockPath, token);
   }
 
   /**

@@ -432,6 +432,42 @@ function isTaskNotFoundError(err: unknown): boolean {
 }
 
 /**
+ * QW-15.2: дедупликация задач из новой и legacy-папок.
+ *
+ * Раньше сохранялась «первая попавшаяся» запись, и корректность выбора новой
+ * папки держалась на алфавитном порядке вывода schtasks. Теперь при коллизии
+ * короткого имени явно побеждает запись из новой папки; legacy-дубль
+ * отбрасывается независимо от порядка вывода.
+ */
+export function preferNewFolderTasks(
+  tasks: readonly ScheduledTaskInfo[],
+  newPrefix: string,
+  legacyPrefix: string,
+): ScheduledTaskInfo[] {
+  const shortName = (fullName: string): string => {
+    if (fullName.startsWith(newPrefix)) return fullName.slice(newPrefix.length);
+    if (fullName.startsWith(legacyPrefix)) return fullName.slice(legacyPrefix.length);
+    return fullName;
+  };
+  const isNew = (fullName: string): boolean => fullName.startsWith(newPrefix);
+
+  const preferred = new Map<string, ScheduledTaskInfo>();
+  for (const task of tasks) {
+    const fullName = task.taskName || "";
+    const key = shortName(fullName).toLowerCase();
+    if (!key) continue;
+    const existing = preferred.get(key);
+    if (
+      !existing ||
+      (isNew(fullName) && !isNew(existing.taskName || ""))
+    ) {
+      preferred.set(key, task);
+    }
+  }
+  return Array.from(preferred.values());
+}
+
+/**
  * Бэкенд Планировщика заданий Windows (schtasks).
  *
  * Вся Windows-специфика (кодировка консоли, формат /tn, ONCE-заглушка для
@@ -673,28 +709,23 @@ export class WindowsScheduler implements SchedulerBackend {
         if (nm) names.add(nm);
       }
       if (names.size > 0) {
-        return Array.from(names).map(
-          (nm) => ({ taskName: nm }),
+        // QW-15.2: даже в fallback-ветке дубли из legacy-папки не должны
+        // вытеснять запись из новой папки.
+        const candidates = Array.from(names).map((nm) => ({ taskName: nm }));
+        return preferNewFolderTasks(candidates, this.taskPrefix, this.legacyTaskPrefix).map(
+          (task) => ({ taskName: this.shortName(task.taskName || "") }),
         );
       }
     }
 
     // Если в обеих папках остались задачи с одинаковым коротким именем,
     // показываем одну (новую) — дубликат мог остаться после миграции.
-    const seen = new Set<string>();
-    const output: ScheduledTaskInfo[] = [];
-    for (const task of filtered) {
-      const short = this.shortName(task.taskName || "");
-      const key = short.toLowerCase();
-      if (seen.has(key)) continue;
-      seen.add(key);
-      output.push({
-        ...task,
-        taskName: short,
-        paused: /disabled|отключ|запрещ/i.test(task.status ?? ""),
-      });
-    }
-    return output;
+    const candidates = preferNewFolderTasks(filtered, this.taskPrefix, this.legacyTaskPrefix);
+    return candidates.map((task) => ({
+      ...task,
+      taskName: this.shortName(task.taskName || ""),
+      paused: /disabled|отключ|запрещ/i.test(task.status ?? ""),
+    }));
   }
 
   async deleteTask(name: string): Promise<void> {

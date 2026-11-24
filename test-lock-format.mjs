@@ -117,6 +117,33 @@ try {
     "interop: Node lock мёртвого PID вытеснен",
   );
 
+  // --- QW-15.3: TOCTOU read→unlink / stat→rename -------------------------
+  const swapToken = await manager.acquire("swap-race");
+  const swapPath = manager.pathFor("swap-race");
+  const otherToken = `4000000-${ISO}-${UUID}`;
+  await fs.writeFile(swapPath, otherToken, "utf8");
+  check(
+    !(await manager.release("swap-race", swapToken)),
+    "QW-15.3: release не удаляет lock, перехваченный после чтения токена",
+  );
+  check(
+    (await fs.readFile(swapPath, "utf8")) === otherToken,
+    "QW-15.3: чужой токен остался на диске после неудачного release",
+  );
+  await fs.rm(swapPath, { force: true });
+
+  const liveStalePath = await writeOld("live-after-stat.lock", `${process.pid}-${ISO}-${UUID}`);
+  await manager.initialize();
+  check(
+    await fs.stat(liveStalePath).then(() => true, () => false),
+    "QW-15.3: initialize не вытесняет stale-lock живого владельца",
+  );
+  const lockSource = await fs.readFile(new URL("./dist/core/lock.js", import.meta.url), "utf8");
+  check(
+    (lockSource.match(/readLockOwnerPid\(/g) ?? []).length >= 3,
+    "QW-15.3: токен владельца проверяется повторно перед rename",
+  );
+
   // --- 4. Текст обёрток ---------------------------------------------------
   check(
     WRAPPER_SCRIPT.includes(PS_LOCK_PID_FUNCTION),
