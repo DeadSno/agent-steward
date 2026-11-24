@@ -31,6 +31,7 @@ const matrix = section(plan, "## 4. Матрица доступа", "## 5.");
 const appendixA = section(plan, "## Приложение A.", "## Приложение B.");
 const appendixB = section(plan, "## Приложение B.", "## Приложение C.");
 const d15 = section(plan, "### D15.", "### D16.");
+const d16 = section(plan, "### D16.", "### D17.");
 const d17 = section(plan, "### D17.", "### D18.");
 const detail14 = section(roadmap, "## Деталь 1.4", "---");
 
@@ -67,6 +68,11 @@ check("шапка: дата 24.11.2026", plan.includes("24.11.2026"));
 check(`шапка: счётчик файлов = ${testFiles.length}`, plan.includes(`${testFiles.length} файлов`));
 check(`шапка: счётчик npm-скриптов = ${npmTestScripts.length}`,
   plan.includes(`${npmTestScripts.length} npm-скриптов`));
+check("S16.1.4: счётчики согласованы с шапкой",
+  d16.includes(`${testFiles.length} файлов \`test-*.mjs\` (${npmTestScripts.length} npm-скриптов)`) &&
+    !d16.includes("119 файлов") && !d16.includes("111 npm-скриптов"));
+check("TP-6.2: маркеры генератора счётчиков на месте",
+  plan.includes("<!-- counters:start -->") && plan.includes("<!-- counters:end -->"));
 check(`SCHEMA_VERSION в плане = ${schemaVersion} (код)`, plan.includes(`SCHEMA_VERSION = ${schemaVersion}`));
 check("D15/S15.1.2: миграция 10 → 11",
   /SCHEMA_VERSION\s*=\s*11/.test(plan) && /10\s*[→\-]+\s*11/.test(d15) && d15.includes("S15.1.2"));
