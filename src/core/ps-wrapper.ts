@@ -1396,15 +1396,17 @@ try {
     $agentExitCode = $script:exitCode
     $quotaDetected = $false
 
-    # PL-83: исчерпание квоты/баланса модели — отдельный класс ошибки, а не
-    # обычный «Код возврата 1». Иначе гейт и afterScript пропускаются, а частично
-    # изменённое дерево остаётся без артефакта и без понятной подсказки.
-    if ($script:exitCode -ne 0 -and $LogFile -and (Test-Path -LiteralPath $LogFile)) {
-        $quotaLine = @()
+    # QA-PORT-6: сканируем лог НЕЗАВИСИМО от кода выхода. Дочерний агент может
+    # упереться в лимит Free, а основной — успешно откатиться к primary (PL-72)
+    # и завершиться с кодом 0. Раньше квота в таком прогоне терялась без следа.
+    $quotaChild = $false
+    $quotaPartialLines = @()
+    $quotaLine = @()
+    if ($LogFile -and (Test-Path -LiteralPath $LogFile)) {
+        $quotaText = ""
         try {
             # QW-7: читаем только хвост после маркера текущего прогона —
             # -Tail 80 всё равно заглядывал в прошлый запуск при коротком выводе.
-            $quotaText = ""
             $quotaStream = [System.IO.File]::Open($LogFile, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
             try {
                 if ($script:quotaScanStart -gt 0 -and $script:quotaScanStart -lt $quotaStream.Length) {
@@ -1413,38 +1415,78 @@ try {
                 $quotaReader = New-Object System.IO.StreamReader($quotaStream, [System.Text.Encoding]::UTF8)
                 try { $quotaText = $quotaReader.ReadToEnd() } finally { $quotaReader.Dispose() }
             } finally { $quotaStream.Dispose() }
-            $quotaLine = @($quotaText -split "\r?\n" |
-                Where-Object { $_ -match 'Free usage limit reached|Insufficient Balance|free usage limit' } |
-                Select-Object -Last 1)
         } catch {}
-        if ($quotaLine.Count -gt 0) {
-            $quotaReason = [string]$quotaLine[0]
-            # PL-114: strip ANSI/control noise and cap the length.
-            $quotaReason = [regex]::Replace($quotaReason, "$esc\\[[0-9;?]*[A-Za-z]", "")
-            $quotaReason = ($quotaReason -replace '[^\x20-\x7EА-Яа-яЁё]', '').Trim()
-            if ($quotaReason.Length -gt 160) { $quotaReason = $quotaReason.Substring(0, 160) + '...' }
-            $quotaSlug = $TaskName -replace '[^a-zA-Z0-9_-]', '-'
-            $quotaDiff = ""
-            try {
-                # quota-diff должен пережить удаление одноразового worktree.
-                $quotaBase = $script:checkoutRoot
-                if (-not $quotaBase) { $quotaBase = (Get-Location).Path }
-                $quotaDiff = Join-Path $quotaBase ("reports/quota-" + $quotaSlug + ".diff")
-            } catch {}
-            if (-not $quotaDiff) {
-                $quotaDiff = Join-Path ([System.IO.Path]::GetTempPath()) ("quota-" + $quotaSlug + ".diff")
+        if ($quotaText) {
+            $quotaSegments = @($quotaText -split "\r?\n")
+            $quotaIndexes = @()
+            for ($qi = 0; $qi -lt $quotaSegments.Count; $qi++) {
+                if ($quotaSegments[$qi] -match 'Free usage limit reached|Insufficient Balance|free usage limit') { $quotaIndexes += $qi }
             }
-            try {
-                New-Item -ItemType Directory -Force -Path (Split-Path -Parent $quotaDiff) | Out-Null
-                & git -C $Workdir diff > $quotaDiff 2>&1
-            } catch {}
-            Write-Log "[agent-steward] PL-83: квота модели исчерпана: $quotaReason"
-            $modelHint = ""
-            if ($Model) { $modelHint = " Текущая модель задачи: $Model." }
-            $script:errorMessage = "PL-83: квота модели исчерпана ($quotaReason). Частичные правки сохранены в $quotaDiff. Перезапустите задачу с другой моделью: update_task name=$TaskName model=provider/model$modelHint"
-            $script:exitCode = 126
-            $quotaDetected = $true
+            if ($quotaIndexes.Count -gt 0) {
+                $quotaLine = @($quotaSegments[$quotaIndexes[-1]])
+                # QA-PORT-6: контекст дочернего агента — строка квоты или 3 строки перед ней.
+                foreach ($qi in $quotaIndexes) {
+                    $contextFrom = [Math]::Max(0, $qi - 3)
+                    $quotaContext = @($quotaSegments[$contextFrom..$qi]) -join [char]10
+                    if ($quotaContext -match 'subagent|sub-agent|explore|агент') { $quotaChild = $true; break }
+                }
+                $firstQuotaIndex = [int]$quotaIndexes[0]
+                if ($firstQuotaIndex -gt 0) {
+                    $quotaPartialLines = @($quotaSegments[0..($firstQuotaIndex - 1)] |
+                        Where-Object { $_ -and $_ -notmatch '^\\[agent-steward\\]|^=== Run started |^\\[role-scoped\\]|^\\d{4}-\\d{2}-\\d{2}' } |
+                        Select-Object -Last 40)
+                }
+            }
         }
+    }
+
+    if ($quotaLine.Count -gt 0 -or $quotaChild) {
+    # PL-83: исчерпание квоты/баланса модели — отдельный класс ошибки, а не
+    # обычный «Код возврата 1». Иначе гейт и afterScript пропускаются, а частично
+    # изменённое дерево остаётся без артефакта и без понятной подсказки.
+    if ($script:exitCode -ne 0 -and $quotaLine.Count -gt 0) {
+        $quotaReason = [string]$quotaLine[0]
+        # PL-114: strip ANSI/control noise and cap the length.
+        $quotaReason = [regex]::Replace($quotaReason, "$esc\\[[0-9;?]*[A-Za-z]", "")
+        $quotaReason = ($quotaReason -replace '[^\x20-\x7EА-Яа-яЁё]', '').Trim()
+        if ($quotaReason.Length -gt 160) { $quotaReason = $quotaReason.Substring(0, 160) + '...' }
+        $quotaSlug = $TaskName -replace '[^a-zA-Z0-9_-]', '-'
+        $quotaDiff = ""
+        try {
+            # quota-diff должен пережить удаление одноразового worktree.
+            $quotaBase = $script:checkoutRoot
+            if (-not $quotaBase) { $quotaBase = (Get-Location).Path }
+            $quotaDiff = Join-Path $quotaBase ("reports/quota-" + $quotaSlug + ".diff")
+        } catch {}
+        if (-not $quotaDiff) {
+            $quotaDiff = Join-Path ([System.IO.Path]::GetTempPath()) ("quota-" + $quotaSlug + ".diff")
+        }
+        try {
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $quotaDiff) | Out-Null
+            & git -C $Workdir diff > $quotaDiff 2>&1
+        } catch {}
+        if ($quotaChild) { $quotaReason = "QA-PORT-6: дочерний агент — $quotaReason" }
+        Write-Log "[agent-steward] PL-83: квота модели исчерпана: $quotaReason"
+        if ($quotaChild) { Write-Log "[agent-steward] QA-PORT-6: PL-83 в дочернем агенте" }
+        $modelHint = ""
+        if ($Model) { $modelHint = " Текущая модель задачи: $Model." }
+        $script:errorMessage = "PL-83: квота модели исчерпана ($quotaReason). Частичные правки сохранены в $quotaDiff. Перезапустите задачу с другой моделью: update_task name=$TaskName model=provider/model$modelHint"
+        $script:exitCode = 126
+        $quotaDetected = $true
+    } elseif ($script:exitCode -eq 0 -and $quotaChild -and $quotaPartialLines.Count -gt 0) {
+        # QA-PORT-6: основной агент завершился успешно, но дочерний упёрся в квоту.
+        # Не перебиваем успешный статус (PL-72/PL-90 — fallback разрешён), но
+        # сохраняем диагностику и частичный результат дочернего агента.
+        $quotaSlug = $TaskName -replace '[^a-zA-Z0-9_-]', '-'
+        $quotaPartialBase = $script:checkoutRoot
+        if (-not $quotaPartialBase) { $quotaPartialBase = (Get-Location).Path }
+        $quotaPartial = Join-Path $quotaPartialBase ("reports/quota-" + $quotaSlug + "-partial.txt")
+        try {
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $quotaPartial) | Out-Null
+            $quotaPartialLines | Out-File -FilePath $quotaPartial -Encoding utf8
+        } catch {}
+        Write-Log "[agent-steward] QA-PORT-6: квота Free у дочернего агента; основной агент завершился успешно, частичный результат сохранён в $quotaPartial (fallback по PL-72)."
+    }
     }
 
     # PL-81: код выхода процесса — факт завершения, а не вердикт проверки.

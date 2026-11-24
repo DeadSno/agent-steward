@@ -53,6 +53,18 @@ fs.writeFileSync(
     "  echo FAKE-OPENCODE-SLEEP-DONE",
     "  exit /b 0",
     ")",
+    // QA-PORT-6: дочерний агент упёрся в квоту Free; основной агент либо
+    // завершается успешно (fallback), либо падает вместе с ним.
+    'if "%FAKE_MODE%"=="quota-child-ok" (',
+    "  echo [subagent/explore] partial: found candidate paths",
+    "  echo Free usage limit reached",
+    "  exit /b 0",
+    ")",
+    'if "%FAKE_MODE%"=="quota-child-fail" (',
+    "  echo [subagent/explore] partial: found candidate paths",
+    "  echo Free usage limit reached",
+    "  exit /b 1",
+    ")",
     "echo FAKE-OPENCODE-OK %*",
     "exit /b 0",
     "",
@@ -158,6 +170,21 @@ check(
     bashQuotaScript.includes('QUOTA_SCOPE=$(tail -n "+$((QUOTA_MARK + 1))" "$LOG_FILE"') &&
     bashQuotaScript.includes("printf '%s\\n' \"$QUOTA_SCOPE\" | grep -qE") &&
     !bashQuotaScript.includes("grep -qE 'Free usage limit reached|Insufficient Balance|free usage limit' \"$LOG_FILE\"")
+);
+// QA-PORT-6: квота дочернего агента распознаётся и при exit 0.
+check(
+  "QA-PORT-6 PowerShell: partial-файл дочернего агента при успешном exit",
+  psWrapperScript.includes("QA-PORT-6: PL-83 в дочернем агенте") &&
+    psWrapperScript.includes("subagent|sub-agent|explore|агент") &&
+    psWrapperScript.includes("-partial.txt") &&
+    psWrapperScript.includes("$quotaPartialLines | Out-File -FilePath $quotaPartial")
+);
+check(
+  "QA-PORT-6 bash: partial-файл дочернего агента при успешном exit",
+  bashQuotaScript.includes("QUOTA_CHILD=0") &&
+    bashQuotaScript.includes('[ "$EXIT_CODE" -eq 0 ] && [ "$QUOTA_CHILD" -eq 1 ]') &&
+    bashQuotaScript.includes('QUOTA_PARTIAL="$REPO_DIR/reports/quota-$SAFE_NAME-partial.txt"') &&
+    bashQuotaScript.includes("QUOTA_LABEL")
 );
 // QW-10: без node и с SCHEDULE_CRON обёртка обязана exit 3 (fail-closed).
 const qw10BashSource = fs.readFileSync(
@@ -313,6 +340,66 @@ function readLog(file) {
   check(
     "лог содержит вывод opencode",
     readLog(logFile).includes("FAKE-OPENCODE-OK")
+  );
+}
+
+// --- QA-PORT-6: квота дочернего агента при exit 0 и при exit 1 ---
+{
+  const okSpec = {
+    name: "Exec Hardening Quota Child Ok",
+    sanitized: "exec-hardening-quota-child-ok",
+    timeoutSeconds: 60,
+  };
+  const { wrapperPath: okWrapper, logFile: okLog } = await prepareTask(okSpec);
+  const okRun = runWrapper(okWrapper, { FAKE_MODE: "quota-child-ok" });
+  const [okRecord] = getHistory(okSpec.name, 5);
+  const okPartial = path.join(
+    tempRoot,
+    "reports",
+    `quota-${okSpec.sanitized}-partial.txt`
+  );
+  check("QA-PORT-6 exit 0: код выхода 0", okRun.status === 0, `status=${okRun.status}`);
+  check(
+    "QA-PORT-6 exit 0: история success без error",
+    okRecord?.status === "success" && !okRecord?.error,
+    `status=${okRecord?.status} error=${okRecord?.error}`
+  );
+  check(
+    "QA-PORT-6 exit 0: диагностика в логе",
+    readLog(okLog).includes("QA-PORT-6: квота Free у дочернего агента")
+  );
+  check(
+    "QA-PORT-6 exit 0: частичный результат суб-агента сохранён",
+    fs.existsSync(okPartial) &&
+      fs.readFileSync(okPartial, "utf8").includes("[subagent/explore] partial: found candidate paths")
+  );
+
+  const failSpec = {
+    name: "Exec Hardening Quota Child Fail",
+    sanitized: "exec-hardening-quota-child-fail",
+    timeoutSeconds: 60,
+  };
+  const { wrapperPath: failWrapper, logFile: failLog } = await prepareTask(failSpec);
+  const failRun = runWrapper(failWrapper, { FAKE_MODE: "quota-child-fail" });
+  const [failRecord] = getHistory(failSpec.name, 5);
+  const failDiff = path.join(tempRoot, "reports", `quota-${failSpec.sanitized}.diff`);
+  check(
+    "QA-PORT-6 exit 1: отдельный код квоты 126",
+    failRun.status === 126,
+    `status=${failRun.status}`
+  );
+  check(
+    "QA-PORT-6 exit 1: история error с причиной дочерней квоты",
+    failRecord?.status === "error" && String(failRecord?.error ?? "").includes("QA-PORT-6"),
+    `status=${failRecord?.status} error=${failRecord?.error}`
+  );
+  check(
+    "QA-PORT-6 exit 1: partial-diff сохранён",
+    fs.existsSync(failDiff)
+  );
+  check(
+    "QA-PORT-6 exit 1: лог помечает квоту дочернего агента",
+    readLog(failLog).includes("QA-PORT-6: PL-83 в дочернем агенте")
   );
 }
 
