@@ -14,6 +14,12 @@
 # from the actual task diff (git diff --name-only), not from every change in the
 # shared tree. Files outside the task manifest (-Files) are foreign: they are
 # excluded from the commit and reported as a WARN.
+# PL-127/PL-132: a rejected push is repaired by replaying ONLY the commit this
+# helper just created onto a fresh origin/dev with cherry-pick. We never rebase
+# the whole branch: local commits already present in origin/dev under other
+# hashes would conflict on stale docs, and rebase --quit used to leave a
+# detached HEAD with an unresolved (UU) index. The origin remote name works for
+# GitHub and for a local mirror alike - no remote URL or path is hard-coded.
 param(
   [Parameter(Mandatory = $true)][string]$Message,
   [Parameter(Mandatory = $true)][string]$Files,
@@ -132,12 +138,19 @@ try {
     Start-Sleep -Seconds 3
   }
 
-  # PL-127: parallel tasks push to the same branch while this helper retries.
-  # Blind retries cannot resolve a non-fast-forward rejection; unlike
-  # steward-commit.ps1 (PL-104) this helper had no rebase path, so a green
-  # quality gate ended with "FAIL push" and no commit in the remote branch.
+  # PL-127/PL-132: a rejected push is not repaired by blind retries or by
+  # rebasing the whole branch. A rebase replays local commits already present
+  # in origin/dev under different hashes and dies on stale CHANGELOG/ROADMAP
+  # conflicts; rebase --quit then leaves a detached HEAD and a UU index.
+  # Instead: fetch, remember this helper's single new commit, move to the fresh
+  # origin/dev tip and cherry-pick that one commit, then push again.
+  # The origin/dev remote-tracking ref works for GitHub and for a local mirror
+  # alike - no remote URL or filesystem path is hard-coded here.
   if (-not $pushed) {
-    $null = Invoke-Git 'fetch' @('fetch', 'origin', 'dev')
+    if ((Invoke-Git 'fetch-nonff' @('fetch', 'origin', 'dev')) -ne 0) {
+      Log "FAIL fetch origin dev: $Message"
+      exit 1
+    }
     $old = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
@@ -145,21 +158,45 @@ try {
       $remote = (& git rev-parse origin/dev 2>$null).Trim()
     }
     finally { $ErrorActionPreference = $old }
-    if ($local -and $local -eq $remote) {
+    if (-not $local -or -not $remote) {
+      Log "FAIL rev-parse HEAD/origin/dev: $Message"
+      exit 1
+    }
+    if ($local -eq $remote) {
       $pushed = $true
-      Log "push: remote already contains HEAD (concurrent push)"
-    } else {
-      # --autostash keeps foreign unstaged edits from parallel agents safe.
-      if ((Invoke-Git 'rebase' @('rebase', '--autostash', 'origin/dev')) -eq 0) {
-        if ((Invoke-Git 'push-rebase' @('push', 'origin', 'HEAD:dev')) -eq 0) {
-          $pushed = $true
-          Log "OK (rebased onto origin/dev): $Message"
+      Log "push: remote already contains HEAD (concurrent push): $Message"
+    }
+    else {
+      # Reset the current branch (NOT a detached checkout) to the fresh remote
+      # tip, then replay exactly one commit: our own pathspec-limited commit.
+      if ((Invoke-Git 'reset-remote' @('reset', '--hard', 'origin/dev')) -ne 0) {
+        Log "FAIL reset --hard origin/dev: $Message"
+        exit 1
+      }
+      $pickCode = Invoke-Git 'cherry-pick' @('cherry-pick', $local)
+      if ($pickCode -ne 0) {
+        # PL-132: on conflict run 'git cherry-pick --abort', then force a clean
+        # tree. --abort restores HEAD to origin/dev; reset --hard clears any
+        # UU index entries. No detached HEAD, no unresolved state, no push.
+        $oldPick = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+          $cpHead = (& git rev-parse --git-path CHERRY_PICK_HEAD 2>$null).Trim()
         }
-      } else {
-        $null = Invoke-Git 'rebase-quit' @('rebase', '--quit')
-        Log "CONFLICT - manual resolution required: $Message"
+        finally { $ErrorActionPreference = $oldPick }
+        if ($cpHead -and (Test-Path -LiteralPath $cpHead)) {
+          $null = Invoke-Git 'cherry-pick-abort' @('cherry-pick', '--abort')
+        }
+        $null = Invoke-Git 'reset-clean' @('reset', '--hard', 'HEAD')
+        Log "PL-132: cherry-pick --abort; conflict replaying $local onto origin/dev; tree clean, no push: $Message"
         exit 2
       }
+      if ((Invoke-Git 'push-picked' @('push', 'origin', 'HEAD:dev')) -ne 0) {
+        Log "FAIL push after cherry-pick: $Message"
+        exit 1
+      }
+      $pushed = $true
+      Log "OK (cherry-picked onto origin/dev): $Message"
     }
   }
   if (-not $pushed) {

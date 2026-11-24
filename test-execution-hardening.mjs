@@ -1575,6 +1575,84 @@ try {
   check("PL-80/81/101/104/105: секция не выбросила исключение", false, "section threw");
 }
 
+// --- PL-127/PL-132: non-FF push path in pl-commit.ps1 (string-only regressions) ---
+// No real git, fetch or push: we assert the helper source so a regression to a
+// whole-branch rebase, or a lost cherry-pick/abort path, fails deterministically.
+try {
+  const helper = fs.readFileSync(path.resolve("scripts/pl-commit.ps1"), "utf8");
+  const nonFf = helper.slice(helper.lastIndexOf("PL-127/PL-132:"));
+  const hasNonFf = nonFf.length > 0;
+  const fetchCall = "@('fetch', 'origin', 'dev')";
+  const pickCall = "@('cherry-pick', $local)";
+  const abortCall = "@('cherry-pick', '--abort')";
+  const cleanCall = "@('reset', '--hard', 'HEAD')";
+
+  check(
+    "PL-127: non-FF путь делает fetch origin dev перед повторным push",
+    hasNonFf &&
+      nonFf.includes(fetchCall) &&
+      nonFf.includes("fetch origin dev") &&
+      nonFf.indexOf(fetchCall) < nonFf.indexOf(pickCall),
+    `fetch@${nonFf.indexOf(fetchCall)}, pick@${nonFf.indexOf(pickCall)}`
+  );
+  check(
+    "PL-132: non-FF путь НЕ переигрывает ветку rebase --autostash",
+    hasNonFf &&
+      !nonFf.includes("rebase --autostash") &&
+      !nonFf.includes("@('rebase',") &&
+      !nonFf.includes("@('rebase', '--quit')"),
+    nonFf.slice(0, 500)
+  );
+  check(
+    "PL-132: запоминается HEAD и накатывается ОДИН коммит cherry-pick поверх origin/dev",
+    hasNonFf &&
+      nonFf.includes("git rev-parse HEAD") &&
+      nonFf.includes("@('reset', '--hard', 'origin/dev')") &&
+      nonFf.includes(pickCall) &&
+      nonFf.indexOf("@('reset', '--hard', 'origin/dev')") < nonFf.indexOf(pickCall) &&
+      nonFf.indexOf(pickCall) < nonFf.indexOf("@('push', 'origin', 'HEAD:dev')"),
+    `reset@${nonFf.indexOf("@('reset', '--hard', 'origin/dev')")}, pick@${nonFf.indexOf(pickCall)}`
+  );
+  check(
+    "PL-132: конфликт cherry-pick --abort оставляет дерево чистым и exit 2",
+    hasNonFf &&
+      nonFf.includes("cherry-pick --abort") &&
+      nonFf.includes(abortCall) &&
+      nonFf.includes(cleanCall) &&
+      nonFf.indexOf(abortCall) < nonFf.indexOf(cleanCall) &&
+      nonFf.indexOf(cleanCall) < nonFf.indexOf("exit 2"),
+    `abort@${nonFf.indexOf(abortCall)}, clean@${nonFf.indexOf(cleanCall)}`
+  );
+  check(
+    "PL-132: при конфликте не остаётся отсоединённого HEAD / UU-индекса",
+    hasNonFf &&
+      nonFf.includes("CHERRY_PICK_HEAD") &&
+      nonFf.includes("Test-Path -LiteralPath $cpHead") &&
+      nonFf.includes("UU index") &&
+      nonFf.includes("tree clean, no push")
+  );
+  check(
+    "PL-127/PL-132: origin — имя remote, а не hard-coded путь (GitHub или mirror)",
+    hasNonFf &&
+      nonFf.includes("origin/dev") &&
+      !/https?:\/\//.test(nonFf) &&
+      !/file:\/\//.test(nonFf) &&
+      !/[A-Za-z]:\\/.test(nonFf)
+  );
+  check(
+    "PL-41/PL-58: pathspec-коммит только своих файлов и проверка маркера сохранены",
+    helper.includes("@('commit', '-m', $Message, '--')") &&
+      helper.includes("Test-Path -LiteralPath $markerPath") &&
+      helper.includes("git diff --name-only") &&
+      helper.includes("PL-41") &&
+      helper.includes("PL-58") &&
+      helper.includes("WARN PL-58")
+  );
+} catch (err) {
+  console.log("[diag] PL-127/PL-132 section THREW:", err instanceof Error ? err.stack : String(err));
+  check("PL-127/PL-132: секция не выбросила исключение", false, "section threw");
+}
+
 // --- PL-112: prompt destructive-command guard ---
 try {
   const { inspectPromptSafety } = await import("./dist/core/guard.js");
