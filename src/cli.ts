@@ -33,7 +33,7 @@ const USAGE = `agent-steward — планировщик agent jobs
   validate  проверить opencode.pipeline.yaml, не меняя задачи
   apply     создать/обновить задачи из файла (идемпотентно)
   export    выгрузить задачи pipeline из БД обратно в YAML
-  mcp       поднять 32 инструмента как MCP-сервер на stdio
+  mcp       поднять 34 инструмента как MCP-сервер на stdio
   serve     поднять локальный дашборд без OpenCode
 
 Опции:

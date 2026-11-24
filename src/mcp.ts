@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * P-2 — MCP-адаптер: тот же реестр из 32 инструментов, но поверх stdio MCP.
+ * P-2 — MCP-адаптер: полный реестр из 34 инструментов, но поверх stdio MCP.
  *
  * Точка входа: `agent-steward mcp`. Адаптер не знает про OpenCode: он берёт
  * спеки из публичного facade `tool-specs.ts` и регистрирует их в McpServer.
@@ -17,7 +17,7 @@ import { CHILD_RUN_ENV } from "./core/run-mode.js";
 
 export const MCP_SKILL_URI = "skill://agent-steward/scheduled-job-best-practices/SKILL.md";
 
-/** Спеки для MCP: всегда полные 32, независимо от профиля OpenCode. */
+/** Спеки для MCP: всегда полные 34, независимо от профиля OpenCode. */
 export function mcpToolSpecs(env: NodeJS.ProcessEnv = process.env): ToolSpec[] {
   return createToolSpecs(null as unknown as SchedulerRuntime, {
     ...env,
