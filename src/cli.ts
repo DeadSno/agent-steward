@@ -12,6 +12,7 @@
  *   agent-steward recipes list [--task-type <type>] [--json]  # S-4 библиотека рецептов
  *   agent-steward recipes verify [id] [--json]            # S-4 проверка доказательств гейтов
  *   agent-steward chat verify <file.json> [--json]        # S-5 ответ только с проверкой
+ *   agent-steward scaffold <recipe-id> --out <dir> [--force] [--json]  # S-6 scaffolding из рецепта
  *
  * Exit-коды: 0 — успех, 1 — ошибки валидации/применения, 2 — неверные аргументы.
  */
@@ -29,6 +30,7 @@ import {
   verifyRecipe,
 } from "./core/recipes.js";
 import { verifyChatAnswer } from "./core/verified-chat.js";
+import { scaffoldFromRecipeId } from "./core/scaffold.js";
 import { executePipelineApply, planPipelineApply } from "./core/pipeline-apply.js";
 import { tasksToPipelineSpec } from "./core/pipeline-map.js";
 import { saveTaskDefinition, type TaskDefinition } from "./task-transfer.js";
@@ -47,6 +49,7 @@ const USAGE = `agent-steward — планировщик agent jobs
   agent-steward recipes list [--task-type <type>] [--json]
   agent-steward recipes verify [id] [--json]
   agent-steward chat verify <file.json> [--json]
+  agent-steward scaffold <recipe-id> --out <dir> [--force] [--json]
   agent-steward mcp
   agent-steward serve [--port <number>]
 
@@ -58,6 +61,7 @@ const USAGE = `agent-steward — планировщик agent jobs
   scorecard публичная метрика объективных гейтов и сэкономленных токенов (S-3)
   recipes   библиотека gate-passed рецептов и проверка их доказательств (S-4)
   chat      верифицированный ответ только с гейтом/источником (S-5)
+  scaffold  развернуть проект из gate-passed рецепта одной командой (S-6)
   mcp       поднять 34 инструмента как MCP-сервер на stdio
   serve     поднять локальный дашборд без OpenCode
 
@@ -66,7 +70,8 @@ const USAGE = `agent-steward — планировщик agent jobs
   --dry-run     показать план apply без изменений
   -f, --file    файл pipeline для алиаса apply
   --pipeline    имя pipeline для export
-  --out         файл для export (по умолчанию stdout)
+  --out         файл для export или каталог проекта для scaffold
+  --force       перезаписать существующие файлы при scaffold
   --task-type   фильтр рецептов по типу задачи (recipes list)
 `;
 
@@ -411,6 +416,40 @@ async function runChat(args: string[]): Promise<number> {
   return decision.delivered ? 0 : 1;
 }
 
+/** S-6: разворачивает проект из gate-passed рецепта одной командой. */
+async function runScaffold(args: string[]): Promise<number> {
+  const [recipeId, ...rest] = args;
+  if (!recipeId || recipeId === "--help" || recipeId === "-h" || recipeId === "help") {
+    console.log(USAGE);
+    return recipeId ? 0 : 2;
+  }
+  const out = flagValue(rest, "--out");
+  if (!out) {
+    console.error("Для scaffold укажите --out <dir>.\n");
+    console.error(USAGE);
+    return 2;
+  }
+  const json = rest.includes("--json");
+  const overwrite = rest.includes("--force");
+  let result;
+  try {
+    result = scaffoldFromRecipeId(recipeId, out, { overwrite });
+  } catch (err) {
+    console.error(`Scaffolding не выполнен: ${err instanceof Error ? err.message : String(err)}`);
+    return 1;
+  }
+  if (json) {
+    console.log(JSON.stringify(result, null, 2));
+    return 0;
+  }
+  console.log(`OK рецепт «${result.recipeId}» развёрнут в ${result.targetDir}`);
+  for (const file of result.files) console.log(`  ${file}`);
+  console.log(
+    `Гейты: ${result.verifiedGates}/${result.gateCount} подтверждено; методика: ${result.methodologyUrl}`,
+  );
+  return 0;
+}
+
 async function runExport(args: string[]): Promise<number> {
   const pipelineName = flagValue(args, "--pipeline");
   if (!pipelineName) {
@@ -658,6 +697,13 @@ async function main(argv: string[]): Promise<number> {
   }
   if (group === "chat") {
     return runChat([command, ...rest].filter((value): value is string => Boolean(value)));
+  }
+  if (group === "scaffold") {
+    if (command === "--help" || command === "-h" || command === "help") {
+      console.log(USAGE);
+      return 0;
+    }
+    return runScaffold([command, ...rest].filter((value): value is string => Boolean(value)));
   }
   if (group === "recipes") {
     return runRecipes([command, ...rest].filter((value): value is string => Boolean(value)));

@@ -91,6 +91,19 @@ export {
   type VerifiedChatInput,
   type VerifiedChatOptions,
 } from "./core/verified-chat.js";
+// S-6: scaffolding проекта из gate-passed рецептов одной командой.
+export {
+  SCAFFOLD_FORMAT,
+  SCAFFOLD_GATE_SCRIPT,
+  SCAFFOLD_METHODOLOGY_URL,
+  SCAFFOLD_PIPELINE_FILE,
+  SCAFFOLD_README_FILE,
+  SCAFFOLD_VERSION,
+  scaffoldFromRecipe,
+  scaffoldFromRecipeId,
+  type ScaffoldOptions,
+  type ScaffoldResult,
+} from "./core/scaffold.js";
 export {
   TOOL_NAMES,
   buildToolSpecs,

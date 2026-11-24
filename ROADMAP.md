@@ -28,6 +28,8 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 
 ## QA-находки (проверка работоспособности плагина 24.11.2026)
 
+- QA-D319-2: тест `test-package-exports.mjs` не учитывает junction `dist/ → .steward-dev/dist`: `npm pack` локально не включает файлы `dist`, поэтому 11 проверок «exports "dist/..." есть в тарболе» падают (`node test-package-exports.mjs` exit 1), хотя соседний `test-portability-exports.mjs` для того же случая явно пропускает проверку артефактов (QA-PORT-9) — P2. Действие: добавить в `test-package-exports.mjs` тот же guard на junction/симлинк `dist/`, что и в `test-portability-exports.mjs`, оставив проверку состава тарбола только для CI с реальным `dist`. Обнаружено 24.11.2026.
+
 ---
 
 ## Деталь 3.15 — Улучшения продукта из TEST-PLAN §7.3
@@ -72,7 +74,6 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 ## Деталь 3.19 — Новые ставки поверх клина (24.11.2026)
 `docs/*`, `src/core/*`, `package.json`
 
-- [ ] S-6 Scaffolding проекта из gate-passed рецептов одной командой
 
 ---
 

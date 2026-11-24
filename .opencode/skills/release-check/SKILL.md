@@ -35,7 +35,7 @@ project: agent-steward
 ### 4. Документы и версия
 - `package.json` version, `CHANGELOG.md`, `README.md`, `docs/ARCHITECTURE.md`,
   `docs/FEATURES.md`, `docs/PIPELINE.md`, `ROADMAP*.md` — согласованы.
-- `test-docs` не ругается на счётчики (34 MCP-инструментов / 61 RPC-методов / 126 наборов —
+- `test-docs` не ругается на счётчики (34 MCP-инструментов / 61 RPC-методов / 127 наборов —
   сверять по исходникам: `src/index.ts`, `SchedulerRpc.methods`, `npm test`).
 - `docs/COMPATIBILITY.md` обновлён, если затронут dual V1/V2 path.
 

@@ -68,6 +68,7 @@ src/core/runner-docker.ts
 src/core/runner-ssh.ts
 src/core/runner.ts
 src/core/savings.ts
+src/core/scaffold.ts
 src/core/schedule-gate.ts
 src/core/schedule-v2.ts
 src/core/scheduler/at-fallback.ts
@@ -121,7 +122,7 @@ src/db/tasks-repo.ts
 src/db/templates-repo.ts
 ```
 
-**Что видно:** 86 модулей в `src/core/` (из них 5 — `router/`, 10 — `scheduler/`, 1 — `wrappers/`) и 18 модулей в `src/db/`. Durable-слой вынесен в `src/db/`, оркестрация — в `src/core/`. Счётчик сверен с `src/core/**/*.ts` 24.11.2026 (71 → 80 после D-1/D-3, M-1…M-4, A-2, T-1, S3-D36 и QW-2; 81 после QW-9; 82 после S-1; 83 после S-2; 84 после S-3; 85 после S-4; 86 после S-5; 18 в `src/db/` после BN-7).
+**Что видно:** 87 модулей в `src/core/` (из них 5 — `router/`, 10 — `scheduler/`, 1 — `wrappers/`) и 18 модулей в `src/db/`. Durable-слой вынесен в `src/db/`, оркестрация — в `src/core/`. Счётчик сверен с `src/core/**/*.ts` 24.11.2026 (71 → 80 после D-1/D-3, M-1…M-4, A-2, T-1, S3-D36 и QW-2; 81 после QW-9; 82 после S-1; 83 после S-2; 84 после S-3; 85 после S-4; 86 после S-5; 87 после S-6; 18 в `src/db/` после BN-7).
 
 **Ключевые выводы:** Принцип «ядро не зависит от транспорта» реализован через [`execution.ts`](src/core/execution.ts): исполнитель (`StepExecutor`) передаётся в `executeExecutionPlan` снаружи. Отдельного `gate-repo.ts` не существует — операции с `gate_outcomes` распределены между [`execution.ts`](src/core/execution.ts), [`runs-repo.ts`](src/db/runs-repo.ts) и [`capability-repo.ts`](src/db/capability-repo.ts).
 
@@ -137,6 +138,7 @@ src/db/templates-repo.ts
 | [src/core/reliability-scorecard.ts](src/core/reliability-scorecard.ts) | ✅ | S-3: публичная метрика объективных гейтов (`objective: true`), first-pass rate и доли сэкономленных токенов с методикой и размером выборки. |
 | [src/core/recipes.ts](src/core/recipes.ts) | ✅ | S-4: библиотека gate-passed рецептов; YAML + объективное доказательство гейта, чистый `verifyRecipe()` без запуска команд. |
 | [src/core/verified-chat.ts](src/core/verified-chat.ts) | ✅ | S-5: верифицированный чат — ответ только при объективном гейте, источнике с цитатой или gate-passed рецепте; отказ без утечки текста. |
+| [src/core/scaffold.ts](src/core/scaffold.ts) | ✅ | S-6: scaffolding из gate-passed рецепта — pipeline YAML, README с доказательствами и verify-gates.mjs; запись только после verifyRecipe(). |
 | [src/core/router/dispatch.ts](src/core/router/dispatch.ts) | ✅ | Capability-map routing: `routeStep`, `compileContextForRoute`, `recompileContextForRouteEscalation`. |
 | [src/core/router/escalation.ts](src/core/router/escalation.ts) | ✅ | Escalation logic: `gateVerdict`, `runGateWithRetry`, `resolveGateOutcome`, `escalateAfterGate`. |
 | [src/core/budget.ts](src/core/budget.ts) | ✅ | Budget gates: `evaluateBudgetGate`, `evaluateTaskTokenBudgetGate`, `buildBudgetReport`. |
