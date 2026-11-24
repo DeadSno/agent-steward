@@ -33,10 +33,6 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 - [ ] X-4.3 Устранить гонку за lock-файл в `test-registry-resilience.mjs`
   > Флейк: `EPERM: operation not permitted, open '...\locks\registry-p2-16-parallel.lock'` при параллельном доступе 32 задач к registry lock (Windows, Node 22). Действие: сериализовать доступ/добавить retry с экспоненциальной задержкой вокруг `LockManager.acquire` в тесте, чтобы PR с dev-зависимостями не краснели случайно. Не блокирует X-4.1.
 
-**Задача QA-LINT — ESLint-предупреждения в CI** · P3 · ⬜
-- [ ] QA-LINT.1 Разобрать 60 warnings в аннотациях CI (`ci.yml`, `run 44308638812`)
-  > Пример: `src/core/audit.ts:165/169 — Unsafe member access .details.json on an any value`. `eslint-baseline.json` нулевой и гейт `lint:strict` включён, но предупреждения остаются в аннотациях. Цель: типизация `details.json` через zod/явный тип, 0 warnings в аннотациях. Регрессия: `npm run lint:strict`.
-
 ## Деталь 3.9 — Портабельность: OpenCode → MCP / dsh / ACP (0.2.x+)
 `src/core/`, `src/adapters/`, `src/invokers/`, `src/cli.ts`
 
