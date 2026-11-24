@@ -44,6 +44,23 @@ export {
   type OpenPipelineEdge,
   type OpenPipelineBudget,
 } from "./core/pipeline-open-spec.js";
+// S-3: публичная метрика объективных гейтов и сэкономленных токенов.
+export {
+  RELIABILITY_SCORECARD_FORMAT,
+  RELIABILITY_SCORECARD_METHODOLOGY_URL,
+  RELIABILITY_SCORECARD_VERSION,
+  MIN_OBJECTIVE_GATES_FOR_SCORE,
+  GATE_WEIGHT,
+  TOKEN_WEIGHT,
+  buildReliabilityScorecard,
+  type ReliabilityScorecard,
+  type ReliabilityScorecardInput,
+  type ReliabilityScorecardOptions,
+  type ReliabilityGateOutcome,
+  type GateScorecard,
+  type GateTaskRow,
+  type TokenScorecard,
+} from "./core/reliability-scorecard.js";
 export {
   TOOL_NAMES,
   buildToolSpecs,

@@ -8,15 +8,17 @@
  *   agent-steward pipeline apply <file> [--dry-run] [--json]
  *   agent-steward pipeline export --pipeline <name> [--out <file>]
  *   agent-steward apply -f <file> [--dry-run] [--json]   # алиас pipeline apply
+ *   agent-steward scorecard <file.json> [--json]          # S-3 метрика надёжности
  *
  * Exit-коды: 0 — успех, 1 — ошибки валидации/применения, 2 — неверные аргументы.
  */
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { stringify } from "yaml";
 import { closeDb, initDb } from "./db/index.js";
 import { listTasks } from "./db/tasks-repo.js";
 import { loadPipelineFile } from "./core/pipeline-io.js";
 import { toOpenPipelineSpec } from "./core/pipeline-open-spec.js";
+import { buildReliabilityScorecard } from "./core/reliability-scorecard.js";
 import { executePipelineApply, planPipelineApply } from "./core/pipeline-apply.js";
 import { tasksToPipelineSpec } from "./core/pipeline-map.js";
 import { saveTaskDefinition, type TaskDefinition } from "./task-transfer.js";
@@ -31,6 +33,7 @@ const USAGE = `agent-steward — планировщик agent jobs
   agent-steward pipeline apply <file> [--dry-run] [--json]
   agent-steward pipeline export --pipeline <name> [--out <file>]
   agent-steward apply -f <file> [--dry-run] [--json]
+  agent-steward scorecard <file.json> [--json]
   agent-steward mcp
   agent-steward serve [--port <number>]
 
@@ -39,6 +42,7 @@ const USAGE = `agent-steward — планировщик agent jobs
   describe  открытое описание DAG, гейтов и бюджетов (S-1)
   apply     создать/обновить задачи из файла (идемпотентно)
   export    выгрузить задачи pipeline из БД обратно в YAML
+  scorecard публичная метрика объективных гейтов и сэкономленных токенов (S-3)
   mcp       поднять 34 инструмента как MCP-сервер на stdio
   serve     поднять локальный дашборд без OpenCode
 
@@ -212,6 +216,49 @@ async function runDescribe(args: string[]): Promise<number> {
       `максимум ${open.budgets.maxTimeoutSeconds ?? "—"} с на шаг, повторов ≤ ${open.budgets.maxRetries}`,
   );
   console.log(`Методика: ${open.methodologyUrl}`);
+  return 0;
+}
+
+/** S-3: печатает scorecard по JSON-файлу со всеми исходными данными. */
+async function runScorecard(args: string[]): Promise<number> {
+  const file = requireFile(args);
+  const json = args.includes("--json");
+  let input: unknown;
+  try {
+    input = JSON.parse(readFileSync(file, "utf8"));
+  } catch (err) {
+    console.error(`Не удалось прочитать JSON «${file}»: ${err instanceof Error ? err.message : String(err)}`);
+    return 1;
+  }
+  if (input === null || typeof input !== "object" || Array.isArray(input)) {
+    console.error("scorecard ожидает JSON-объект с полями runs и gates.");
+    return 1;
+  }
+  let card;
+  try {
+    card = buildReliabilityScorecard(input as Parameters<typeof buildReliabilityScorecard>[0]);
+  } catch (err) {
+    console.error(`Некорректные данные scorecard: ${err instanceof Error ? err.message : String(err)}`);
+    return 1;
+  }
+  if (json) {
+    console.log(JSON.stringify(card, null, 2));
+    return 0;
+  }
+  console.log(`Reliability scorecard ${card.format} v${card.version}`);
+  console.log(
+    `Гейты: ${card.gates.objective} объективных (${(card.gates.passRate * 100).toFixed(1)}% passed, ` +
+      `${(card.gates.firstPassRate * 100).toFixed(1)}% с первой попытки); всего ${card.gates.total}`,
+  );
+  console.log(
+    `Токены: ${card.tokens.counted} учтено, ${card.tokens.saved} сэкономлено ` +
+      `(${(card.tokens.savedShare * 100).toFixed(1)}%), оценка $${card.savings.savedUsd.toFixed(4)}`,
+  );
+  console.log(
+    `Score: ${card.score === null ? "n/a (мало объективных гейтов)" : `${card.score}/100`} ` +
+      `[${card.confidence}; выборка ${card.sampleSize.gates} гейтов / ${card.sampleSize.runs} запусков]`,
+  );
+  console.log(`Методика: ${card.methodologyUrl}`);
   return 0;
 }
 
@@ -452,6 +499,13 @@ async function main(argv: string[]): Promise<number> {
       return 0;
     }
     return runApply([command, ...rest].filter((value): value is string => Boolean(value)));
+  }
+  if (group === "scorecard") {
+    if (command === "--help" || command === "-h" || command === "help") {
+      console.log(USAGE);
+      return 0;
+    }
+    return runScorecard([command, ...rest].filter((value): value is string => Boolean(value)));
   }
   if (group !== "pipeline") {
     console.error(`Неизвестная команда «${group}».\n`);

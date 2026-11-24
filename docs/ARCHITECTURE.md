@@ -413,6 +413,7 @@ SQLite-карта, и публичный сабпат `agent-steward/router`, к
 | `src/core/retention.ts` | Daily history prune and incremental vacuum |
 | `src/core/analytics.ts` | Pure 14-day analytics and CSV export |
 | `src/core/savings.ts` | Counterfactual savings report (`net_savings_usd`) for analytics/CSV |
+| `src/core/reliability-scorecard.ts` | Public reliability metric: objective gate outcomes, first-pass rate and saved-token share with methodology and sample size (S-3) |
 | `src/core/execution.ts` | Execution plan, step executor, quality gate, ledger writes and escalation |
 | `src/core/mission.ts` | Ad-hoc mission → `RunContext`, approval and budget gates before `createRun` |
 | `src/core/scheduler/` | Platform backends, registry, logs |

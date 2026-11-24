@@ -72,5 +72,5 @@ Rules of the projection:
 
 The open spec describes intent. It is not a quality gate and does not assert
 that any gate passed. Actual gate outcomes, first-pass rates and token savings
-are reported separately by the reliability scorecard (S-3) with their own
-methodology.
+are reported separately by the reliability scorecard (S-3) — see
+[RELIABILITY.md](RELIABILITY.md#methodology) for its own methodology.
