@@ -155,7 +155,6 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 - [ ] QW-6.3 Опровергнутые пункты и дубли зафиксировать в CHANGELOG в рамках QW-14
 
 **Задача QW-14 — P3: код, доки и конфиги** · P3 · ⬜
-- [ ] QW-14.3 `sanitizeName`: CJK-коллизии, `one-shot`: секунды и MMM из Intl
 - [ ] QW-14.4 Доки: tr-locale vs «три языка», `AGENTS.md` счётчики, `COMPATIBILITY` 1.19.6, MIGRATION/FAQ/SAFETY, релизные теги, `index.js`/dev-скрипты в тарболе, lint-промпт pipeline
 - [ ] QW-14.5 Опровергнутые пункты Qwen и дубли зафиксировать в CHANGELOG
 

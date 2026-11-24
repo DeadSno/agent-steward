@@ -123,13 +123,20 @@ function pad(value: number): string {
  * @param runAt — ISO-8601 время запуска.
  * @param dateFormat — шаблон даты локали (например, "dd.MM.yyyy" или "M/d/yyyy").
  *                     Если не задан — используется DD.MM.YYYY (по умолчанию RU).
+ * @param locale — имя культуры Windows (Get-Culture).Name для MMM/MMMM;
+ *                 без него Intl берёт локаль Node (QW-14.3).
+ *
+ * ВАЖНО (QW-14.3): `schtasks /st` и `at -t` имеют разрешение только до минут —
+ * секунды из runAt не передаются, поэтому запуск может произойти до 59 с раньше.
+ * На launchd секунды сохраняются через StartCalendarInterval/Second и guard.
  */
 export function buildWindowsOneShotFlags(
   runAt: string,
   dateFormat?: string,
+  locale?: string,
 ): ["/sc", "ONCE", "/sd", string, "/st", string] {
   const date = new Date(runAt);
-  const sd = dateFormat ? formatDateByLocalePattern(date, dateFormat) : `${pad(date.getDate())}.${pad(date.getMonth() + 1)}.${date.getFullYear()}`;
+  const sd = dateFormat ? formatDateByLocalePattern(date, dateFormat, locale) : `${pad(date.getDate())}.${pad(date.getMonth() + 1)}.${date.getFullYear()}`;
   return [
     "/sc",
     "ONCE",
@@ -148,15 +155,26 @@ export function buildWindowsOneShotFlags(
  * P2-26: раньше последовательные replace(/MM/) и replace(/M/) превращали
  * «MMM» в число месяца («2030. 011 2.»). Теперь разбор идёт одним проходом
  * по токенам, поэтому MMM/MMMM не пересекаются с MM/M.
+ *
+ * QW-14.3: `locale` — имя культуры Windows из `(Get-Culture).Name`; без него
+ * названия месяцев берутся из локали Node, а не из ОС. Неподдерживаемый
+ * Intl-локалью культура откатывается на системную (fail-open).
  */
-export function formatDateByLocalePattern(date: Date, pattern: string): string {
+export function formatDateByLocalePattern(
+  date: Date,
+  pattern: string,
+  locale?: string,
+): string {
   const pad2 = (v: number) => String(v).padStart(2, "0");
-  const monthShort = new Intl.DateTimeFormat(undefined, {
-    month: "short",
-  }).format(date);
-  const monthLong = new Intl.DateTimeFormat(undefined, {
-    month: "long",
-  }).format(date);
+  const formatMonth = (options: Intl.DateTimeFormatOptions): string => {
+    try {
+      return new Intl.DateTimeFormat(locale, options).format(date);
+    } catch {
+      return new Intl.DateTimeFormat(undefined, options).format(date);
+    }
+  };
+  const monthShort = formatMonth({ month: "short" });
+  const monthLong = formatMonth({ month: "long" });
   return pattern.replace(
     /yyyy|yy|MMMM|MMM|MM|M|dd|d/g,
     (token) => {
@@ -184,7 +202,11 @@ export function formatDateByLocalePattern(date: Date, pattern: string): string {
   );
 }
 
-/** Формат `at -t`: YYYYMMDDHHMM в локальном времени системы. */
+/**
+ * Формат `at -t`: YYYYMMDDHHMM в локальном времени системы.
+ * QW-14.3: `at` не принимает секунды — они отбрасываются (см. комментарий
+ * к buildWindowsOneShotFlags); точность по секундам есть только в launchd.
+ */
 export function buildAtTimestamp(runAt: string): string {
   const date = new Date(runAt);
   return (
@@ -231,6 +253,7 @@ export function buildLaunchdCalendar(runAt: string): {
   Day: number;
   Hour: number;
   Minute: number;
+  Second: number;
 } {
   const date = new Date(runAt);
   return {
@@ -238,6 +261,9 @@ export function buildLaunchdCalendar(runAt: string): {
     Day: date.getDate(),
     Hour: date.getHours(),
     Minute: date.getMinutes(),
+    // QW-14.3: launchd поддерживает Second в StartCalendarInterval,
+    // поэтому секунды runAt больше не теряются (guard всё равно проверяет epoch).
+    Second: date.getSeconds(),
   };
 }
 

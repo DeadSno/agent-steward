@@ -129,6 +129,35 @@ try {
     check("launchd Day соответствует локальному дню", calendar.Day === date.getDate());
     check("launchd Hour соответствует локальному часу", calendar.Hour === date.getHours());
     check("launchd Minute соответствует локальной минуте", calendar.Minute === date.getMinutes());
+    check("QW-14.3: launchd Second сохраняет секунды runAt", calendar.Second === date.getSeconds());
+    check(
+      "QW-14.3: секунды не теряются в StartCalendarInterval",
+      /\["Second", cal\.Second\]/.test(
+        fs.readFileSync(new URL("./dist/core/scheduler/mac.js", import.meta.url), "utf8"),
+      ),
+    );
+
+    // QW-14.3: MMM/MMMM берутся из имени культуры ОС, а не из локали Node.
+    const deShort = new Intl.DateTimeFormat("de-DE", { month: "short" }).format(p226);
+    const deLong = new Intl.DateTimeFormat("de-DE", { month: "long" }).format(p226);
+    check(
+      "QW-14.3: MMM использует переданную культуру",
+      formatDateByLocalePattern(p226, "yyyy. MMM d.", "de-DE") === `2030. ${deShort} 2.`,
+    );
+    check(
+      "QW-14.3: MMMM использует переданную культуру",
+      formatDateByLocalePattern(p226, "yyyy MMMM d", "de-DE") === `2030 ${deLong} 2`,
+    );
+    check(
+      "QW-14.3: schtasks получает дату в культуре ОС",
+      buildWindowsOneShotFlags(p226.toISOString(), "yyyy. MMM d.", "de-DE")[3] ===
+        `2030. ${deShort} 2.`,
+    );
+    check(
+      "QW-14.3: неизвестная культура откатывается на системную",
+      formatDateByLocalePattern(p226, "yyyy. MMM d.", "xx-INVALID") ===
+        `2030. ${shortMonth} 2.`,
+    );
 
     const cleanup = buildLaunchdOneShotCleanup("My-Task_1");
     check("cleanup вызывает bootout", cleanup.includes("bootout"));

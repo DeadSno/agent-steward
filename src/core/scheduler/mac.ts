@@ -34,6 +34,7 @@ function xmlEscape(value: string): string {
 
 /** Один элемент StartCalendarInterval. */
 interface LaunchdCalendar {
+  Second?: number; // QW-14.3: точный момент one-shot (иначе запуск до 59 с раньше)
   Minute?: number;
   Hour?: number;
   Weekday?: number;
@@ -125,6 +126,7 @@ function pushCalendarFields(
   indent: string,
 ): void {
   const fields: [string, number | undefined][] = [
+    ["Second", cal.Second],
     ["Minute", cal.Minute],
     ["Hour", cal.Hour],
     ["Weekday", cal.Weekday],

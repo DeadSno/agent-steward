@@ -69,4 +69,22 @@ for (const bad of ["---", "...", "."]) {
 assert.equal(validateTaskName("task"), null, "обычное имя task остаётся допустимым");
 assert.equal(validateTaskName("задача-1"), null, "кириллица остаётся допустимой");
 
-console.log("P1-10: коллизии sanitized-имени — все проверки пройдены.");
+// QW-14.3: CJK-имена не должны схлопываться в один и тот же slug.
+{
+  const first = sanitizeName("任务一");
+  const second = sanitizeName("任务二");
+  assert.match(first, /^task-[0-9a-f]{8}$/);
+  assert.match(second, /^task-[0-9a-f]{8}$/);
+  assert.notEqual(first, second, "разные китайские имена дают разные slug");
+  assert.equal(sanitizeName(first), first, "slug идемпотентен");
+  assert.equal(sanitizeName("my task"), "my-task", "латиница без изменений");
+  assert.equal(sanitizeName("задача-1"), "zadacha-1", "кириллица без изменений");
+  assert.equal(validateTaskName("任务一"), null, "CJK-имена по-прежнему допустимы");
+  assert.equal(
+    findSanitizedNameConflict("任务二", ["任务一"], noArtifacts),
+    null,
+    "CJK-задачи больше не конфликтуют по slug",
+  );
+}
+
+console.log("P1-10 / QW-14.3: коллизии sanitized-имени — все проверки пройдены.");

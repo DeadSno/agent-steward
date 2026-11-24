@@ -44,6 +44,27 @@ async function getWindowsDateFormat(): Promise<string> {
   return windowsDateFormatCache;
 }
 
+/** Кэш имени культуры Windows (Get-Culture).Name для MMM/MMMM (QW-14.3). */
+let windowsLocaleCache: Promise<string | undefined> | null = null;
+
+async function getWindowsLocale(): Promise<string | undefined> {
+  if (windowsLocaleCache === null) {
+    windowsLocaleCache = (async () => {
+      try {
+        const { stdout } = await execFileAsync(
+          "powershell.exe",
+          ["-NoProfile", "-Command", "(Get-Culture).Name"],
+          { maxBuffer: MAX_OUTPUT_BUFFER },
+        );
+        return String(stdout).trim() || undefined;
+      } catch {
+        return undefined;
+      }
+    })();
+  }
+  return windowsLocaleCache;
+}
+
 /** Форматирует дату «никогда» (заглушка для file/git/mcp-триггеров) в формате локали. */
 async function buildNeverDate(format: string): Promise<string> {
   const { formatDateByLocalePattern } = await import("../one-shot.js");
@@ -475,8 +496,11 @@ export class WindowsScheduler implements SchedulerBackend {
           `Задача "${name}": для triggerType=once не передано время runAt.`,
         );
       }
-      const dateFormat = await getWindowsDateFormat();
-      scheduleFlags = buildWindowsOneShotFlags(options.runAt, dateFormat);
+      const [dateFormat, locale] = await Promise.all([
+        getWindowsDateFormat(),
+        getWindowsLocale(),
+      ]);
+      scheduleFlags = buildWindowsOneShotFlags(options.runAt, dateFormat, locale);
     } else if (triggerType && triggerType !== "cron") {
       // Файловый или MCP-триггер: однократный запуск в далёком будущем.
       // Активация — только вручную (runTask / файловый watcher / emit_event).

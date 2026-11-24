@@ -71,8 +71,23 @@ export function sanitizeName(name: string): string {
 
   let result = name.toLowerCase();
   result = result.split("").map((c) => translit[c] || c).join("");
+  // QW-14.3: кириллица транслитерируется, но CJK/греческий/арабский и др.
+  // заменяются дефисами — «任务一» и «任务二» оба давали «task» и молча
+  // конфликтовали. Добавляем короткий детерминированный хеш original name,
+  // только когда после транслитерации остались не-ASCII символы.
+  const needsHash = /[^\x00-\x7F]/u.test(result);
   result = result.replace(/[^a-z0-9_\-]/g, "-");
   result = result.replace(/-+/g, "-").replace(/^-+|-+$/g, "");
+  if (needsHash) {
+    const slug = result || "task";
+    // FNV-1a 32-bit — без зависимостей и без node:crypto (модуль идёт в GUI-бандл).
+    let hash = 0x811c9dc5;
+    for (let i = 0; i < name.length; i += 1) {
+      hash ^= name.charCodeAt(i);
+      hash = Math.imul(hash, 0x01000193);
+    }
+    return `${slug}-${(hash >>> 0).toString(16).padStart(8, "0")}`;
+  }
   return result || "task";
 }
 
