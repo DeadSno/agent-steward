@@ -4,9 +4,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  HARNESS_NAMES, resolveInvoker, OpencodeCliInvoker, DshHeadlessInvoker,
+  HARNESS_VALUES, HARNESS_NAMES, resolveInvoker, OpencodeCliInvoker, DshHeadlessInvoker,
   AcpInvoker, CursorCliInvoker,
 } from "./dist/invokers/agent-invoker.js";
+import {
+  HARNESS_VALUES as PUBLIC_HARNESS_VALUES,
+  resolveInvoker as publicResolveInvoker,
+} from "./dist/core-entry.js";
 import { parseUsageFromText } from "./dist/invokers/usage-parser.js";
 import { ToolPolicy } from "./dist/invokers/tool-policy.js";
 import { scheduleTaskSchema, updateTaskSchema } from "./dist/index.js";
@@ -60,6 +64,18 @@ check("P-3.3: не-opencode инвокеры собирают свои кома�
   assert.deepEqual(new CursorCliInvoker().buildCommand().args, ["agent", "--print"]);
 });
 
+check("P-3.1: единый источник правды HARNESS_VALUES и публичный контракт ./core", () => {
+  assert.deepEqual([...HARNESS_VALUES].sort(), [...HARNESS_NAMES].sort());
+  assert.deepEqual([...PUBLIC_HARNESS_VALUES], [...HARNESS_VALUES]);
+  assert.ok(publicResolveInvoker("acp") instanceof AcpInvoker);
+  // Схемы задач принимают ровно те значения, что объявляет контракт.
+  const base = { name: "P3", schedule: "0 9 * * *", prompt: "test", triggerType: "cron" };
+  for (const harness of HARNESS_VALUES) {
+    assert.equal(scheduleTaskSchema.parse({ ...base, harness }).harness, harness);
+    assert.equal(updateTaskSchema.parse({ name: "P3", harness }).harness, harness);
+  }
+});
+
 check("P-3.1: UsageParser разбирает токены и стоимость", () => {
   const usage = parseUsageFromText("input tokens: 1,200\noutput tokens: 300\ncost $0.0042");
   assert.deepEqual(usage, { inputTokens: 1200, outputTokens: 300, totalTokens: 1500, costUsd: 0.0042 });
@@ -88,7 +104,7 @@ check("P-3.4: поле harness принимается схемами и обра
 
 check("P-3.4: harness сохраняется в definition и импорте", () => {
   const tt = read("src/task-transfer.ts");
-  assert.match(tt, /harness\?: "opencode"/);
+  assert.match(tt, /harness\?: HarnessName/);
   assert.match(tt, /HARNESS_VALUES/);
 });
 

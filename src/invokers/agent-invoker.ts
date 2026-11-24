@@ -6,7 +6,15 @@
  */
 import { spawn } from "node:child_process";
 
-export type HarnessName = "opencode" | "dsh-headless" | "acp" | "cursor-cli";
+/** Единственный источник правды для поля `harness` (схемы задач и импорт). */
+export const HARNESS_VALUES = [
+  "opencode",
+  "dsh-headless",
+  "acp",
+  "cursor-cli",
+] as const;
+
+export type HarnessName = (typeof HARNESS_VALUES)[number];
 
 export interface BuildCommandOptions {
   model?: string | null;

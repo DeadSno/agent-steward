@@ -165,7 +165,6 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 **Задача P-2 — MCP-адаптер (~80% ценности клина)** · P1 · ⬜
 
 **Задача P-3 — AgentInvoker и `harness`** · P1 · ⬜
-- [ ] P-3.1 Ввести контракт `AgentInvoker` и поле `harness` в спецификации задачи
 - [ ] P-3.2 Подключить `runner*.ts` / `agents*.ts` к execution-loop (разрыв DS-4)
 - [ ] P-3.3 Контракт-тест: смена харнесса без правки ядра
 

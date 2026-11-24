@@ -20,6 +20,7 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 // QA-A2.7: безопасное приведение unknown к строке без no-base-to-string.
 import { safeStringify } from "./text.js";
+import { HARNESS_VALUES } from "./invokers/agent-invoker.js";
 import { applyModelRecommendation } from "./core/dry-run.js";
 import { LockManager } from "./core/lock.js";
 import {
@@ -787,7 +788,7 @@ export const scheduleTaskSchema = z.object({
       "Matrix fan-out: the task becomes a template that is expanded into clones, one per workspace. The parent never runs itself. Cannot be combined with workspaceId.",
     ),
   harness: z
-    .enum(["opencode", "dsh-headless", "acp", "cursor-cli"])
+    .enum(HARNESS_VALUES)
     .optional()
     .describe(
       "P-3.4: agent invoker for the task. Defaults to opencode CLI; unknown values are not accepted by the schema (import degrades to opencode for compatibility).",
@@ -1084,7 +1085,7 @@ export const updateTaskSchema = z.object({
       "New matrix configuration. Pass null to turn the matrix off (clones and aggregator are removed).",
     ),
   harness: z
-    .enum(["opencode", "dsh-headless", "acp", "cursor-cli"])
+    .enum(HARNESS_VALUES)
     .optional()
     .describe("P-3.4: agent invoker for the task; omitted keeps the current harness."),
 }).superRefine((value, ctx) => {

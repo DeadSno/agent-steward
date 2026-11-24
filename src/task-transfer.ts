@@ -15,6 +15,7 @@ import {
 } from "./core/schedule-v2.js";
 import { isValidSessionId } from "./core/session.js";
 import { normalizeTaskGuards, type TaskGuards } from "./core/guard.js";
+import { HARNESS_VALUES, type HarnessName } from "./invokers/agent-invoker.js";
 
 /** Триггер задачи по событию из MCP-шины. */
 export interface McpEventTrigger {
@@ -260,7 +261,7 @@ export interface TaskDefinition {
    * P-3.4: агент-инвокер задачи. Необязательное поле; отсутствие поля
    * означает прежнее поведение (opencode CLI).
    */
-  harness?: "opencode" | "dsh-headless" | "acp" | "cursor-cli";
+  harness?: HarnessName;
 }
 
 const PREFIX = `\\OpenCode\\${TASK_FOLDER_NAME}\\`;
@@ -693,10 +694,10 @@ export function parseImportJson(raw: string): ParsedImport {
     }
 
     // P-3.4: harness опционален; неизвестные значения деградируют в opencode.
-    const HARNESS_VALUES = new Set(["opencode", "dsh-headless", "acp", "cursor-cli"]);
     const harness =
-      typeof source.harness === "string" && HARNESS_VALUES.has(source.harness)
-        ? (source.harness as "opencode" | "dsh-headless" | "acp" | "cursor-cli")
+      typeof source.harness === "string" &&
+      (HARNESS_VALUES as readonly string[]).includes(source.harness)
+        ? (source.harness as HarnessName)
         : undefined;
 
     // Новое поле workingDirectory; workdir читаем для обратной совместимости.

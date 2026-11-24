@@ -14,6 +14,22 @@ export {
   type SchedulerRuntime,
   type RuntimeDeps,
 } from "./runtime.js";
+// P-3.1: публичный контракт инвокера — тоже контекст-free (только node:child_process).
+export {
+  HARNESS_VALUES,
+  HARNESS_NAMES,
+  INVOKERS,
+  resolveInvoker,
+  OpencodeCliInvoker,
+  DshHeadlessInvoker,
+  AcpInvoker,
+  CursorCliInvoker,
+  type HarnessName,
+  type AgentInvoker,
+  type BuildCommandOptions,
+  type BuiltCommand,
+  type InvocationResult,
+} from "./invokers/agent-invoker.js";
 export {
   TOOL_NAMES,
   buildToolSpecs,
