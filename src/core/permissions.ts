@@ -635,13 +635,14 @@ export function resolvePermissions(input: PermissionInput = {}): EffectivePermis
 /** Готовый OPENCODE_CONFIG_CONTENT для обёрток. */
 export function buildOpencodeConfig(input: PermissionInput = {}): string {
   const effective = resolvePermissions(input);
-  // ARCH-6.1: egress добавляется в scoped-конфиг только когда политика задана.
-  // Без неё вывод байт-в-байт прежний — fail-open для необязательной подсистемы.
+  // QW-4: https://opencode.ai/config.json объявляет additionalProperties: false
+  // и не знает корневого ключа egress. Строгая валидация хостом отвергла бы
+  // весь конфиг (fail-open), мягкая — проигнорировала бы ограничение.
+  // Egress живёт только в runEgressGuarded / compilePermissionPolicy и в аудите.
   const config: Record<string, unknown> = {
     $schema: "https://opencode.ai/config.json",
     permissions: effective.permissions,
   };
-  if (effective.egress) config.egress = effective.egress;
   return JSON.stringify(config, null, 2);
 }
 

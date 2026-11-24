@@ -181,12 +181,7 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 ## Деталь 3.17 — Верификация аудита Qwen (QW)
 `src/runtime.ts`, `src/core/scheduler/mac.ts`, `src/core/permissions.ts`, `legacy/package.json`, `test-*.mjs`, `docs/*`
 
-> Отчёт Qwen от 24.11.2026 проверяется по коду: в ROADMAP попадают только подтверждённые находки. QW-1 (worktree isolation), QW-2 (catch-up) и QW-3 (macOS pause) закрыты и перенесены в CHANGELOG. Неподтверждённые пункты P2/P3 ведутся в QW-6 до воспроизведения.
-
-**Задача QW-4 — `egress` в `OPENCODE_CONFIG_CONTENT` отсутствует в схеме OpenCode** · P1 · ⬜
-- [ ] QW-4.1 Убрать корневой `egress` из `buildOpencodeConfig`; runtime-guard `runEgressGuarded` сохранить
-- [ ] QW-4.2 Обновить `test-permissions-policy.mjs`: сгенерированный конфиг не содержит `egress`
-- [ ] QW-4.3 Проверки: `npm run build`, `test-permissions-policy.mjs`, `test-docs.mjs`
+> Отчёт Qwen от 24.11.2026 проверяется по коду: в ROADMAP попадают только подтверждённые находки. QW-1 (worktree isolation), QW-2 (catch-up), QW-3 (macOS pause) и QW-4 (egress) закрыты и перенесены в CHANGELOG. Неподтверждённые пункты P2/P3 ведутся в QW-6 до воспроизведения.
 
 **Задача QW-5 — legacy-шим npm 1.5.8 тянет ломающий мажор и ведёт на несуществующий пакет** · P1 · ⬜
 - [ ] QW-5.1 Поднять `legacy/package.json` до 1.5.10 с диапазоном `>=0.0.2 <0.1.0`

@@ -26,8 +26,9 @@ risk R2 → allowedTools:  [read, edit, glob, grep]
           budget:        из контракта
 ```
 
-- Enforcement — существующие `permissions` / `OPENCODE_CONFIG_CONTENT` +
-  egress-контроль на уровне исполнения.
+- Enforcement — существующие `permissions` / `OPENCODE_CONFIG_CONTENT` для прав
+  инструментов; `egress` не является полем схемы OpenCode и применяется только
+  на уровне исполнения (`runEgressGuarded`) и в аудите.
 - `policy_hash` пишется в ledger; изменение политики посреди миссии → `fail` +
   аудит-инцидент.
 - Внешние policy-движки (OPA/Cedar) на этом этапе не используем: локальная одна

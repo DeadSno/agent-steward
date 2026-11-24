@@ -178,7 +178,7 @@ check(
   compilePermissionPolicy({ riskClass: "R0", policy: "legacy" }).policy === "legacy",
 );
 
-// ── ARCH-6.1: egress-политика в scoped-конфиге ───────────────────────────────
+// ── ARCH-6.1 / QW-4: egress-политика в execute-пути, не в конфиге OpenCode ───
 check(
   "egress: без конфига политика не задана (fail-open)",
   normalizeEgressPolicy(null) === null &&
@@ -256,7 +256,7 @@ check(
 
 const compiledWithEgress = compilePermissionPolicy({ riskClass: "R2", egress: ["api.github.com"] });
 check(
-  "egress: компилятор переносит whitelist в scoped-конфиг",
+  "egress: компилятор переносит whitelist в execute-политику",
   compiledWithEgress.egress !== null &&
     compiledWithEgress.egress.allowedHosts.join(",") === "api.github.com",
 );
@@ -268,8 +268,10 @@ const scoped = JSON.parse(
   buildOpencodeConfig({ policy: "hybrid", egress: { allowedHosts: ["api.github.com"] } }),
 );
 check(
-  "egress: scoped-конфиг содержит whitelist и 10 правил",
-  scoped.egress.allowedHosts.join(",") === "api.github.com" && scoped.permissions.length === 10,
+  "QW-4: scoped-конфиг содержит только поля схемы OpenCode и 10 правил",
+  scoped.egress === undefined &&
+    scoped.permissions.length === 10 &&
+    Object.keys(scoped).every((key) => key === "$schema" || key === "permissions"),
 );
 const legacyConfig = JSON.parse(buildOpencodeConfig({ policy: "hybrid" }));
 check(
