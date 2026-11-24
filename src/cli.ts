@@ -408,7 +408,11 @@ async function main(argv: string[]): Promise<number> {
   }
   if (group === "serve") {
     const { startStandaloneDashboard } = await import("./serve.js");
-    await startStandaloneDashboard(rest);
+    // P-5.1: `command` — это первый аргумент после `serve` (например, --port),
+    // а не подкоманда; терять его нельзя, иначе --port игнорируется.
+    await startStandaloneDashboard(
+      [command, ...rest].filter((value): value is string => Boolean(value)),
+    );
     return 0;
   }
   // P-2.3: GitOps-алиас `agent-steward apply -f pipeline.yaml`.

@@ -1,7 +1,9 @@
 // P-5.3: subpath exports работают из одного пакета, без монорепо.
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
+import net from "node:net";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -23,6 +25,10 @@ const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"))
 let checks = 0;
 const check = (name, fn) => {
   try { fn(); checks++; }
+  catch (err) { console.error(`FAIL ${name}: ${err.message}`); process.exitCode = 1; }
+};
+const checkAsync = async (name, fn) => {
+  try { await fn(); checks++; }
   catch (err) { console.error(`FAIL ${name}: ${err.message}`); process.exitCode = 1; }
 };
 
@@ -103,6 +109,60 @@ check("P-5.1: CLI объявляет команды mcp и serve", () => {
   assert.match(cli, /"serve"/);
   const serve = fs.readFileSync(path.join(root, "src/serve.ts"), "utf8");
   assert.match(serve, /startDashboardServer/);
+});
+
+await checkAsync("P-5.1: CLI serve реально поднимает dashboard и отдаёт /api/health", async () => {
+  const freePort = await new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const port = server.address().port;
+      server.close(() => resolve(port));
+    });
+  });
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "agent-steward-serve-"));
+  const symlinkArgs = fs.lstatSync(path.join(root, "dist")).isSymbolicLink()
+    ? ["--preserve-symlinks", "--preserve-symlinks-main"]
+    : [];
+  const child = spawn(
+    process.execPath,
+    [...symlinkArgs, path.join(root, "dist/cli.js"), "serve", "--port", String(freePort)],
+    {
+      cwd: root,
+      env: { ...process.env, APPDATA: tmp, XDG_CONFIG_HOME: tmp },
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  let stderr = "";
+  let stdout = "";
+  child.stderr.on("data", (chunk) => { stderr += String(chunk); });
+  child.stdout.on("data", (chunk) => { stdout += String(chunk); });
+  try {
+    let response;
+    const deadline = Date.now() + 15000;
+    while (!response && Date.now() < deadline) {
+      try {
+        response = await fetch(`http://127.0.0.1:${freePort}/api/health`, {
+          headers: { "X-Scheduler-Client": "test-portability" },
+          signal: AbortSignal.timeout(1000),
+        });
+      } catch {
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      }
+    }
+    assert(response, `serve не ответил за 15 c (exit=${child.exitCode}): stderr=${stderr.slice(-500)} stdout=${stdout.slice(-500)}`);
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.app, "agent-steward");
+  } finally {
+    child.kill("SIGTERM");
+    await Promise.race([
+      new Promise((resolve) => child.once("exit", resolve)),
+      new Promise((resolve) => setTimeout(resolve, 2000)),
+    ]);
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
 });
 
 console.log(`test-portability-exports: ${checks} checks passed`);
