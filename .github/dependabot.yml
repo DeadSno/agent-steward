@@ -1,4 +1,5 @@
 # P3-1: обновления зависимостей приходят PR-ами, а не «внезапным» дрейфом лока.
+# PR создаются против `dev` (target-branch), чтобы обновления не оседали только в main.
 # Группировка держит шум в разумных пределах: один PR на dev-зависимости,
 # один на OpenTelemetry, один на парные @opencode/* (plugin + schema),
 # остальное — по одному. Мажоры dev-инструментов игнорируются: они требуют
@@ -7,6 +8,7 @@ version: 2
 updates:
   - package-ecosystem: npm
     directory: "/"
+    target-branch: dev
     schedule:
       interval: weekly
       day: monday
@@ -39,6 +41,7 @@ updates:
 
   - package-ecosystem: github-actions
     directory: "/"
+    target-branch: dev
     schedule:
       interval: monthly
     open-pull-requests-limit: 3

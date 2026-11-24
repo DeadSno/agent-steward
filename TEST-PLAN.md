@@ -942,7 +942,7 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 | X-1 | D16 | P1 | ⏸️ | `npm deprecate` legacy `opencode-windows-scheduler@1.5.8` |
 | X-2 | D16 | P1 | ⏸️ | Legacy 1.5.9 с `<0.1.0` upper bound |
 | X-3 | D16 | P3 | ✅ закрыто | Убрать `is_template: false` из `package.json` — `X-3.1` в `CHANGELOG.md` |
-| X-4 | D16 | P2 | ⏸️ | Dependabot: мерж #4 (plugin 2.3.0), OpenTUI 0.9.0 |
+| X-4 | D16 | P2 | 🔄 | Dependabot: PR #4 закрыт, #7/#5 замержены в `main`; auto-merge включён, осталась гонка lock-файла (X-4.3) |
 | X-5 | D16 | P2 | ⏸️ | Привести теги к релизам + GitHub release для каждого тега |
 | X-6 | D16 | P3 | ✅ закрыто | Убрать `systemd` из keywords (бэкенда нет) — `X-6.1` в `CHANGELOG.md` |
 
