@@ -215,13 +215,13 @@ const digestSpecs = (specs) =>
 // Замерено до правки B-3.1: measureToolSurface + gpt-tokenizer, профиль admin.
 const B31_BASELINE = {
   // Деталь 3.9 P-3.4: добавлено опциональное поле harness в schedule_task и
-  // update_task (+~430 токенов в admin-поверхности). Новый потолок зафиксирован
-  // на уровне фактического значения 13927 с небольшим запасом; диета B-3.1
-  // по manage_* и core-профилю продолжает проверяться отдельными проверками.
-  adminTokens: 14000,
+  // update_task (+~430 токенов). BN-7 добавил backup_db/restore_db (admin 18
+  // инструментов), QW-14.4 — tr в enum локали manage_settings. Фактическая
+  // поверхность admin = 14114 токенов; потолок зафиксирован с запасом.
+  adminTokens: 14500,
   manageTokens: 3809,
   manageChars: 2859,
-  coreDigest: "3a894fba335254925dbddd61b0992c6fab016be68dd094dcd2943c5e15f1369b",
+  coreDigest: "3ac5798ce5e2a115b15c3b89aebe5ca02cc5ca5037c64a4b4b440329c98805c3",
 };
 const MANAGE_NAMES = [
   "manage_workspaces",
@@ -288,12 +288,12 @@ check(
 );
 check(
   "B-3.1: остальные профили не_changed — core описания/имена побайтово прежние",
-  coreSpecs.length === 8 && digestSpecs(coreSpecs) === B31_BASELINE.coreDigest
+  coreSpecs.length === 9 && digestSpecs(coreSpecs) === B31_BASELINE.coreDigest
 );
 check(
   "B-3.1: остальные профили не_changed — состав admin/all прежний",
-  adminSpecs.length === 16 &&
-    allSpecs.length === 32 &&
+  adminSpecs.length === 18 &&
+    allSpecs.length === 34 &&
     MANAGE_NAMES.every((name) =>
       adminSpecs.some((s) => s.name === name) && allSpecs.some((s) => s.name === name)
     )

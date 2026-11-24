@@ -96,6 +96,22 @@ check("MIGRATION: нет упоминаний конкурентов", !/differe
 const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
 check("package.json: files включает docs", Array.isArray(pkg.files) && pkg.files.includes("docs"));
 check("package.json: files включает locales", Array.isArray(pkg.files) && pkg.files.includes("locales"));
+check(
+  "QW-14.4: npm-тарбол исключает мёртвый index.js и dev-скрипты коммитов",
+  !pkg.files.includes("index.js") && pkg.files.includes("!scripts/*-commit.ps1")
+);
+check(
+  "QW-14.4: все README упоминают четвёртый каталог locales/tr.json",
+  [
+    readmeMain,
+    fs.readFileSync(path.join(docs, "README.ru.md"), "utf8"),
+    fs.readFileSync(path.join(docs, "README.zh.md"), "utf8"),
+  ].every((text) => text.includes("locales/tr.json"))
+);
+check(
+  "QW-14.4: COMPATIBILITY называет последнюю V1 1.19.6",
+  fs.readFileSync(path.join(docs, "COMPATIBILITY.md"), "utf8").includes("1.19.6")
+);
 check("package.json: test включает test-docs.mjs", typeof pkg.scripts.test === "string" && pkg.scripts.test.includes("test-docs.mjs"));
 check("package.json: test включает test-i18n.mjs", typeof pkg.scripts.test === "string" && pkg.scripts.test.includes("test-i18n.mjs"));
 check(

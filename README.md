@@ -53,22 +53,22 @@ Want to see it without installing OpenCode? `node scripts/demo-dashboard.mjs` st
 
 ### Language
 
-The interface ships in Russian, English and Simplified Chinese. By default the language
+The interface ships in Russian, English, Simplified Chinese and Turkish. By default the language
 selector is set to **Auto** — like OpenCode, it follows the OpenCode interface language;
-Russian, English and Chinese can be chosen explicitly. The selector sits in the scheduler
-panel header (🌐 Auto / Русский / English / 中文) and is also available through the
+Russian, English, Chinese and Turkish can be chosen explicitly. The selector sits in the scheduler
+panel header (🌐 Auto / Русский / English / 中文 / Türkçe) and is also available through the
 `manage_settings` tool (`action: "update"`, `locale: "zh"`).
 `locale: "auto"` (the "Auto" option, used by default) follows the OpenCode interface language: the panel
 reacts to language changes immediately, and the resolved locale is sent to the server so
 notifications, digests and the dashboard use the same language. The switch applies
 without a restart. The dashboard follows the resolved locale: Russian and English are
 fully localized (its screenshot in `docs/dashboard.png` is the English variant);
-Chinese currently falls back to English for dashboard chrome until its catalog is ready.
+Chinese and Turkish currently fall back to English for dashboard chrome until their catalogs are ready.
 Agent tool descriptions and schemas stay English by design, and diagnostics printed
 to the console stay Russian.
 
-Catalogs live in `locales/ru.json`, `locales/en.json` and `locales/zh.json`; every key
-must exist in all three, otherwise CI fails.
+Catalogs live in `locales/ru.json`, `locales/en.json`, `locales/zh.json` and `locales/tr.json`; every key
+must exist in all four, otherwise CI fails.
 
 Documentation is separate from the interface locale: the English docs are the primary
 source, with Russian (`docs/README.ru.md`) and Simplified Chinese (`docs/README.zh.md`,
@@ -349,7 +349,7 @@ No. Windows Toast (PowerShell/WinRT), macOS Notification Center (`osascript`) an
 Yes. Set `notifications.quietHours` (`enabled`, `from`, `to` in `HH:MM`). During the window successful and `partial` runs are suppressed, while failures and timeouts are always delivered.
 
 **How do I store secrets?**
-Use `manage_secrets` (or the **🔐 Secrets** panel in the sidebar) to create an encrypted secret. Secrets are stored in `<PLUGIN_DIR>/secrets.json` with AES-256-GCM and a key file (`secrets.key`; mode 0600 on POSIX, an ACL granting only the current Windows user on Windows). In task `env`, reference a secret as `${secret:NAME}` — the value is substituted at run time and masked in logs, history and audit. The secret name can also be set via `manage_settings` → `notifications.telegram.botToken` left empty and `OPENCODE_SCHEDULER_TELEGRAM_BOT_TOKEN` env var instead.
+Use `manage_secrets` (or the **🔐 Secrets** panel in the sidebar) to create an encrypted secret. Secrets are stored in `<PLUGIN_DIR>/secrets.json` with AES-256-GCM and a key file (`secrets.key`; mode 0600 on POSIX, an ACL granting only the current Windows user on Windows). In task `env`, reference a secret as `${secret:NAME}` — the value is substituted at run time and masked in logs, history and audit. To keep the Telegram token out of `settings.json`, leave `notifications.telegram.botToken` empty and set `OPENCODE_SCHEDULER_TELEGRAM_BOT_TOKEN` (and `OPENCODE_SCHEDULER_TELEGRAM_CHAT_ID`) as environment variables instead — see the Telegram question above.
 
 **Can I see who changed what?**
 Yes. The audit log (`get_audit_log` tool, **Audit log** panel, `GET /api/audit`) records every mutation — task create/update/delete/run, settings, templates, profiles, workspaces, secrets, import, history cleanup — with actor (mcp/gui/http), source, timestamp and redacted details. Retention defaults to 90 days / 10 000 records.

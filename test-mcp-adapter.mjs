@@ -25,9 +25,9 @@ try {
   await client.connect(transport);
 
   const tools = await client.listTools();
-  check("P-2.1: MCP registry отдаёт 32 инструмента", () => {
-    assert.equal(tools.tools.length, 32);
-    assert.equal(new Set(tools.tools.map((t) => t.name)).size, 32);
+  check("P-2.1: MCP registry отдаёт 34 инструмента", () => {
+    assert.equal(tools.tools.length, 34);
+    assert.equal(new Set(tools.tools.map((t) => t.name)).size, 34);
   });
   check("P-2.4: имена инструментов совпадают с контрактом", () => {
     const names = tools.tools.map((t) => t.name).sort();
@@ -38,7 +38,7 @@ try {
       "matrix_control", "get_metrics", "get_analytics", "self_analysis", "manage_settings",
       "manage_local_ai", "manage_templates", "manage_profiles", "transfer_tasks", "send_notification",
       "report_bug", "get_dashboard_info", "cleanup_history", "emit_event", "manage_secrets",
-      "get_audit_log",
+      "get_audit_log", "backup_db", "restore_db",
     ].sort();
     assert.deepEqual(names, expected);
   });

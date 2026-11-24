@@ -299,6 +299,7 @@
   "gui.languageRu": "俄语",
   "gui.languageTitle": "界面语言：「自动」跟随 OpenCode 语言",
   "gui.languageZh": "中文",
+  "gui.languageTr": "Türkçe",
   "gui.lastCleanupDone": "{when} · 已删除 {deleted}",
   "gui.lastCleanupLabel": "上次清理：",
   "gui.lastCleanupNever": "尚未运行",

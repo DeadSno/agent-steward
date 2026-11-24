@@ -319,6 +319,29 @@ check(
   localizeDashboardHtml(dashboardRu, "de") === dashboardEn
 );
 
+// QW-14.4: турецкий каталог должен быть виден в GUI, RPC и утилите прогонов.
+const guiSource = fs.readFileSync(path.join(process.cwd(), "src", "gui.tsx"), "utf8");
+const rpcSource = fs.readFileSync(path.join(process.cwd(), "src", "rpc.ts"), "utf8");
+const runTestsSource = fs.readFileSync(path.join(process.cwd(), "scripts", "run-tests.mjs"), "utf8");
+check(
+  "QW-14.4: GUI регистрирует tr и показывает его в селекторе",
+  guiSource.includes('import trCatalog from "../locales/tr.json"') &&
+    guiSource.includes('registerCatalog("tr", trCatalog)') &&
+    guiSource.includes('<option value="tr">')
+);
+check(
+  "QW-14.4: RPC locale enum содержит tr во всех трёх схемах",
+  (rpcSource.match(/enum: \["auto", "ru", "en", "zh", "tr"\]/g) ?? []).length === 3
+);
+check(
+  "QW-14.4: run-tests.mjs принимает --locale=tr",
+  runTestsSource.includes('["ru", "en", "zh", "tr"].includes(options.locale)')
+);
+check(
+  "QW-14.4: ключ gui.languageTr есть во всех четырёх каталогах",
+  SUPPORTED_LOCALES.every((loc) => hasKey("gui.languageTr", loc))
+);
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\ni18n: ${results.length - failed.length}/${results.length} проверок пройдено.`);
 process.exit(failed.length > 0 ? 1 : 0);

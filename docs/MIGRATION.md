@@ -122,7 +122,7 @@ ExecStart=/usr/bin/npm run nightly
 | `WorkingDirectory` | `workingDirectory` / `workspaceId` |
 | `Environment=` | set it in the hook or in the user environment |
 | `TimeoutStartSec` | `timeoutSeconds` |
-| `Persistent=true` | catch-up is not implemented; a missed window is skipped |
+| `Persistent=true` | missed cron windows are caught up on the next start (see `src/core/catch-up.ts`) |
 | `Requires=` / `After=` | `dependsOn` |
 
 Disable the old units (`systemctl --user disable --now api-nightly.timer`) only after
@@ -175,8 +175,8 @@ Existing tasks usually point to a `.bat`/`.ps1` file or a command line.
 | Task Scheduler | Scheduler |
 | --- | --- |
 | Trigger "Daily" | `0 2 * * *` |
-| Trigger "At log on" | not supported; use a file trigger or a start-up hook |
-| "Run whether user is logged on" | the plugin registers tasks in the current user context |
+| Trigger "At log on" | use `runWhenLoggedOff: false` (default): tasks run in the creating user's interactive session |
+| "Run whether user is logged on" | `runWhenLoggedOff: true` registers the task with `schtasks /ru SYSTEM` (session 0, no user profile or mapped drives) |
 | "Stop task if it runs longer than" | `timeoutSeconds` |
 | "If the task is already running" | lock file, the second run is `skipped` |
 | Action "Start a program" | you describe the goal in a prompt instead of a command |
@@ -192,7 +192,8 @@ There is no universal importer, because definition formats differ. The workflow 
 1. List the old jobs and copy their schedules, prompts and working directories.
 2. Recreate them with `schedule_task` or the GUI.
 3. If the old plugin exports JSON, transform it into the import format below and use
-   `import_tasks` — validation reports per-record errors.
+   `transfer_tasks` with `action: "import"` (RPC layer: `import_tasks`) — validation
+   reports per-record errors.
 4. Disable the old plugin before the first overlapping run.
 
 ## Bulk import and export
@@ -217,7 +218,8 @@ There is no universal importer, because definition formats differ. The workflow 
 
 **Import**
 
-Use `import_tasks` from the GUI or the RPC layer. Rules:
+Use the agent tool `transfer_tasks` (`action: "import"`) from the GUI, or the
+`import_tasks` RPC method directly. Rules:
 
 - `name` and `prompt` are required.
 - `cron` tasks need a schedule; `file` tasks need `watchPath`; `mcp-event` tasks need
@@ -302,9 +304,8 @@ are rewritten; existing tasks and history are preserved.
 
 3. **Old package (`opencode-windows-scheduler`)** — remains published as a thin
    re-export wrapper around `agent-steward` for one major version. It receives only
-   critical patches. No action required if you already have it installed; it will
-   continue to work until `npm deprecate` (planned for `>= 2.1`, after download parity
-   with the new package).
+   critical patches. No action required if you already have it installed; the package
+   is already deprecated on npm (`Use agent-steward: npm i -g agent-steward`, 1.5.8/1.5.9/1.5.10 — see `docs/RELEASE-RUNBOOK.md`, X-1/X-2).
 
 4. **Verify** — run `dry_run` on any existing task and confirm it executes. Check
    `get_history` for the latest runs. Task behaviour should not change; after the first
@@ -356,8 +357,9 @@ If something goes wrong:
 
 1. Re-enable the old jobs (they were never deleted).
 2. `pause_task` the migrated ones, or delete them.
-3. Export the plugin definitions before major changes: `export_tasks` gives a single
-   JSON file you can re-import on any machine.
+3. Export the plugin definitions before major changes: `transfer_tasks` with
+   `action: "export"` (RPC: `export_tasks`) gives a single JSON file you can
+   re-import on any machine.
 
 Definitions live in `scheduler.db`; deleting the plugin directory removes all state.
 Export first if you might want it back.

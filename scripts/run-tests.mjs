@@ -38,8 +38,8 @@ function parseArgs(argv) {
       options.concurrency = Math.min(8, value);
     } else if (arg.startsWith("--locale=")) {
       options.locale = arg.slice("--locale=".length);
-      if (!["ru", "en", "zh"].includes(options.locale)) {
-        console.error(`Неизвестная локаль: ${options.locale}. Ожидается ru, en или zh.`);
+      if (!["ru", "en", "zh", "tr"].includes(options.locale)) {
+        console.error(`Неизвестная локаль: ${options.locale}. Ожидается ru, en, zh или tr.`);
         process.exit(2);
       }
     } else if (arg.startsWith("--only=")) {
@@ -54,7 +54,7 @@ function parseArgs(argv) {
     } else if (arg === "--help" || arg === "-h") {
       console.log(
         [
-          "node scripts/run-tests.mjs [--concurrency=N] [--serial] [--locale=ru|en|zh]",
+          "node scripts/run-tests.mjs [--concurrency=N] [--serial] [--locale=ru|en|zh|tr]",
           "                            [--only=substring] [--timeout=seconds]",
         ].join("\n")
       );

@@ -20,9 +20,9 @@ const ctx = {
 };
 const names = defineDshTools(ctx);
 
-check("P-4.1: через ctx.tools.register зарегистрировано 32 инструмента", () => {
-  assert.equal(names.length, 32);
-  assert.equal(registered.size, 32);
+check("P-4.1: через ctx.tools.register зарегистрировано 34 инструмента", () => {
+  assert.equal(names.length, 34);
+  assert.equal(registered.size, 34);
   for (const [name, spec] of registered) {
     assert.ok(spec.description, `нет description у ${name}`);
     assert.ok(spec.inputSchema && typeof spec.inputSchema === "object", `нет схемы у ${name}`);

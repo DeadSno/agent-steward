@@ -8,10 +8,12 @@ import { DEFAULT_LOCALE, DEFAULT_LOCALE_MODE, normalizeLocale, normalizeLocaleMo
 import ruCatalog from "../locales/ru.json"
 import enCatalog from "../locales/en.json"
 import zhCatalog from "../locales/zh.json"
+import trCatalog from "../locales/tr.json"
 
 registerCatalog("ru", ruCatalog)
 registerCatalog("en", enCatalog)
 registerCatalog("zh", zhCatalog)
+registerCatalog("tr", trCatalog)
 
 /** Счётчик смены локали: чтение в JSX-геттерах делает строки реактивными. */
 const [localeTick, setLocaleTick] = createSignal(0)
@@ -3241,6 +3243,7 @@ export default Plugin.define({
                   <option value="ru">{gt("gui.languageRu")}</option>
                   <option value="en">{gt("gui.languageEn")}</option>
                   <option value="zh">{gt("gui.languageZh")}</option>
+                  <option value="tr">{gt("gui.languageTr")}</option>
                 </select>
                 <select
                   value={workspaceFilter()}

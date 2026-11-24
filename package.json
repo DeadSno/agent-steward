@@ -67,11 +67,11 @@
   "files": [
     "dist",
     "src",
-    "index.js",
     "gui-experimental.cjs",
     "skills",
     "locales",
     "scripts",
+    "!scripts/*-commit.ps1",
     "docs",
     "examples",
     "README.md",

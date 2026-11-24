@@ -13,16 +13,18 @@ steps:
   - id: lint
     schedule: "0 2 * * *"
     prompt: >
-      Run the linter and fix every reported problem in the changed files.
-      Do not change behaviour, only style and obvious defects.
+      Inspect the linter configuration and the changed files, list likely lint
+      problems and prepare style-only fixes. Do not change behaviour. The quality
+      gate runs `npm run lint` itself; this step has no shell tool.
     qualityGate: npm run lint
 
   - id: test
     needs: [lint]
     trigger: dag
     prompt: >
-      Run the test suite, find the cause of any failure and fix it.
-      Add a regression test when the fix changes behaviour.
+      Analyze the test sources and available failure artifacts, identify likely
+      causes and prepare fixes with regression tests. The quality gate runs
+      `npm test` itself; this step has no shell tool.
     qualityGate: npm test
 
   - id: build
@@ -30,6 +32,7 @@ steps:
     trigger: dag
     timeoutSeconds: 3600
     prompt: >
-      Build the package and verify that dist/ contains the CLI entry point.
-      Report the build output size.
+      Review the build configuration and expected dist/ entry points, then report
+      what the build should produce. The quality gate runs `npm run build` itself;
+      this step has no shell tool.
     qualityGate: npm run build

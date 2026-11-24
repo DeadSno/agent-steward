@@ -8,19 +8,21 @@
 
 | Класс | Что делает | Примеры | Default |
 |-------|-----------|---------|---------|
-| **R0** read-only | Читает, ничего не меняет | анализ, отчёт, обзор | разрешён |
-| **R1** local-write | Меняет файлы в изолированном worktree | правка кода, бойлерплейт | разрешён в worktree |
-| **R2** external-effect | Меняет внешнее состояние | git push, PR, API-запись, деплой | **approval + отложенные эффекты** |
-| **R3** destructive / egress | Удаляет, льёт данные наружу | reset --hard, удаление, отправка наружу | **approval + явный opt-in** |
+| **R0** read-only | Только чтение, без сети и записи | анализ, отчёт, обзор | разрешён |
+| **R1** network-read | Чтение плюс `webfetch`/`websearch`; Quality Gate поднимает R0 до R1 | поиск документов, проверка API на чтение | разрешён |
+| **R2** edit / subagent | Запись файлов и запуск subagent; shell запрещён | правка кода, бойлерплейт, делегирование | **approval + отложенные амбивалентные эффекты** |
+| **R3** shell / legacy | Произвольные команды оболочки (в т.ч. деструктивные и egress) | reset --hard, деплой, отправка наружу | **approval + явный opt-in** |
 
-Класс определяется по **инструментам и командам**, а не по описанию миссии.
+Класс определяется по **фактически доступным инструментам** (`classifyRiskClass`
+в `src/core/permissions.ts`), а не по описанию миссии. Внешние эффекты, egress и
+blast-radius — дополнительный слой поверх tool-scope (разделы 2 и 5).
 
 ## 2. Компиляция политики (принуждение, не декларация)
 
 ```
-risk R2 → allowedTools:  [read, edit, glob, grep]
-          deniedTools:   [shell]
-          egress:        [] (кроме явного allowlist)
+risk R2 → allowedTools:  [read, edit, glob, grep, webfetch, websearch, write, subagent]
+          deniedTools:   [shell, question]
+          egress:        runtime-allowlist (runEgressGuarded), не поле конфига OpenCode
           requiredGates: [tests, lint, approval]
           effects:       deferred (intents)
           budget:        из контракта

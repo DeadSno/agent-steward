@@ -299,6 +299,7 @@
   "gui.languageRu": "Русский",
   "gui.languageTitle": "Язык интерфейса: «Авто» следует за языком OpenCode",
   "gui.languageZh": "中文",
+  "gui.languageTr": "Türkçe",
   "gui.lastCleanupDone": "{when} · удалено {deleted}",
   "gui.lastCleanupLabel": "Последняя очистка:",
   "gui.lastCleanupNever": "ещё не выполнялась",

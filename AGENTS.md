@@ -20,7 +20,7 @@
 - `npm run build` — tsc с declaration-файлами; обязателен после правки TypeScript.
 - `npm run lint` — eslint по `src/`.
 - `npm run build:gui` — пересобрать GUI-бандл перед релизом.
-- `npm test` — полный прогон (~130 `test-*.mjs`, тесты идут против `dist/`); `npm run test:parallel` — быстрее; точечно — `npm run test:<name>`.
+- `npm test` — полный прогон (121 сюит из 129 файлов `test-*.mjs`, тесты идут против `dist/`); `npm run test:parallel` — быстрее; точечно — `npm run test:<name>`.
 - `npm run test:en`, `npm run test:zh` — локали; `npm run test:i18n` — паритет ключей ru/en/zh.
 - `node test-docs.mjs` — мета-гейт: сверка счётчиков tools/RPC, версии схемы, ключей конфига и доков; `node test-workflows.mjs` — структура CI-воркфлоу.
 - `npm run test:chaos` — nightly-проверки crash/kill-9; `npm pack --dry-run`, `node test-package-exports.mjs` — целостность тарбола и `exports`.
@@ -39,7 +39,7 @@
 
 - Правка `src/core/scheduler/*` → тесты schtasks / cron / mac / at-fallback.
 - Правка `src/core/worktree*` → `npm run test:worktree`, `test:guards`, `test:w4`.
-- Правка i18n → `test:i18n`, `test:en`, `test:zh` (все три локали равноправны).
+- Правка i18n → `test:i18n`, `test:ru`, `test:en`, `test:zh`, `test:tr` (все четыре локали равноправны).
 - Правка GUI/RPC → `test:dlq-gui`, `test:pause-gui`, `test:gui-bundle` + smoke в Playwright.
 - Новый модуль в `src/core` → новый `test-*.mjs` в корне.
 - Задача в свежем worktree (W-1): сначала подготовить окружение — junction `node_modules` и `dist` из основного чек-аута через `cmd /c mklink /J` либо `npm ci` внутри worktree; иначе `npm run build` и `node test-*.mjs` падают (PL-109). Если `dist/` — junction, self-reference `agent-steward/*` резолвится по реальному пути и не находит зависимости в `node_modules` текущего worktree (QA-PORT-8): тест `test-portability-exports.mjs` сам перезапускается с флагом `--preserve-symlinks` (или дайте worktree собственный `dist`). `npm pack` не упаковывает junction `dist/` (QA-PORT-9): публиковать только из чистого чек-аута, состав tarball проверяет CI.

@@ -151,13 +151,12 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 ## Деталь 3.17 — Верификация аудита Qwen (QW)
 `src/runtime.ts`, `src/core/scheduler/mac.ts`, `src/core/permissions.ts`, `legacy/package.json`, `test-*.mjs`, `docs/*`
 
-> Отчёт Qwen от 24.11.2026 проверен по коду: в ROADMAP попадают только подтверждённые находки. QW-1 (worktree isolation), QW-2 (catch-up), QW-3 (macOS pause), QW-4 (egress), QW-5 (legacy-шим npm), QW-7 (quota-детектор), QW-8 (MONTHLY/ID), QW-9 (POSIX delete/defer), QW-10 (poll без node / POSIX-семантика), QW-11 (one-shot cleanup/стампы), QW-12 (SSH/Docker runner) и QW-13 (доверие Origin дашборда) закрыты и перенесены в CHANGELOG. Верификация P2/P3 выполнена 24.11.2026: подтверждённые пункты оформлены задачами QW-11…QW-14; пункт «quota-diff/gate смотрят в main-репо» — дубль уже закрытого QW-1, отдельной задачи не требует; претензия к комментарию про `X-Scheduler-Client` опровергнута (комментарий сам называет его «бонусом»), но слабое место Origin реально и вынесено в QW-13.
+> Отчёт Qwen от 24.11.2026 проверен по коду: в ROADMAP попадают только подтверждённые находки. QW-1 (worktree isolation), QW-2 (catch-up), QW-3 (macOS pause), QW-4 (egress), QW-5 (legacy-шим npm), QW-7 (quota-детектор), QW-8 (MONTHLY/ID), QW-9 (POSIX delete/defer), QW-10 (poll без node / POSIX-семантика), QW-11 (one-shot cleanup/стампы), QW-12 (SSH/Docker runner), QW-13 (доверие Origin дашборда) и QW-14.4 (доку/конфиги: tr-локаль, счётчики, MIGRATION/SAFETY, тарбол, lint-промпт) закрыты и перенесены в CHANGELOG. Верификация P2/P3 выполнена 24.11.2026: подтверждённые пункты оформлены задачами QW-11…QW-14; пункт «quota-diff/gate смотрят в main-репо» — дубль уже закрытого QW-1, отдельной задачи не требует; претензия к комментарию про `X-Scheduler-Client` опровергнута (комментарий сам называет его «бонусом»), но слабое место Origin реально и вынесено в QW-13.
 
 **Задача QW-6 — верификация P2/P3 отчёта Qwen** · P2 · ⬜
 - [ ] QW-6.3 Опровергнутые пункты и дубли зафиксировать в CHANGELOG в рамках QW-14
 
 **Задача QW-14 — P3: код, доки и конфиги** · P3 · ⬜
-- [ ] QW-14.4 Доки: tr-locale vs «три языка», `AGENTS.md` счётчики, `COMPATIBILITY` 1.19.6, MIGRATION/FAQ/SAFETY, релизные теги, `index.js`/dev-скрипты в тарболе, lint-промпт pipeline
 - [ ] QW-14.5 Опровергнутые пункты Qwen и дубли зафиксировать в CHANGELOG
 
 ---

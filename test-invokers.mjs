@@ -69,13 +69,13 @@ check("P-3.1: UsageParser разбирает токены и стоимость"
 check("P-3.1: ToolPolicy.toHarnessConfig() сериализуем и полон", () => {
   const policy = ToolPolicy.forHarness("opencode");
   const config = policy.toHarnessConfig();
-  assert.equal(config.allowedTools.length, 32);
+  assert.equal(config.allowedTools.length, 34);
   assert.equal(config.deniedTools.length, 0);
   assert.equal(JSON.parse(JSON.stringify(config)).harness, "opencode");
   const cursor = ToolPolicy.forHarness("cursor-cli").toHarnessConfig();
   assert.ok(cursor.allowedTools.includes("list_tasks"));
   assert.ok(cursor.deniedTools.includes("delete_task"));
-  assert.equal(cursor.allowedTools.length + cursor.deniedTools.length, 32);
+  assert.equal(cursor.allowedTools.length + cursor.deniedTools.length, 34);
 });
 
 check("P-3.4: поле harness принимается схемами и обратно совместимо", () => {

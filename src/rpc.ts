@@ -760,7 +760,7 @@ const GetSettingsOutput = {
   type: "object" as const,
   properties: {
     maxConcurrent: { type: "number" },
-    locale: { type: "string", enum: ["auto", "ru", "en", "zh"] },
+    locale: { type: "string", enum: ["auto", "ru", "en", "zh", "tr"] },
     uiLocale: { type: "string", enum: ["ru", "en", "zh"] },
     winterMode: { type: "boolean" },
     notifications: NotificationSettingsSchema,
@@ -778,7 +778,7 @@ const SaveSettingsInput = {
   properties: {
     maxConcurrent: { type: "number" },
     /** Язык интерфейса (Спринт 28): ru по умолчанию, en — опционально. */
-    locale: { type: "string", enum: ["auto", "ru", "en", "zh"] },
+    locale: { type: "string", enum: ["auto", "ru", "en", "zh", "tr"] },
     uiLocale: { type: "string", enum: ["ru", "en", "zh"] },
     winterMode: { type: "boolean" },
     notifications: NotificationSettingsSchema,
@@ -796,7 +796,7 @@ const SaveSettingsOutput = {
   properties: {
     success: { type: "boolean" },
     maxConcurrent: { type: "number" },
-    locale: { type: "string", enum: ["auto", "ru", "en", "zh"] },
+    locale: { type: "string", enum: ["auto", "ru", "en", "zh", "tr"] },
     uiLocale: { type: "string", enum: ["ru", "en", "zh"] },
     winterMode: { type: "boolean" },
     notifications: NotificationSettingsSchema,
