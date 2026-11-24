@@ -6,6 +6,7 @@
  * Запуск: node test-cron-to-schtasks.mjs (после npm run build).
  */
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import {
   convertCronToSchTasks,
   buildScheduleFlags,
@@ -238,6 +239,35 @@ check(
 check(
   "PL-75: неизвестный previousNextRun не блокирует пересоздание",
   shouldDeferCronTriggerRecreation(undefined, pl57Now) === false,
+);
+
+// --- BN-1 / BP-D01-1: */N, недостижимый для schtasks -------------------------
+check("BN-1: '*/7 * * * *' уходит в poll-режим", needsPollMode("*/7 * * * *") === true);
+check("BN-1: '*/15 * * * *' остаётся нативным", needsPollMode("*/15 * * * *") === false);
+check(
+  "BN-1: poll-режим ОС регистрируется как MINUTE /mo 1",
+  (() => {
+    const src = fs.readFileSync("src/core/scheduler/windows.ts", "utf8");
+    return /needsPollMode\(schedule, tz\)/.test(src) && /"\/sc", "MINUTE", "\/mo", "1"/.test(src);
+  })(),
+);
+// Буферизация пропущенных тиков должна быть запечена в ОБЕ обёртки и в gate.
+check(
+  "BN-1: ps-обёртка передаёт --catchup-file",
+  /--catchup-file "\$\{scheduleGate\.catchupFile\.trim\(\)\}"/.test(
+    fs.readFileSync("src/core/ps-wrapper.ts", "utf8"),
+  ),
+);
+check(
+  "BN-1: bash-обёртка передаёт --catchup-file",
+  fs.readFileSync("src/core/wrappers/bash.ts", "utf8").includes("--catchup-file"),
+);
+check(
+  "BN-1: gate умеет читать/писать маркер догона",
+  (() => {
+    const src = fs.readFileSync("src/core/schedule-gate.ts", "utf8");
+    return src.includes("readCatchupMarker") && src.includes("writeCatchupMarker");
+  })(),
 );
 
 console.log(`\n${passed}/${passed + failed} проверок пройдено`);

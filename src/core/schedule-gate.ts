@@ -7,6 +7,7 @@
  *                                   [--not-before 22:00 --not-after 06:00]
  *                                   [--defer-file "C:\...\name.lock.defer"]
  *                                   [--force-file "C:\...\name.lock.force"]
+ *                                   [--catchup-file "C:\...\name.lock.catchup"]
  *                                   [--now 2026-11-13T12:00:00.000Z]  (для тестов)
  *
  * --force-file — маркер ручного запуска (run_task_now, файловый триггер,
@@ -38,6 +39,13 @@ import {
 } from "./schedule-v2.js";
 
 const STALE_DEFER_MS = 25 * 60 * 60 * 1000;
+
+/**
+ * BN-1 / BP-D01-1: горизонт буферизации пропущенных cron-тиков в poll-режиме.
+ * Ровно сутки + час — чтобы шаг 1439 минут (максимум для schtasks)
+ * перекрывало хотя бы один пропущенный запуск.
+ */
+const CATCHUP_LOOKBACK_MS = 25 * 60 * 60 * 1000;
 
 /** Сколько живёт маркер ручного запуска. */
 const FORCE_TTL_MS = 2 * 60 * 1000;
@@ -90,6 +98,30 @@ function releaseDefer(path: string): void {
 }
 
 /**
+ * BN-1: читает время последнего обработанного cron-тика.
+ * Протухший/битый/будущий маркер игнорируется — лучше пропустить догон,
+ * чем устроить серию дублей после смены часового пояса или перезагрузки.
+ */
+function readCatchupMarker(path: string, nowMs: number): number | null {
+  try {
+    const ts = Date.parse(fs.readFileSync(path, "utf8").trim());
+    if (!Number.isFinite(ts) || ts > nowMs || nowMs - ts > CATCHUP_LOOKBACK_MS) return null;
+    return ts;
+  } catch {
+    return null;
+  }
+}
+
+/** BN-1: best-effort запись маркера; отсутствие файла не ломает запуск. */
+function writeCatchupMarker(path: string, atMs: number): void {
+  try {
+    fs.writeFileSync(path, new Date(atMs).toISOString(), "utf8");
+  } catch {
+    /* best-effort: следующий тик просто не найдёт маркер */
+  }
+}
+
+/**
  * Проверяет и поглощает маркер ручного запуска.
  *
  * Возвращает true, если маркер свежий (значит, запуск инициирован вручную:
@@ -120,6 +152,7 @@ async function main(): Promise<number> {
   const policyArg = argValue(args, "--window-policy");
   const deferFile = argValue(args, "--defer-file");
   const forceFile = argValue(args, "--force-file");
+  const catchupFile = argValue(args, "--catchup-file");
   const nowArg = argValue(args, "--now");
 
   const days = daysArg
@@ -142,6 +175,8 @@ async function main(): Promise<number> {
   // Ручной запуск (run_task_now, файловый триггер, MCP-событие, catch-up):
   // маркер свежий — расписание и окно не проверяем.
   if (forceFile && consumeForceMarker(forceFile)) {
+    // Ручной запуск не должен порождать догон только что прошедшего cron-тика.
+    if (catchupFile) writeCatchupMarker(catchupFile, now.getTime());
     console.error("[schedule-gate] Ручной запуск — проверка расписания пропущена.");
     return 0;
   }
@@ -173,9 +208,36 @@ async function main(): Promise<number> {
     }
   }
 
-  if (spec && !cronMatches(spec, now, zone)) {
-    // По расширенному cron сейчас не время.
-    return 3;
+  if (spec) {
+    if (cronMatches(spec, now, zone)) {
+      // Точный тик: запоминаем его, чтобы следующий опрос не счёл его пропущенным.
+      if (catchupFile) writeCatchupMarker(catchupFile, now.getTime());
+    } else {
+      // BN-1 / BP-D01-1: cron `*/N` с N, не делящим 60, не выражается во
+      // флагах schtasks, поэтому ОС дёргает обёртку раз в минуту. Если тик
+      // планировщика был пропущен (перезагрузка, занятая ОС), обычный gate
+      // терял совпадение навсегда. Здесь мы ищем последний не обработанный
+      // матч за горизонт буферизации и разрешаем РОВНО один догон за тик.
+      const last = catchupFile ? readCatchupMarker(catchupFile, now.getTime()) : null;
+      let missed: number | null = null;
+      if (last !== null) {
+        const from = Math.max(last + 60_000, now.getTime() - CATCHUP_LOOKBACK_MS);
+        const cursor = new Date(from);
+        cursor.setSeconds(0, 0);
+        for (let at = cursor.getTime(); at <= now.getTime(); at += 60_000) {
+          if (at <= last) continue;
+          if (cronMatches(spec, new Date(at), zone)) {
+            missed = at;
+            break;
+          }
+        }
+      }
+      if (missed === null) return 3;
+      if (catchupFile) writeCatchupMarker(catchupFile, missed);
+      console.error(
+        `[schedule-gate] BN-1: догнан пропущенный cron-тик ${new Date(missed).toISOString()}.`,
+      );
+    }
   }
 
   // Дни недели и окно запуска (Спринт 27). Политика вне окна:

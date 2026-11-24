@@ -241,6 +241,7 @@ export function buildBashWrapperScript(options: BashWrapperOptions): string {
     `SCHEDULE_WINDOW_POLICY=${shellQuote(scheduleGate?.windowPolicy ?? "")}`,
     `SCHEDULE_DEFER_FILE=${shellQuote(scheduleGate?.deferFile ?? "")}`,
     `SCHEDULE_FORCE_FILE=${shellQuote(scheduleGate?.forceFile ?? "")}`,
+    `SCHEDULE_CATCHUP_FILE=${shellQuote(scheduleGate?.catchupFile ?? "")}`,
     `ENV_FILE=${shellQuote(envFile ?? "")}`,
     // Спринт 29.2 / 32: права задачи передаются в opencode через переменную
     // окружения. Единый резолвер политики — src/core/permissions.ts.
@@ -321,6 +322,7 @@ export function buildBashWrapperScript(options: BashWrapperOptions): string {
     '  [ -n "$SCHEDULE_WINDOW_POLICY" ] && SCHED_GATE_ARGS+=(--window-policy "$SCHEDULE_WINDOW_POLICY")',
     '  [ -n "$SCHEDULE_DEFER_FILE" ] && SCHED_GATE_ARGS+=(--defer-file "$SCHEDULE_DEFER_FILE")',
     '  [ -n "$SCHEDULE_FORCE_FILE" ] && SCHED_GATE_ARGS+=(--force-file "$SCHEDULE_FORCE_FILE")',
+    '  [ -n "$SCHEDULE_CATCHUP_FILE" ] && SCHED_GATE_ARGS+=(--catchup-file "$SCHEDULE_CATCHUP_FILE")',
     "  if ! command -v node >/dev/null 2>&1; then",
     '    log "[scheduler] Гейт расписания пропущен: node не найден в PATH."',
     "  else",

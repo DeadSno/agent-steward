@@ -7427,6 +7427,8 @@ export async function schedulerCreateTask(
       gateFile: gatePath,
       deferFile: `${lockFile}.defer`,
       forceFile: `${lockFile}.force`,
+      // BN-1: догон cron-тиков, пропущенных между минутными опросами ОС.
+      catchupFile: `${lockFile}.catchup`,
     }
     : undefined;
   // Workspace имеет приоритет над workingDirectory: одна задача = один repo

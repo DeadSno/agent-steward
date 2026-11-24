@@ -1993,6 +1993,10 @@ export async function writeWrapperCmd(
     if (scheduleGate.forceFile?.trim()) {
       gateArgs.push(`--force-file "${scheduleGate.forceFile.trim()}"`);
     }
+    // BN-1: маркер догона пропущенных cron-тиков в poll-режиме.
+    if (scheduleGate.catchupFile?.trim()) {
+      gateArgs.push(`--catchup-file "${scheduleGate.catchupFile.trim()}"`);
+    }
     // append к логу задачи, чтобы перенос/пропуск был виден в истории запусков
     if (logFile?.trim()) {
       gateArgs.push(`>> "${logFile.trim()}" 2>&1`);

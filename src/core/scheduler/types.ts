@@ -57,6 +57,8 @@ export interface CreateTaskOptions {
     notAfter?: string;
     /** Путь к defer-файлу для переноса из окна (lock-файл + .defer). */
     deferFile?: string;
+    /** BN-1: путь к файлу маркера последнего cron-тика (lock-файл + .catchup). */
+    catchupFile?: string;
   };
 }
 

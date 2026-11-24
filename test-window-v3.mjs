@@ -3,6 +3,9 @@
  * Запуск: node test-window-v3.mjs (после npm run build).
  */
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import {
   activeWindowState,
   nextWindowOpenDelayMs,
@@ -137,6 +140,51 @@ const runPolicy = assessCronWindowFeasibility(
   p224From,
 );
 check("P2-24: windowPolicy=run → всегда достижимо", runPolicy.feasible === true);
+
+// --- 8. BN-1 / BP-D01-1: догон пропущенных cron-тиков в poll-режиме ----------
+// cron `*/7` не выражается флагами schtasks: ОС опрашивает раз в минуту.
+// Маркер .catchup хранит последний обработанный тик, чтобы пропущенный
+// (перезагрузка/занятая ОС) запуск не терялся навсегда.
+const bn1Marker = path.join(os.tmpdir(), `bn1-catchup-${process.pid}.marker`);
+const bn1Args = (now, extra = []) => [
+  "--cron", "*/7 * * * *", "--tz", "UTC",
+  "--now", now, "--catchup-file", bn1Marker, ...extra,
+];
+try {
+  fs.writeFileSync(bn1Marker, "2026-11-24T12:00:00.000Z", "utf8");
+  const catchup = runGate(bn1Args("2026-11-24T12:09:30.000Z"));
+  check("BN-1: пропущенный тик 12:07 догнан (exit 0)", catchup.status === 0);
+  check(
+    "BN-1: маркер сдвинут на 12:07",
+    fs.readFileSync(bn1Marker, "utf8").trim() === "2026-11-24T12:07:00.000Z",
+  );
+  check("BN-1: в логе диагностика догона", /BN-1.*догнан/.test(catchup.stderr));
+
+  const noDuplicate = runGate(bn1Args("2026-11-24T12:10:30.000Z"));
+  check("BN-1: на следующем тике дубля нет (exit 3)", noDuplicate.status === 3);
+
+  fs.rmSync(bn1Marker, { force: true });
+  const exact = runGate(bn1Args("2026-11-24T12:14:00.000Z"));
+  check("BN-1: точный тик без маркера → exit 0", exact.status === 0);
+  check(
+    "BN-1: точный тик записал маркер",
+    fs.readFileSync(bn1Marker, "utf8").trim() === "2026-11-24T12:14:00.000Z",
+  );
+
+  // Ручной запуск не должен порождать догон только что прошедшего cron-тика.
+  fs.rmSync(bn1Marker, { force: true });
+  const forceMarker = `${bn1Marker}.force`;
+  fs.writeFileSync(forceMarker, new Date().toISOString(), "utf8");
+  const forced = runGate(bn1Args("2026-11-24T12:21:00.000Z", ["--force-file", forceMarker]));
+  check("BN-1: ручной запуск обходит cron (exit 0)", forced.status === 0);
+  check(
+    "BN-1: ручной запуск сдвинул маркер и не вызвал догон",
+    runGate(bn1Args("2026-11-24T12:22:00.000Z")).status === 3,
+  );
+  fs.rmSync(forceMarker, { force: true });
+} finally {
+  fs.rmSync(bn1Marker, { force: true });
+}
 
 const failed = results.filter((r) => !r.ok);
 console.log(`\n${results.length - failed.length}/${results.length} OK`);

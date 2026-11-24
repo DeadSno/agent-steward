@@ -718,6 +718,11 @@ export interface ScheduleGateSpec {
   days?: number[];
   /** Поведение вне окна: skip — пропустить, run — выполнить всё равно. */
   windowPolicy?: "skip" | "run";
+  /**
+   * BN-1: файл маркера последнего обработанного cron-тика (догон пропущенных
+   * запусков в poll-режиме). Путь вычисляется в index.ts из lock-файла задачи.
+   */
+  catchupFile?: string;
 }
 
 /**
