@@ -13,7 +13,7 @@
 > **Нумерация.** Нумерация сохранена для преемственности ссылок: первая открытая
 > деталь — 3.9, следующий раздел — 4.
 
-Текущая версия: **agent-steward 0.0.6** (20.11.2026).
+Текущая версия: **agent-steward 0.0.7** (24.11.2026).
 Legacy: `opencode-windows-scheduler@1.5.9`.
 
 - Стратегия и позиционирование — [ROADMAP-STRATEGY.md](./ROADMAP-STRATEGY.md).
@@ -29,9 +29,6 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 - [ ] X-4.1 Мерж #4 (plugin 2.3.0)
 - [ ] X-4.2 OpenTUI 0.9.0
   > Блокировка (2026-11-24): PR #4 открыт (base `main` отстаёт от `dev` на 138 коммитов, head `89c2b89`), но в CI 2 из 10 джобов отменены (macOS, node 22/24) — по `docs/RELEASE-RUNBOOK.md` при незелёном CI мерж запрещён. `gh` CLI и `GH_TOKEN` отсутствуют; обновление OpenTUI 0.9.0 по runbook разрешено только после зелёного PR #4.
-
-### QA-находки, найденные при верификации плагина (24.11.2026)
-
 
 ## Деталь 3.9 — Портабельность: OpenCode → MCP / dsh / ACP (0.2.x+)
 `src/core/`, `src/adapters/`, `src/invokers/`, `src/cli.ts`

@@ -2,9 +2,9 @@
 
 Этот документ — **инструкция**, не отчёт о выполнении. Ни одна из описанных операций не выполнялась
 автоматически: все они требуют доступа к npm registry и GitHub, прав на публикацию и явного решения
-человека. Соответствующие строки остаются открытыми в `ROADMAP.md` (деталь 3.7, задачи X-1, X-2, X-4, X-5).
+человека. По состоянию на 0.0.7 в `ROADMAP.md` остаётся открытой только задача X-4; X-1, X-2 и X-5 закрыты и зафиксированы в `CHANGELOG.md`.
 
-## Предconditions (общие для всех шагов)
+## Предварительные условия (общие для всех шагов)
 
 - Рабочая копия `dev` синхронизирована: `git fetch origin && git rebase --autostash origin/dev`.
 - Локально зелёны: `npm run build`, `npm run lint`, `npm run lint:strict`, `node test-docs.mjs`,
@@ -45,9 +45,9 @@ npm view opencode-windows-scheduler@1.5.9 dependencies.agent-steward
 
 1. Открыть https://github.com/DeadSno/agent-steward/pull/4, проверить статус CI (все 6 matrix-джоб
    build-and-test, compat-v1, compat-v2, shim-smoke зелёные),-diff зависимостей и отсутствие
-   неожданных изменений в `package-lock.json`.
+   неожиданных изменений в `package-lock.json`.
 2. Слить PR через squash-merge, убедиться что `dev` содержит мерж и что CI на `dev` зелёный.
-3. Отдельно проверить OpenTUI 0.9.0: обновлениеdependency только после зелёного PR #4
+3. Отдельно проверить OpenTUI 0.9.0: обновление dependency только после зелёного PR #4
    и повторного прогона `npm run build && npm run test:parallel`.
 4. Если CI красный — не мержить, зафиксировать причину в issue и оставить строку X-4 открытой.
 
@@ -57,16 +57,16 @@ npm view opencode-windows-scheduler@1.5.9 dependencies.agent-steward
 # теги должны соответствовать уже опубликованным версиям, а не наоборот
 git tag --list
 npm view agent-steward versions --json
-git tag -a v0.0.6 -m "agent-steward 0.0.6" <commit>
-git push origin v0.0.6
-gh release create v0.0.6 --verify-tag --generate-notes
+git tag -a v0.0.7 -m "agent-steward 0.0.7" <commit>
+git push origin v0.0.7
+gh release create v0.0.7 --verify-tag --generate-notes
 ```
 
 Проверка: для каждого существующего релиза npm есть тег `v<version>` и GitHub release с notes;
-список тегов и список версий совпадают. Откат тега: `git push origin :refs/tags/v0.0.6` и
-`git tag -d v0.0.6` (только если released commit ещё не разошёлся).
+список тегов и список версий совпадают. Откат тега: `git push origin :refs/tags/v0.0.7` и
+`git tag -d v0.0.7` (только если released commit ещё не разошёлся).
 
-## Порядок и-stop условия
+## Порядок и stop-условия
 
 X-1 → X-2 → X-4 → X-5. Между шагами — повторный прогон верификации и проверка, что `dev` не
 разошёлся с `origin/dev`. Любой красный CI или расхождение версий останавливает последовательность;

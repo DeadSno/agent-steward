@@ -112,10 +112,8 @@ npm run build && npm run build:gui
 |---|---|---|
 | `schedule_task` | `name`, `prompt`, `schedule` для cron или `runAt` / `delaySeconds` для одноразового запуска, опционально `session` / `sessionMaxRuns`, `timeoutSeconds`, `model`, `priority`, `beforeScript`, `afterScript`, `qualityGate`, `dependsOn`, `retryCount`, `retryDelay`, `nextTaskOnSuccess`, `nextTaskOnError`, `triggerType` (`cron`/`file`/`git`/`mcp-event`/`once`), `mcpEvent`, `watchPath`, `watchGlobs`, `watchIgnore`, `gitBranch`, `gitPaths`, `gitIgnore`, `gitPollSeconds`, `activeDays`, `windowPolicy` (`skip`/`postpone`/`run`), `workingDirectory`, `workspaceId`, `allowedTools`, `deniedTools`, `matrix` | Регистрирует задачу в планировщике ОС (cron, одноразовый запуск, файл, git или MCP-событие) |
 | `schedule_advanced` | полная схема `schedule_task` | Расширенное планирование в профиле admin |
-| `schedule_advanced` | полная схема `schedule_task` | Расширенное планирование в профиле admin |
 | `list_tasks` | — | Задачи: расписание, статус, следующее время запуска, цепочки, workspace, сводка матрицы |
 | `update_task` | `name` + изменяемые поля | Частичное обновление: незаданные поля сохраняются, пустые — очищаются, `matrix: null` убирает матрицу |
-| `update_advanced` | полная схема `update_task` | Расширенное обновление в профиле admin |
 | `update_advanced` | полная схема `update_task` | Расширенное обновление в профиле admin |
 | `delete_task` | `name` | Удаляет задачу (родитель матрицы — вместе с клонами и агрегатором) |
 | `run_task_now` | `name` | Немедленный запуск (для матрицы — запуск fan-out) |

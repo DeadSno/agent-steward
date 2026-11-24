@@ -131,12 +131,8 @@ The agent gets the full feature set — 32 tools covering scheduling, pipelines,
 |---|---|---|
 | `schedule_task` | `name`, `prompt`, `schedule` for cron or `runAt` / `delaySeconds` for one-shot, optional `session` / `sessionMaxRuns`, `timeoutSeconds`, `model`, `priority`, `beforeScript`, `afterScript`, `qualityGate`, `dependsOn`, `retryCount`, `retryDelay`, `nextTaskOnSuccess`, `nextTaskOnError`, `triggerType` (`cron`/`file`/`git`/`mcp-event`/`once`), `mcpEvent`, `watchPath`, `watchGlobs`, `watchIgnore`, `gitBranch`, `gitPaths`, `gitIgnore`, `gitPollSeconds`, `activeDays`, `windowPolicy` (`skip`/`postpone`/`run`), `workingDirectory`, `workspaceId`, `allowedTools`, `deniedTools`, `legacyShell`, `matrix` | Registers a job with the OS scheduler (cron, one-shot, file, git or MCP-event trigger) |
 | `schedule_advanced` | full `schedule_task` schema: matrix, DAG, retry, launch windows and all trigger types | Advanced scheduling in the admin profile |
-| `schedule_advanced` | full `schedule_task` schema: matrix, DAG, retry, launch windows and all trigger types | Advanced scheduling in the admin profile |
-| `schedule_advanced` | full `schedule_task` schema: matrix, DAG, retry, launch windows and all trigger types | Advanced scheduling in the admin profile |
 | `list_tasks` | — | Returns jobs with schedule, status, next run, chains, workspace and matrix summary |
 | `update_task` | `name` + any field to change | Partial update; omitted fields keep their values, empty values clear them, `matrix: null` removes the matrix |
-| `update_advanced` | full `update_task` schema | Advanced task updates in the admin profile |
-| `update_advanced` | full `update_task` schema | Advanced task updates in the admin profile |
 | `update_advanced` | full `update_task` schema | Advanced task updates in the admin profile |
 | `delete_task` | `name` | Deletes a job (a matrix parent deletes clones and aggregator) |
 | `run_task_now` | `name` | Runs a job immediately (matrix parent starts the fan-out) |
