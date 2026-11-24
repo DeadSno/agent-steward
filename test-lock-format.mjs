@@ -123,8 +123,9 @@ try {
     "PS: общий парсер вставлен в обёртку",
   );
   check(
-    (WRAPPER_SCRIPT.match(/GetBytes\("\$PID-\$startedAtIso"\)/g) ?? []).length === 2,
-    "PS: оба места пишут единый <pid>-<iso>",
+    // PL-146: unified-токен пишут и lock, и checkout-lock — всего 4 места.
+    (WRAPPER_SCRIPT.match(/GetBytes\("\$PID-\$startedAtIso"\)/g) ?? []).length === 4,
+    "PS: все места пишут единый <pid>-<iso>",
   );
   check(!WRAPPER_SCRIPT.includes("$startedAtIso|$PID"), "PS: старый ISO|PID больше не пишется");
 

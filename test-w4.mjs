@@ -185,7 +185,14 @@ const plainBash = buildBashWrapperScript({
   recorderFile: recorder,
 });
 check("bash: без guards нет recorder --skip", !plainBash.includes("--skip"));
-check("Windows: базовая обёртка без --skip", !WRAPPER_SCRIPT.includes("--skip"));
+// PL-146: базовая PowerShell-обёртка теперь содержит --skip для пропуска по
+// checkout-lock, но не содержит guard-ветки (та добавляется только в .cmd).
+check(
+  "Windows: базовая обёртка содержит только checkout-skip (PL-146)",
+  WRAPPER_SCRIPT.includes("--skip") &&
+    WRAPPER_SCRIPT.includes("$checkoutSkipB64") &&
+    !WRAPPER_SCRIPT.includes("AGENT_STEWARD_GUARD_STATUS"),
+);
 
 // --- 4. GUI и локали -------------------------------------------------------
 const guiSource = fs.readFileSync("src/gui.tsx", "utf8");
