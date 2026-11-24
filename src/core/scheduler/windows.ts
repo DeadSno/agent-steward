@@ -1,8 +1,12 @@
 import { execFile } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import fs from "node:fs/promises";
+import os from "node:os";
 import { dirname, join } from "node:path";
+import path from "node:path";
 import { promisify } from "node:util";
 import iconv from "iconv-lite";
+import { quoteCmdArg } from "../opencode-cli.js";
 import type { ScheduledTaskInfo } from "../../types.js";
 import { TASK_FOLDER, TASK_FOLDER_NAME, LEGACY_TASK_FOLDER_NAME, taskFolderNameForProfile, legacyTaskFolderNameForProfile, getPluginDir } from "../../types.js";
 import { getProfileName } from "../../profiles.js";
@@ -423,12 +427,182 @@ export async function runSchtasks(args: string[]): Promise<SchtasksResult> {
     const e = err as { message?: string; code?: number | null };
     const stdout = await decodeConsoleOutput(errorBuffer(err, "stdout"));
     const stderr = await decodeConsoleOutput(errorBuffer(err, "stderr"));
-    throw new SchtasksError(
+    const failure = new SchtasksError(
       `schtasks error: ${buildErrorDetails(err, stdout, stderr)}`,
       e.code ?? null,
       stderr,
     );
+    // Нет прав → пробуем тот же вызов с повышением (UAC) вместо тупика.
+    if (!isAccessDeniedError(failure) || !shouldTryElevation(args)) {
+      throw failure;
+    }
+    return await runSchtasksWithElevation(args, failure);
   }
+}
+
+/**
+ * Фолбэк повышения (UAC) для schtasks.
+ *
+ * На части машин (OEM-политика, отозванное право «Log on as a batch job»)
+ * регистрация задач запрещена даже владельцу без повышения: и `schtasks.exe`,
+ * и COM-апик `Register-ScheduledTask` отвечают «Access is denied». Раньше это
+ * была тупиковая ошибка и единственный способ — запускать OpenCode от администратора.
+ * Теперь команда повторяется через ShellExecute `verb=runas`: права спрашиваются
+ * у пользователя ровно на одну операцию, сам OpenCode остаётся без повышения.
+ *
+ * Ограничения: промпт показывает только интерактивный десктоп (в services/session 0
+ * фолбэк выключен), ответа ждём `UAC_TIMEOUT_MS`, отключается он
+ * `AGENT_STEWARD_NO_UAC=1` (CI, headless, сервисы).
+ */
+
+/** Флаги schtasks, которые меняют планировщик: только для них просим повышение. */
+const ELEVATABLE_FLAGS = new Set(["/create", "/delete", "/change", "/run", "/end"]);
+
+/** Отключение фолбэка (CI/headless/сервисы): AGENT_STEWARD_NO_UAC=1. */
+export const NO_UAC_ENV = "AGENT_STEWARD_NO_UAC";
+
+/** Сколько ждать ответа на запрос повышения. */
+export const UAC_TIMEOUT_MS = 120_000;
+
+/** Признак «нет прав» в ошибке schtasks: HRESULT 0x80070005, код 5 или текст. */
+export function isAccessDeniedError(err: unknown): boolean {
+  const e = (err ?? {}) as { code?: number | null; message?: string; stderr?: string };
+  const code =
+    typeof e.code === "number" && Number.isFinite(e.code) ? e.code >>> 0 : null;
+  if (code === 0x80070005 || code === 5) return true;
+  const text = `${e.message ?? ""} ${e.stderr ?? ""}`.toLowerCase();
+  return text.includes("access is denied") || text.includes("отказано в доступе");
+}
+
+/** Нужен ли UAC-фолбэк для этих аргументов (только изменяющие команды). */
+export function shouldTryElevation(
+  args: string[],
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  if ((env[NO_UAC_ENV] ?? "").trim()) return false;
+  if (!ELEVATABLE_FLAGS.has((args[0] ?? "").toLowerCase())) return false;
+  // Services/session 0: показать промпт некому, ждать согласия не от кого.
+  const session = (env.SESSIONNAME ?? "").trim();
+  return !session || /^(console|rdp-tcp)/i.test(session);
+}
+
+/** Литерал строки для PowerShell (одинарные кавычки удваиваются). */
+function psLiteral(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+/**
+ * Запускает schtasks через повышенный `cmd.exe` и возвращает вывод как обычно.
+ *
+ * Права запрашивает ShellExecute (`-Verb RunAs`), поэтому stdout/stderr нельзя
+ * унаследовать — они пишутся во временные файлы, а код возврата — в `code.txt`.
+ * Кавычки собирает `quoteCmdArg` (PL-54), сама командная строка передаётся через
+ * файл, а скрипт PowerShell — base64, так что метасимволы из имени задачи нигде
+ * не разбираются оболочкой.
+ *
+ * `opts` — тестовый шов: `verb: null` прогоняет ту же цепочку cmd.exe → exe без
+ * повышения, `exe` подставляет заглушку вместо schtasks.exe.
+ */
+export async function runSchtasksElevated(
+  args: string[],
+  opts: { verb?: string | null; exe?: string; timeoutMs?: number } = {},
+): Promise<SchtasksResult> {
+  const verb = opts.verb === undefined ? "runas" : opts.verb;
+  const exe =
+    opts.exe ??
+    path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "schtasks.exe");
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "agent-steward-uac-"));
+  const outFile = path.join(dir, "stdout.txt");
+  const errFile = path.join(dir, "stderr.txt");
+  const codeFile = path.join(dir, "code.txt");
+  const lineFile = path.join(dir, "cmdline.txt");
+  try {
+    const line =
+      `"${exe}" ${args.map(quoteCmdArg).join(" ")}` +
+      ` 1> "${outFile}" 2> "${errFile}"`;
+    await fs.writeFile(lineFile, line, "utf8");
+
+    const verbParam = verb ? ` -Verb ${psLiteral(verb)}` : "";
+    const script =
+      "$ErrorActionPreference = 'Stop'\n" +
+      `$line = [IO.File]::ReadAllText(${psLiteral(lineFile)}, [Text.Encoding]::UTF8)\n` +
+      "$cmd = [IO.Path]::Combine($env:SystemRoot, 'System32', 'cmd.exe')\n" +
+      `$p = Start-Process -FilePath $cmd -ArgumentList ('/S /c "' + $line + '"')${verbParam} -Wait -PassThru -WindowStyle Hidden\n` +
+      `[IO.File]::WriteAllText(${psLiteral(codeFile)}, [string]$p.ExitCode)\n`;
+
+    try {
+      await execFileAsync(
+        "powershell.exe",
+        ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")],
+        {
+          windowsHide: true,
+          maxBuffer: MAX_OUTPUT_BUFFER,
+          timeout: opts.timeoutMs ?? UAC_TIMEOUT_MS,
+        },
+      );
+    } catch (err) {
+      const e = err as { killed?: boolean; message?: string; stderr?: string | Buffer };
+      const stderr = Buffer.isBuffer(e.stderr) ? e.stderr.toString("utf8") : (e.stderr ?? "");
+      const text = `${e.message ?? ""} ${stderr}`;
+      if (e.killed) {
+        throw new Error(`повышение не подтверждено за ${Math.round((opts.timeoutMs ?? UAC_TIMEOUT_MS) / 1000)} с`);
+      }
+      if (/canceled by the user|отменена пользователем|1223|0x800704c7/i.test(text)) {
+        throw new Error("повышение отклонено пользователем");
+      }
+      throw new Error(`не удалось повысить права: ${(text.split(/\r?\n/)[0] ?? text).trim()}`);
+    }
+
+    const codeRaw = (await fs.readFile(codeFile, "utf8").catch(() => "")).trim();
+    if (codeRaw === "") {
+      throw new Error("повышенный запуск не вернул код возврата");
+    }
+    return {
+      stdout: await decodeConsoleOutput(await fs.readFile(outFile).catch(() => Buffer.alloc(0))),
+      stderr: await decodeConsoleOutput(await fs.readFile(errFile).catch(() => Buffer.alloc(0))),
+      code: Number.parseInt(codeRaw, 10),
+    };
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
+/** Повышение уже отклонено/не ответили — не просим заново до перезапуска процесса. */
+let elevationUnavailable = false;
+
+/** Повтор команды с повышением; при отказе сохраняется исходная ошибка. */
+async function runSchtasksWithElevation(
+  args: string[],
+  failure: SchtasksError,
+): Promise<SchtasksResult> {
+  if (elevationUnavailable) {
+    throw new SchtasksError(
+      `${failure.message} | повышение уже отклонено в этой сессии — перезапустите OpenCode с правами администратора`,
+      failure.code,
+      failure.stderr,
+    );
+  }
+
+  let result: SchtasksResult;
+  try {
+    result = await runSchtasksElevated(args);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (/отклонено|не подтверждено/.test(message)) {
+      elevationUnavailable = true;
+    }
+    throw new SchtasksError(`${failure.message} | ${message}`, failure.code, failure.stderr);
+  }
+
+  if (result.code !== 0) {
+    // В повышенном режиме schtasks тоже может ошибаться («уже существует» и т.п.).
+    throw new SchtasksError(
+      `schtasks error: ${[result.stdout, result.stderr].filter(Boolean).join(" | ")}`,
+      result.code,
+      result.stderr,
+    );
+  }
+  return result;
 }
 
 /** Формирует полное имя задачи с папкой плагина. */
@@ -967,19 +1141,13 @@ export class WindowsScheduler implements SchedulerBackend {
     for (let i = 0; i < candidates.length; i++) {
       const args = ["/run", "/tn", candidates[i]];
 
-      // schtasks /run не требует смены кодировки — вызываем напрямую.
+      // /run тоже может требовать повышения → общий путь с UAC-фолбэком.
       try {
-        await execFileAsync("schtasks", args, {
-          windowsHide: true,
-          encoding: "buffer",
-          maxBuffer: MAX_OUTPUT_BUFFER,
-        });
+        await runSchtasks(args);
         return { alreadyRunning: false };
       } catch (err) {
-        const e = err as { message?: string; code?: number | null };
-        const stdout = await decodeConsoleOutput(errorBuffer(err, "stdout"));
-        const stderr = await decodeConsoleOutput(errorBuffer(err, "stderr"));
-        const errorDetails = buildErrorDetails(err, stdout, stderr);
+        const e = err as { message?: string; code?: number | null; stderr?: string };
+        const errorDetails = `${e.message ?? ""} ${e.stderr ?? ""}`.trim();
 
         const text = errorDetails.toLowerCase();
         const saysAlreadyRunning =
@@ -996,11 +1164,13 @@ export class WindowsScheduler implements SchedulerBackend {
           continue;
         }
 
-        throw new SchtasksError(
-          `schtasks error: ${errorDetails}`,
-          e.code ?? null,
-          stderr,
-        );
+        throw err instanceof SchtasksError
+          ? err
+          : new SchtasksError(
+            `schtasks error: ${errorDetails}`,
+            e.code ?? null,
+            e.stderr ?? "",
+          );
       }
     }
     throw new SchtasksError(
