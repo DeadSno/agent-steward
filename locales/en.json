@@ -778,7 +778,7 @@
   "tool.error.matrixNotMatrix": "Task \"{name}\" is not a matrix.",
   "tool.error.matrixOverride": "Task \"{task}\": matrix.overrides contains workspace \"{workspace}\" that is not listed in workspaceIds.",
   "tool.error.modelInvalid": "Invalid model \"{model}\": {error}",
-  "tool.error.mcpEventRequired": "An MCP trigger requires an event name (mcpEvent.event or mcpEvent.eventName).",
+  "tool.error.mcpEventRequired": "An MCP trigger requires an event name (mcpEvent.event or mcpEvent.eventName). For MCP-event triggers and nextTaskOnSuccess chains, use schedule_advanced (tool profile admin) or AGENT_STEWARD_TOOL_PROFILE=all: mcpEvent and nextTaskOnSuccess live in the full schema but are excluded from the core profile's schedule_task.",
   "tool.error.onceFields": "runAt/delaySeconds are only allowed with triggerType=once.",
   "tool.error.onceMatrixSchema": "One-shot cannot be combined with matrix: a matrix is started manually only.",
   "tool.error.onceMatrixUpdate": "One-shot cannot be combined with matrix.",

@@ -778,7 +778,7 @@
   "tool.error.matrixNotMatrix": "任务 “{name}” 不是矩阵。",
   "tool.error.matrixOverride": "任务 “{task}”：matrix.overrides 包含未在 workspaceIds 中列出的工作区 “{workspace}”。",
   "tool.error.modelInvalid": "无效的模型 “{model}”：{error}",
-  "tool.error.mcpEventRequired": "MCP 触发器需要事件名称（mcpEvent.event 或 mcpEvent.eventName）。",
+  "tool.error.mcpEventRequired": "MCP 触发器需要事件名称（mcpEvent.event 或 mcpEvent.eventName）。对于 MCP-event 触发器和 nextTaskOnSuccess 链，请使用 schedule_advanced（工具配置文件 admin）或 AGENT_STEWARD_TOOL_PROFILE=all：mcpEvent 和 nextTaskOnSuccess 存在于完整模式中，但已从 core 配置文件的 schedule_task 中排除。",
   "tool.error.onceFields": "runAt/delaySeconds 仅在 triggerType=once 时允许。",
   "tool.error.onceMatrixSchema": "One-shot 不能与矩阵组合：矩阵仅可手动启动。",
   "tool.error.onceMatrixUpdate": "One-shot 不能与矩阵组合。",

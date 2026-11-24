@@ -447,9 +447,9 @@ check(
   manageSpecs.length === manageToolNames.length &&
     manageSpecs.every(
       (spec) =>
-        spec.description.includes("Use ONLY the actions listed above") &&
-        spec.description.includes("do not guess get") &&
-        /read action \(list or get\)/.test(spec.description)
+        spec.description.includes("Only listed actions") &&
+        spec.description.includes("never guess get") &&
+        /read action \(list\/get\)/.test(spec.description)
     )
 );
 check(
@@ -787,6 +787,36 @@ check(
       compacted[0].error.endsWith("…[truncated]") &&
       compacted[1].error === "short" &&
       original[0].error === longError
+  );
+}
+
+// PL-129: осознанное упрощение core-профиля — mcpEvent/nextTaskOnSuccess
+// вынесены в ADVANCED_SCHEMA_KEYS, а подсказка в локалях ведёт к schedule_advanced.
+{
+  const coreShape = coreScheduleTaskSchema.shape;
+  const fullShape = scheduleTaskSchema.shape;
+  check(
+    "PL-129: coreScheduleTaskSchema.shape не содержит mcpEvent/nextTaskOnSuccess",
+    !("mcpEvent" in coreShape) && !("nextTaskOnSuccess" in coreShape)
+  );
+  check(
+    "PL-129: полная scheduleTaskSchema содержит mcpEvent и nextTaskOnSuccess",
+    "mcpEvent" in fullShape && "nextTaskOnSuccess" in fullShape
+  );
+  const localeHints = ["en", "ru", "zh", "tr"].map((locale) => {
+    const catalog = JSON.parse(
+      fs.readFileSync(new URL(`./locales/${locale}.json`, import.meta.url), "utf8")
+    );
+    return catalog["tool.error.mcpEventRequired"] ?? "";
+  });
+  check(
+    "PL-129: все 4 локали подсказывают schedule_advanced в tool.error.mcpEventRequired",
+    localeHints.every(
+      (hint) =>
+        hint.includes("schedule_advanced") &&
+        hint.includes("AGENT_STEWARD_TOOL_PROFILE=all") &&
+        hint.includes("nextTaskOnSuccess")
+    )
   );
 }
 

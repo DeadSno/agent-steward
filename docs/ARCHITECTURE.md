@@ -548,6 +548,16 @@ semantics:
   `watch*`, `git*`, `activeDays`, `windowPolicy`, `runWhenLoggedOff`,
   `sessionMaxRuns`, `workspaceId`) are declared only on `schedule_advanced` /
   `update_advanced`, saving about 4.5k tokens per core-profile request.
+  - **Core profile limit (PL-129)**: `triggerType: "mcp-event"` and
+    `nextTaskOnSuccess` (like the other 18 `ADVANCED_SCHEMA_KEYS` in
+    `src/index.ts`) exist in the full `scheduleTaskSchema` but are deliberately
+    absent from `coreScheduleTaskSchema`. Passing them to `schedule_task` in the
+    core profile drops the fields and fails with the `tool.error.mcpEventRequired`
+    error, whose message now points to the fix: use `schedule_advanced` (tool
+    profile `admin`) or set `AGENT_STEWARD_TOOL_PROFILE=all` for MCP-event
+    triggers and `nextTaskOnSuccess` chains. This is a conscious simplification —
+    the core schema field set, its digest and its token budget stay unchanged
+    (B-3.1).
 - **Compact history**: `get_history` with `compact: true` truncates `error` to 300
   characters with an explicit `…[truncated]` marker. The SQLite row is untouched;
   `get_task_logs` still returns the full error and log.

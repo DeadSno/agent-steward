@@ -778,7 +778,7 @@
   "tool.error.matrixNotMatrix": "Задача \"{name}\" не является матрицей.",
   "tool.error.matrixOverride": "Задача \"{task}\": matrix.overrides содержит workspace \"{workspace}\", которого нет в workspaceIds.",
   "tool.error.modelInvalid": "Недопустимая модель «{model}»: {error}",
-  "tool.error.mcpEventRequired": "Для MCP-триггера нужно указать имя события (mcpEvent.event или mcpEvent.eventName).",
+  "tool.error.mcpEventRequired": "Для MCP-триггера нужно указать имя события (mcpEvent.event или mcpEvent.eventName). Для MCP-event-триггеров и цепочек nextTaskOnSuccess используйте schedule_advanced (профиль инструментов admin) или AGENT_STEWARD_TOOL_PROFILE=all: поля mcpEvent и nextTaskOnSuccess есть в полной схеме, но исключены из schedule_task core-профиля.",
   "tool.error.onceFields": "runAt/delaySeconds допустимы только при triggerType=once.",
   "tool.error.onceMatrixSchema": "One-shot нельзя комбинировать с matrix: матрица запускается только вручную.",
   "tool.error.onceMatrixUpdate": "One-shot нельзя комбинировать с matrix.",
