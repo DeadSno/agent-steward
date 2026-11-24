@@ -454,6 +454,7 @@
   "gui.taskNamePlaceholder": "例如 Gui-Test",
   "gui.tasksHeading": "任务",
   "gui.templateErrorPlaceholder": "❌ 任务 “{task}” 失败（{duration}）{error}",
+  "gui.templateVariablesHint": "变量：{task}、{status}、{duration}、{error}、{emoji}、{cost}、{tokens}、{date}、{time}、{runId}、{matrix}",
   "gui.templateHint": "占位符：{task} {status} {duration} {error} {emoji} {cost} {tokens}。留空 = 默认模板。",
   "gui.templateSuccessPlaceholder": "✅ 任务 “{task}” 已完成（{duration}）",
   "gui.templates.deleteConfirm": "删除模板“{name}”？",

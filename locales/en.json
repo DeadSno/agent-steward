@@ -454,6 +454,7 @@
   "gui.taskNamePlaceholder": "e.g. Gui-Test",
   "gui.tasksHeading": "Tasks",
   "gui.templateErrorPlaceholder": "❌ Task \"{task}\" failed ({duration}){error}",
+  "gui.templateVariablesHint": "Variables: {task}, {status}, {duration}, {error}, {emoji}, {cost}, {tokens}, {date}, {time}, {runId}, {matrix}",
   "gui.templateHint": "Placeholders: {task} {status} {duration} {error} {emoji} {cost} {tokens}. Empty = default template.",
   "gui.templateSuccessPlaceholder": "✅ Task \"{task}\" completed ({duration})",
   "gui.templates.deleteConfirm": "Delete template \"{name}\"?",

@@ -3734,6 +3734,12 @@ export default Plugin.define({
                     <div style="font-size:11px;color:#8e8e93">
                       {gt("gui.templateHint")}
                     </div>
+                    <div
+                      data-template-variables
+                      style="font-size:11px;color:#8e8e93"
+                    >
+                      {gt("gui.templateVariablesHint")}
+                    </div>
                   </div>
 
                   {/* 🔐 Секреты (Спринт 26) */}

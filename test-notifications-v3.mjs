@@ -31,7 +31,7 @@ const {
   validateTelegramToken,
 } = telegram;
 const { buildNativeNotificationCommand, sendNativeNotification } = nativeNotify;
-const { formatNotificationMessage, isQuietHours } = notifications;
+const { formatNotificationMessage, isQuietHours, validateTemplateVariables } = notifications;
 
 const results = [];
 function check(name, cond) {
@@ -410,6 +410,41 @@ check(
     { success: "{task}", error: "{task}{error}{cost}" }
   ) === 'deploy: boom · $0.0100'
 );
+
+// IM-8 / D09: переменные шаблона уведомлений.
+const varsMessage = formatNotificationMessage(
+  {
+    taskName: "deploy",
+    status: "success",
+    durationMs: 1000,
+    runId: "run-42",
+    matrix: "matrix-main",
+    timestamp: "2026-11-24T12:34:56.000Z",
+  },
+  {
+    success: "{task}|{status}|{duration}|{emoji}|{date}|{time}|{runId}|{matrix}",
+    error: "{task}",
+  }
+);
+check(
+  "IM-8: шаблон получает runId и matrix",
+  varsMessage.includes("deploy|success|1.0s|✅|") &&
+    varsMessage.endsWith("|run-42|matrix-main")
+);
+check(
+  "IM-8: шаблон получает дату и время из timestamp (детерминированно)",
+  varsMessage.includes("|2026-11-24|12:34:56|")
+);
+check(
+  "IM-8: валидация переменных находит только неизвестные",
+  validateTemplateVariables("{task}|{runId}|{boom}|{boom}").join(",") === "boom" &&
+    validateTemplateVariables("{task}").length === 0
+);
+const unknownVar = formatNotificationMessage(
+  { taskName: "deploy", status: "error", durationMs: 1000, error: "boom" },
+  { success: "{task}", error: "{unknown}" }
+);
+check("IM-8: неизвестная переменная остаётся в тексте", unknownVar === "{unknown}");
 
 // --- 8. Настройки: дефолты и миграция ------------------------------------
 const defaults = settingsModule.defaultNotifications();

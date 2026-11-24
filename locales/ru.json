@@ -454,6 +454,7 @@
   "gui.taskNamePlaceholder": "например, Gui-Test",
   "gui.tasksHeading": "Задачи",
   "gui.templateErrorPlaceholder": "❌ Задача \"{task}\" упала ({duration}){error}",
+  "gui.templateVariablesHint": "Переменные: {task}, {status}, {duration}, {error}, {emoji}, {cost}, {tokens}, {date}, {time}, {runId}, {matrix}",
   "gui.templateHint": "Плейсхолдеры: {task} {status} {duration} {error} {emoji} {cost} {tokens}. Пусто = шаблон по умолчанию.",
   "gui.templateSuccessPlaceholder": "✅ Задача \"{task}\" выполнена ({duration})",
   "gui.templates.deleteConfirm": "Удалить шаблон \"{name}\"?",

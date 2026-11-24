@@ -454,6 +454,7 @@
   "gui.taskNamePlaceholder": "ör. Gui-Test",
   "gui.tasksHeading": "Görevler",
   "gui.templateErrorPlaceholder": "❌ \"{task}\" görevi başarısız oldu ({duration}){error}",
+  "gui.templateVariablesHint": "Değişkenler: {task}, {status}, {duration}, {error}, {emoji}, {cost}, {tokens}, {date}, {time}, {runId}, {matrix}",
   "gui.templateHint": "Yer tutucular: {task} {status} {duration} {error} {emoji} {cost} {tokens}. Boş = varsayılan şablon.",
   "gui.templateSuccessPlaceholder": "✅ \"{task}\" görevi tamamlandı ({duration})",
   "gui.templates.deleteConfirm": "\"{name}\" şablonu silinsin mi?",

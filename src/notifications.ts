@@ -54,6 +54,12 @@ export interface NotificationPayload {
   tokens?: number | null;
   /** Стоимость запуска в USD, если известна. */
   costUsd?: number | null;
+  /** D09: ISO-время события; без него {date}/{time} остаются плейсхолдерами. */
+  timestamp?: string | null;
+  /** D09: идентификатор запуска для подстановки {runId} в шаблон. */
+  runId?: string | null;
+  /** D09: имя родителя матрицы для подстановки {matrix} в шаблон. */
+  matrix?: string | null;
 }
 
 /** Настройки асинхронного триажа (Спринт 31.7). */
@@ -124,6 +130,22 @@ export function renderTemplate(
   );
 }
 
+/** D09 (IM-8): список поддерживаемых переменных шаблона уведомления. */
+export const TEMPLATE_VARIABLES = [
+  "task", "status", "duration", "error", "emoji", "cost", "tokens",
+  "date", "time", "runId", "matrix",
+] as const;
+
+/** Возвращает имена неизвестных `{переменных}` шаблона (без дублей). */
+export function validateTemplateVariables(template: string): string[] {
+  const unknown = new Set<string>();
+  for (const match of template.matchAll(/\{(\w+)\}/g)) {
+    const key = match[1];
+    if (!(TEMPLATE_VARIABLES as readonly string[]).includes(key)) unknown.add(key);
+  }
+  return [...unknown];
+}
+
 /**
  * Формат сообщения по умолчанию:
  *  ✅ Задача "Тест" выполнена (2.3s)
@@ -152,27 +174,34 @@ export function formatNotificationMessage(
   const usageSuffix = usage ? ` · ${usage}` : "";
   const costVar = usageSuffix;
   const tokensVar = tokens;
+  // D09 (IM-8): набор переменных шаблона единый для success/error. Рендер
+  // детерминирован: {date}/{time} берутся только из переданного timestamp,
+  // часы при форматировании не читаются.
+  const templateVars: Record<string, string> = {
+    task: taskName,
+    status,
+    duration,
+    emoji: isSuccess ? "✅" : "❌",
+    cost: costVar,
+    tokens: tokensVar,
+    runId: payload.runId ?? "",
+    matrix: payload.matrix ?? "",
+  };
+  if (typeof payload.timestamp === "string" && payload.timestamp.length >= 19) {
+    templateVars.date = payload.timestamp.slice(0, 10);
+    templateVars.time = payload.timestamp.slice(11, 19);
+  }
 
   if (templates && isSuccess && templates.success.trim()) {
     return renderTemplate(templates.success, {
-      task: taskName,
-      status,
-      duration,
+      ...templateVars,
       error: "",
-      emoji: "✅",
-      cost: costVar,
-      tokens: tokensVar,
     });
   }
   if (templates && !isSuccess && templates.error.trim()) {
     return renderTemplate(templates.error, {
-      task: taskName,
-      status,
-      duration,
+      ...templateVars,
       error: reason,
-      emoji: "❌",
-      cost: costVar,
-      tokens: tokensVar,
     });
   }
 
