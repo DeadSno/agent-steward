@@ -10,6 +10,7 @@
 
 import { spawn } from "node:child_process";
 import crypto from "node:crypto";
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -72,6 +73,80 @@ export function formatLogRunMarker(
   }
   const label = kind === "run" ? "Run" : "Mission";
   return `[agent-steward] === ${label} started ${now.toISOString()} (${taskName}) ===\n`;
+}
+
+/** BN-3: верхний предел размера файла лога задачи и размер оставляемого хвоста. */
+export const TASK_LOG_MAX_BYTES = 10 * 1024 * 1024;
+export const TASK_LOG_TAIL_BYTES = 2 * 1024 * 1024;
+
+/** BN-3: префикс, помечающий корректно обрезанный по хвосту лог. */
+export const TASK_LOG_TRIM_MARKER = "[agent-steward] === Log rotated (size limit) ===";
+
+/**
+ * BN-3: читает только хвост файла лога, не загружая весь файл в память.
+ * Первая (возможно, урезанная) строка отбрасывается, чтобы `extractLastRunLog`
+ * и разборщики видели целые строки.
+ */
+function tailBufferToString(buffer: Buffer, truncated: boolean): string {
+  let text = buffer.toString("utf8");
+  if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+  if (truncated) {
+    const nl = text.indexOf("\n");
+    if (nl >= 0) text = text.slice(nl + 1);
+  }
+  return text;
+}
+
+/** Синхронный вариант чтения хвоста (для recorder, который работает синхронно). */
+export function readTaskLogTailSync(
+  filePath: string,
+  maxBytes = TASK_LOG_TAIL_BYTES,
+): string {
+  let fd: number | undefined;
+  try {
+    fd = fsSync.openSync(filePath, "r");
+    const size = fsSync.fstatSync(fd).size;
+    const bytes = Math.min(Math.max(1, Math.floor(maxBytes)), size);
+    if (bytes <= 0) return "";
+    const buffer = Buffer.alloc(bytes);
+    fsSync.readSync(fd, buffer, 0, bytes, size - bytes);
+    return tailBufferToString(buffer, bytes < size);
+  } catch {
+    return "";
+  } finally {
+    if (fd !== undefined) {
+      try {
+        fsSync.closeSync(fd);
+      } catch {
+        // best effort
+      }
+    }
+  }
+}
+
+/** Асинхронный вариант чтения хвоста для get_task_logs (ошибки пробрасывает). */
+export async function readTaskLogTail(
+  filePath: string,
+  maxBytes = TASK_LOG_TAIL_BYTES,
+): Promise<string> {
+  let handle: fsSync.promises.FileHandle | undefined;
+  try {
+    handle = await fs.open(filePath, "r");
+    const stat = await handle.stat();
+    const bytes = Math.min(Math.max(1, Math.floor(maxBytes)), stat.size);
+    if (bytes <= 0) return "";
+    const buffer = Buffer.alloc(bytes);
+    await handle.read(buffer, 0, bytes, stat.size - bytes);
+    return tailBufferToString(buffer, bytes < stat.size);
+  } finally {
+    if (handle) {
+      try {
+        await handle.close();
+      } catch {
+        // best effort
+      }
+    }
+  }
 }
 
 /**

@@ -16,6 +16,13 @@ process.env.OPENCODE_SCHEDULER_HOME = path.join(tempRoot, "home");
 
 const { LOG_DIR, sanitizeName } = await import("./dist/types.js");
 const { getTaskLogs } = await import("./dist/core/scheduler/logs.js");
+const {
+  readTaskLogTail,
+  readTaskLogTailSync,
+  TASK_LOG_MAX_BYTES,
+  TASK_LOG_TAIL_BYTES,
+  TASK_LOG_TRIM_MARKER,
+} = await import("./dist/core/mission.js");
 const { saveTask, deleteTask } = await import("./dist/db/tasks-repo.js");
 
 const results = [];
@@ -108,6 +115,64 @@ check(
   "PL-67: контракт результата {logs, error?} сохранён",
   Object.keys(short).every((key) => key === "logs" || key === "error") &&
     typeof short.logs === "string",
+);
+
+// --- BN-3: рост лога длинных запусков ограничен чтением хвоста и ротацией ---
+const BN3_HEAD = "BN3-OLD-RECORD";
+const BN3_TAIL = "BN3-LAST-RUN-RECORD";
+const bigLog = path.join(LOG_DIR, "bn3-bounded.log");
+const filler = `L${"x".repeat(1023)}`;
+const chunks = [];
+for (let i = 0; i < Math.ceil((TASK_LOG_TAIL_BYTES * 1.5) / (filler.length + 1)); i++) {
+  chunks.push(filler);
+}
+fs.writeFileSync(bigLog, `${BN3_HEAD}\n${chunks.join("\n")}\n[agent-steward] === Run started 2026-11-24T10:00:00.000Z (BN3) ===\n${BN3_TAIL}\n`, "utf8");
+
+const tailText = await readTaskLogTail(bigLog);
+check(
+  "BN-3: readTaskLogTail возвращает только хвост, а не весь файл",
+  tailText.includes(BN3_TAIL) && !tailText.includes(BN3_HEAD) &&
+    tailText.length <= TASK_LOG_TAIL_BYTES + 200,
+);
+const firstTailLine = tailText.split("\n")[0];
+check(
+  "BN-3: хвост начинается с целой строки, а не с середины",
+  firstTailLine.startsWith("L") && firstTailLine.length === 1024,
+);
+const tailSync = readTaskLogTailSync(bigLog);
+check(
+  "BN-3: синхронный reader для recorder тоже ограничен хвостом",
+  tailSync.includes(BN3_TAIL) && !tailSync.includes(BN3_HEAD),
+);
+const tailLogs = await getTaskLogs("bn3-bounded");
+check(
+  "BN-3: get_task_logs сопротивляется многомегабайтному логу",
+  tailLogs.error === undefined && tailLogs.logs.includes(BN3_TAIL) &&
+    !tailLogs.logs.includes(BN3_HEAD),
+);
+
+const logsSource = fs.readFileSync(path.join(process.cwd(), "src/core/scheduler/logs.ts"), "utf8");
+const recorderSource = fs.readFileSync(path.join(process.cwd(), "src/core/record-history.ts"), "utf8");
+const psSource = fs.readFileSync(path.join(process.cwd(), "src/core/ps-wrapper.ts"), "utf8");
+const bashSource = fs.readFileSync(path.join(process.cwd(), "src/core/wrappers/bash.ts"), "utf8");
+check(
+  "BN-3: get_task_logs и recorder используют чтение хвоста",
+  logsSource.includes("readLogTailWithRetry(") &&
+    recorderSource.includes("readTaskLogTailSync("),
+);
+check(
+  "BN-3: лимит размера согласован между reader и writer",
+  TASK_LOG_MAX_BYTES === 10 * 1024 * 1024 &&
+    TASK_LOG_TAIL_BYTES === 2 * 1024 * 1024 &&
+    psSource.includes("-MaxBytes 10485760 -KeepBytes 2097152") &&
+    bashSource.includes("-gt 10485760") && bashSource.includes("tail -c 2097152"),
+);
+check(
+  "BN-3: обе обёртки ротируют лог перед маркером Run started",
+  psSource.includes("Invoke-TaskLogRotation") &&
+    psSource.indexOf("Invoke-TaskLogRotation -Path") < psSource.indexOf("=== Run started") &&
+    bashSource.indexOf("Log rotated (size limit)") < bashSource.indexOf("=== Run started") &&
+    psSource.includes(TASK_LOG_TRIM_MARKER),
 );
 
 const failed = results.filter((r) => !r.ok);

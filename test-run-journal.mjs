@@ -292,6 +292,28 @@ assert(
   "запуск после падения остаётся running (для resume в 36.2)",
 );
 
+// --- BN-3: журнал шагов и лог длинного запуска имеют согласованные границы ---
+const {
+  TASK_LOG_MAX_BYTES,
+  TASK_LOG_TAIL_BYTES,
+  readTaskLogTailSync,
+} = await import("./dist/core/mission.js");
+assert(
+  TASK_LOG_MAX_BYTES === 10 * 1024 * 1024 && TASK_LOG_TAIL_BYTES === 2 * 1024 * 1024,
+  "BN-3: лимит лога задачи (10MB) и хвост (2MB) фиксированы",
+);
+const probeLog = path.join(tempRoot, "journal-bounded.log");
+fs.writeFileSync(
+  probeLog,
+  `BN3-JOURNAL-OLD\n${"y".repeat(TASK_LOG_TAIL_BYTES + 4096)}\nBN3-JOURNAL-NEW\n`,
+  "utf8",
+);
+const probeTail = readTaskLogTailSync(probeLog);
+assert(
+  probeTail.includes("BN3-JOURNAL-NEW") && !probeTail.includes("BN3-JOURNAL-OLD"),
+  "BN-3: reader лога не загружает старые мегабайты журнала шагов",
+);
+
 closeDb();
 fs.rmSync(tempRoot, { recursive: true, force: true });
 

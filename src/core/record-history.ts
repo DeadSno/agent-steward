@@ -40,7 +40,7 @@ import {
   writeGateOutcome,
   type RunContext,
 } from "./execution.js";
-import { extractLastRunLog } from "./mission.js";
+import { extractLastRunLog, readTaskLogTailSync } from "./mission.js";
 import { rotateSessionIfNeeded } from "./session.js";
 import type { TaskDefinition } from "../task-transfer.js";
 import type { HistoryRecord } from "../history.js";
@@ -427,7 +427,8 @@ function readLogTail(filePath: string, maxLines: number): string[] {
   try {
     // Токены/стоимость относятся к завершаемому запуску; старые прогоны
     // в том же файле лога не должны портить оценку (QA-F.1).
-    const content = extractLastRunLog(fs.readFileSync(filePath, "utf8"));
+    // BN-3: только хвост — полный лог длинного запуска не читается в память.
+    const content = extractLastRunLog(readTaskLogTailSync(filePath));
     const lines = content.split(/\r?\n/);
     if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
     return lines.slice(-maxLines);
@@ -440,7 +441,7 @@ function readLogTail(filePath: string, maxLines: number): string[] {
 function readLogTextForEstimate(filePath: string | undefined): string {
   if (!filePath) return "";
   try {
-    const content = extractLastRunLog(fs.readFileSync(filePath, "utf8"));
+    const content = extractLastRunLog(readTaskLogTailSync(filePath));
     return content.length > 256_000 ? content.slice(-256_000) : content;
   } catch {
     return "";

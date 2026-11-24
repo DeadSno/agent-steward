@@ -576,6 +576,16 @@ export function buildBashWrapperScript(options: BashWrapperOptions): string {
     "",
     'if [ "$SKIP_MAIN" -eq 0 ]; then',
     "",
+    // BN-3: перед новым прогоном ограничиваем размер лога: без этого длинная
+    // серия запусков бесконечно растёт, а get_task_logs/recorder читают весь файл.
+    'if [ -f "$LOG_FILE" ]; then',
+    '  LOG_BYTES=$(wc -c < "$LOG_FILE" 2>/dev/null || echo 0)',
+    '  if [ "$LOG_BYTES" -gt 10485760 ]; then',
+    '    TMP_LOG="${LOG_FILE}.rot.$$"',
+    '    { printf \'[agent-steward] === Log rotated (size limit) ===\\n\'; tail -c 2097152 "$LOG_FILE"; } > "$TMP_LOG" 2>/dev/null && mv -f "$TMP_LOG" "$LOG_FILE" || rm -f "$TMP_LOG"',
+    "  fi",
+    "fi",
+    "",
     // QA-P0.2: маркер границы реального прогона. Пишется без префикса времени,
     // чтобы extractLastRunLog() смог отсечь вывод предыдущих запусков и
     // подготовительные записи. До этой точки запуск мог быть отменён guard-ом

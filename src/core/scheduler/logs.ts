@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { LOG_DIR, sanitizeName } from "../../types.js";
 import { listTasks } from "../../db/tasks-repo.js";
-import { extractLastRunLog } from "../mission.js";
+import { extractLastRunLog, readTaskLogTail } from "../mission.js";
 
 /** Codes returned by Windows/PowerShell while a log file is still held by the writer. */
 export function isRetriableLogReadError(code: unknown): boolean {
@@ -19,6 +19,33 @@ export async function readLogWithRetry(
   for (let i = 0; i < attempts; i++) {
     try {
       return await fs.readFile(logPath, "utf8");
+    } catch (err: unknown) {
+      lastErr = err;
+      if (
+        !isRetriableLogReadError((err as NodeJS.ErrnoException).code) ||
+        i === attempts - 1
+      ) {
+        throw err;
+      }
+      await new Promise((resolve) => setTimeout(resolve, delayMs * (i + 1)));
+    }
+  }
+  throw lastErr;
+}
+
+/**
+ * BN-3: читает только хвост лога с тем же retry на EBUSY, что и полное чтение.
+ * O(размера хвоста), а не O(размера всего файла).
+ */
+export async function readLogTailWithRetry(
+  logPath: string,
+  attempts = 6,
+  delayMs = 50,
+): Promise<string> {
+  let lastErr: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await readTaskLogTail(logPath);
     } catch (err: unknown) {
       lastErr = err;
       if (
@@ -127,7 +154,8 @@ export async function getTaskLogs(
   try {
     // PowerShell 5.1 пишет UTF-8 с BOM — убираем его, чтобы GUI не показывал мусор.
     // Лог дописывается между запусками: показываем только последний прогон.
-    const content = extractLastRunLog(await readLogWithRetry(logPath));
+    // BN-3: длинные запуски не должны заставлять get_task_logs читать весь файл.
+    const content = extractLastRunLog(await readLogTailWithRetry(logPath));
     const lines = content.split(/\r?\n/).filter((line) => line.trim());
     if (lines.length === 0) {
       return {

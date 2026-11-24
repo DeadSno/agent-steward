@@ -154,6 +154,34 @@ function Write-Log {
     Write-Host $line
 }
 
+# BN-3: лог задачи дописывается между прогонами. Без границы размер растёт
+# бесконечно, а get_task_logs/recorder читают весь файл. Перед новым запуском
+# оставляем только хвост — маркер Run started нового прогона будет в начале.
+function Invoke-TaskLogRotation {
+    param([string]$Path, [int]$MaxBytes = 10485760, [int]$KeepBytes = 2097152)
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return }
+    try {
+        $info = New-Object System.IO.FileInfo($Path)
+        if ($info.Length -le $MaxBytes) { return }
+        $keep = [Math]::Min([int]$KeepBytes, [int]$info.Length)
+        if ($keep -le 0) { return }
+        $stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+        try {
+            [void]$stream.Seek([long](-$keep), [System.IO.SeekOrigin]::End)
+            $buffer = New-Object byte[] $keep
+            $read = $stream.Read($buffer, 0, $keep)
+        } finally {
+            $stream.Dispose()
+        }
+        $text = [System.Text.Encoding]::UTF8.GetString($buffer, 0, $read)
+        $nl = $text.IndexOf([string][char]10)
+        if ($nl -ge 0 -and $nl -lt ($text.Length - 1)) { $text = $text.Substring($nl + 1) }
+        $rotated = "[agent-steward] === Log rotated (size limit) ===" + [string][char]13 + [string][char]10 + $text
+        [System.IO.File]::WriteAllText($Path, $rotated, (New-Object System.Text.UTF8Encoding($false)))
+        Write-Log "[agent-steward] Log exceeded size limit; kept last $keep bytes"
+    } catch {}
+}
+
 
 # Проверяет, что процесс с указанным PID ещё существует. Нужно для stale-lock:
 # возраст файла сам по себе не говорит, что владелец мёртв (задача может идти долго).
@@ -179,6 +207,10 @@ if ($LogFile) {
         }
     } catch {}
 }
+
+# BN-3: ротация перед маркером Run started, чтобы новый прогон начинался с
+# компактного файла, а потребитель лога видел корректную границу прогона.
+if ($LogFile) { Invoke-TaskLogRotation -Path $LogFile -MaxBytes 10485760 -KeepBytes 2097152 }
 
 Write-Log "[agent-steward] Запуск задачи '$TaskName'..."
 
