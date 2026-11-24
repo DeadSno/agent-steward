@@ -29,6 +29,7 @@ const { saveTask, getTask } = await import("./dist/db/tasks-repo.js");
 const { getHistory, listRunningRecords, recoverInterrupted } = await import("./dist/db/history-repo.js");
 const { WRAPPER_SCRIPT } = await import("./dist/core/ps-wrapper.js");
 const { buildBashWrapperScript } = await import("./dist/core/wrappers/bash.js");
+const { flushStructuredLog } = await import("./dist/core/structured-log.js");
 
 initDb();
 
@@ -367,6 +368,7 @@ assert(
   getHistory("PL-124 Live Owner", 1)[0]?.status === "running",
   "PL-124: живой владелец с тем же хостом остался running (PL-63 не сломан)",
 );
+await flushStructuredLog();
 const pl124Log = fs.readFileSync(path.join(pluginDir, "logs", "runs.jsonl"), "utf8");
 assert(
   pl124Log.includes('"event":"run.interrupted_dead_owner"'),

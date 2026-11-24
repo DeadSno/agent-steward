@@ -6,6 +6,8 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
 
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ws-scheduler-audit-"));
 process.env.APPDATA = tempRoot;
@@ -16,6 +18,7 @@ const permissions = await import("./dist/core/permissions.js");
 const dbModule = await import("./dist/db/index.js");
 
 const { recordAudit, readAuditLog, cleanupAuditLog, clearAuditLog, resetAuditCleanupThrottle, recordToolBlocked, recordTaskToolBlocks, recordEgressAttempt, runEgressGuardedWithAudit, summarizeEgressRun, EGRESS_ALLOWED_ACTION, EGRESS_BLOCKED_ACTION } = audit;
+const { clearStructuredLogs, readStructuredLogs } = await import("./dist/core/structured-log.js");
 
 const results = [];
 function check(name, cond) {
@@ -554,6 +557,30 @@ check(
     rejectedRows.records[0].details.runRef === "run-ref-2",
 );
 check("ARCH-7.1: неизвестный запрос возвращает null", audit.getApproval("arch7-missing") === null);
+
+// --- 8b. BN-5: гарантированный сброс буфера при выходе дочернего процесса -----
+clearStructuredLogs();
+const structuredLogUrl = pathToFileURL(
+  path.join(process.cwd(), "dist", "core", "structured-log.js"),
+).href;
+const exitFlushChild = spawnSync(
+  process.execPath,
+  [
+    "-e",
+    `(async () => {
+       const m = await import(${JSON.stringify(structuredLogUrl)});
+       m.appendStructuredLog({ event: "bn5.exit.flush", ts: "2026-01-06T00:00:00.000Z" });
+       process.exit(0);
+     })();`,
+  ],
+  { cwd: process.cwd(), env: process.env, encoding: "utf8" },
+);
+check(
+  "BN-5: дочерний процесс с process.exit сбрасывает буфер структурированного лога",
+  exitFlushChild.status === 0 &&
+    readStructuredLogs({ event: "bn5.exit.flush" }).total === 1,
+);
+clearStructuredLogs();
 
 // --- 9. Итог ------------------------------------------------------------------
 const failures = results.filter((item) => !item.ok);

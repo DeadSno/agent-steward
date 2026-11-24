@@ -14,6 +14,12 @@ import { safeStringify } from "../text.js";
  * в `runs.jsonl.1` (предыдущий `.1` перезаписывается). Этого достаточно,
  * чтобы лог не рос бесконечно, и не требуется внешних зависимостей.
  *
+ * BN-5 (BP-D13-1): запись буферизуется и уходит в файл асинхронно (один
+ * `appendFile` на порцию вместо `appendFileSync` на каждое событие), чтобы
+ * intensive-логирование не блокировало event loop. Гарантия сброса:
+ * `flushStructuredLog()` (await), `flushStructuredLogSync()` и хуки
+ * `beforeExit`/`exit`; чтение (`readStructuredLogs`) сбрасывает буфер само.
+ *
  * Любая ошибка записи логируется в console.warn и **никогда** не ломает
  * запуск задачи: наблюдаемость не должна влиять на планировщик.
  */
@@ -131,16 +137,94 @@ function rotateIfNeeded(): void {
   }
 }
 
+/** BN-5: после скольких записей буфер сбрасывается немедленно. */
+export const STRUCTURED_LOG_BUFFER_MAX_LINES = 512;
+
+let pendingStructuredLines: string[] = [];
+let drainScheduled = false;
+let activeDrain: Promise<void> | null = null;
+
 /**
- * Добавляет запись в JSONL-лог. Возвращает true при успешной записи.
- * Не бросает исключений.
+ * BN-5: статус буфера — сколько событий ещё не ушло в файл.
+ * Используется телеметрией и регрессионными тестами.
+ */
+export function getStructuredLogBufferSize(): number {
+  return pendingStructuredLines.length;
+}
+
+function scheduleStructuredLogDrain(): void {
+  if (drainScheduled) return;
+  drainScheduled = true;
+  const timer = setImmediate(() => {
+    drainScheduled = false;
+    void flushStructuredLog();
+  });
+  // Не держим процесс только ради записи лога — сброс есть на beforeExit/exit.
+  (timer as { unref?: () => void }).unref?.();
+}
+
+/**
+ * BN-5: асинхронно сбрасывает накопленные события в JSONL.
+ * Безопасен при параллельных вызовах: ждёт текущую запись и перебирает
+ * повторно, если за время ожидания пришли новые строки.
+ */
+export async function flushStructuredLog(): Promise<void> {
+  while (pendingStructuredLines.length > 0 || activeDrain) {
+    if (activeDrain) {
+      await activeDrain;
+      continue;
+    }
+    const lines = pendingStructuredLines;
+    pendingStructuredLines = [];
+    const drain = (async () => {
+      try {
+        ensureLogDir();
+        rotateIfNeeded();
+        await fs.promises.appendFile(STRUCTURED_LOG_FILE, lines.join(""), "utf8");
+      } catch (err) {
+        // Как и раньше: ошибка логирования не должна ломать запуск задачи.
+        warn("не удалось записать событие", err);
+      }
+    })();
+    activeDrain = drain;
+    try {
+      await drain;
+    } finally {
+      activeDrain = null;
+    }
+  }
+}
+
+/**
+ * BN-5: синхронный сброс для shutdown-хуков и читателей, которым нужен
+ * мгновенный консистентный вид лога. Обычный путь записи асинхронный.
+ */
+export function flushStructuredLogSync(): void {
+  if (pendingStructuredLines.length === 0) return;
+  const lines = pendingStructuredLines;
+  pendingStructuredLines = [];
+  try {
+    ensureLogDir();
+    rotateIfNeeded();
+    fs.appendFileSync(STRUCTURED_LOG_FILE, lines.join(""), "utf8");
+  } catch (err) {
+    warn("не удалось записать событие", err);
+  }
+}
+
+if (typeof process !== "undefined" && typeof process.on === "function") {
+  process.on("beforeExit", flushStructuredLogSync);
+  process.on("exit", flushStructuredLogSync);
+}
+
+/**
+ * Добавляет запись в JSONL-лог. Возвращает true, если событие принято в
+ * буфер (реальная запись уходит асинхронно). Не бросает исключений.
  */
 export function appendStructuredLog(
   record: Omit<StructuredLogRecord, "ts"> & { ts?: string },
 ): boolean {
   try {
-    ensureLogDir();
-    rotateIfNeeded();
     const payload: StructuredLogRecord = {
       ...record,
       ts: record.ts ?? new Date().toISOString(),
@@ -167,7 +251,12 @@ export function appendStructuredLog(
     if (typeof payload.postFlightStderr === "string") {
       payload.postFlightStderr = redactSecretsInText(payload.postFlightStderr);
     }
-    fs.appendFileSync(STRUCTURED_LOG_FILE, `${JSON.stringify(payload)}\n`, "utf8");
+    pendingStructuredLines.push(`${JSON.stringify(payload)}\n`);
+    if (pendingStructuredLines.length >= STRUCTURED_LOG_BUFFER_MAX_LINES) {
+      void flushStructuredLog();
+    } else {
+      scheduleStructuredLogDrain();
+    }
     return true;
   } catch (err) {
     warn("не удалось записать событие", err);
@@ -233,6 +322,9 @@ function readLines(file: string): string[] {
 export function readStructuredLogs(
   filter: ReadStructuredLogsFilter = {},
 ): ReadStructuredLogsResult {
+  // Читатель всегда видит все ранее принятые события, даже если асинхронный
+  // drain ещё не успел дойти до диска (сохраняем read-after-write).
+  flushStructuredLogSync();
   const limit = Math.max(1, Math.min(5000, Math.floor(filter.limit ?? 200) || 200));
   const task = filter.task?.trim().toLowerCase();
   const status = filter.status?.trim().toLowerCase();
@@ -285,6 +377,7 @@ export function readStructuredLogs(
 
 /** Удаляет JSONL-логи (для тестов и обслуживания). */
 export function clearStructuredLogs(): void {
+  pendingStructuredLines = [];
   try {
     fs.rmSync(STRUCTURED_LOG_FILE, { force: true });
     fs.rmSync(STRUCTURED_LOG_ARCHIVE, { force: true });

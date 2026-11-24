@@ -24,6 +24,8 @@ const {
   appendStructuredLog,
   readStructuredLogs,
   clearStructuredLogs,
+  flushStructuredLog,
+  getStructuredLogBufferSize,
   STRUCTURED_LOG_FILE,
   STRUCTURED_LOG_ARCHIVE,
   STRUCTURED_LOG_MAX_BYTES,
@@ -233,10 +235,40 @@ assert(logs.malformed === 1 && logs.total === 4, "битая JSONL-строка 
 fs.writeFileSync(STRUCTURED_LOG_FILE, "", "utf8");
 fs.truncateSync(STRUCTURED_LOG_FILE, STRUCTURED_LOG_MAX_BYTES + 1);
 appendStructuredLog({ event: "rotation.test", ts: "2026-01-04T00:00:00.000Z" });
+await flushStructuredLog();
 assert(fs.existsSync(STRUCTURED_LOG_ARCHIVE), "переполненный лог ротируется в runs.jsonl.1");
 assert(
   fs.readFileSync(STRUCTURED_LOG_FILE, "utf8").includes("rotation.test"),
   "после ротации новая запись пишется в runs.jsonl"
+);
+
+// BN-5 (BP-D13-1): события принимаются в буфер без синхронной записи в файл,
+// гарантированный сброс — через flushStructuredLog / readStructuredLogs.
+clearStructuredLogs();
+const originalAppendFileSync = fs.appendFileSync;
+let syncWrites = 0;
+fs.appendFileSync = (...args) => {
+  syncWrites += 1;
+  return originalAppendFileSync(...args);
+};
+try {
+  appendStructuredLog({ event: "bn5.async", ts: "2026-01-05T00:00:00.000Z" });
+  appendStructuredLog({ event: "bn5.async", ts: "2026-01-05T00:00:01.000Z" });
+} finally {
+  fs.appendFileSync = originalAppendFileSync;
+}
+assert(syncWrites === 0, "BN-5: appendStructuredLog не делает синхронную запись в файл");
+assert(getStructuredLogBufferSize() === 2, "BN-5: события копятся в буфере");
+await flushStructuredLog();
+assert(getStructuredLogBufferSize() === 0, "BN-5: flushStructuredLog опустошает буфер");
+assert(
+  fs.readFileSync(STRUCTURED_LOG_FILE, "utf8").includes("bn5.async"),
+  "BN-5: после flush события присутствуют в runs.jsonl"
+);
+appendStructuredLog({ event: "bn5.readflush", ts: "2026-01-05T00:00:02.000Z" });
+assert(
+  readStructuredLogs({ event: "bn5.readflush" }).total === 1,
+  "BN-5: readStructuredLogs сбрасывает буфер перед чтением"
 );
 clearStructuredLogs();
 
