@@ -30,6 +30,16 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 
 - QA-D319-2: тест `test-package-exports.mjs` не учитывает junction `dist/ → .steward-dev/dist`: `npm pack` локально не включает файлы `dist`, поэтому 11 проверок «exports "dist/..." есть в тарболе» падают (`node test-package-exports.mjs` exit 1), хотя соседний `test-portability-exports.mjs` для того же случая явно пропускает проверку артефактов (QA-PORT-9) — P2. Действие: добавить в `test-package-exports.mjs` тот же guard на junction/симлинк `dist/`, что и в `test-portability-exports.mjs`, оставив проверку состава тарбола только для CI с реальным `dist`. Обнаружено 24.11.2026.
 
+- QA-D316-1: `scripts/pl-commit.ps1` по умолчанию проверяет `npm run build && npm run lint` перед коммитом/пушем, но `npm run lint` на `dev` падает с exit 1 (23 ошибки ESLint в `src/cli.ts`, `src/core/reliability-scorecard.ts`, `src/core/structured-log.ts`, `src/db/runs-repo.ts`, `src/index.ts`, `src/mcp.ts`, `src/router.ts`, `src/shared/audit-csv.ts`, `src/shared/batch-call.ts`), поэтому после любой задачи с afterScript коммит и пуш НЕ происходят даже при зелёном quality gate — P1. Действие: починить линт-бэклог или явно передавать `-VerifyCommands` только с релевантными сюитами; в текущих задачах 3.16 передаём `-VerifyCommands "& node test-test-plan.mjs 2>&1"`. Обнаружено 24.11.2026.
+
+- QA-D316-2: поле `nextTaskOnSuccess`, переданное в `schedule_task`, молча игнорируется: `list_tasks` возвращает `nextTaskOnSuccess: null`, хотя вызов завершается `success: true` без предупреждений; `schedule_advanced`/`update_advanced` (где есть DAG/цепочки) в профиле `default` недоступны — P2. Действие: либо вернуть поле в базовый инструмент, либо явное предупреждение в ответе `schedule_task`, что параметр unsupported в текущем профиле. Обнаружено 24.11.2026.
+
+- QA-D316-3: валидация SCOPE для задачи без `workingDirectory` проверяет пути относительно папки сессии, а не репозитория: `update_task` для TPS-1.2 с путями `TEST-PLAN.md` отклонил правку «PL-79/PL-82: SCOPE содержит несуществующие пути», хотя файл есть в `tp-audit-dev`; с префиксом `tp-audit-dev/...` всё проходит — P2. Действие: в сообщении об ошибке явно указывать базовую папку проверки и показывать expect path. Обнаружено 24.11.2026.
+
+- QA-D316-4: на Windows плагин генерирует `.cmd`-обёртки для `qualityGate`/`afterScript` и вставляет тело скрипта в обёртку как есть; `cmd.exe` не понимает PowerShell-синтаксис, поэтому гейт TPS-1.1 упал с `'$r' is not recognized as an internal or external command`, а afterScript — с `& was unexpected at this time`, хотя файлы задачи были записаны — P1. Действие: генерировать `.ps1` или автоматически префиксовать строки `powershell -NoProfile -ExecutionPolicy Bypass -Command ...` / `-File ...`; обход в текущих задачах — вручную добавить такой префикс (проверено: exit 0 и маркер создаётся). Обнаружено 24.11.2026.
+
+- QA-D316-5: watchdog PL-134 завершил запуск TPS-1.1 по «простою 60 с, лог и CPU без изменений» в момент финализации агента: отчёт, правки ROADMAP/CHANGELOG уже были на диске, но прогон помечен `error`, quality gate и коммит не выполнились — P2. Действие: настраиваемый таймаут простоя/grace period и статус `partial` с сохранёнными артефактами вместо жёсткого `error`. Обнаружено 24.11.2026.
+
 ---
 
 ## Деталь 3.15 — Улучшения продукта из TEST-PLAN §7.3
@@ -43,7 +53,6 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 > При переносе открытых задач выявлено расхождение: строки `D-1…D-3`, `A-2…A-6`, `M-1…M-8`, `X-1/X-2/X-5`, `F-2.5` в §7.4 всё ещё помечены ⬜/⏸️, хотя CHANGELOG содержит закрытые подзадачи (`D-1.1…`, `A-2.1/A-2.2`, `A-3.1`, `A-4.1/A-5.1/A-6.1/A-6.2`, `M-1.1…M-8.1`, `X-1.1/X-2.1/X-5`, `F-2.5`). Все перечисленные ID закрыты в CHANGELOG; `X-4` (X-4.1/4.2/4.3) тоже закрыт и удалён из ROADMAP.
 
 **Задача TPS-1 — статусы §7.4 не совпадают с CHANGELOG** · D16 · P2 · ⬜
-- [ ] TPS-1.1 Сверить каждую строку §7.4 с записью CHANGELOG и зафиксировать расхождения
 - [ ] TPS-1.2 Обновить статусы в TEST-PLAN.md на ✅ со ссылками на CHANGELOG, оставив `X-4` открытой
 - [ ] TPS-1.3 Добавить проверку в `test-test-plan.mjs`, чтобы закрытые ID из §7.4 не могли вернуться как ⬜
 
