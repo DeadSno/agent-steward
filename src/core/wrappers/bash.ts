@@ -673,6 +673,16 @@ export function buildBashWrapperScript(options: BashWrapperOptions): string {
     "# Конфиг прав живёт только в переменной окружения — файл не создаётся.",
     "",
     "TIMED_OUT=0",
+    // QW-7: классификатор квоты должен видеть только текущий прогон. Лог —
+    // append-only, поэтому старая строка «Free usage limit reached» из прошлой
+    // задачи вечно заставляла любую последующую ошибку выглядеть как квота.
+    'QUOTA_SCOPE=""',
+    'if [ -f "$LOG_FILE" ]; then',
+    '  QUOTA_MARK=$(grep -n \'=== Run started \' "$LOG_FILE" 2>/dev/null | tail -n 1 | cut -d: -f1)',
+    '  if [ -n "$QUOTA_MARK" ]; then',
+    '    QUOTA_SCOPE=$(tail -n "+$((QUOTA_MARK + 1))" "$LOG_FILE" 2>/dev/null)',
+    "  fi",
+    "fi",
     'if [ -f "$TIMEOUT_MARKER" ]; then',
     "  TIMED_OUT=1",
     "  EXIT_CODE=124",
@@ -682,8 +692,8 @@ export function buildBashWrapperScript(options: BashWrapperOptions): string {
     '  log "[scheduler] Задача \'$TASK_NAME\' прервана по таймауту (${TIMEOUT_SECONDS} с)."',
     // PL-83: квота/баланс модели — отдельный класс ошибки (код 126 + явная
     // подсказка и partial-diff), а не безликий «Код возврата 1».
-    'elif [ "$EXIT_CODE" -ne 0 ] && [ -f "$LOG_FILE" ] && grep -qE \'Free usage limit reached|Insufficient Balance|free usage limit\' "$LOG_FILE"; then',
-    '  QUOTA_REASON=$(grep -E \'Free usage limit reached|Insufficient Balance|free usage limit\' "$LOG_FILE" | tail -n 1 | cut -c1-160)',
+    'elif [ "$EXIT_CODE" -ne 0 ] && printf \'%s\\n\' "$QUOTA_SCOPE" | grep -qE \'Free usage limit reached|Insufficient Balance|free usage limit\'; then',
+    '  QUOTA_REASON=$(printf \'%s\\n\' "$QUOTA_SCOPE" | grep -E \'Free usage limit reached|Insufficient Balance|free usage limit\' | tail -n 1 | cut -c1-160)',
     '  SAFE_NAME=$(printf \'%s\' "$TASK_NAME" | tr -c \'[:alnum:]_-\' \'-\')',
     '  QUOTA_DIFF="$REPO_DIR/reports/quota-$SAFE_NAME.diff"',
     '  mkdir -p "$REPO_DIR/reports" 2>/dev/null || true',

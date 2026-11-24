@@ -171,12 +171,46 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 ## Деталь 3.17 — Верификация аудита Qwen (QW)
 `src/runtime.ts`, `src/core/scheduler/mac.ts`, `src/core/permissions.ts`, `legacy/package.json`, `test-*.mjs`, `docs/*`
 
-> Отчёт Qwen от 24.11.2026 проверяется по коду: в ROADMAP попадают только подтверждённые находки. QW-1 (worktree isolation), QW-2 (catch-up), QW-3 (macOS pause), QW-4 (egress) и QW-5 (legacy-шим npm) закрыты и перенесены в CHANGELOG. Неподтверждённые пункты P2/P3 ведутся в QW-6 до воспроизведения.
+> Отчёт Qwen от 24.11.2026 проверен по коду: в ROADMAP попадают только подтверждённые находки. QW-1 (worktree isolation), QW-2 (catch-up), QW-3 (macOS pause), QW-4 (egress), QW-5 (legacy-шим npm) и QW-7 (quota-детектор) закрыты и перенесены в CHANGELOG. Верификация P2/P3 выполнена 24.11.2026: подтверждённые пункты оформлены задачами QW-8…QW-14; пункт «quota-diff/gate смотрят в main-репо» — дубль уже закрытого QW-1, отдельной задачи не требует; претензия к комментарию про `X-Scheduler-Client` опровергнута (комментарий сам называет его «бонусом»), но слабое место Origin реально и вынесено в QW-13.
 
 **Задача QW-6 — верификация P2/P3 отчёта Qwen** · P2 · ⬜
-- [ ] QW-6.1 Проверить по коду: quota-детектор, macOS one-shot cleanup, MONTHLY boundary, detectStaleTask, POSIX delete order, defer TTL, poll fail-open, needsPollMode, миграция каталога, SSH/Docker runner, dashboard Origin
-- [ ] QW-6.2 Подтверждённые пункты оформить отдельными задачами QW-7+ с репродукцией и тестом
-- [ ] QW-6.3 Опровергнутые пункты зафиксировать в CHANGELOG как «не подтверждено» с причиной
+- [ ] QW-6.3 Опровергнутые пункты и дубли зафиксировать в CHANGELOG в рамках QW-14
+
+**Задача QW-8 — MONTHLY-граница съедает сегодняшний тик и коллизии ID** · P2 · ⬜
+- [ ] QW-8.1 `nextMonthlyStartBoundary`: передавать hour/minute тика и сравнивать `candidate + tick > now`
+- [ ] QW-8.2 `detectStaleTask`: `roadmap.includes(id)` → проверка по границам слова (`\bPL-\d+\b`)
+- [ ] QW-8.3 Регрессии для обоих сценариев
+
+**Задача QW-9 — POSIX delete оставляет ghost-cron; осиротевший defer блокирует сутки** · P2 · ⬜
+- [ ] QW-9.1 `PosixSchedulerBase.deleteTask`: сначала uninstall, при ошибке — откат реестра
+- [ ] QW-9.2 `deferFileBusy`: PID владельца + проверка живости или TTL с запасом вместо 25 ч
+- [ ] QW-9.3 Регрессии: сбой crontab не теряет запись, мёртвый PID не блокирует тик
+
+**Задача QW-10 — poll без node и Windows-семантика на POSIX** · P2 · ⬜
+- [ ] QW-10.1 bash-обёртка: fail-closed, если задан `SCHEDULE_CRON`, а `node` недоступен
+- [ ] QW-10.2 `buildScheduleGate`: platform-aware выбор `needsPollMode` / `needsPosixPollMode`
+- [ ] QW-10.3 Регрессии для POSIX и Windows
+
+**Задача QW-11 — macOS one-shot cleanup и мусор в LaunchAgents** · P2 · ⬜
+- [ ] QW-11.1 `AbandonProcessGroup=true` в plist или синхронная очистка после recorder
+- [ ] QW-11.2 `uninstallEntry` удаляет стампы `*.once-*.done`
+- [ ] QW-11.3 Регрессия: cleanup переживает выход джобы, стампы не копятся
+
+**Задача QW-12 — SSH-runner инъекция и неполный Docker-runner** · P2 · ⬜
+- [ ] QW-12.1 Запрет ведущего `-`/`--` в host ssh-runner
+- [ ] QW-12.2 Docker: секреты не через argv (`--env K=V`), либо документировать ограничение и смонтировать репо
+- [ ] QW-12.3 Регрессии
+
+**Задача QW-13 — дашборд доверяет любому localhost-Origin** · P2 · ⬜
+- [ ] QW-13.1 При наличии Origin требовать `X-Scheduler-Client: dashboard` (форсирует CORS-preflight, который сервер не разрешает)
+- [ ] QW-13.2 Задокументировать модель угроз; регрессия
+
+**Задача QW-14 — P3: код, доки и конфиги** · P3 · ⬜
+- [ ] QW-14.1 `eslint.config.mjs`: убрать несуществующее `@typescript-eslint/no-console`, добавить объявленный `eslint:recommended`
+- [ ] QW-14.2 Устаревшие комментарии/сообщения: `src/types.ts`, `src/db/index.ts`, `src/index.ts:5451` (лог промпта), `at-fallback.ts` (save вне лока)
+- [ ] QW-14.3 `sanitizeName`: CJK-коллизии, `one-shot`: секунды и MMM из Intl
+- [ ] QW-14.4 Доки: tr-locale vs «три языка», `AGENTS.md` счётчики, `COMPATIBILITY` 1.19.6, MIGRATION/FAQ/SAFETY, релизные теги, `index.js`/dev-скрипты в тарболе, lint-промпт pipeline
+- [ ] QW-14.5 Опровергнутые пункты Qwen и дубли зафиксировать в CHANGELOG
 
 ---
 

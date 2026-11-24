@@ -125,6 +125,11 @@ if ($env:AGENT_STEWARD_WORKTREE) { $Workdir = $env:AGENT_STEWARD_WORKTREE }
 
 $ErrorActionPreference = "Continue"
 
+# QW-7: смещение в append-логе, с которого начинается текущий прогон.
+# Выставляется сразу после маркера «=== Run started ===» и используется
+# классификатором квоты, чтобы старые строки не портили новый запуск.
+$script:quotaScanStart = 0
+
 # P2-11: свободный текст (модель, имя workspace, списки инструментов) приходит
 # в base64, чтобы символы подстановки PowerShell/cmd не разворачивались.
 function ConvertFrom-B64Text {
@@ -313,7 +318,8 @@ if ($LockFile) {
 # уникальна для задачи, а in-process planRuntimeIsolation не защищает OS-запуски:
 # параллельные задачи с одним -Workdir видят чужой diff, гейт падает с общим
 # сообщением, а afterScript коммитит чужие правки. Ключ — первые 16 hex SHA256
-# от $Workdir, поэтому все задачи одного чек-аута делят один и тот же lock.
+# от $script:checkoutRoot (исходный репозиторий, не одноразовый worktree), поэтому
+# все задачи одного чек-аута делят один и тот же lock.
 $script:checkoutLockAcquired = $false
 $script:checkoutLockFile = ""
 $checkoutHash = ""
@@ -1226,6 +1232,7 @@ try {
     if ($LogFile) {
         try {
             Add-Content -Path $LogFile -Value ("[agent-steward] === Run started " + $startedAtIso + " (" + $TaskName + ") ===") -Encoding utf8
+            $script:quotaScanStart = (Get-Item -LiteralPath $LogFile).Length
         } catch {}
     }
     $prompt = Get-Content -Path $PromptFile -Raw -Encoding UTF8
@@ -1338,7 +1345,18 @@ try {
     if ($script:exitCode -ne 0 -and $LogFile -and (Test-Path -LiteralPath $LogFile)) {
         $quotaLine = @()
         try {
-            $quotaLine = @(Get-Content -LiteralPath $LogFile -Tail 80 -ErrorAction Stop |
+            # QW-7: читаем только хвост после маркера текущего прогона —
+            # -Tail 80 всё равно заглядывал в прошлый запуск при коротком выводе.
+            $quotaText = ""
+            $quotaStream = [System.IO.File]::Open($LogFile, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+            try {
+                if ($script:quotaScanStart -gt 0 -and $script:quotaScanStart -lt $quotaStream.Length) {
+                    $quotaStream.Position = $script:quotaScanStart
+                }
+                $quotaReader = New-Object System.IO.StreamReader($quotaStream, [System.Text.Encoding]::UTF8)
+                try { $quotaText = $quotaReader.ReadToEnd() } finally { $quotaReader.Dispose() }
+            } finally { $quotaStream.Dispose() }
+            $quotaLine = @($quotaText -split "\r?\n" |
                 Where-Object { $_ -match 'Free usage limit reached|Insufficient Balance|free usage limit' } |
                 Select-Object -Last 1)
         } catch {}

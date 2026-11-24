@@ -117,10 +117,19 @@ const bashQuotaScript = buildBashWrapperScript({
   logFile: path.join(tempRoot, "quota-probe.log"),
   recorderFile: path.join(tempRoot, "record-history.js"),
 });
+// QW-7: PL-130 всё ещё читает хвост лога через Get-Content -Tail 80 для причины
+// ошибки — это legitimo. Отрицание относится только к блоку детекции квоты.
+const psQuotaBlock = psWrapperScript.slice(
+  psWrapperScript.indexOf("$quotaDetected = $false"),
+  psWrapperScript.indexOf("if ($quotaLine.Count"),
+);
 check(
-  "PL-83 PowerShell: квота обнаруживается по логу",
+  "PL-83/QW-7 PowerShell: квота ищется только в сегменте текущего прогона",
   psWrapperScript.includes("Free usage limit reached|Insufficient Balance|free usage limit") &&
-    psWrapperScript.includes("Get-Content -LiteralPath $LogFile -Tail 80")
+    psWrapperScript.includes("$script:quotaScanStart = 0") &&
+    psWrapperScript.includes("$script:quotaScanStart = (Get-Item -LiteralPath $LogFile).Length") &&
+    psWrapperScript.includes("[System.IO.File]::Open($LogFile") &&
+    !psQuotaBlock.includes("Get-Content -LiteralPath $LogFile -Tail 80")
 );
 check(
   "PL-83 PowerShell: отдельный код 126 и подсказка по модели",
@@ -137,9 +146,18 @@ check(
     bashQuotaScript.includes("EXIT_CODE=126")
 );
 check(
-  "PL-83 bash: partial-diff и подсказка по модели",
-  bashQuotaScript.includes('QUOTA_DIFF="$WORKDIR/reports/quota-$SAFE_NAME.diff"') &&
+  "PL-83/QW-1 bash: partial-diff пишется в исходный репозиторий",
+  bashQuotaScript.includes('QUOTA_DIFF="$REPO_DIR/reports/quota-$SAFE_NAME.diff"') &&
+    bashQuotaScript.includes('mkdir -p "$REPO_DIR/reports"') &&
+    bashQuotaScript.includes('git -C "$WORKDIR" diff') &&
     bashQuotaScript.includes("update_task name=$TASK_NAME model=provider/model")
+);
+check(
+  "QW-7 bash: квота ищется только после последнего маркера запуска",
+  bashQuotaScript.includes("QUOTA_MARK=$(grep -n '=== Run started ' \"$LOG_FILE\"") &&
+    bashQuotaScript.includes('QUOTA_SCOPE=$(tail -n "+$((QUOTA_MARK + 1))" "$LOG_FILE"') &&
+    bashQuotaScript.includes("printf '%s\\n' \"$QUOTA_SCOPE\" | grep -qE") &&
+    !bashQuotaScript.includes("grep -qE 'Free usage limit reached|Insufficient Balance|free usage limit' \"$LOG_FILE\"")
 );
 // PL-113: аргументы дочернего powershell не должны проходить через повторный
 // разбор командной строки - иначе промпт с кавычками и многоточием падает до
@@ -1380,7 +1398,7 @@ try {
   check(
     "PL-121: checkout-lock ключ — SHA256 от Workdir, первые 16 hex",
     psWrapperScript.includes("[System.Security.Cryptography.SHA256]::Create()") &&
-      psWrapperScript.includes("[System.Text.Encoding]::UTF8.GetBytes($Workdir)") &&
+      psWrapperScript.includes("[System.Text.Encoding]::UTF8.GetBytes($script:checkoutRoot)") &&
       psWrapperScript.includes(".Substring(0, 16).ToLowerInvariant()") &&
       psWrapperScript.includes('"checkout-$checkoutHash.lock"')
   );
@@ -1392,7 +1410,7 @@ try {
   );
   check(
     "PL-121: живой владелец checkout-lock пропускает задачу с причиной PL-121",
-    psWrapperScript.includes("PL-121: в чек-ауте $Workdir уже идёт другая задача") &&
+    psWrapperScript.includes("PL-121: в чек-ауте $script:checkoutRoot уже идёт другая задача") &&
       psWrapperScript.includes("$script:skipMainTask = $true") &&
       psWrapperScript.includes("Get-LockOwnerPid -Content $checkoutHolderRaw") &&
       psWrapperScript.includes("Test-ProcessAlive -ProcessId $checkoutHolderPid")
