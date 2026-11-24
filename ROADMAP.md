@@ -181,12 +181,7 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 ## Деталь 3.17 — Верификация аудита Qwen (QW)
 `src/runtime.ts`, `src/core/scheduler/mac.ts`, `src/core/permissions.ts`, `legacy/package.json`, `test-*.mjs`, `docs/*`
 
-> Отчёт Qwen от 24.11.2026 проверяется по коду: в ROADMAP попадают только подтверждённые находки. QW-1 (worktree isolation), QW-2 (catch-up), QW-3 (macOS pause) и QW-4 (egress) закрыты и перенесены в CHANGELOG. Неподтверждённые пункты P2/P3 ведутся в QW-6 до воспроизведения.
-
-**Задача QW-5 — legacy-шим npm 1.5.8 тянет ломающий мажор и ведёт на несуществующий пакет** · P1 · ⬜
-- [ ] QW-5.1 Поднять `legacy/package.json` до 1.5.10 с диапазоном `>=0.0.2 <0.1.0`
-- [ ] QW-5.2 Опубликовать 1.5.10 как `latest`, поставить корректный deprecation (`Use agent-steward`) на 1.5.8/1.5.9
-- [ ] QW-5.3 Синхронизировать `docs/RELEASE-RUNBOOK.md` (X-1/X-2) и release-чеклист
+> Отчёт Qwen от 24.11.2026 проверяется по коду: в ROADMAP попадают только подтверждённые находки. QW-1 (worktree isolation), QW-2 (catch-up), QW-3 (macOS pause), QW-4 (egress) и QW-5 (legacy-шим npm) закрыты и перенесены в CHANGELOG. Неподтверждённые пункты P2/P3 ведутся в QW-6 до воспроизведения.
 
 **Задача QW-6 — верификация P2/P3 отчёта Qwen** · P2 · ⬜
 - [ ] QW-6.1 Проверить по коду: quota-детектор, macOS one-shot cleanup, MONTHLY boundary, detectStaleTask, POSIX delete order, defer TTL, poll fail-open, needsPollMode, миграция каталога, SSH/Docker runner, dashboard Origin

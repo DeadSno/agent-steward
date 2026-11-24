@@ -2,7 +2,8 @@
 
 Этот документ — **инструкция**, не отчёт о выполнении. Ни одна из описанных операций не выполнялась
 автоматически: все они требуют доступа к npm registry и GitHub, прав на публикацию и явного решения
-человека. По состоянию на 0.0.7 в `ROADMAP.md` остаётся открытой только задача X-4; X-1, X-2 и X-5 закрыты и зафиксированы в `CHANGELOG.md`.
+человека. X-1/X-2 выполнены 24.11.2026 выпуском `opencode-windows-scheduler@1.5.10` (latest, диапазон
+`>=0.0.2 <0.1.0`) и deprecation `Use agent-steward` для 1.5.8/1.5.9/1.5.10; X-4/X-5 закрыты и зафиксированы в `CHANGELOG.md`.
 
 ## Предварительные условия (общие для всех шагов)
 
@@ -13,33 +14,40 @@
   (`npm whoami` показывает нужную учётку), а также GitHub CLI или веб-интерфейс с правом merge/release.
 - Версия в `package.json` совпадает с планируемым тегом; `CHANGELOG.md` обновлён.
 
-## X-1 — deprecated legacy `opencode-windows-scheduler@1.5.8`
+## X-1 — deprecated legacy `opencode-windows-scheduler`
 
 ```bash
-npm view opencode-windows-scheduler@1.5.8 version
+npm view opencode-windows-scheduler@1.5.8 deprecated
 npm deprecate opencode-windows-scheduler@1.5.8 \
-  "Устаревший пакет. Переходим на agent-steward: npm i -g agent-steward"
+  "Use agent-steward: npm i -g agent-steward"
+npm deprecate opencode-windows-scheduler@1.5.9 \
+  "Use agent-steward: npm i -g agent-steward"
+npm deprecate opencode-windows-scheduler@1.5.10 \
+  "Use agent-steward: npm i -g agent-steward"
 npm view opencode-windows-scheduler@1.5.8 deprecated
 ```
 
-Ожидаемый результат: поле `deprecated` у версии 1.5.8 содержит сообщение. Откат:
-`npm deprecate opencode-windows-scheduler@1.5.8 ""` (снимает метку, если требуется).
+Ожидаемый результат: поле `deprecated` у 1.5.8/1.5.9/1.5.10 содержит осмысленное сообщение
+`Use agent-steward`, а не ссылку на несуществующий `@agent-steward/plugin`. Откат:
+`npm deprecate opencode-windows-scheduler@<version> ""` (снимает метку, если требуется).
 
-## X-2 — legacy 1.5.9 с upper bound `<0.1.0`
+## X-2 — legacy 1.5.10 с upper bound `<0.1.0`
 
 Цель: пользователи шима 1.5.x не должны получить ломающий релиз `agent-steward@0.1.0`.
 
 ```bash
-# в каталоге legacy/ шима, версия 1.5.9
-npm pkg set dependencies.agent-steward="<0.1.0"
-npm run build   # если у шима есть сборка
+# в каталоге legacy/ шима, версия 1.5.10
+npm pkg get version dependencies.agent-steward   # 1.5.10, ">=0.0.2 <0.1.0"
 npm pack --dry-run
-npm publish --tag legacy
-npm view opencode-windows-scheduler@1.5.9 dependencies.agent-steward
+npm publish --tag latest
+npm view opencode-windows-scheduler dist-tags --json
+npm view opencode-windows-scheduler@1.5.10 dependencies.agent-steward
 ```
 
-Проверка: `npm view ...` возвращает ровно `<0.1.0`. Откат публикации — `npm unpublish`
-допустим только в течение grace period; иначе выпускается 1.5.10 с исправленной зависимостью.
+Проверка: `latest == 1.5.10`, `npm view ...dependencies.agent-steward` возвращает ровно
+`>=0.0.2 <0.1.0`. Версия 1.5.9 осталась под тегом `legacy` и тоже ограничена; перепубликация
+1.5.8 невозможна, поэтому исправление выпущено как 1.5.10. Откат публикации — `npm unpublish`
+допустим только в течение grace period; иначе выпускается следующая версия с исправленной зависимостью.
 
 ## X-4 — Dependabot PR #4 и OpenTUI 0.9.0
 
