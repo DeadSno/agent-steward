@@ -28,6 +28,8 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 
 ## QA-находки (проверка работоспособности плагина 24.11.2026)
 
+- QA-D315-1: ad-hoc-миссия без привязки к ОС (`agent-steward run "..."`) падает с `NOT NULL constraint failed: runs.started_at` на БД, где legacy-таблица `runs` создана с `started_at TEXT NOT NULL`: `createRun()` (`src/db/runs-repo.ts:261-262`) пишет `null` для статуса `pending`, хотя актуальная схема `src/db/schema.ts:215` допускает NULL — P2. Действие: при создании pending-запуска подставлять `startedAt = timestamp` (или добавить миграцию, снимающую NOT NULL) и покрыть регрессией `test-mission-run.mjs`; проверено реальным прогоном CLI 24.11.2026.
+
 - B-3.1: профильные бейзлайны `test-profiles.mjs` не обновлены после QA-PORT-4 (`emit_event` переведён в core-профиль): `node test-profiles.mjs` даёт 71/74 — surface admin 14536 токенов против лимита 14500, `coreSpecs.length` стал 10 вместо 9, admin — 19 вместо 18 — P2. Действие: пересчитать `B31_BASELINE` (coreDigest, adminTokens, ожидаемые размеры профилей) или явно пересмотреть ограничение B-3.1 с обоснованием в CHANGELOG. Обнаружено 24.11.2026.
 
 ---
