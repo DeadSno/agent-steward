@@ -161,7 +161,6 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 **Задача P-3 — AgentInvoker и `harness`** · P1 · ✅
 
 **Задача P-4/P-5 — нативный dsh и `serve`** · P3 · ⬜ · бэклог
-- [ ] P-4.1 Нативный dsh-адаптер поверх `AgentInvoker`
 - [ ] P-5.1 `agent-steward serve` как универсальная точка входа
 
 ---

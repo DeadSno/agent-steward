@@ -3,7 +3,10 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { defineDshTools, submitDshJob, DSH_ADAPTER_VERSION, readDshSkill } from "./dist/dsh.js";
+import {
+  defineDshTools, submitDshJob, DSH_ADAPTER_VERSION, readDshSkill,
+  DSH_HARNESS, buildDshCommand, invokeDsh,
+} from "./dist/dsh.js";
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 let checks = 0;
@@ -40,6 +43,16 @@ check("P-4.1: фоновый запуск ушёл в dsh jobs", () => {
   assert.equal(submitted.length, 1);
   assert.equal(submitted[0].name, "nightly");
   assert.equal(submitted[0].payload.harness, "dsh-headless");
+});
+
+check("P-4.1: dsh строит команду через AgentInvoker", () => {
+  assert.equal(DSH_HARNESS, "dsh-headless");
+  assert.equal(typeof invokeDsh, "function");
+  const cmd = buildDshCommand({ model: "deepseek-chat", prompt: "go" });
+  assert.equal(cmd.commandPath, "dsh");
+  assert.deepEqual(cmd.args.slice(0, 2), ["--headless", "run"]);
+  assert.ok(cmd.args.includes("--model"));
+  assert.ok(cmd.args.includes("deepseek-chat"));
 });
 
 check("P-4.2: копия SKILL.md идентична исходнику", () => {
