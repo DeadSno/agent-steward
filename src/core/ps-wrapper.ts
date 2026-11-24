@@ -1232,13 +1232,26 @@ try {
         }
     }
 
-    # Получаем путь к скрипту opencode (.ps1 или .cmd)
-    $opencodeCmd = Get-Command opencode | Select-Object -ExpandProperty Source
+    # P-3.2: harness-параметризация. По умолчанию поведение прежнее
+    # (opencode run --auto), но задача может указать другой агент через
+    # $AgentCommandPath / $AgentArgs (env AGENT_COMMAND_PATH / AGENT_ARGS).
+    $AgentCommandPath = $env:AGENT_COMMAND_PATH
+    $AgentArgs = $env:AGENT_ARGS
+    if ($AgentCommandPath) {
+        $opencodeCmd = $AgentCommandPath
+    } else {
+        # Получаем путь к скрипту opencode (.ps1 или .cmd)
+        $opencodeCmd = Get-Command opencode | Select-Object -ExpandProperty Source
+    }
 
     # Формируем аргументы для opencode run (Спринт 24: сессия).
     # Спринт 29.2: --auto автоодобряет не запрещённые права, а ограничения
     # берутся из сгенерированного opencode.jsonc в Workdir.
-    $opencodeArgs = @("run", "--auto")
+    if ($AgentArgs) {
+        $opencodeArgs = @($AgentArgs -split '\s+')
+    } else {
+        $opencodeArgs = @("run", "--auto")
+    }
     if ($Model) {
         $opencodeArgs += @("--model", $Model)
     }

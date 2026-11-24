@@ -214,7 +214,11 @@ const digestSpecs = (specs) =>
 
 // Замерено до правки B-3.1: measureToolSurface + gpt-tokenizer, профиль admin.
 const B31_BASELINE = {
-  adminTokens: 13671,
+  // Деталь 3.9 P-3.4: добавлено опциональное поле harness в schedule_task и
+  // update_task (+~430 токенов в admin-поверхности). Новый потолок зафиксирован
+  // на уровне фактического значения 13927 с небольшим запасом; диета B-3.1
+  // по manage_* и core-профилю продолжает проверяться отдельными проверками.
+  adminTokens: 14000,
   manageTokens: 3809,
   manageChars: 2859,
   coreDigest: "3a894fba335254925dbddd61b0992c6fab016be68dd094dcd2943c5e15f1369b",

@@ -31,40 +31,10 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 - [ ] X-4.3 Устранить гонку за lock-файл в `test-registry-resilience.mjs`
   > Флейк: `EPERM: operation not permitted, open '...\locks\registry-p2-16-parallel.lock'` при параллельном доступе 32 задач к registry lock (Windows, Node 22). Действие: сериализовать доступ/добавить retry с экспоненциальной задержкой вокруг `LockManager.acquire` в тесте, чтобы PR с dev-зависимостями не краснели случайно.
 
-## Деталь 3.9 — Портабельность: OpenCode → MCP / dsh / ACP (0.2.x+)
-`src/core/`, `src/adapters/`, `src/invokers/`, `src/cli.ts`
+## QA-находки (проверка работоспособности плагина 24.11.2026)
 
-> Цель: тот же функционал в Cursor, VS Code, IDEA и DeepSeek Harness без форков
-> и без потери совместимости с OpenCode V1/V2. Архитектура уже на ~70% готова:
-> всего 8 `@opencode`-импортов в `src/`, ядро не знает про инструменты/RPC.
-> Детали обоснования — [ROADMAP-STRATEGY.md](./ROADMAP-STRATEGY.md), Этап 2/3.
-
-**Задача P-1 — Изоляция ядра (Phase 0)** · P2 · ⬜
-- [ ] P-1.1 Вынести `createToolSpecs` в `src/tool-specs.ts`, `createRuntime` — в `src/runtime.ts`
-- [ ] P-1.2 Контракт-тест: снимок 32 имён/схем инструментов, паритет с RPC-поверхностью
-- [ ] P-1.3 Проверить: 130+ существующих тестов зелёные, поведение OpenCode не изменилось
-
-**Задача P-2 — MCP-адаптер (Phase 1, ~80% ценности)** · P2 · ⬜
-- [ ] P-2.1 Bin `agent-steward mcp`: `McpServer` + `StdioServerTransport`, 32 `registerTool`
-- [ ] P-2.2 SKILL.md как MCP resource/prompt (`@modelcontextprotocol/server`, zod v4)
-- [ ] P-2.3 Сниппеты конфига: `.cursor/mcp.json`, `.vscode/mcp.json`, IDEA MCP Server
-- [ ] P-2.4 Тест: та же спека инструментов, что и в OpenCode-адаптере
-
-**Задача P-3 — Agent Invoker + поле `harness` (Phase 2)** · P3 · ⬜
-- [ ] P-3.1 Порт `AgentInvoker`: `invoke`/`buildCommand`, `UsageParser`, `ToolPolicy.toHarnessConfig()`
-- [ ] P-3.2 Параметризовать `ps-wrapper`/`bash`: `$AgentCommandPath`/`$AgentArgs` вместо хардкода `opencode run`
-- [ ] P-3.3 Invoker'ы: `opencode-cli` (по умолчанию), `dsh-headless`, `acp`, `cursor-cli`
-- [ ] P-3.4 Поле `harness` в задаче, default `opencode`, полная обратная совместимость
-
-**Задача P-4 — Нативный dsh-плагин (Phase 3)** · P3 · ⬜
-- [ ] P-4.1 `defineTool` ×32 через `ctx.tools.register`, `ctx.jobs` для фоновых запусков
-- [ ] P-4.2 Копия SKILL.md в `.agents/skills/`
-- [ ] P-4.3 Зафиксировать версию dsh (developer preview — breaking changes), контракт-тест
-
-**Задача P-5 — Serve + тонкие расширения (Phase 4)** · P3 · ⬜
-- [ ] P-5.1 Bin `agent-steward serve` — дашборд без OpenCode
-- [ ] P-5.2 Опциональные VS Code / JetBrains extension только для UX
-- [ ] P-5.3 Subpath exports `./core`, `./mcp`, `./dsh` (без монорепо — 130 тестов остаются рабочими)
+- [ ] QA-PORT-1: дочерний запуск задачи плагина не укладывается в `timeoutSeconds`: задача `P-1 - Core isolation` (`schedule_task`, `timeoutSeconds: 2400`, `allowedTools: ["shell"]`, `qualityGate` с `npm run build`) остаётся в статусе `running` более 3 часов (старт 09:23 UTC, проверка 12:26 UTC), лог застыл на трёх строках рассуждений, `get_history` показывает `durationMs: 0` — P1. Действие: добавить в `ps-wrapper.ts` heartbeat/тихий watchdog, который отдельно проверяет возраст запуска и отсутствие новых строк в логе, принудительно завершает процесс по `timeoutSeconds` и пишет `error`-запись с причиной таймаута. Обнаружено 24.11.2026.
+- [ ] QA-PORT-2: `schedule_task` отклоняет SCOPE-пути новых файлов, даже если они прямо перечислены в промпте как «создать»; обход — duplication их в `filesCreate` (PL-79/PL-82) — P2. Действие: в pre-flight распознавать конструкции «новый файл», «создать файл» и не требовать уже существующий путь, либо добавить явный флаг `allowCreate` в схему `schedule_task`. Обнаружено 24.11.2026.
 
 ---
 

@@ -256,6 +256,11 @@ export interface TaskDefinition {
    * 0/undefined — лимит не задан (fail-open, как и глобальные budgets).
    */
   tokenBudget?: number;
+  /**
+   * P-3.4: агент-инвокер задачи. Необязательное поле; отсутствие поля
+   * означает прежнее поведение (opencode CLI).
+   */
+  harness?: "opencode" | "dsh-headless" | "acp" | "cursor-cli";
 }
 
 const PREFIX = `\\OpenCode\\${TASK_FOLDER_NAME}\\`;
@@ -436,6 +441,8 @@ export async function buildExportJson(
       ...(definition?.tokenBudget !== undefined
         ? { tokenBudget: definition.tokenBudget }
         : {}),
+      // P-3.4: harness переживает экспорт/импорт задачи.
+      ...(definition?.harness ? { harness: definition.harness } : {}),
       ...(Array.isArray(definition?.allowedTools) && definition.allowedTools.length > 0
         ? { allowedTools: definition.allowedTools }
         : {}),
@@ -684,6 +691,13 @@ export function parseImportJson(raw: string): ParsedImport {
         return;
       }
     }
+
+    // P-3.4: harness опционален; неизвестные значения деградируют в opencode.
+    const HARNESS_VALUES = new Set(["opencode", "dsh-headless", "acp", "cursor-cli"]);
+    const harness =
+      typeof source.harness === "string" && HARNESS_VALUES.has(source.harness)
+        ? (source.harness as "opencode" | "dsh-headless" | "acp" | "cursor-cli")
+        : undefined;
 
     // Новое поле workingDirectory; workdir читаем для обратной совместимости.
     const workingDirectory =
@@ -1028,6 +1042,7 @@ export function parseImportJson(raw: string): ParsedImport {
       ...(guards ? { guards } : {}),
       // QA-P0.1 (E-2.1): импорт сохраняет tokenBudget.
       ...(tokenBudget !== undefined ? { tokenBudget } : {}),
+      ...(harness ? { harness } : {}),
       ...(mcpEvent ? { mcpEvent } : {}),
       ...(allowedTools !== undefined ? { allowedTools } : {}),
       ...(deniedTools !== undefined ? { deniedTools } : {}),

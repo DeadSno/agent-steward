@@ -29,9 +29,15 @@ const bashScript = buildBashWrapperScript({
 const execLines = bashScript
   .split("\n")
   .map((line) => line.trim())
-  .filter((line) => line.startsWith("exec opencode run"));
+  // P-3.2: команда агента параметризована; дефолт по-прежнему `opencode run --auto`.
+  .filter((line) => line.startsWith('exec "$AGENT_COMMAND_PATH" $AGENT_ARGS'));
 
 check("bash: все ветки запуска найдены", execLines.length === 8, String(execLines.length));
+check(
+  "bash: дефолт команды агента — opencode run --auto",
+  bashScript.includes('AGENT_COMMAND_PATH="${AGENT_COMMAND_PATH:-opencode}"') &&
+    bashScript.includes("AGENT_ARGS=${AGENT_ARGS-'run --auto'}")
+);
 check(
   "bash: в каждой ветке перед промптом стоит --",
   execLines.length > 0 && execLines.every((line) => line.endsWith('-- "$PROMPT"')),

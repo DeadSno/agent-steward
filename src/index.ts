@@ -20,7 +20,6 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 // QA-A2.7: безопасное приведение unknown к строке без no-base-to-string.
 import { safeStringify } from "./text.js";
-import { filterToolSpecsByProfile } from "./core/tool-profile.js";
 import { applyModelRecommendation } from "./core/dry-run.js";
 import { LockManager } from "./core/lock.js";
 import {
@@ -176,11 +175,12 @@ import {
   parseImportJson,
   normalizePriority,
 } from "./task-transfer.js";
+import type {
+  FileWatchManager} from "./core/file-watcher.js";
 import {
   FILE_TRIGGER_SELF_WRITE_SUPPRESS_MS,
-  FileWatchManager,
 } from "./core/file-watcher.js";
-import { GitTriggerManager } from "./core/git-trigger.js";
+import type { GitTriggerManager } from "./core/git-trigger.js";
 import type {
   McpEventTrigger,
   MatrixConfig,
@@ -238,6 +238,17 @@ import {
   verifyGateLedgerIntegrity,
 } from "./core/audit.js";
 import type { AuditEntryInput } from "./core/audit.js";
+// P-1.1: ядро запуска и построитель спецификаций вынесены в модули без @opencode/*.
+// Entrypoint остаётся единственным адаптером платформы (V1/V2).
+import {
+  createRuntimeCore,
+  type RuntimeDeps,
+  type RuntimeContextLike,
+  type SchedulerRuntime,
+} from "./runtime.js";
+import { buildToolSpecs, type ToolSpec as ToolSpecLike } from "./tool-specs.js";
+export type { RuntimeContextLike, SchedulerRuntime } from "./runtime.js";
+export type { ToolSpec, ToolSpecExecute, ToolSpecAudit, ToolResultLike } from "./tool-specs.js";
 
 // Путь к вспомогательному node-скрипту записи истории/метрик (dist/core/record-history.js).
 const require = createRequire(import.meta.url);
@@ -774,6 +785,12 @@ export const scheduleTaskSchema = z.object({
     .describe(
       "Matrix fan-out: the task becomes a template that is expanded into clones, one per workspace. The parent never runs itself. Cannot be combined with workspaceId.",
     ),
+  harness: z
+    .enum(["opencode", "dsh-headless", "acp", "cursor-cli"])
+    .optional()
+    .describe(
+      "P-3.4: agent invoker for the task. Defaults to opencode CLI; unknown values are not accepted by the schema (import degrades to opencode for compatibility).",
+    ),
 }).superRefine((value, ctx) => {
   const trigger = value.triggerType ?? "cron";
   if (trigger === "cron" && !value.schedule?.trim()) {
@@ -1065,6 +1082,10 @@ export const updateTaskSchema = z.object({
     .describe(
       "New matrix configuration. Pass null to turn the matrix off (clones and aggregator are removed).",
     ),
+  harness: z
+    .enum(["opencode", "dsh-headless", "acp", "cursor-cli"])
+    .optional()
+    .describe("P-3.4: agent invoker for the task; omitted keeps the current harness."),
 }).superRefine((value, ctx) => {
   if (
     value.triggerType !== undefined &&
@@ -1152,6 +1173,7 @@ const CORE_FIELD_DESCRIPTIONS: Record<string, string> = {
   workdir: "Alias of workingDirectory.",
   worktree: "Run in an isolated git worktree.",
   tokenBudget: "Maximum tokens per run.",
+  harness: "Agent invoker: opencode (default) | dsh-headless | acp | cursor-cli.",
   allowedTools: "Tools the agent may use.",
   deniedTools: "Tools the agent must not use.",
   triggerType: "cron | once | file | mcp-event | git (default cron).",
@@ -2971,11 +2993,7 @@ const resumeTaskExecute = wrapExecute<ResumeArgs>(async (args) => {
   return { content: JSON.stringify(result) };
 });
 
-/** Периодичность проверки автопродолжения задач (Спринт 19). */
 const POSIX_MAX_PROMPT_BYTES = 131072; // 128 KiB: MAX_ARG_STRLEN на одном аргументе в Linux; запас под обёртку.
-const PAUSED_UNTIL_CHECK_MS = 5 * 60 * 1000;
-/** Период проверки дайджеста и зависших матриц (Спринт 20). */
-const NOTIFICATION_CHECK_MS = 60 * 1000;
 
 /**
  * Спринт 19: автопродолжение задач, поставленных на паузу до даты.
@@ -4801,286 +4819,34 @@ async function scheduleEventRun(taskName: string, reason: string): Promise<void>
 }
 
 /**
- * Минимальный контракт контекста, который нужен общему ядру.
- * V2 передаёт сюда setup-контекст, V1 — контекст из `server()`.
+ * P-1.1: адаптер запуска. Реализация ядра живёт в src/runtime.ts и не знает
+/*; здесь связываем её с состоянием entrypoint'а.
  */
-export interface RuntimeContextLike {
-  location?: { directory?: string };
-}
-
-/**
- * Общее ядро плагина: всё, что должно произойти ровно один раз при старте,
- * независимо от версии OpenCode (V1/V2).
- *
- * Здесь нет регистрации инструментов, RPC и хуков — это делают entrypoint'ы.
- * Ядро владеет таймерами и менеджерами триггеров и умеет корректно их гасить.
- */
-export interface SchedulerRuntime {
-  projectDirectory: string;
-  /** Останавливает таймеры и наблюдателей; БД закрывает entrypoint после ожидания idle. */
-  dispose: () => void;
-}
+const RUNTIME_DEPS: RuntimeDeps = {
+  scheduler: scheduler,
+  setProjectDirectory: (directory) => {
+    projectDirectory = directory;
+  },
+  setFileWatcherManager: (manager) => {
+    fileWatcherManager = manager;
+  },
+  getFileWatcherManager: () => fileWatcherManager,
+  setGitTriggerManager: (manager) => {
+    gitTriggerManager = manager;
+  },
+  getGitTriggerManager: () => gitTriggerManager,
+  garbageCollectTaskArtifacts,
+  resumeExpiredPauses,
+  maybeSendDigest,
+  checkStuckMatrices,
+  refreshTriggers,
+  scheduleEventRun,
+  runTaskEntry,
+};
 
 export async function createRuntime(ctxLike: RuntimeContextLike): Promise<SchedulerRuntime> {
-  // Папка проекта — рабочая директория задач по умолчанию. Благодаря ей
-  // `opencode run` подхватывает opencode.json с MCP-серверами проекта.
-  projectDirectory = ctxLike.location?.directory || process.cwd();
-
-  // Спринт 28: язык интерфейса берём из настроек. Ошибка чтения не должна
-  // мешать старту — в этом случае остаётся локаль по умолчанию (ru).
-  try {
-    const initialSettings = await loadSettings();
-    setLocale(resolveLocale(initialSettings.locale, initialSettings.uiLocale));
-  } catch {
-    // Локаль по умолчанию уже активна.
-  }
-
-  // Спринт 12: SQLite — основное хранилище. Открываем БД, при первом запуске
-  // автоматически переносим данные из JSON, затем восстанавливаем прерванные
-  // запуски. Ошибки миграции не должны мешать плагину стартовать.
-  initDb();
-  try {
-    await migrateJsonToDb();
-  } catch (err) {
-    console.error(
-      `[migrate] Не удалось мигрировать JSON → SQLite: ${
-        err instanceof Error ? err.message : String(err)
-      }`,
-    );
-  }
-  try {
-    recoverInterruptedRuns();
-  } catch (err) {
-    console.error(
-      `[recovery] Не удалось восстановить незавершённые запуски: ${
-        err instanceof Error ? err.message : String(err)
-      }`,
-    );
-  }
-  // PL-98: проверяем tamper-evident цепочку gate_outcomes при каждом старте.
-  // Результат пишется в журнал аудита; ошибка не должна ломать старт плагина.
-  try {
-    verifyGateLedgerIntegrity("startup");
-  } catch (err) {
-    console.error(
-      `[gate-ledger] Автопроверка цепочки не выполнена: ${
-        err instanceof Error ? err.message : String(err)
-      }`,
-    );
-  }
-  // Деталь 3.8 (F-1.6): повторяем недоставленные отчёты из outbox.
-  // Fire-and-forget: сеть не должна задерживать или ломать старт плагина.
-  void loadSettings()
-    .then((settings) => flushOutbox(settings.feedback))
-    .then((result) => {
-      if (result.sent > 0) {
-        console.log(`[feedback] Из outbox доставлено отчётов: ${result.sent}`);
-      }
-    })
-    .catch((err: unknown) => {
-      console.error(
-        `[feedback] Ошибка повтора outbox: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
-    });
-  // P1-14: pid:-записи fallback'а не переживают перезагрузку. Чистим их и
-  // пересоздаём будущие one-shot, иначе после reboot можно убить чужой pid.
-  if (scheduler instanceof LinuxScheduler) {
-    try {
-      const report = await scheduler.pruneStaleFallbacks();
-      if (report.removed || report.rescheduled || report.missed) {
-        console.log(
-          `[scheduler] Fallback one-shot: удалено ${report.removed}, ` +
-            `пересоздано ${report.rescheduled}, пропущено ${report.missed}, ` +
-            `живо ${report.kept}.`,
-        );
-      }
-    } catch (err) {
-      console.error(
-        `[scheduler] Не удалось очистить fallback-записи: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
-    }
-  }
-  checkJsonBackups();
-  void garbageCollectTaskArtifacts().catch((err) => {
-    console.log(`[gc] Не удалось вычистить мусорные файлы: ${err instanceof Error ? err.message : String(err)}`);
-  });
-
-  // Спринт 18: ежедневная очистка истории. Ошибка ретеншна не должна мешать
-  // плагину стартовать — пишем в лог и продолжаем.
-  void maybeRunHistoryRetention()
-    .then((report) => {
-      if (report && report.deleted > 0) {
-        console.log(
-          `[retention] Удалено ${report.deleted} записей истории ` +
-            `(по возрасту: ${report.deletedByAge}, по лимиту: ${report.deletedByCount}); ` +
-            `осталось ${report.kept}.`,
-        );
-      }
-    })
-    .catch((err) => {
-      console.error(
-        `[retention] Не удалось очистить историю: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
-    });
-
-  // Спринт 19: автопродолжение задач, поставленных на паузу до даты.
-  // Проверяем сразу при старте и далее раз в 5 минут, пока плагин жив.
-  void resumeExpiredPauses().catch((err) => {
-    console.error(
-      `[agent-steward] Не удалось проверить автопродолжение: ${
-        err instanceof Error ? err.message : String(err)
-      }`,
-    );
-  });
-  const pausedUntilTimer = setInterval(() => {
-    void resumeExpiredPauses().catch((err) => {
-      console.error(
-        `[agent-steward] Не удалось проверить автопродолжение: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
-    });
-  }, PAUSED_UNTIL_CHECK_MS);
-  pausedUntilTimer.unref?.();
-
-  // Спринт 20: дайджест и детектор зависших матриц. Проверяем сразу при
-  // старте и далее раз в минуту; таймер не держит процесс Node живым.
-  const notificationTimer = setInterval(() => {
-    void maybeSendDigest().catch(() => undefined);
-    void checkStuckMatrices().catch((err) => {
-      console.error(
-        `[agent-steward] Детектор зависших матриц: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
-    });
-  }, NOTIFICATION_CHECK_MS);
-  notificationTimer.unref?.();
-  void maybeSendDigest().catch(() => undefined);
-  void checkStuckMatrices().catch(() => undefined);
-
-  // Инициализация блокировок: создаём директорию и очищаем зависшие lock-файлы (>24 ч).
-  const lockManager = new LockManager(LOCK_DIR);
-  await lockManager.initialize();
-
-  // Восстановление пропущенных запусков (catch-up): если OpenCode был закрыт,
-  // а задача должна была выполниться (с nextRun прошло >5 мин и в истории нет
-  // записи после этого времени) — запускаем её немедленно.
-  void (async () => {
-    try {
-      const definitions = await loadTaskDefinitions();
-      const history = await loadHistory();
-      const now = new Date();
-      const catchUpThresholdMs = 5 * 60 * 1000;
-
-      // Сначала запускаем задачи с более высоким приоритетом (10 — максимум).
-      const prioritized = [...definitions].sort(
-        (a, b) => (normalizePriority(b.priority) ?? 5) - (normalizePriority(a.priority) ?? 5),
-      );
-
-      for (const def of prioritized) {
-        // Catch-up имеет смысл только для cron-задач.
-        if ((def.triggerType ?? "cron") !== "cron") continue;
-        if (!def.schedule) continue;
-        // Задача на паузе до даты — её включит авто-продолжение.
-        if (def.pausedUntil) continue;
-        const prev = prevRun(def.schedule, now, def.timezone);
-        if (!prev) continue;
-        const ageMs = now.getTime() - prev.getTime();
-        if (ageMs < catchUpThresholdMs) continue;
-
-        // Есть ли запись в истории после предполагаемого времени запуска?
-        const ranAfter = history.some(
-          (r) =>
-            r.taskName.toLowerCase() === def.name.toLowerCase() &&
-            new Date(r.startedAt).getTime() >= prev.getTime(),
-        );
-        if (ranAfter) continue;
-
-        // Запускаем задачу и пишем в лог.
-        try {
-          await runTaskEntry(def.name);
-          console.log(
-            `[agent-steward] Запущено восстановление пропущенной задачи "${def.name}" (последний срабатывал ~${Math.round(ageMs / 1000)} с назад).`,
-          );
-        } catch (err) {
-          console.error(
-            `[agent-steward] Не удалось восстановить задачу "${def.name}": ${
-              err instanceof Error ? err.message : String(err)
-            }`,
-          );
-        }
-      }
-    } catch (err) {
-      console.error(
-        `[agent-steward] Catch-up ошибка: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-  })();
-
-  // Файловые триггеры (File Watchers): задачи с triggerType === "file"
-  // запускаются при изменении watchPath через chokidar (с дебаунсом).
-  fileWatcherManager = new FileWatchManager(async (taskName) => {
-    try {
-      // PL-130: задачу уже запустили — последующие правки наблюдаемого файла
-      // сделаны этим же агентом и не должны вызывать самоповтор (11 лишних
-      // запусков в зонде DS313-FILE-PROBE).
-      // PL-143: окно берётся из AGENT_STEWARD_FILE_SELF_WRITE_SUPPRESS_MS
-      // (по умолчанию FILE_TRIGGER_SELF_WRITE_SUPPRESS_MS); каждое фактическое
-      // подавление логируется в FileWatchManager.onChange с префиксом PL-143.
-      console.log(
-        `[PL-143] Задача "${taskName}": установлено окно подавления self-write ` +
-          `${fileWatcherManager?.selfWriteSuppressMs ?? FILE_TRIGGER_SELF_WRITE_SUPPRESS_MS} мс.`,
-      );
-      fileWatcherManager?.suppressForTask(taskName);
-      await scheduleEventRun(taskName, "изменение отслеживаемого файла");
-    } catch (err) {
-      console.error(
-        `[agent-steward] Не удалось запустить задачу "${taskName}" по файловому триггеру: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
-    }
-  });
-
-  // Спринт 27: git-триггеры — опрос HEAD и запуск при новых коммитах,
-  // затронувших подходящие файлы.
-  gitTriggerManager = new GitTriggerManager(async (taskName, info) => {
-    try {
-      await scheduleEventRun(taskName, `новый коммит ${info.head?.slice(0, 7) ?? ""}`);
-    } catch (err) {
-      console.error(
-        `[agent-steward] Не удалось запустить задачу "${taskName}" по git-триггеру: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
-    }
-  });
-  void refreshTriggers();
-
-  return {
-    projectDirectory,
-    dispose: () => {
-      clearInterval(pausedUntilTimer);
-      clearInterval(notificationTimer);
-      if (fileWatcherManager) {
-        void fileWatcherManager.stop();
-        fileWatcherManager = null;
-      }
-      if (gitTriggerManager) {
-        void gitTriggerManager.stop();
-        gitTriggerManager = null;
-      }
-    },
-  };
+  return createRuntimeCore(ctxLike, RUNTIME_DEPS);
 }
-
 /**
  * Реестр execute-обработчиков всех инструментов плагина.
  *
@@ -5224,28 +4990,10 @@ export function createShutdownHandler(
  * чтобы зарегистрировать его в своей версии API.
  */
 /**
- * Бивариантные сигнатуры (паттерн `bivarianceHack`). Типизированные
- * обработчики из `ToolHandlers` принимают конкретные `z.infer`-аргументы,
- * а реестр хранит их как `unknown`: вход проверен Zod-схемой инструмента
- * до вызова, поэтому приведение типов здесь не требуется.
+ * P-1.1: типы реестра переехали в src/tool-specs.ts. Локальный псевдоним
+ * сохраняет читаемость объявлений ниже и публичный контракт dist/index.js.
  */
-type ToolSpecExecute = {
-  bivarianceHack(args: unknown, context: ToolExecuteContext): Promise<Tool.Result>;
-}["bivarianceHack"];
-type ToolSpecAudit = {
-  bivarianceHack(args: unknown): Omit<AuditEntryInput, "actor"> | null;
-}["bivarianceHack"];
-
-export interface ToolSpec {
-  name: string;
-  input: z.ZodTypeAny;
-  /** PL-43: схема структурированного output (только V2 Code Mode; V1 использует content). */
-  output?: z.ZodTypeAny;
-  description: string;
-  execute: ToolSpecExecute;
-  /** Правила аудита; null/undefined — операция не пишется в журнал. */
-  audit?: ToolSpecAudit;
-}
+type ToolSpec = ToolSpecLike;
 
 /**
  * PL-70: единый контракт для всех manage_* инструментов. Агент теряет вызовы,
@@ -5274,13 +5022,9 @@ export function createToolSpecs(
   runtime: SchedulerRuntime,
   env: NodeJS.ProcessEnv = process.env,
 ): ToolSpec[] {
-  // QV-8: обёртка задач выставляет маркер дочернего прогона перед `opencode run`.
-  // Такой ребёнок не должен получать инструменты планировщика — иначе он видит
-  // весь surface родителя и может рекурсивно создавать задачи.
-  if (isChildRunMode(env)) {
-    console.log(`[qv8] ${CHILD_RUN_ENV}: инструменты планировщика не регистрируются`);
-    return [];
-  }
+  // Объявления инструментов остаются в адаптере: это публичный контракт
+  // surfaces для V1/V2 и контрактных тестов. Общие правила (QV-8, профили)
+  // применяет buildToolSpecs из src/tool-specs.ts.
   const handlers = createToolHandlers(runtime);
   const specs: ToolSpec[] = [
     {
@@ -5603,9 +5347,9 @@ export function createToolSpecs(
       execute: handlers.emit_event,
     },
   ];
-  // T-1/T-3: фильтруем уже собранный реестр. Полный список остаётся в
-  // исходнике и доступен через AGENT_STEWARD_TOOL_PROFILE=all.
-  return filterToolSpecsByProfile(specs, env);
+  // T-1/T-3: фильтрация по профилю и запрет инструментов в дочернем прогоне
+  // применяются общим построителем из src/tool-specs.ts.
+  return buildToolSpecs(runtime, env, specs);
 }
 
 /**

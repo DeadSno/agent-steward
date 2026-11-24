@@ -26,11 +26,15 @@ const USAGE = `agent-steward — планировщик agent jobs
   agent-steward pipeline validate <file> [--json]
   agent-steward pipeline apply <file> [--dry-run] [--json]
   agent-steward pipeline export --pipeline <name> [--out <file>]
+  agent-steward mcp
+  agent-steward serve [--port <number>]
 
 Команды:
   validate  проверить opencode.pipeline.yaml, не меняя задачи
   apply     создать/обновить задачи из файла (идемпотентно)
   export    выгрузить задачи pipeline из БД обратно в YAML
+  mcp       поднять 32 инструмента как MCP-сервер на stdio
+  serve     поднять локальный дашборд без OpenCode
 
 Опции:
   --json        машинный вывод
@@ -382,6 +386,16 @@ async function main(argv: string[]): Promise<number> {
   }
   if (group === "run") {
     return runAdHoc([command, ...rest].filter((value): value is string => Boolean(value)));
+  }
+  if (group === "mcp") {
+    const { startMcpServer } = await import("./mcp.js");
+    await startMcpServer();
+    return 0;
+  }
+  if (group === "serve") {
+    const { startStandaloneDashboard } = await import("./serve.js");
+    await startStandaloneDashboard(rest);
+    return 0;
   }
   if (group !== "pipeline") {
     console.error(`Неизвестная команда «${group}».\n`);

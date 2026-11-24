@@ -312,7 +312,8 @@ try {
   // B2: повторы принадлежат recorder'у. POSIX-обёртка запускает opencode один
   // раз (`exec`), своего retry-цикла у неё нет — иначе получилось бы (1+N)^2.
   check("ретраи: POSIX-обёртка не содержит retry-цикла", !/retry/i.test(script));
-  check("ретраи: POSIX-обёртка делает один запуск через exec", script.includes("exec opencode run"));
+  // P-3.2: exec идёт через параметризованную команду агента (дефолт opencode run --auto).
+  check("ретраи: POSIX-обёртка делает один запуск через exec", script.includes('exec "$AGENT_COMMAND_PATH" $AGENT_ARGS'));
 } catch (err) {
   console.log("[diag] section 4 THREW:", err instanceof Error ? err.stack : String(err));
   check("backstop: в обёртке есть проверка PROMPT_BYTES", false, "section threw");
