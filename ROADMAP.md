@@ -25,10 +25,17 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 ---
 
 
-**Задача X-4 — Dependabot** · P2 · ⏸️
-- [ ] X-4.1 Мерж #4 (plugin 2.3.0)
-- [ ] X-4.2 OpenTUI 0.9.0
-  > Блокировка (2026-11-24): PR #4 открыт (base `main` отстаёт от `dev` на 138 коммитов, head `89c2b89`), но в CI 2 из 10 джобов отменены (macOS, node 22/24) — по `docs/RELEASE-RUNBOOK.md` при незелёном CI мерж запрещён. `gh` CLI и `GH_TOKEN` отсутствуют; обновление OpenTUI 0.9.0 по runbook разрешено только после зелёного PR #4.
+**Задача X-4 — Dependabot** · P2 · 🔄
+- [ ] X-4.1 Смержить PR #5 (OpenTUI 0.9.0)
+  > 2026-11-24: PR #7 (group `@opencode/*` → 2.3.2) замержен в `main` (`10168ca`), PR #4 (plugin 2.3.0) закрыт как устаревший. Остался #5: `@opentui/core`/`@opentui/solid` 0.8.4 → 0.9.0. Первый прогон CI имел флейк `EPERM ... registry-p2-16-parallel.lock` в `test-registry-resilience.mjs` на windows/node22; после `Re-run failed jobs` все 10 джобов зелёные, `mergeable: clean`. (`gh` CLI и `GH_TOKEN` в окружении отсутствуют — операции через веб/GitHub API.)
+- [ ] X-4.2 Включить auto-merge для minor/patch в `.github/dependabot.yml`
+  > Чтобы patch/minor не копились руками: GitHub Settings → Enable auto-merge; в `.github/dependabot.yml` оставить текущую группировку `@opencode/*` и dev-зависимостей. Мажоры по-прежнему вручную.
+- [ ] X-4.3 Устранить гонку за lock-файл в `test-registry-resilience.mjs`
+  > Флейк: `EPERM: operation not permitted, open '...\locks\registry-p2-16-parallel.lock'` при параллельном доступе 32 задач к registry lock (Windows, Node 22). Действие: сериализовать доступ/добавить retry с экспоненциальной задержкой вокруг `LockManager.acquire` в тесте, чтобы PR с dev-зависимостями не краснели случайно. Не блокирует X-4.1.
+
+**Задача QA-LINT — ESLint-предупреждения в CI** · P3 · ⬜
+- [ ] QA-LINT.1 Разобрать 60 warnings в аннотациях CI (`ci.yml`, `run 44308638812`)
+  > Пример: `src/core/audit.ts:165/169 — Unsafe member access .details.json on an any value`. `eslint-baseline.json` нулевой и гейт `lint:strict` включён, но предупреждения остаются в аннотациях. Цель: типизация `details.json` через zod/явный тип, 0 warnings в аннотациях. Регрессия: `npm run lint:strict`.
 
 ## Деталь 3.9 — Портабельность: OpenCode → MCP / dsh / ACP (0.2.x+)
 `src/core/`, `src/adapters/`, `src/invokers/`, `src/cli.ts`
