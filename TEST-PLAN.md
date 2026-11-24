@@ -44,7 +44,7 @@
 # Выполнять из корня чек-аута agent-steward (например, .steward-dev или tp-audit-dev)
 npm run build          # tsc: dist/ (сервер, RPC, ядро)
 npm run build:gui      # vite: gui-experimental.cjs (панель OpenCode)
-npm test               # 122 файлов test-*.mjs (114 npm-скриптов), полный регресс
+npm test               # 121 файлов test-*.mjs (114 npm-скриптов), полный регресс
 node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с сид-данными
 ```
 
@@ -63,9 +63,9 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 | MCP-инструментов | 32 | Приложение B |
 | RPC-методов | 59 | Приложение A |
 | HTTP-эндпоинтов | 19 | Приложение C |
-| Файлов test-*.mjs | 122 | корень репозитория |
+| Файлов test-*.mjs | 121 | корень репозитория |
 | npm-скриптов test* | 114 | package.json |
-| Покрытие в §5 | 122 | TEST-PLAN §5 |
+| Покрытие в §5 | 121 | TEST-PLAN §5 |
 | SCHEMA_VERSION | 14 | src/db/schema.ts |
 <!-- counters:end -->
 
@@ -573,7 +573,7 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 | S16.1.1 | 🧪 tsc | `npm run build` | 0 ошибок |
 | S16.1.2 | 🧪 vite | `npm run build:gui` | `gui-experimental.cjs` создан, каталоги внутри |
 | S16.1.3 | 🧪 Экспорты | `package.json.exports` | `./gui-experimental` и основные точки входа валидны |
-| S16.1.4 | 🧪 Тесты | `npm test` | 122 файлов `test-*.mjs` (114 npm-скриптов), 0 падений |
+| S16.1.4 | 🧪 Тесты | `npm test` | 121 файлов `test-*.mjs` (114 npm-скриптов), 0 падений |
 | S16.1.5 | 🧪 Docs | `node test-docs.mjs` | Команды и ключи в README/CHANGELOG актуальны |
 | S16.1.6 | 🧪 Чистая установка | `npm pack` → установка в пустой проект | Плагин стартует, панель открывается |
 | S16.1.7 | 🧪 Версия | `version.ts` / CHANGELOG | Совпадают, дата и раздел Fixed на месте |
@@ -735,7 +735,6 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 | `test-windows-locales.mjs` | D01 (формат даты one-shot en-US/zh-CN, P1-8.T1.4) |
 | `test-windows-oem.mjs` | D01 (декодирование консоли OEMCP, T-06) |
 | `test-agent-tools.mjs` | D02, D04 |
-| `test-tool-specs.mjs` | D02 (P-1.2: контрактный снимок 32 инструментов и паритет со списком RPC) |
 | `test-task-status.mjs` | D02 |
 | `test-task-name-limit.mjs` | D02.1.15 |
 | `test-task-name-collision.mjs` | D02.1.5 |
