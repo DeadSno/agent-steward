@@ -68,11 +68,6 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 - [ ] P-5.2 Опциональные VS Code / JetBrains extension только для UX
 - [ ] P-5.3 Subpath exports `./core`, `./mcp`, `./dsh` (без монорепо — 130 тестов остаются рабочими)
 
-## Деталь 3.12 — Бюджет: жёсткий enforcement и маршрутизация (0.0.7+)
-`src/core/ps-wrapper.ts`, `src/core/record-history.ts`, `src/core/budget.ts`, `src/core/dry-run.ts`, `src/index.ts`
-
-> Экономика токенов: телеметрия и рекомендации готовы, enforcement и автоприменение — нет.
-
 ---
 
 # 4. Правила работы (канбан)

@@ -246,8 +246,9 @@ applied through `PRAGMA user_version` on open. Step 11 adds functional indexes
   agent-executor abstraction (`src/core/agents.ts` / `agents-advanced.ts`) and the
   runner abstraction (`runner.ts` / `runner-docker.ts` / `runner-ssh.ts`, fail-open
   to local) exist, but are not wired into the production mission path.
-- `checkBudgetGate` is called at tool/RPC/manual entry points; registered tasks
-  started by the OS scheduler do not pass a budget gate (PL-125).
+- `checkBudgetGate` / `checkRunBudgetGate` are called at tool/RPC/manual entry
+  points and on the registered OS-scheduler path via the wrapper's `--budget-gate`
+  check (B-1.1, PL-125); an over-limit run is recorded as `skipped` with a reason.
 - Approval A-1 is closed and runs through `approval-api.ts`, but mission plans with
   deferred effects still need a manual restart after approval.
 
@@ -583,8 +584,8 @@ semantics:
   commands, cwd, roles, estimates from recent runs), reports
   `preflightSkipRiskWarnings` and `recommendModelForTask` and executes nothing;
   `preflightScope` validates SCOPE paths before `schedule_task`. `checkBudgetGate`
-  blocks over-limit daily/weekly spend at tool/RPC/manual entry points. The
-  OS-scheduler wrapper path still has no budget gate (**PL-125**).
+  blocks over-limit daily/weekly spend and per-task `tokenBudget` at manual/tool/RPC
+  entry points and on the OS-scheduler wrapper path since B-1.1 (PL-125).
 
 Per-run `tokenBudget` is implemented (`evaluateTaskTokenBudgetGate`), but cost
 forecasting, Grafana export and automatic enforcement of the efficiency score
