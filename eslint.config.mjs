@@ -3,7 +3,8 @@ import tseslint from "typescript-eslint";
 /**
  * ESLint flat config (ESLint v10).
  * Проверяет только src/ — mjs/js тест-файлы не трогаем.
- * База: eslint:recommended + @typescript-eslint/recommended-type-checked.
+ * База: @typescript-eslint/recommended-type-checked + stylistic-type-checked
+ * (eslint:recommended здесь не подключён — @eslint/js не является зависимостью).
  * Семейство no-unsafe-* и prefer-nullish-coalescing — warn, а не error:
  * в коде много преднамеренных any/|| из до-ESLint эпохи; они не должны
  * падать CI, но подсвечиваются в редакторе.
@@ -50,7 +51,8 @@ export default tseslint.config(
       "quotes": ["error", "double", { "avoidEscape": true }],
       "indent": ["error", 2, { "SwitchCase": 1 }],
       "comma-dangle": ["error", "always-multiline"],
-      "@typescript-eslint/no-console": "off",
+      // QW-14.1: у `@typescript-eslint` нет правила `no-console` — используется core-правило.
+      "no-console": "off",
       "@typescript-eslint/no-unused-vars": ["warn", { "argsIgnorePattern": "^_", "caughtErrorsIgnorePattern": "^_" }],
       "@typescript-eslint/no-explicit-any": "warn",
       "@typescript-eslint/strict-boolean-expressions": "off",

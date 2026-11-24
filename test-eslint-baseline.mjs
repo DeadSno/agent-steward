@@ -136,6 +136,14 @@ check("package.json: скрипт lint:strict и тест подключены �
   assert.ok(pkg.scripts.test.includes("node test-eslint-baseline.mjs"));
 });
 
+check("QW-14.1: в flat-конфиге нет несуществующего @typescript-eslint/no-console", () => {
+  const config = fs.readFileSync(path.join(root, "eslint.config.mjs"), "utf8");
+  assert.ok(!config.includes('"@typescript-eslint/no-console"'));
+  assert.ok(config.includes('"no-console": "off"'));
+  assert.ok(!config.includes("База: eslint:recommended"));
+  assert.ok(config.includes("@typescript-eslint/recommended-type-checked + stylistic-type-checked"));
+});
+
 const failed = results.filter((ok) => !ok).length;
 console.log(`\nESLint baseline: ${results.length - failed}/${results.length} проверок пройдено.`);
 process.exit(failed > 0 ? 1 : 0);
