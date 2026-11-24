@@ -78,6 +78,10 @@ export function initDb(file: string = dbFile): SqliteDatabase {
   dbFile = file;
   fs.mkdirSync(path.dirname(file), { recursive: true });
 
+  // D15 (IM-14): только существующий файл с данными нуждается в страховке
+  // перед миграцией. Свежая пустая БД создаётся DatabaseSync-ом здесь же.
+  const hadData = fs.existsSync(file) && fs.statSync(file).size > 0;
+
   const DatabaseSync = loadSqlite();
   const instance = new DatabaseSync(file);
 
@@ -93,7 +97,7 @@ export function initDb(file: string = dbFile): SqliteDatabase {
   instance.exec("PRAGMA journal_mode = WAL;");
   instance.exec("PRAGMA synchronous = NORMAL;");
   instance.exec("PRAGMA foreign_keys = ON;");
-  applySchema(instance);
+  applySchema(instance, hadData ? file : undefined);
 
   db = instance;
   return instance;

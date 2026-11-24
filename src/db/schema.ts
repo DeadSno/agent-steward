@@ -1,3 +1,5 @@
+import { createMigrationBackup } from "./migration-backup.js";
+
 /**
  * Схема БД планировщика (Спринт 12 + workspaces из Спринта 13).
  *
@@ -693,13 +695,20 @@ function tableColumns(db: SchemaDb, table: string): string[] {
  * После успешных миграций версия фиксируется в `PRAGMA user_version`, чтобы
  * будущие ступени могли выполняться инкрементально, а не перебирать колонки.
  */
-export function applySchema(db: SchemaDb): void {
+export function applySchema(db: SchemaDb, dbFile?: string): void {
+  // DDL идемпотентен (IF NOT EXISTS) и должен идти ДО ступеней: часть из них
+  // предполагает, что базовые таблицы уже существуют.
   db.exec(SCHEMA_SQL);
 
   const fromVersion = getSchemaVersion(db);
+  let currentVersion = fromVersion;
   for (const step of MIGRATIONS) {
-    if (fromVersion < step.to) {
+    if (currentVersion < step.to) {
+      // D15 (IM-14): перед каждой ступенью — проверенная копия БД.
+      // При ошибке снимка исключение прерывает миграцию: данные не тронуты.
+      createMigrationBackup(db, dbFile, currentVersion, step.to);
       step.migrate(db);
+      currentVersion = step.to;
     }
   }
 

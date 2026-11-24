@@ -92,6 +92,8 @@ const { initDb, closeDb, getDb, getDbFile, isDatabaseEmpty, getDbStatus } =
 const { migrateJsonToDb } = await import("./dist/db/migrate.js");
 const { backupDatabase, restoreDatabase, verifyDbBackup, defaultBackupPath } =
   await import("./dist/db/backup.js");
+const { createMigrationBackup, MIGRATION_BACKUP_KEEP } =
+  await import("./dist/db/migration-backup.js");
 const { recoverInterruptedRuns } = await import("./dist/db/recovery.js");
 const tasksRepo = await import("./dist/db/tasks-repo.js");
 const historyRepo = await import("./dist/db/history-repo.js");
@@ -320,6 +322,37 @@ assert(
     legacyMetrics.partial === 0,
   "миграция старой БД не теряет накопленные метрики"
 );
+// --- 5a. D15 / IM-14: авто-бэкап перед миграцией ------------------------
+const migrationBackupDir = `${legacyDbPath}.migration-backups`;
+const migrationBackups = fs
+  .readdirSync(migrationBackupDir)
+  .filter((name) => name.endsWith(".db"))
+  .sort();
+assert(migrationBackups.length > 0, "D15: перед миграцией создан бэкап legacy-БД");
+const firstMigrationBackup = path.join(migrationBackupDir, migrationBackups[0]);
+const backupCheck = verifyDbBackup(firstMigrationBackup);
+assert(
+  backupCheck.ok &&
+    fs.readFileSync(firstMigrationBackup).subarray(0, 16).toString("utf8") === "SQLite format 3\u0000",
+  "D15: миграционный бэкап проходит проверку SHA-256 и SQLite-заголовка"
+);
+assert(
+  migrationBackups.length <= MIGRATION_BACKUP_KEEP,
+  "D15: действует политика удержания последних копий"
+);
+const noSerializeDb = {
+  exec() {},
+  prepare() {
+    return { all: () => [{ integrity_check: "ok" }] };
+  },
+};
+let backupRefused = false;
+try {
+  createMigrationBackup(noSerializeDb, legacyDbPath, 1, 2);
+} catch {
+  backupRefused = true;
+}
+assert(backupRefused, "D15: без serialize() миграция прерывается, а не переписывает БД");
 closeDb();
 initDb(dbPath);
 
