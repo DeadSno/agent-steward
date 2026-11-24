@@ -8,7 +8,7 @@
 
 | Импорт | Что даёт |
 | --- | --- |
-| `agent-steward/core` | `createRuntime`, `createToolSpecs`, `ToolSpec`, `TOOL_NAMES` |
+| `agent-steward/core` | `createRuntimeCore`, `buildToolSpecs`, `RuntimeDeps`, `ToolSpec`, `TOOL_NAMES` — только контекст-free ядро (P-1.2); `createRuntime`/`createToolSpecs` остаются в корневом `agent-steward` и не импортируются фасадом |
 | `agent-steward/mcp` | `createMcpServer`, `startMcpServer`, `mcpToolSpecs` |
 | `agent-steward/dsh` | `defineDshTools`, `submitDshJob`, `DSH_ADAPTER_VERSION` |
 
@@ -45,7 +45,7 @@ MCP-конфига достаточно для Cursor/VS Code/IDEA — см. `do
 
 ```bash
 npm run build
-node test-portability-exports.mjs
+npm run test:portability-exports   # --preserve-symlinks: dist/ может быть junction (QA-PORT-8)
 node test-mcp-adapter.mjs
 node test-dsh-adapter.mjs
 node test-invokers.mjs

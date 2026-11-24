@@ -41,7 +41,7 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 - [ ] QA-PORT-4: `emit_event` и `schedule_advanced` есть в исходниках плагина (`src/index.ts:5376`, `:1105`), но отсутствуют в доступном MCP-инструментарии (core-профиль): event-driven задачи невозможно ни создать, ни запустить событием; `schedule_task` с `mcpEvent` отвергается с подсказкой про admin-профиль (PL-145) — P2. Действие: либо экспортировать `emit_event` в core-профиль, либо явно документировать и добавить инструмент «create event task» в core. Обнаружено 24.11.2026.
 - [ ] QA-PORT-5: history дочерней задачи `BN-PROBE-OS` (успешный запуск 24.11.2026, файл-артефакт создан) содержит `status: "success"` одновременно с `error: "PL-81: успешное завершение без quality gate"` — P2. Действие: либо не писать `error` для успешных записей, либо вынести диагностику PL-81 в отдельное поле. Обнаружено 24.11.2026.
 - [ ] QA-PORT-6: дочерний `explore`-суб-агент (максимум 1 по заданию) прервался сообщением `Free usage limit reached` и не вернул результат; обёртка плагина не отличила лимит Free от обычной ошибки и не записала диагностику (аналог PL-87) — P2. Действие: классифицировать ошибку квоты отдельным статусом/причиной и сохранять частичный результат суб-агента. Обнаружено 24.11.2026.
-- [ ] QA-PORT-8: `test-portability-exports.mjs` импортирует `agent-steward/core|mcp|dsh` через self-reference, но `dist/` в свежем worktree — junction на `.steward-dev\dist`; оттуда `@modelcontextprotocol/sdk` ищется в `.steward-dev\node_modules` (junction на `opencode-windows-scheduler\node_modules`), где SDK отсутствует → `ERR_MODULE_NOT_FOUND` и тест падает до проверки контракта — P2. Действие: импортировать в тесте относительные `./dist/*.js` и/или давать каждому worktree собственный `dist`, зафиксировать ограничение в `AGENTS.md` (W-1). Обнаружено 24.11.2026.
+
 
 ---
 
@@ -166,7 +166,6 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 > P-1 в dev-линии частично реализован (subpath exports `./core` / `./mcp` / `./dsh`, `src/mcp.ts`), но в релизе ещё не зафиксирован. Жёсткий порядок: P-1 → P-2 → P-3; P-2 без закрытого P-1 не начинать.
 
 **Задача P-1 — изоляция ядра** · P1 · 🔄
-- [ ] P-1.2 Зафиксировать публичный facade `./core` без утечки OpenCode-контекста
 - [ ] P-1.3 Регрессия: `test-portability-exports.mjs`, `npm pack --dry-run`, CI на 3 ОС
 
 **Задача P-2 — MCP-адаптер (~80% ценности клина)** · P1 · ⬜
