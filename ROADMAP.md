@@ -28,8 +28,6 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 
 ## QA-находки (проверка работоспособности плагина 24.11.2026)
 
-- QA-PORT-16: запущенный процесс плагина не подхватывает собранный `dist/`: `schedule_task` с `triggerType:"mcp-event"` + `mcpEvent` отклоняется сообщением «исключены из core-профиля», хотя в свежей сборке поле присутствует; в каталоге инструментов сессии нет `emit_event`/`schedule_advanced`/`get_analytics`/`get_metrics` — P2. Действие: явно документировать обязательный перезапуск плагина после `npm run build` либо горячо перечитывать реестр инструментов. Обнаружено 24.11.2026.
-
 - QA-PORT-17: префлайт SCOPE ошибочно трактует прозу как пути: `schedule_task` с промптом «Scope: tp-audit-dev, branch dev.» (`src/core/scheduler/run-now.ts`, `extractCreateIntentPaths`/префлайт) отклонён PL-79/PL-82 с «несуществующие пути: tp-audit-dev, branch» — P2. Действие: извлекать только явные пути с расширением файла/списком `filesCreate`, игнорировать произвольную прозу после ключевого слова Scope. Обнаружено 24.11.2026.
 
 - QA-D319-1: тест `test-skill.mjs` читает скилл из устаревшей копии `.steward-dev/skills/scheduled-job-best-practices/SKILL.md` из-за junction `dist/` → `.steward-dev/dist`: `loadSchedulerSkill()` (`src/skill.ts:82`) резолвит packageRoot по `import.meta.url`, поэтому правки `skills/scheduled-job-best-practices/SKILL.md` в репозитории не попадают в тест — `node test-skill.mjs` даёт 25/26 (`FAIL IM-4: skill documents batch_call isolation`), хотя исходный файл содержит `batch_call` — P2. Действие: синхронизировать `skills/` в `.steward-dev` при сборке/тестах либо разорвать junction/резолвить packageRoot через cwd исходного чек-аута, как сделано для i18n в QA-PORT-13. Обнаружено 24.11.2026.

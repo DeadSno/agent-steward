@@ -776,6 +776,16 @@ Thirty-four tools: `schedule_task`, `list_tasks`, `update_task`, `schedule_advan
 `pipeline_validate`, `pipeline_apply`, `pipeline_export`,
 `backup_db`, `restore_db` (online SQLite snapshot with SHA-256 and logical restore).
 
+**Restart after a rebuild (QA-PORT-16).** A running plugin process caches its tool
+catalog and the loaded `dist/` modules at startup. After `npm run build` (or a
+checkout that replaces `dist/`, such as a worktree junction), restart/reload the
+plugin before relying on new tools or schema fields. Until then the session may
+still offer an older tool set — for example, `schedule_task` can reject
+`triggerType: "mcp-event"` with `mcpEvent` as "excluded from the core profile",
+and `emit_event`, `schedule_advanced`, `get_analytics` or `get_metrics` may be
+unknown. This is stale in-process state, not a missing capability in the fresh
+build; verify with `list_tasks`/`get_dashboard_info` after restarting.
+
 A bundled skill, `scheduled-job-best-practices`, teaches the agent safe defaults:
 least privilege, Quality Gates, timeout, matrix concurrency, DAG rules and a
 create → dry-run → run-now → inspect loop. It is registered automatically by the
