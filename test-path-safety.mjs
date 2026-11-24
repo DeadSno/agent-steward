@@ -53,6 +53,17 @@ for (const hostile of ["../../evil", "..\\..\\evil", "/etc/passwd", "a/b/c"]) {
     written === "safe prompt");
 }
 
+// --- PL-139: детерминированная регрессия на кириллический prompt round-trip ---
+// Могилибица при выводе в консоль PowerShell / Win32_Process.CommandLine — артефакт
+// кодовой страницы терминала, а не повреждение файла: проверяем чтением как UTF-8.
+const cyrillicPrompt = "ГОАЛ: проверка кириллицы — Święty Łódź 中文";
+const cyrillicPath = await writePromptFile("CyrillicUtf8Probe", cyrillicPrompt);
+check("writePromptFile('CyrillicUtf8Probe') возвращает путь в pluginDir/prompts",
+  insidePluginDir(cyrillicPath) && path.dirname(path.resolve(cyrillicPath)) === path.join(pluginDir, "prompts"));
+const cyrillicWritten = await fs.promises.readFile(cyrillicPath, "utf8");
+check("writePromptFile('CyrillicUtf8Probe') round-trip кириллицы через UTF-8 (после снятия BOM)",
+  cyrillicWritten.replace(/^\uFEFF/, "") === cyrillicPrompt);
+
 // Ни один файл не должен появиться выше pluginDir.
 const parentEntries = fs.readdirSync(tempRoot).filter((entry) => entry !== "opencode");
 check("во временном корне нет файлов, созданных обходом пути", parentEntries.length === 0);

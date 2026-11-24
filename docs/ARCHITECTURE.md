@@ -458,6 +458,8 @@ enforced:
 | Logging | Append-only log per task under `logs/` |
 | History | Calls the recorder with `--start` and `--finish` |
 
+**Prompt encoding (PL-139).** The prompt file is written in UTF-8 (with a BOM on Windows, where PowerShell 5.1 needs it to decode Cyrillic correctly) and read by the wrapper via `Get-Content -Raw -Encoding UTF8` (`core/ps-wrapper.ts`). Mojibake observed when printing the prompt to a PowerShell console or through `Win32_Process.CommandLine` can be an artifact of the terminal's code page and does not mean the file is corrupted — verify by reading it back as UTF-8.
+
 **Gate input and worktree snapshots.** A task with `qualityGate` stores a hash of
 the gate command, prompt and timeout when it is created (`core/gate-integrity.ts`,
 `gate-snapshots/*.json`); before the gate runs, both wrappers verify that hash and
