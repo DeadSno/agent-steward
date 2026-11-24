@@ -26,12 +26,10 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 
 
 **Задача X-4 — Dependabot** · P2 · 🔄
-- [ ] X-4.1 Смержить PR #5 (OpenTUI 0.9.0)
-  > 2026-11-24: PR #7 (group `@opencode/*` → 2.3.2) замержен в `main` (`10168ca`), PR #4 (plugin 2.3.0) закрыт как устаревший. Остался #5: `@opentui/core`/`@opentui/solid` 0.8.4 → 0.9.0. Первый прогон CI имел флейк `EPERM ... registry-p2-16-parallel.lock` в `test-registry-resilience.mjs` на windows/node22; после `Re-run failed jobs` все 10 джобов зелёные, `mergeable: clean`. (`gh` CLI и `GH_TOKEN` в окружении отсутствуют — операции через веб/GitHub API.)
 - [ ] X-4.2 Включить auto-merge для minor/patch в `.github/dependabot.yml`
   > Чтобы patch/minor не копились руками: GitHub Settings → Enable auto-merge; в `.github/dependabot.yml` оставить текущую группировку `@opencode/*` и dev-зависимостей. Мажоры по-прежнему вручную.
 - [ ] X-4.3 Устранить гонку за lock-файл в `test-registry-resilience.mjs`
-  > Флейк: `EPERM: operation not permitted, open '...\locks\registry-p2-16-parallel.lock'` при параллельном доступе 32 задач к registry lock (Windows, Node 22). Действие: сериализовать доступ/добавить retry с экспоненциальной задержкой вокруг `LockManager.acquire` в тесте, чтобы PR с dev-зависимостями не краснели случайно. Не блокирует X-4.1.
+  > Флейк: `EPERM: operation not permitted, open '...\locks\registry-p2-16-parallel.lock'` при параллельном доступе 32 задач к registry lock (Windows, Node 22). Действие: сериализовать доступ/добавить retry с экспоненциальной задержкой вокруг `LockManager.acquire` в тесте, чтобы PR с dev-зависимостями не краснели случайно.
 
 ## Деталь 3.9 — Портабельность: OpenCode → MCP / dsh / ACP (0.2.x+)
 `src/core/`, `src/adapters/`, `src/invokers/`, `src/cli.ts`
