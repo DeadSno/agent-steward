@@ -17,9 +17,9 @@ import type { SchedulerBackend } from "./core/scheduler/types.js";
 import { maybeRunHistoryRetention } from "./core/retention.js";
 import { LockManager } from "./core/lock.js";
 import { LOCK_DIR } from "./types.js";
-import { prevRun } from "./core/schedule-v2.js";
+import { selectCatchUpTasks } from "./core/catch-up.js";
 import { loadHistory } from "./history.js";
-import { loadTaskDefinitions, normalizePriority } from "./task-transfer.js";
+import { loadTaskDefinitions } from "./task-transfer.js";
 import {
   FILE_TRIGGER_SELF_WRITE_SUPPRESS_MS,
   FileWatchManager,
@@ -221,41 +221,22 @@ export async function createRuntimeCore(ctxLike: RuntimeContextLike, deps: Runti
       const definitions = await loadTaskDefinitions();
       const history = await loadHistory();
       const now = new Date();
-      const catchUpThresholdMs = 5 * 60 * 1000;
+      // QW-2: paused/pausedUntil отсеиваются внутри selectCatchUpTasks.
+      // На POSIX runTask спавнит bash напрямую и не проверяет disabled-задачу,
+      // поэтому старт плагина больше не должен запускать задачи на паузе.
+      const candidates = selectCatchUpTasks(definitions, history, now);
 
-      // Сначала запускаем задачи с более высоким приоритетом (10 — максимум).
-      const prioritized = [...definitions].sort(
-        (a, b) => (normalizePriority(b.priority) ?? 5) - (normalizePriority(a.priority) ?? 5),
-      );
-
-      for (const def of prioritized) {
-        // Catch-up имеет смысл только для cron-задач.
-        if ((def.triggerType ?? "cron") !== "cron") continue;
-        if (!def.schedule) continue;
-        // Задача на паузе до даты — её включит авто-продолжение.
-        if (def.pausedUntil) continue;
-        const prev = prevRun(def.schedule, now, def.timezone);
-        if (!prev) continue;
-        const ageMs = now.getTime() - prev.getTime();
-        if (ageMs < catchUpThresholdMs) continue;
-
-        // Есть ли запись в истории после предполагаемого времени запуска?
-        const ranAfter = history.some(
-          (r) =>
-            r.taskName.toLowerCase() === def.name.toLowerCase() &&
-            new Date(r.startedAt).getTime() >= prev.getTime(),
-        );
-        if (ranAfter) continue;
-
+      for (const candidate of candidates) {
+        const { definition, ageMs } = candidate;
         // Запускаем задачу и пишем в лог.
         try {
-          await deps.runTaskEntry(def.name);
+          await deps.runTaskEntry(definition.name);
           console.log(
-            `[agent-steward] Запущено восстановление пропущенной задачи "${def.name}" (последний срабатывал ~${Math.round(ageMs / 1000)} с назад).`,
+            `[agent-steward] Запущено восстановление пропущенной задачи "${definition.name}" (последний срабатывал ~${Math.round(ageMs / 1000)} с назад).`,
           );
         } catch (err) {
           console.error(
-            `[agent-steward] Не удалось восстановить задачу "${def.name}": ${
+            `[agent-steward] Не удалось восстановить задачу "${definition.name}": ${
               err instanceof Error ? err.message : String(err)
             }`,
           );

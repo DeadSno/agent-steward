@@ -184,11 +184,6 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 
 > Отчёт Qwen от 24.11.2026 проверяется по коду: в ROADMAP попадают только подтверждённые находки. QW-1 (worktree isolation) закрыт и перенесён в CHANGELOG. Неподтверждённые пункты P2/P3 ведутся в QW-6 до воспроизведения.
 
-**Задача QW-2 — catch-up на POSIX запускает задачи, стоящие на паузе** · P1 · ⬜
-- [ ] QW-2.1 Добавить `if (def.paused) continue;` в цикл catch-up `src/runtime.ts` рядом с проверкой `pausedUntil`
-- [ ] QW-2.2 Регрессия: paused cron-задача не запускается при старте, unpaused — запускается
-- [ ] QW-2.3 Проверки: `npm run build`, `test-run-state.mjs`/`test-crash-recovery.mjs`, `test-docs.mjs`
-
 **Задача QW-3 — macOS 13+ пауза не переживает выход/вход в систему** · P1 · ⬜
 - [ ] QW-3.1 На modern launchctl вызывать `disable gui/<uid>/<label>` при паузе и `enable` при возобновлении/установке
 - [ ] QW-3.2 Пауза при установке уже приостановленной задачи должна оставлять агент выключенным

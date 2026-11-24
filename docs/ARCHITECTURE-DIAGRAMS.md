@@ -21,6 +21,7 @@ src/core/analytics.ts
 src/core/approval-api.ts
 src/core/audit.ts
 src/core/budget.ts
+src/core/catch-up.ts
 src/core/cron-to-schtasks.ts
 src/core/dlq-api.ts
 src/core/dry-run.ts
@@ -113,7 +114,7 @@ src/db/tasks-repo.ts
 src/db/templates-repo.ts
 ```
 
-**Что видно:** 79 модулей в `src/core/` (из них 4 — `router/`, 10 — `scheduler/`, 1 — `wrappers/`) и 17 модулей в `src/db/`. Durable-слой вынесен в `src/db/`, оркестрация — в `src/core/`. Счётчик сверен с `src/core/**/*.ts` 23.11.2026 (71 → 79 после D-1/D-3, M-1…M-4, A-2, T-1 и S3-D36).
+**Что видно:** 80 модулей в `src/core/` (из них 4 — `router/`, 10 — `scheduler/`, 1 — `wrappers/`) и 17 модулей в `src/db/`. Durable-слой вынесен в `src/db/`, оркестрация — в `src/core/`. Счётчик сверен с `src/core/**/*.ts` 24.11.2026 (71 → 80 после D-1/D-3, M-1…M-4, A-2, T-1, S3-D36 и QW-2).
 
 **Ключевые выводы:** Принцип «ядро не зависит от транспорта» реализован через [`execution.ts`](src/core/execution.ts): исполнитель (`StepExecutor`) передаётся в `executeExecutionPlan` снаружи. Отдельного `gate-repo.ts` не существует — операции с `gate_outcomes` распределены между [`execution.ts`](src/core/execution.ts), [`runs-repo.ts`](src/db/runs-repo.ts) и [`capability-repo.ts`](src/db/capability-repo.ts).
 
