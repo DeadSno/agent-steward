@@ -17,12 +17,14 @@ import type { RunTaskResult, SchedulerBackend } from "./types.js";
 export function extractScopePaths(text: string): string[] {
   const line = /(?:^|\n)[^\n]*\bSCOPE\s*:\s*([^\n]*)/i.exec(text);
   if (!line) return [];
-  // PL-120: путь — это ведущая последовательность path-подобных символов
-  // (буквы/цифры/_, @, ., +, /, \, -, плюс * для glob). Всё, что идёт после
-  // первого иного символа (пробел, тире, кириллическая проза), — не путь.
-  // Отсекаем хвост вида "docs/FEATURES.md. Файл src/core/agents.ts — заглушка"
-  // и прекращаем разбор: дальше в SCOPE путей уже нет.
-  const pathRun = /^[A-Za-z0-9а-яёА-ЯЁ_@.+\/\-\\*]+/;
+  // PL-120 / PL-144: путь — это ведущая последовательность path-подобных
+  // символов (буквы/цифры/_, @, ., +, /, \, -, плюс * для glob). Кириллица
+  // НЕ входит в алфавит пути: русская проза («только TEST-PLAN.md») не должна
+  // трактоваться как путь и ломать pre-flight. Всё, что идёт после первого
+  // иного символа (пробел, тире, кириллица), — не путь. Отсекаем хвост вида
+  // "docs/FEATURES.md. Файл src/core/agents.ts — заглушка" и прекращаем разбор:
+  // дальше в SCOPE путей уже нет.
+  const pathRun = /^[A-Za-z0-9_@.+\/\-\\*]+/;
   const result: string[] = [];
   for (const raw of line[1].split(/[,;]/)) {
     const value = raw

@@ -1187,6 +1187,33 @@ try {
     JSON.stringify(mixedScope),
   );
 
+  // PL-144: кириллическая проза — не путь. Раньше pathRun включал а-яёА-ЯЁ,
+  // поэтому «SCOPE: только TEST-PLAN.md» отвергалось pre-flight как путь «только».
+  const cyrillicOnlyScope = extractScopePaths("SCOPE: только TEST-PLAN.md");
+  check(
+    "PL-144: русская проза не распознаётся как SCOPE-путь",
+    JSON.stringify(cyrillicOnlyScope) === JSON.stringify([]),
+    JSON.stringify(cyrillicOnlyScope),
+  );
+  const cyrillicMixedScope = extractScopePaths(
+    "SCOPE: TEST-PLAN.md, ещё немного описания задачи",
+  );
+  check(
+    "PL-144: корректный путь после кириллической прозы разбирается",
+    JSON.stringify(cyrillicMixedScope) === JSON.stringify(["TEST-PLAN.md"]),
+    JSON.stringify(cyrillicMixedScope),
+  );
+  const cyrillicSourceCheck = fs.readFileSync(
+    new URL("./src/core/scheduler/run-now.ts", import.meta.url),
+    "utf8",
+  );
+  const pathRunLine = cyrillicSourceCheck.split("\n").find((line) => line.includes("const pathRun ="));
+  check(
+    "PL-144: алфавит SCOPE-пути не содержит кириллицу",
+    !!pathRunLine && !/[а-яёА-ЯЁ]/.test(pathRunLine),
+    pathRunLine ?? "pathRun не найден",
+  );
+
   // PL-119: create-intent — SCOPE-пути создаваемых файлов не считаются missing.
   // Берём заведомо несуществующие маркеры, чтобы проверка не зависела от диска.
   const createIntentPaths = [
