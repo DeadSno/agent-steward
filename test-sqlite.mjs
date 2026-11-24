@@ -359,8 +359,15 @@ assert(Boolean(started), "дашборд запущен на свободном 
 const base = "http://127.0.0.1:" + getDashboardPort();
 
 const page = await (await fetch(base + "/")).text();
-assert(page.includes("💾 Скачать БД"), "в дашборде есть кнопка «Скачать БД»");
-assert(page.includes("БД: ✅ SQLite (WAL)"), "в футере индикатор SQLite (WAL)");
+// Дашборд локализуется (RU/EN, zh/tr → EN), принимаем оба варианта.
+assert(
+  page.includes("💾 Скачать БД") || page.includes("💾 Download DB"),
+  "в дашборде есть кнопка «Скачать БД»"
+);
+assert(
+  page.includes("БД: ✅ SQLite (WAL)") || page.includes("DB: ✅ SQLite (WAL)"),
+  "в футере индикатор SQLite (WAL)"
+);
 
 const health = await (await fetch(base + "/api/health")).json();
 assert(health.db && health.db.engine === "sqlite", "/api/health сообщает о SQLite");

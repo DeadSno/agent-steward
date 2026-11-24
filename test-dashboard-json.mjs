@@ -112,11 +112,18 @@ const htmlRes = await fetch(base + "/");
 const html = await htmlRes.text();
 assert(htmlRes.headers.get("content-type").includes("text/html"), "GET / отдаёт HTML");
 assert(html.includes("function readJson"), "фронтенд содержит readJson-проверку Content-Type");
-assert(html.includes("Сервер вернул не JSON. Проверьте консоль."), "фронтенд показывает понятную ошибку вместо падения JSON.parse");
+// Дашборд локализуется (RU/EN, zh/tr → EN), принимаем оба варианта.
+assert(
+  html.includes("Сервер вернул не JSON. Проверьте консоль.") ||
+    html.includes("Server returned non-JSON. Check the console."),
+  "фронтенд показывает понятную ошибку вместо падения JSON.parse"
+);
 assert(html.includes("server-warn"), "на странице есть баннер с диагностикой ответа сервера");
 assert(
-  html.includes("Похоже, ваш антивирус блокирует соединение. ") &&
-    html.includes("Добавьте localhost в исключения или смените порт."),
+  (html.includes("Похоже, ваш антивирус блокирует соединение. ") ||
+    html.includes("Looks like your antivirus is blocking the connection. ")) &&
+    (html.includes("Добавьте localhost в исключения или смените порт.") ||
+      html.includes("Add localhost to exceptions or change the port.")),
   "фронтенд показывает подсказку про антивирус"
 );
 assert(html.includes("res.status === 499") && html.includes("ct.indexOf('image/') === 0"), "подсказка срабатывает на статус 499 и Content-Type image/*");
