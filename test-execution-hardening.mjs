@@ -331,6 +331,37 @@ function readLog(file) {
   );
 }
 
+// --- 2b. QA-PORT-1: таймаут задачи применяется и к хукам (pre-flight) ---
+{
+  const spec = {
+    name: "Exec Hardening Hook Timeout",
+    sanitized: "exec-hardening-hook-timeout",
+    timeoutSeconds: 2,
+    beforeScript: "ping -n 30 127.0.0.1 >nul",
+  };
+  const { wrapperPath, logFile } = await prepareTask(spec);
+  // GateTimeoutSeconds по умолчанию = 300: раньше именно он один ограничивал
+  // хук, поэтому задача с timeoutSeconds=2 висела 30 с в pre-flight.
+  const run = runWrapper(wrapperPath, { FAKE_MODE: "ok" });
+
+  check(
+    "QA-PORT-1: pre-flight убит по таймауту задачи (раньше 30 с)",
+    run.elapsedMs < 12000,
+    `elapsedMs=${run.elapsedMs}`
+  );
+  const [record] = getHistory(spec.name, 5);
+  check("QA-PORT-1: статус timeout после таймаута хука", record?.status === "timeout", record?.status);
+  check(
+    "QA-PORT-1: причина таймаута записана в историю",
+    String(record?.error ?? "").includes("Таймаут"),
+    record?.error
+  );
+  check(
+    "QA-PORT-1: в логе явно указан таймаут задачи",
+    readLog(logFile).includes("Таймаут задачи")
+  );
+}
+
 // --- 3. Блокировка: второй запуск пропускается ---
 {
   const spec = {

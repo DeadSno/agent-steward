@@ -440,7 +440,25 @@ function Invoke-HookScript {
     # PL-107: список файлов задачи из afterScript приходит сюда и экспортируется
     # в хук, чтобы qualityGate мог линтить только свои файлы, а не весь src/.
     param([string]$Command, [string]$AllowPaths = "")
+    # QA-PORT-1: TimeoutSeconds — жёсткий бюджет ВСЕЙ задачи, а не только
+    # запуска агента. Раньше хуки жили по GateTimeoutSeconds (300 с по
+    # умолчанию): задача с timeoutSeconds=8 висела в pre-flight 90 с,
+    # статус оставался running, а durationMs в истории был 0.
+    $taskRemaining = [int]$TimeoutSeconds
+    if ($taskRemaining -gt 0) {
+        $elapsedSeconds = [Math]::Max(0, [int]((Get-Date) - $startTime).TotalSeconds)
+        $taskRemaining = [Math]::Max(0, $taskRemaining - $elapsedSeconds)
+        if ($taskRemaining -eq 0) {
+            $script:timedOut = $true
+            $script:errorMessage = "Таймаут: превышено $TimeoutSeconds с до выполнения хука"
+            Write-Log "[agent-steward] Таймаут задачи ($TimeoutSeconds с) до выполнения хука: $Command"
+            return 124
+        }
+    }
     $timeout = $GateTimeoutSeconds
+    if ($taskRemaining -gt 0 -and ($timeout -le 0 -or $taskRemaining -lt $timeout)) {
+        $timeout = $taskRemaining
+    }
     $previousAllowPaths = $env:AGENT_STEWARD_GATE_ALLOW_PATHS
     if ($AllowPaths) { $env:AGENT_STEWARD_GATE_ALLOW_PATHS = $AllowPaths }
 
@@ -503,6 +521,14 @@ function Invoke-HookScript {
             try { $proc.WaitForExit(5000) | Out-Null } catch {}
             $code = 124
             Write-Log "[agent-steward] Таймаут хука ($timeout с): $Command"
+            # QA-PORT-1: если лимит хука равен остатку бюджета задачи — это
+            # не gate-timeout, а настоящий таймаут задачи. Отмечаем его, чтобы
+            # Get-RecordVerdict записал status=timeout с понятной причиной.
+            if ($taskRemaining -gt 0 -and $timeout -eq $taskRemaining) {
+                $script:timedOut = $true
+                $script:errorMessage = "Таймаут: превышено $TimeoutSeconds с в хуке"
+                Write-Log "[agent-steward] Таймаут задачи ($TimeoutSeconds с) в хуке: $Command"
+            }
         } else {
             try { $proc.WaitForExit() } catch {}
             $code = $proc.ExitCode
@@ -1205,23 +1231,43 @@ try {
         $preStderrText = (@($preErrorLines) -join " | ")
         Write-HookStructuredOutput -Phase "preFlight" -ExitCode $preCode
         if ($preCode -ne 0) {
-            # PL-6.1: SilentlyContinue не гарантирует код 0 — подсказываем явный exit 0.
-            Write-Log "[agent-steward] ОШИБКА: Pre-flight script failed (код $preCode). Завершите хук явным 'exit 0' (например: if (Test-Path -LiteralPath '<path>') { Remove-Item -LiteralPath '<path>' -Force }; exit 0)."
-            # PL-69: реальная причина должна быть видна в get_task_logs, а не только общая фраза.
-            Write-Log "[agent-steward] Pre-flight причина: command=$BeforeScript; exitCode=$preCode"
-            foreach ($line in $preErrorLines) {
-                Write-Log "[agent-steward] Pre-flight stderr: $line"
-            }
-            foreach ($line in $preStdoutLines) {
-                Write-Log "[agent-steward] Pre-flight stdout: $line"
+            # QA-PORT-1: таймаут pre-flight — это таймаут задачи, а не ошибка хука.
+            if ($preCode -eq 124 -and $script:timedOut) {
+                Write-Log "[agent-steward] Таймаут задачи '$TaskName' в pre-flight: превышено $TimeoutSeconds с."
+                $script:exitCode = 124
+            } else {
+                # PL-6.1: SilentlyContinue не гарантирует код 0 — подсказываем явный exit 0.
+                Write-Log "[agent-steward] ОШИБКА: Pre-flight script failed (код $preCode). Завершите хук явным 'exit 0' (например: if (Test-Path -LiteralPath '<path>') { Remove-Item -LiteralPath '<path>' -Force }; exit 0)."
+                # PL-69: реальная причина должна быть видна в get_task_logs, а не только общая фраза.
+                Write-Log "[agent-steward] Pre-flight причина: command=$BeforeScript; exitCode=$preCode"
+                foreach ($line in $preErrorLines) {
+                    Write-Log "[agent-steward] Pre-flight stderr: $line"
+                }
+                foreach ($line in $preStdoutLines) {
+                    Write-Log "[agent-steward] Pre-flight stdout: $line"
+                }
+                $script:errorMessage = "Pre-flight script failed (command=$BeforeScript, exitCode=$preCode; stderr=$preStderrText)"
+                $script:exitCode = 1
             }
             $script:preFlightStatus = "error"
-            $script:errorMessage = "Pre-flight script failed (command=$BeforeScript, exitCode=$preCode; stderr=$preStderrText)"
-            $script:exitCode = 1
             $script:skipMainTask = $true
         } else {
             $script:preFlightStatus = "success"
             Write-Log "[agent-steward] Pre-flight успешно завершён."
+        }
+    }
+
+    # QA-PORT-1: проверяем общий бюджет и после pre-flight. Хук мог завершиться
+    # по таймауту гейта раньше лимита задачи, но съесть весь остаток времени —
+    # агент в таком случае запускать нельзя, иначе задача снова «зависнет».
+    if ($TimeoutSeconds -gt 0 -and -not $script:skipMainTask) {
+        $elapsedBeforeAgent = [Math]::Max(0, [int]((Get-Date) - $startTime).TotalSeconds)
+        if ($elapsedBeforeAgent -ge $TimeoutSeconds) {
+            $script:timedOut = $true
+            $script:errorMessage = "Таймаут: превышено $TimeoutSeconds с до запуска агента"
+            Write-Log "[agent-steward] Таймаут задачи '$TaskName' до запуска агента: превышено $TimeoutSeconds с."
+            $script:exitCode = 124
+            $script:skipMainTask = $true
         }
     }
 
@@ -1484,9 +1530,16 @@ try {
             $gateCode = Invoke-HookScript -Command $QualityGate -AllowPaths $GateAllowPaths
 
             if ($gateCode -eq 124) {
-                Write-Log "[agent-steward] ОШИБКА: Quality Gate превысил таймаут $GateTimeoutSeconds с и был остановлен."
-                $script:errorMessage = "Quality Gate: превышен таймаут $GateTimeoutSeconds с"
-                $script:exitCode = 1
+                if ($script:timedOut) {
+                    # QA-PORT-1: гейт съел остаток бюджета задачи.
+                    Write-Log "[agent-steward] Таймаут задачи '$TaskName' в Quality Gate: превышено $TimeoutSeconds с."
+                    $script:errorMessage = "Таймаут: превышено $TimeoutSeconds с в Quality Gate"
+                    $script:exitCode = 124
+                } else {
+                    Write-Log "[agent-steward] ОШИБКА: Quality Gate превысил таймаут $GateTimeoutSeconds с и был остановлен."
+                    $script:errorMessage = "Quality Gate: превышен таймаут $GateTimeoutSeconds с"
+                    $script:exitCode = 1
+                }
                 $gatePassed = $false
             } elseif ($gateCode -ne 0) {
                 # PL-140: причина провала — из хвоста вывода гейта (stdout/stderr,
@@ -1562,12 +1615,18 @@ try {
         $postCode = Invoke-HookScript -Command $AfterScript
         Write-HookStructuredOutput -Phase "postFlight" -ExitCode $postCode
         if ($postCode -ne 0) {
-            Write-Log "[agent-steward] ОШИБКА: Post-flight script failed (код $postCode)."
-            $script:postFlightStatus = "error"
-            if ($script:exitCode -eq 0) {
-                $script:errorMessage = "Post-flight script failed"
-                $script:exitCode = 1
+            # QA-PORT-1: таймаут post-flight не должен перезаписать причину
+            # таймаута задачи и статус 124, иначе история снова уйдёт в error.
+            if ($postCode -eq 124 -and $script:timedOut) {
+                Write-Log "[agent-steward] Таймаут задачи '$TaskName' в post-flight: превышено $TimeoutSeconds с."
+            } else {
+                Write-Log "[agent-steward] ОШИБКА: Post-flight script failed (код $postCode)."
+                if ($script:exitCode -eq 0) {
+                    $script:errorMessage = "Post-flight script failed"
+                    $script:exitCode = 1
+                }
             }
+            $script:postFlightStatus = "error"
         } else {
             $script:postFlightStatus = "success"
             Write-Log "[agent-steward] Post-flight успешно завершён."
