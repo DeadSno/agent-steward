@@ -1879,7 +1879,10 @@ function renderPage(nonce: string): string {
   .graph-node.errg { border-left-color: #ff3b30; }
   .graph-node.partg { border-left-color: #f5a623; }
   .graph-node.rung { border-left-color: #58a6ff; }
+  .graph-node.criticalg { border: 2px solid #f5a623; background: rgba(245,166,35,0.12); box-shadow: 0 0 8px rgba(245,166,35,0.25); }
+  .graph-node .g-critical { color: #f5a623; font-weight: 700; }
   .graph-edge { fill: none; stroke: var(--border); stroke-width: 1.5; }
+  .graph-edge.criticalg { stroke: #f5a623; stroke-width: 2.5; }
   .chain-line { font-size: 13px; padding: 3px 0; }
   .chain-line .dep { color: var(--accent); }
   .chain-line .arrow { color: var(--muted); margin: 0 6px; }
@@ -1964,7 +1967,7 @@ function renderPage(nonce: string): string {
 
     <div class="graph" id="graph" style="display:none">
       <div class="graph-title">🔗 Граф зависимостей (DAG)</div>
-      <div class="graph-hint">Слева — задачи без зависимостей, справа — задачи, которые ждут их успешного завершения. Граф можно прокручивать по горизонтали.</div>
+      <div class="graph-hint">Слева — задачи без зависимостей, справа — задачи, которые ждут их успешного завершения. Граф можно прокручивать по горизонтали. <span id="graph-critical-hint">Критический путь выделен оранжевым (★).</span></div>
       <div class="graph-scroll" id="graph-scroll" role="region" aria-label="Граф зависимостей задач" tabindex="0">
         <div id="graph-lines"></div>
       </div>
@@ -2461,6 +2464,45 @@ function renderPage(nonce: string): string {
       return own;
     }
 
+    // IM-5 / D05: критический путь — самая длинная цепочка зависимостей.
+    // Строим обратные рёбра, находим конечную вершину максимального уровня
+    // и возвращаемся по зависимостям, уровень которых ровно на 1 меньше.
+    var children = {};
+    for (var ti = 0; ti < tasks.length; ti++) {
+      var tdeps = Array.isArray(tasks[ti].dependsOn) ? tasks[ti].dependsOn : [];
+      var tkey = String(tasks[ti].name).toLowerCase();
+      for (var dj = 0; dj < tdeps.length; dj++) {
+        var depKey = String(tdeps[dj]).toLowerCase();
+        if (!known[depKey]) continue;
+        if (!children[depKey]) children[depKey] = [];
+        if (children[depKey].indexOf(tkey) < 0) children[depKey].push(tkey);
+      }
+    }
+    var critical = {};
+    var endKey = null;
+    for (var sinkKey in involved) {
+      if (!Object.prototype.hasOwnProperty.call(involved, sinkKey)) continue;
+      var kids = children[sinkKey] || [];
+      var hasNext = false;
+      for (var ki = 0; ki < kids.length; ki++) {
+        if (levels[kids[ki]] === levels[sinkKey] + 1) { hasNext = true; break; }
+      }
+      if (!hasNext && (endKey === null || levels[sinkKey] > levels[endKey])) endKey = sinkKey;
+    }
+    while (endKey != null) {
+      critical[endKey] = true;
+      var currentLevel = levels[endKey] || 0;
+      var endDeps = Array.isArray(known[endKey].dependsOn) ? known[endKey].dependsOn : [];
+      var nextKey = null;
+      for (var ei = 0; ei < endDeps.length; ei++) {
+        var candidate = String(endDeps[ei]).toLowerCase();
+        if (nextKey === null && known[candidate] && levels[candidate] === currentLevel - 1) {
+          nextKey = candidate;
+        }
+      }
+      endKey = nextKey;
+    }
+
     var byLevel = {};
     var maxLevel = 0;
     for (var key in involved) {
@@ -2529,7 +2571,8 @@ function renderPage(nonce: string): string {
         var x2 = target.x;
         var y2 = target.y + NODE_H / 2;
         var bend = Math.max(24, (x2 - x1) / 2);
-        svg += '<path class="graph-edge" d="M' + x1 + ',' + y1 +
+        var isCriticalEdge = critical[targetKey] && critical[String(deps[di]).toLowerCase()];
+        svg += '<path class="graph-edge' + (isCriticalEdge ? ' criticalg' : '') + '" d="M' + x1 + ',' + y1 +
           ' C' + (x1 + bend) + ',' + y1 + ' ' + (x2 - bend) + ',' + y2 + ' ' + x2 + ',' + y2 +
           '" marker-end="url(#dag-arrow)"></path>';
       }
@@ -2541,10 +2584,13 @@ function renderPage(nonce: string): string {
       if (!Object.prototype.hasOwnProperty.call(pos, pKey)) continue;
       var node = pos[pKey];
       var nodeDeps = Array.isArray(node.task.dependsOn) ? node.task.dependsOn : [];
-      var meta = nodeDeps.length > 0
-        ? '← ' + shortLabel(nodeDeps.join(', '), 30)
-        : 'начальная задача';
-      nodesHtml += '<div class="graph-node' + statusClass(node.task.status) + '" style="left:' + node.x +
+      var isCritical = !!critical[pKey];
+      var meta = isCritical
+        ? '★ критический путь'
+        : nodeDeps.length > 0
+          ? '← ' + shortLabel(nodeDeps.join(', '), 30)
+          : 'начальная задача';
+      nodesHtml += '<div class="graph-node' + statusClass(node.task.status) + (isCritical ? ' criticalg' : '') + '" style="left:' + node.x +
         'px;top:' + node.y + 'px;width:' + NODE_W + 'px;height:' + NODE_H + 'px" title="' +
         attr(node.task.name + (nodeDeps.length ? ' · зависит от: ' + nodeDeps.join(', ') : '')) + '">' +
         '<span class="g-name">' + esc(shortLabel(node.task.name, 26)) + '</span>' +

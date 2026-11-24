@@ -94,6 +94,16 @@ try {
     page.includes('<th scope="col">Зависимости</th>') ||
       page.includes('<th scope="col">Dependencies</th>')));
   ok("HTML: есть отрисовка графа DAG", () => assert.ok(page.includes("function renderGraph")));
+  ok("HTML: подсказка о критическом пути", () => assert.ok(
+    page.includes("Критический путь выделен оранжевым") ||
+      page.includes("critical path is highlighted")));
+  ok("JS: вычисление критического пути по зависимостям", () => assert.ok(
+    page.includes("var critical = {}") &&
+      page.includes("critical[endKey] = true") &&
+      page.includes("levels[candidate] === currentLevel - 1")));
+  ok("JS: подсветка узлов и рёбер критического пути", () => assert.ok(
+    page.includes("criticalg") && page.includes("★ критический путь") &&
+      page.includes("isCriticalEdge")));
 
   const tasks = await (await fetch(base + "/api/tasks")).json();
   ok("API: dependsOn задачи отдаётся в /api/tasks", () => {

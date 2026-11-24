@@ -40,6 +40,8 @@ const EN: Record<string, string> = {
   "Слева — задачи без зависимостей, справа — задачи, которые ждут их успешного завершения. Граф можно прокручивать по горизонтали.":
     "On the left are tasks without dependencies, on the right are tasks waiting for them to finish. The graph scrolls horizontally.",
   "Граф зависимостей задач": "Task dependency graph",
+  "Критический путь выделен оранжевым (★).": "The critical path is highlighted in orange (★).",
+  "★ критический путь": "★ critical path",
   // Таблица задач
   "Задачи планировщика": "Scheduler tasks",
   "Имя": "Name",
