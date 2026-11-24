@@ -1372,6 +1372,27 @@ try {
     pathRunLine ?? "pathRun не найден",
   );
 
+  // QA-PORT-17: проза без разделителя/расширения — не путь и не должна
+  // ломать pre-flight (PL-79/PL-82) сообщением о несуществующих путях.
+  const proseWordsScope = extractScopePaths("SCOPE: tp-audit-dev, branch dev.");
+  check(
+    "QA-PORT-17: голые слова в SCOPE не распознаются как пути",
+    JSON.stringify(proseWordsScope) === JSON.stringify([]),
+    JSON.stringify(proseWordsScope),
+  );
+  const proseWordsPreflight = preflightScope("SCOPE: tp-audit-dev, branch dev.", process.cwd());
+  check(
+    "QA-PORT-17: pre-flight не падает на прозе без путей",
+    proseWordsPreflight.ok === true && proseWordsPreflight.missing.length === 0,
+    JSON.stringify(proseWordsPreflight),
+  );
+  const proseWithRealPath = extractScopePaths("SCOPE: tp-audit-dev, docs/FEATURES.md, branch");
+  check(
+    "QA-PORT-17: настоящий путь после прозы по-прежнему разбирается",
+    JSON.stringify(proseWithRealPath) === JSON.stringify(["docs/FEATURES.md"]),
+    JSON.stringify(proseWithRealPath),
+  );
+
   // PL-119: create-intent — SCOPE-пути создаваемых файлов не считаются missing.
   // Берём заведомо несуществующие маркеры, чтобы проверка не зависела от диска.
   const createIntentPaths = [

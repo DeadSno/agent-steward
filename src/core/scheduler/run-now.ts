@@ -25,6 +25,11 @@ export function extractScopePaths(text: string): string[] {
   // "docs/FEATURES.md. Файл src/core/agents.ts — заглушка" и прекращаем разбор:
   // дальше в SCOPE путей уже нет.
   const pathRun = /^[A-Za-z0-9_@.+\/\-\\*]+/;
+  // QA-PORT-17: «голые» слова в SCOPE — это проза («tp-audit-dev, branch dev.»),
+  // а не пути. Путь должен содержать разделитель (/ или \) либо расширение
+  // файла; иначе префлайт PL-79/PL-82 ошибочно объявляет прозу missing.
+  const looksLikePath = (value: string): boolean =>
+    value.includes("/") || value.includes("\\") || /\.[A-Za-z0-9]{1,8}$/.test(value);
   const result: string[] = [];
   for (const raw of line[1].split(/[,;]/)) {
     const value = raw
@@ -34,7 +39,7 @@ export function extractScopePaths(text: string): string[] {
     const lead = pathRun.exec(value);
     if (!lead) continue;
     const candidate = lead[0].replace(/[`"'\[\].]+$/g, "").trim();
-    if (candidate) {
+    if (candidate && looksLikePath(candidate)) {
       // SCOPE может содержать директории вида src/core/scheduler/*.
       result.push(
         candidate.endsWith("/*") || candidate.endsWith("\\*")
