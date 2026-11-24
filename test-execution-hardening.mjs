@@ -3014,6 +3014,60 @@ try {
   );
 }
 
+// --- PL-138 / PL-134: репер осиротевших запусков и причина простоя (строковые регрессии) ---
+// Реальные kill не нужны: проверяем контракт исходников и сгенерированный обёрткой скрипт.
+try {
+  const indexSrc = fs.readFileSync(path.resolve("src/index.ts"), "utf8");
+  const psWrapperSrc = fs.readFileSync(path.resolve("src/core/ps-wrapper.ts"), "utf8");
+  const entryAt = indexSrc.indexOf("async function runTaskEntry(");
+  const entrySrc = indexSrc.slice(entryAt, entryAt + 4000);
+  const reapAt = entrySrc.indexOf("await reapStaleRuns()");
+  const isolationAt = entrySrc.indexOf("planRuntimeIsolation({");
+
+  check(
+    "PL-138: reapStaleRuns() вызывается в начале runTaskEntry до planRuntimeIsolation",
+    reapAt >= 0 && isolationAt > reapAt,
+    `reapAt=${reapAt}, isolationAt=${isolationAt}`,
+  );
+  check(
+    "PL-138: причина осиротевшего запуска и порог из env присутствуют в исходнике",
+    indexSrc.includes("PL-138: осиротевший запуск") &&
+      indexSrc.includes("AGENT_STEWARD_STALE_RUN_LOG_SEC") &&
+      indexSrc.includes("resolveTaskLogPath") &&
+      indexSrc.includes("fs.stat") &&
+      indexSrc.includes("os.hostname()") &&
+      indexSrc.includes('spawnSync("taskkill", ["/F", "/T", "/PID"')
+  );
+  check(
+    "PL-138: финализация записи и снятие счётчика PL-106 не ниже нуля",
+    indexSrc.includes('finishRun(rec.id, "error", durationMs, reason, null, 0, 0, undefined, "skipped", "skipped")') &&
+      indexSrc.includes("activeNonIsolatedRuns = Math.max(0, activeNonIsolatedRuns - 1)")
+  );
+  check(
+    "PL-134: idle-сторож пишет осмысленную причину в маркер вместо \"idle\"",
+    psWrapperSrc.includes(
+      'PL-134: агент не отвечает (простой $IdleSec с, лог и CPU без изменений)'
+    ) &&
+      psWrapperSrc.includes("Set-Content -Path $Marker -Value $reason -Encoding UTF8") &&
+      !psWrapperSrc.includes('Set-Content -Path $Marker -Value "idle"')
+  );
+  check(
+    "PL-134: причина из маркера читается в $script:idleReason и пишется в лог",
+    psWrapperSrc.includes("$script:idleReason = (Get-Content -LiteralPath $completionMarker -Raw") &&
+      psWrapperSrc.includes("PL-134: причина завершения по простою: $script:idleReason") &&
+      psWrapperSrc.includes("PL-124: дочерний агент завершён/простаивает") &&
+      psWrapperSrc.includes("return 0")
+  );
+  check(
+    "PL-134: причина доходит до сгенерированной PowerShell-обёртки",
+    psWrapperScript.includes("PL-134: агент не отвечает") &&
+      psWrapperScript.includes("$script:idleReason")
+  );
+} catch (err) {
+  console.log("[diag] PL-138/PL-134 section THREW:", err instanceof Error ? err.stack : String(err));
+  check("PL-138/PL-134: секция не выбросила исключение", false, "section threw");
+}
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\nExecution hardening: ${results.length - failed.length}/${results.length} проверок пройдено.`);
 try {

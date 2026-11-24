@@ -63,7 +63,7 @@ async function fileExists(filePath: string): Promise<boolean> {
  *      реестр недоступен или задача в нём не записана);
  *   4) несколько файлов — самый короткий slug (ближе к запросу), затем по алфавиту.
  */
-async function resolveTaskLogPath(name: string): Promise<string> {
+export async function resolveTaskLogPath(name: string): Promise<string> {
   const slug = logNameSlug(name);
   const directPath = path.join(LOG_DIR, `${slug}.log`);
   if (await fileExists(directPath)) return directPath;

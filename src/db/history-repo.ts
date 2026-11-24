@@ -650,22 +650,30 @@ export interface RunningHistoryRecord {
   id: number;
   taskName: string;
   startedAt: string;
+  /** Владелец запуска (PL-138): нужен, чтобы реaper отличил живой процесс от осиротевшего. */
+  ownerPid: number | null;
+  ownerHost: string | null;
 }
 
 /** Список активных запусков (finished_at IS NULL), самые старые сверху. */
 export function listRunningRecords(): RunningHistoryRecord[] {
   const rows = getDb()
     .prepare(
-      `SELECT id, task_name, started_at FROM history
+      `SELECT id, task_name, started_at, owner_pid, owner_host FROM history
        WHERE finished_at IS NULL
        ORDER BY started_at ASC, id ASC`,
     )
     // QA-A2-T3: граница node:sqlite — all() возвращает any[], сужаем к доменному типу.
-    .all() as unknown as Pick<HistoryRow, "id" | "task_name" | "started_at">[];
+    .all() as unknown as Pick<
+      HistoryRow,
+      "id" | "task_name" | "started_at" | "owner_pid" | "owner_host"
+    >[];
   return rows.map((row) => ({
     id: Number(row.id) || 0,
     taskName: String(row.task_name ?? ""),
     startedAt: String(row.started_at ?? ""),
+    ownerPid: row.owner_pid == null ? null : Number(row.owner_pid),
+    ownerHost: row.owner_host == null ? null : String(row.owner_host),
   }));
 }
 

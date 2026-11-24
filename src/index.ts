@@ -15,6 +15,8 @@ import type { Skill } from "@opencode/schema/skill";
 import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
+import os from "node:os";
+import { spawnSync } from "node:child_process";
 import path from "node:path";
 // QA-A2.7: безопасное приведение unknown к строке без no-base-to-string.
 import { safeStringify } from "./text.js";
@@ -45,7 +47,7 @@ import {
 import { ensureWrapper, writePromptFile, writeWrapperCmd, lockFilePath, requestImmediateRun, gateAllowPathsFromAfterScript } from "./core/ps-wrapper.js";
 import { getSchedulerBackend, LinuxScheduler } from "./core/scheduler/index.js";
 import { SCHEDULER_SKILL_ID, loadSchedulerSkill } from "./skill.js";
-import { getTaskLogs } from "./core/scheduler/logs.js";
+import { getTaskLogs, resolveTaskLogPath } from "./core/scheduler/logs.js";
 import {
   planParallelExecution,
   planRuntimeIsolation,
@@ -129,6 +131,7 @@ import {
 } from "./core/budget.js";
 import { generateSelfAnalysisReport } from "./core/self-analysis.js";
 import {
+  finishRun,
   getHistoryForAnalytics,
   getHistoryForBudget,
   listRunningRecords,
@@ -8370,6 +8373,64 @@ export class PluginShutdownError extends Error {
 /** PL-106: счётчик активных запусков без изоляции в этом процессе плагина. */
 let activeNonIsolatedRuns = 0;
 
+/**
+ * PL-138: подметает осиротевшие running-записи перед новым запуском.
+ *
+ * Принудительное завершение дочернего opencode оставляет живую обёртку и
+ * историю `running`; следующий запуск упирается в кросс-процессный лок PL-121.
+ * Осиротевшим считается запуск, чей лог не обновлялся дольше порога
+ * (AGENT_STEWARD_STALE_RUN_LOG_SEC, по умолчанию 180 с). Для владельца на этом
+ * хосте best-effort проверяем/завершаем процесс, затем финализируем запись
+ * как error с требованием явного повтора и снимаем счётчик PL-106: предыдущий
+ * runTaskEntry не дошёл до своего finally.
+ */
+async function reapStaleRuns(): Promise<number> {
+  const configuredSec = Number(process.env.AGENT_STEWARD_STALE_RUN_LOG_SEC);
+  const staleSec =
+    Number.isFinite(configuredSec) && configuredSec > 0 ? configuredSec : 180;
+  const hostname = os.hostname();
+  let reaped = 0;
+
+  for (const rec of listRunningRecords()) {
+    let mtimeMs: number;
+    try {
+      const stat = await fs.stat(await resolveTaskLogPath(rec.taskName));
+      mtimeMs = stat.mtimeMs;
+    } catch {
+      // Нет лога или путь недоступен — не считаем запуск осиротевшим.
+      continue;
+    }
+    if (Date.now() - mtimeMs < staleSec * 1000) continue;
+
+    if (rec.ownerPid != null && rec.ownerPid > 0 && rec.ownerHost === hostname) {
+      try {
+        process.kill(rec.ownerPid, 0);
+      } catch {
+        // Процесса уже нет — дальше всё равно финализируем запись.
+      }
+      if (process.platform === "win32") {
+        try {
+          spawnSync("taskkill", ["/F", "/T", "/PID", String(rec.ownerPid)], {
+            windowsHide: true,
+            stdio: "ignore",
+          });
+        } catch {
+          // Best-effort: обёртка могла уже умереть.
+        }
+      }
+    }
+
+    const reason = `PL-138: осиротевший запуск (агент/обёртка не отвечают, лог не обновлялся ${staleSec} с); требуется явный повтор`;
+    const durationMs = Date.now() - Date.parse(rec.startedAt);
+    if (finishRun(rec.id, "error", durationMs, reason, null, 0, 0, undefined, "skipped", "skipped")) {
+      console.error(`[agent-steward] ${reason} Задача: ${rec.taskName}, run #${rec.id}.`);
+      activeNonIsolatedRuns = Math.max(0, activeNonIsolatedRuns - 1);
+      reaped += 1;
+    }
+  }
+  return reaped;
+}
+
 async function runTaskEntry(name: string): Promise<{ alreadyRunning: boolean }> {
   if (shutdownGate.isShuttingDown()) {
     throw new PluginShutdownError(
@@ -8378,6 +8439,10 @@ async function runTaskEntry(name: string): Promise<{ alreadyRunning: boolean }> 
       shutdownGate.state(),
     );
   }
+
+  // PL-138: до гейта изоляции (PL-106) убираем записи от прошлых убитых обёрток,
+  // иначе следующий запуск блокируется локом PL-121 и счётчиком активных ран.
+  await reapStaleRuns();
 
   const trimmed = name.trim();
   const definition = (await loadTaskDefinitions()).find(

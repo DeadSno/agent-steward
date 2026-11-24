@@ -26,7 +26,7 @@ const assert = (cond, msg) => {
 
 const { initDb, closeDb, getDb } = await import("./dist/db/index.js");
 const { saveTask, getTask } = await import("./dist/db/tasks-repo.js");
-const { getHistory, recoverInterrupted } = await import("./dist/db/history-repo.js");
+const { getHistory, listRunningRecords, recoverInterrupted } = await import("./dist/db/history-repo.js");
 const { WRAPPER_SCRIPT } = await import("./dist/core/ps-wrapper.js");
 const { buildBashWrapperScript } = await import("./dist/core/wrappers/bash.js");
 
@@ -371,6 +371,35 @@ const pl124Log = fs.readFileSync(path.join(pluginDir, "logs", "runs.jsonl"), "ut
 assert(
   pl124Log.includes('"event":"run.interrupted_dead_owner"'),
   "PL-124: событие подметки записано в runs.jsonl",
+);
+
+// --- 7. PL-138: listRunningRecords отдаёт владельца запуска ----------------
+// Реперу на следующем runTaskEntry нужен owner_pid/owner_host осиротевшей записи.
+const pl138StartedAt = new Date().toISOString();
+getDb()
+  .prepare(
+    "INSERT INTO history (task_name, status, started_at, finished_at, owner_pid, owner_host) VALUES (?, 'running', ?, NULL, ?, ?)",
+  )
+  .run("PL-138 Owner Probe", pl138StartedAt, process.pid, os.hostname());
+const pl138Running = listRunningRecords().find((rec) => rec.taskName === "PL-138 Owner Probe");
+assert(Boolean(pl138Running), "PL-138: запись видна в listRunningRecords");
+assert(
+  pl138Running?.ownerPid === process.pid,
+  `PL-138: listRunningRecords возвращает owner_pid (${pl138Running?.ownerPid})`,
+);
+assert(
+  pl138Running?.ownerHost === os.hostname(),
+  `PL-138: listRunningRecords возвращает owner_host (${pl138Running?.ownerHost})`,
+);
+const pl138HistorySrc = fs.readFileSync(
+  path.resolve("src/db/history-repo.ts"),
+  "utf8",
+);
+assert(
+  pl138HistorySrc.includes("SELECT id, task_name, started_at, owner_pid, owner_host FROM history") &&
+    pl138HistorySrc.includes("ownerPid: row.owner_pid == null ? null : Number(row.owner_pid)") &&
+    pl138HistorySrc.includes("ownerHost: row.owner_host == null ? null : String(row.owner_host)"),
+  "PL-138: контракт ownerPid/ownerHost зафиксирован в исходнике history-repo.ts",
 );
 
 closeDb();

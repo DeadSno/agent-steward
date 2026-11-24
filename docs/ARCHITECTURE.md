@@ -234,6 +234,14 @@ applied through `PRAGMA user_version` on open. Step 11 adds functional indexes
   `recoverStaleRunningOnRecorderStart` closes stale rows at recorder start, but a
   crashed wrapper can still leave history `running` until the task timeout
   (**PL-124**).
+- Orphaned runs (**PL-138**) are not finalized in-place: `runTaskEntry()` reaps them
+  at the next launch, before the isolation gate. A run is considered orphaned when
+  its task log has not been modified for `AGENT_STEWARD_STALE_RUN_LOG_SEC` seconds
+  (180 by default); the record is closed as `error` with an explicit-retry reason.
+  When a live but idle agent keeps the wrapper open (**PL-134**), the Windows
+  completion watcher writes the reason («агент не отвечает», idle window and no
+  log/CPU progress) into the marker and `Write-Log`, while keeping PL-124 exit
+  compatibility (the report is already written, exit code stays 0).
 - Durable steps currently execute through the same wrapper machinery. The
   agent-executor abstraction (`src/core/agents.ts` / `agents-advanced.ts`) and the
   runner abstraction (`runner.ts` / `runner-docker.ts` / `runner-ssh.ts`, fail-open

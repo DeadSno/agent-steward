@@ -588,6 +588,7 @@ function Invoke-OpenCodeOnce {
     $idleWatch = $null
     $completionMarker = ""
     $script:childIdleCompleted = $false
+    $script:idleReason = ""
     if ($TimeoutSeconds -gt 0) {
         $timeoutMarker = Join-Path ([System.IO.Path]::GetTempPath()) ("sched-timeout-" + [guid]::NewGuid().ToString("N") + ".flag")
         $watch = Start-Job -ScriptBlock {
@@ -735,7 +736,10 @@ function Invoke-OpenCodeOnce {
                 if ($lastCpu -ge 0 -and $cpu -le $lastCpu) { $idleTicks++ } else { $idleTicks = 0 }
                 $lastCpu = $cpu
                 if ($idleTicks -ge $maxIdle) {
-                    try { Set-Content -Path $Marker -Value "idle" -Encoding UTF8 } catch {}
+                    # PL-134: маркер несёт понятную причину, а не безликое "idle" —
+                    # она попадёт в лог при финализации обёртки.
+                    $reason = "PL-134: агент не отвечает (простой $IdleSec с, лог и CPU без изменений)"
+                    try { Set-Content -Path $Marker -Value $reason -Encoding UTF8 } catch {}
                     foreach ($targetId in @($targets)) {
                         try { & taskkill.exe /F /T /PID $targetId 2>$null | Out-Null } catch {}
                     }
@@ -789,6 +793,10 @@ function Invoke-OpenCodeOnce {
         }
         if ($completionMarker -and (Test-Path -LiteralPath $completionMarker)) {
             $script:childIdleCompleted = $true
+            try { $script:idleReason = (Get-Content -LiteralPath $completionMarker -Raw -ErrorAction Stop).Trim() } catch { $script:idleReason = "" }
+            if ($script:idleReason) {
+                Write-Log "[agent-steward] PL-134: причина завершения по простою: $script:idleReason"
+            }
         }
         if ($watch) {
             Stop-Job -Job $watch -ErrorAction SilentlyContinue
@@ -826,7 +834,9 @@ function Invoke-OpenCodeOnce {
     if ($script:childIdleCompleted) {
         # PL-124: отчёт уже записан, дерево снято по простою — освобождаем
         # конвейер и даём outer finally сразу вызвать quality gate/post-flight/--finish.
-        Write-Log "[agent-steward] PL-124: дочерний агент завершён/простаивает, дерево снято; история финализируется сразу."
+        $idleDetail = ""
+        if ($script:idleReason) { $idleDetail = " Причина: $script:idleReason" }
+        Write-Log "[agent-steward] PL-124: дочерний агент завершён/простаивает, дерево снято; история финализируется сразу.$idleDetail"
         return 0
     }
     return $script:attemptExitCode
