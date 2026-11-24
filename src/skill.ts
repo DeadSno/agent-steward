@@ -42,7 +42,24 @@ export interface SchedulerSkill {
 
 /** Корень пакета: `dist/skill.js` → `..`, `src/skill.ts` → `..`. */
 function packageRoot(): string {
-  return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+  const moduleRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+  // QA-D319-1: в свежем worktree `dist/` — junction на dev-установку, поэтому
+  // realpath модуля указывает в её `skills/`, где может быть старая копия скилла
+  // (например, без описания `batch_call`). Рабочая директория — исходный
+  // репозиторий, её `skills/` и есть актуальный источник. Кандидатура из cwd
+  // принимается только в исходном чек-ауте; в GUI-бандле `process` отсутствует.
+  try {
+    if (typeof process !== "undefined" && typeof process.cwd === "function") {
+      const cwd = process.cwd();
+      const isDevCheckout =
+        fs.existsSync(path.join(cwd, "src", "skill.ts")) &&
+        fs.existsSync(path.join(cwd, "skills", SCHEDULER_SKILL_ID, "SKILL.md"));
+      if (isDevCheckout) return cwd;
+    }
+  } catch {
+    // Нет cwd — остаётся корень, вычисленный из расположения модуля.
+  }
+  return moduleRoot;
 }
 
 /**

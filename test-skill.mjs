@@ -35,6 +35,10 @@ if (skill) {
   );
   check("skill path points to an existing file", fs.existsSync(skill.path));
   check(
+    "QA-D319-1: skill is loaded from the source checkout cwd, not junction dist",
+    skill.path.replace(/\\/g, "/").startsWith(`${process.cwd().replace(/\\/g, "/")}/`)
+  );
+  check(
     "skill path is skills/<id>/SKILL.md",
     skill.path.replace(/\\/g, "/").endsWith(`/skills/${SCHEDULER_SKILL_ID}/SKILL.md`)
   );
@@ -75,6 +79,14 @@ check("package exposes a test:skill script", Boolean(pkg.scripts?.["test:skill"]
 check(
   "npm test includes the skill suite",
   String(pkg.scripts?.test ?? "").includes("test-skill.mjs")
+);
+
+const skillSource = fs.readFileSync(path.join(process.cwd(), "src", "skill.ts"), "utf8");
+check(
+  "QA-D319-1: loader prefers the source checkout cwd and guards missing process",
+  skillSource.includes("typeof process") &&
+    skillSource.includes("process.cwd()") &&
+    skillSource.includes('fs.existsSync(path.join(cwd, "skills", SCHEDULER_SKILL_ID, "SKILL.md"))')
 );
 
 const failed = results.filter((r) => !r.ok);

@@ -28,8 +28,6 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 
 ## QA-находки (проверка работоспособности плагина 24.11.2026)
 
-- QA-D319-1: тест `test-skill.mjs` читает скилл из устаревшей копии `.steward-dev/skills/scheduled-job-best-practices/SKILL.md` из-за junction `dist/` → `.steward-dev/dist`: `loadSchedulerSkill()` (`src/skill.ts:82`) резолвит packageRoot по `import.meta.url`, поэтому правки `skills/scheduled-job-best-practices/SKILL.md` в репозитории не попадают в тест — `node test-skill.mjs` даёт 25/26 (`FAIL IM-4: skill documents batch_call isolation`), хотя исходный файл содержит `batch_call` — P2. Действие: синхронизировать `skills/` в `.steward-dev` при сборке/тестах либо разорвать junction/резолвить packageRoot через cwd исходного чек-аута, как сделано для i18n в QA-PORT-13. Обнаружено 24.11.2026.
-
 ---
 
 ## Деталь 3.15 — Улучшения продукта из TEST-PLAN §7.3
