@@ -2236,6 +2236,82 @@ try {
   );
   check("D-1.3: ssh.available — чистый флаг из бинарника", ssh.available() === true);
 
+  // QW-12: ведущий '-' в host/user превращается в опцию ssh (argument injection).
+  const sshInjected = createSSHRunner({
+    host: "-oProxyCommand=id",
+    deps,
+  });
+  check(
+    "QW-12: ssh не доступен с хостом, начинающимся с '-'",
+    sshInjected.available() === false,
+  );
+  let sshInjectedError = null;
+  try {
+    sshInjected.buildCommand(launch);
+  } catch (error) {
+    sshInjectedError = error;
+  }
+  check(
+    "QW-12: ssh.buildCommand отвергает опцию вместо хоста",
+    sshInjectedError instanceof Error && /^-|host\/user/.test(sshInjectedError.message),
+    sshInjectedError?.message,
+  );
+  const sshInjectedUser = createSSHRunner({ host: "build.example", user: "-F/etc/ssh_config", deps });
+  let sshUserError = null;
+  try {
+    sshInjectedUser.buildCommand(launch);
+  } catch (error) {
+    sshUserError = error;
+  }
+  check(
+    "QW-12: ssh.buildCommand отвергает пользователя, начинающегося с '-'",
+    sshUserError instanceof Error,
+    sshUserError?.message,
+  );
+
+  // QW-12: docker envFile уводит секреты из argv; volumes пробрасывают репозиторий.
+  const secureLaunch = {
+    command: "opencode",
+    args: [],
+    workdir: "/work",
+    envFile: "/run/secrets/task.env",
+    volumes: ["/repo:/repo:ro"],
+  };
+  const secureDockerArgs = docker.buildCommand(secureLaunch).args;
+  check(
+    "QW-12: docker использует --env-file и -v вместо --env K=V",
+    JSON.stringify(secureDockerArgs) ===
+      JSON.stringify([
+        "run",
+        "--rm",
+        "--workdir",
+        "/work",
+        "-v",
+        "/repo:/repo:ro",
+        "--env-file",
+        "/run/secrets/task.env",
+        "alpine:3.20",
+        "opencode",
+      ]),
+    JSON.stringify(secureDockerArgs),
+  );
+  check(
+    "QW-12: в argv docker нет секретов из env",
+    !secureDockerArgs.includes("A_VAR=1") && !secureDockerArgs.includes("--env"),
+    JSON.stringify(secureDockerArgs),
+  );
+  let envConflictError = null;
+  try {
+    docker.buildCommand({ ...secureLaunch, env: { TOKEN: "s3cr3t" } });
+  } catch (error) {
+    envConflictError = error;
+  }
+  check(
+    "QW-12: env и envFile несовместимы",
+    envConflictError instanceof Error,
+    envConflictError?.message,
+  );
+
   // D-3.1: та же спека и та же спецификация запуска → байт-в-байт вердикт.
   const spec = { kind: "docker", image: "alpine:3.20", deps };
   const verdictA = resolveRunner(spec).verdict(launch);

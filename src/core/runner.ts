@@ -20,6 +20,18 @@ export interface RunnerLaunch {
   workdir?: string;
   /** Переменные окружения; ключи сортируются при построении команды. */
   env?: Readonly<Record<string, string | undefined>>;
+  /**
+   * QW-12: путь к файлу `KEY=VALUE` для docker. Когда задан, docker использует
+   * `--env-file` вместо `--env K=V`, чтобы секреты не попадали в argv и
+   * `docker inspect`. Несовместим с `env`.
+   */
+  envFile?: string;
+  /**
+   * QW-12: явные монтирования `host:container[:opts]` для docker. `--workdir`
+   * сам по себе не монтирует каталог хоста, поэтому репозиторий нужно пробросить
+   * через `volumes` (например, `${workdir}:${workdir}`).
+   */
+  volumes?: readonly string[];
 }
 
 /** Готовая команда: файл + аргументы, без оболочки и без выполнения. */
@@ -137,6 +149,15 @@ export function validateLaunch(launch: RunnerLaunch): void {
   for (const arg of launch.args) {
     if (/[\r\n\0]/.test(arg)) {
       throw new Error("Runner: аргумент содержит перевод строки или NUL");
+    }
+  }
+  // QW-12: envFile/volumes тоже уходят в argv, поэтому проверяем их так же.
+  if (launch.envFile !== undefined && (!launch.envFile || /[\r\n\0]/.test(launch.envFile))) {
+    throw new Error("Runner: некорректный путь к env-файлу");
+  }
+  for (const volume of launch.volumes ?? []) {
+    if (!volume || /[\r\n\0]/.test(volume)) {
+      throw new Error("Runner: некорректное описание монтирования");
     }
   }
 }

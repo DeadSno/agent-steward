@@ -41,6 +41,15 @@ export function buildRemoteCommand(launch: RunnerLaunch): string {
 }
 
 /**
+ * QW-12: ssh разбираетtarget как опцию, если он начинается с `-`. Такой хост
+ * или пользователь может подсунуть `-oProxyCommand=...` и выполнить команду
+ * до установки соединения. Отвергаем ведущий дефис у обеих частей.
+ */
+function isOptionLike(value: string): boolean {
+  return value.startsWith("-");
+}
+
+/**
  * D-1.3: адаптер ssh CLI. Как и docker, выполняет только явный execute;
  * resolve/dry-run проверяют доступность ssh-бинарника и строят argv.
  */
@@ -50,13 +59,15 @@ export function createSSHRunner(options: SshRunnerOptions): Runner {
   const binary = deps?.sshBinary ?? DEFAULT_SSH_BINARY;
   const user = (options.user ?? "").trim();
   const target = user ? `${user}@${host}` : host;
+  const invalidTarget =
+    !host || isOptionLike(host) || isOptionLike(user) || /[\r\n\0]/.test(target);
 
   const runner: Runner = {
     name: "ssh",
-    available: () => Boolean(host) && !/[\r\n\0]/.test(target) && binaryAvailable(binary, deps),
+    available: () => !invalidTarget && binaryAvailable(binary, deps),
     buildCommand: (launch: RunnerLaunch): RunnerCommand => {
-      if (!host || /[\r\n\0]/.test(target)) {
-        throw new Error("SSH runner: host is required");
+      if (invalidTarget) {
+        throw new Error("SSH runner: host/user is required and must not start with '-'");
       }
       return {
         command: binary,

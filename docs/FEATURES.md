@@ -879,6 +879,14 @@ factory fails open to `local`. The same specification always yields the same
 command and verdict (no clock or randomness), so verdicts are byte-stable.
 No new tools or RPC methods are added.
 
+QW-12 hardening: SSH targets (host and user) may not start with `-`, so a
+target cannot be parsed by `ssh` as an option such as `-oProxyCommand=...`.
+For Docker, `--workdir` is only a container path — pass `volumes` (for example
+`/repo:/repo:ro`) to mount the repository. Pass `envFile` (a `KEY=VALUE` file
+ readable by Docker, ideally mode `0600`) instead of `env` when values are
+ secrets: the legacy `--env K=V` form leaks them into `argv` and
+ `docker inspect`. `env` and `envFile` are mutually exclusive.
+
 ## Limits and non-goals
 
 - **No one-shot scheduling without `triggerType: "once"`.** One-shot runs exist

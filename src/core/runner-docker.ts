@@ -34,11 +34,24 @@ export function createDockerRunner(options: DockerRunnerOptions): Runner {
       validateLaunch(launch);
       const args: string[] = ["run", "--rm"];
       if (launch.workdir) args.push("--workdir", launch.workdir);
-      const env = launch.env ?? {};
-      const keys = Object.keys(env)
-        .filter((key) => env[key] !== undefined)
-        .sort();
-      for (const key of keys) args.push("--env", `${key}=${env[key] ?? ""}`);
+      // QW-12: --workdir сам по себе не монтирует хост-каталог. Явные monтирования
+      // дают возможность пробросить репозиторий в контейнер.
+      for (const volume of launch.volumes ?? []) args.push("-v", volume);
+      // QW-12: --env K=V виден в argv и docker inspect. envFile уводит секреты
+      // в файл с правами 0600; simultанная передача env запрещена, чтобы не
+      // получить тихую рассинхронизацию двух источников.
+      if (launch.envFile && launch.env && Object.keys(launch.env).length > 0) {
+        throw new Error("Docker runner: env and envFile are mutually exclusive");
+      }
+      if (launch.envFile) {
+        args.push("--env-file", launch.envFile);
+      } else {
+        const env = launch.env ?? {};
+        const keys = Object.keys(env)
+          .filter((key) => env[key] !== undefined)
+          .sort();
+        for (const key of keys) args.push("--env", `${key}=${env[key] ?? ""}`);
+      }
       args.push(image, launch.command, ...launch.args);
       return { command: binary, args };
     },
