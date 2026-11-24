@@ -30,7 +30,13 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 
 - QA-D315-1: ad-hoc-миссия без привязки к ОС (`agent-steward run "..."`) падает с `NOT NULL constraint failed: runs.started_at` на БД, где legacy-таблица `runs` создана с `started_at TEXT NOT NULL`: `createRun()` (`src/db/runs-repo.ts:261-262`) пишет `null` для статуса `pending`, хотя актуальная схема `src/db/schema.ts:215` допускает NULL — P2. Действие: при создании pending-запуска подставлять `startedAt = timestamp` (или добавить миграцию, снимающую NOT NULL) и покрыть регрессией `test-mission-run.mjs`; проверено реальным прогоном CLI 24.11.2026.
 
-- B-3.1: профильные бейзлайны `test-profiles.mjs` не обновлены после QA-PORT-4 (`emit_event` переведён в core-профиль): `node test-profiles.mjs` даёт 71/74 — surface admin 14536 токенов против лимита 14500, `coreSpecs.length` стал 10 вместо 9, admin — 19 вместо 18 — P2. Действие: пересчитать `B31_BASELINE` (coreDigest, adminTokens, ожидаемые размеры профилей) или явно пересмотреть ограничение B-3.1 с обоснованием в CHANGELOG. Обнаружено 24.11.2026.
+- QA-PORT-15: устаревшие ожидания профилей после QA-PORT-4: `test-agent-tools.mjs` (`node test-agent-tools.mjs`) даёт 84/89 — 5 проверок всё ещё ждут core=9/admin=18, `bogus`→9, `coreSurface.tools=9`, а блок PL-129 требует отсутствия `mcpEvent` в core и старой подсказки в локалях — P2. Действие: обновить ожидания до core=10/admin=19 и переписать блок под QA-PORT-4 (`mcpEvent` в core, `nextTaskOnSuccess` admin-only), прогнать тест. Обнаружено 24.11.2026.
+
+- QA-PORT-16: запущенный процесс плагина не подхватывает собранный `dist/`: `schedule_task` с `triggerType:"mcp-event"` + `mcpEvent` отклоняется сообщением «исключены из core-профиля», хотя в свежей сборке поле присутствует; в каталоге инструментов сессии нет `emit_event`/`schedule_advanced`/`get_analytics`/`get_metrics` — P2. Действие: явно документировать обязательный перезапуск плагина после `npm run build` либо горячо перечитывать реестр инструментов. Обнаружено 24.11.2026.
+
+- QA-PORT-17: префлайт SCOPE ошибочно трактует прозу как пути: `schedule_task` с промптом «Scope: tp-audit-dev, branch dev.» (`src/core/scheduler/run-now.ts`, `extractCreateIntentPaths`/префлайт) отклонён PL-79/PL-82 с «несуществующие пути: tp-audit-dev, branch» — P2. Действие: извлекать только явные пути с расширением файла/списком `filesCreate`, игнорировать произвольную прозу после ключевого слова Scope. Обнаружено 24.11.2026.
+
+- QA-PORT-18: документация навыка устарела после QA-PORT-4: `skills/scheduled-job-best-practices/SKILL.md:39` и `references/triggers-and-prompts.md:16` по-прежнему пишут, что `mcpEvent` недоступен в core-профиле и нужен `schedule_advanced` — P2. Действие: обновить таблицы триггеров на `schedule_task` + `mcpEvent`/`emit_event` в core, оставить admin-only только `nextTaskOnSuccess`. Обнаружено 24.11.2026.
 
 ---
 
