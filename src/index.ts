@@ -54,6 +54,7 @@ import { getSchedulerBackend } from "./core/scheduler/index.js";
 import { SCHEDULER_SKILL_ID, loadSchedulerSkill } from "./skill.js";
 import { getTaskLogs, resolveTaskLogPath } from "./core/scheduler/logs.js";
 import {
+  extractScopePaths,
   planParallelExecution,
   planRuntimeIsolation,
   preflightScope,
@@ -2676,6 +2677,10 @@ async function updateTaskFromInput(
 
   const schedule = clearableString(input.schedule ?? input.newSchedule, previous.schedule);
   const prompt = clearableString(input.prompt ?? input.newPrompt, previous.prompt);
+  // QA-UPDATE-SCOPE: SCOPE прежнего промпта уже проходил pre-flight при создании
+  // задачи. Частичный апдейт (worktree/paused/...) не должен заново требовать
+  // существования этих путей — иначе апдейт рвётся из-за ложного отката.
+  const preservedScopePaths = extractScopePaths(previous.prompt ?? "");
   const triggerType = input.triggerType ?? previous.triggerType ?? "cron";
   const timezone = clearableString(input.timezone, previous.timezone);
   const notBefore = clearableString(input.notBefore, previous.notBefore);
@@ -2874,7 +2879,7 @@ async function updateTaskFromInput(
       // PL-75: cron-задача при update пересоздаётся с будущей /sd, чтобы
       // прошедшая start boundary не вызывала catch-up.
       triggerType === "cron",
-      undefined, // filesCreate — в update не меняется
+      preservedScopePaths, // QA-UPDATE-SCOPE: прежние SCOPE-пути уже валидированы
       autoSelectModel === true,
       modelChoice.autoSelected,
       // P-3.2: харнесс переживает пересоздание задачи.
@@ -8481,7 +8486,9 @@ async function recreateTaskFromDefinition(definition: TaskDefinition): Promise<v
     // QA-P0.1 (E-2.1): откат update не теряет tokenBudget.
     definition.tokenBudget,
     undefined,
-    undefined,
+    // QA-UPDATE-SCOPE: откат пересоздаёт задачу с тем же промптом; его SCOPE
+    // уже проходил pre-flight, повторная проверка ломает восстановление.
+    extractScopePaths(definition.prompt ?? ""),
     undefined,
     undefined,
     definition.harness,

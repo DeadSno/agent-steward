@@ -886,7 +886,7 @@
   "tool.task.paused": "已暂停",
   "tool.task.pausedText": "任务 “{name}” {verb}{until}。",
   "tool.task.resumed": "已恢复",
-  "tool.task.rollbackFailed": "{cause} 回滚失败：{restore}。任务 “{name}” 在计划程序中缺失——请重新创建。",
+  "tool.task.rollbackFailed": "{cause} 回滚失败：{restore}。任务“{name}”的旧定义仍在数据库中——重试前请检查 list_tasks。",
   "tool.task.rollbackKept": "{cause} 先前版本未触动：无法从计划程序中移除任务。",
   "tool.task.rollbackRestored": "{cause} 更新已取消，先前版本已恢复。",
   "tool.task.started": "任务 “{name}” 已启动。",

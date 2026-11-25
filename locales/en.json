@@ -886,7 +886,7 @@
   "tool.task.paused": "paused",
   "tool.task.pausedText": "Task \"{name}\" {verb}{until}.",
   "tool.task.resumed": "resumed",
-  "tool.task.rollbackFailed": "{cause} Rollback failed: {restore}. Task \"{name}\" is missing from the scheduler — create it again.",
+  "tool.task.rollbackFailed": "{cause} Rollback failed: {restore}. The previous definition of \"{name}\" is still in the database — check list_tasks before retrying.",
   "tool.task.rollbackKept": "{cause} The previous version was left untouched: the task could not be removed from the scheduler.",
   "tool.task.rollbackRestored": "{cause} The update was cancelled and the previous version restored.",
   "tool.task.started": "Task \"{name}\" started.",

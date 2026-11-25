@@ -886,7 +886,7 @@
   "tool.task.paused": "поставлена на паузу",
   "tool.task.pausedText": "Задача \"{name}\" {verb}{until}.",
   "tool.task.resumed": "возобновлена",
-  "tool.task.rollbackFailed": "{cause} Откат не удался: {restore}. Задача \"{name}\" отсутствует в планировщике — создайте её заново.",
+  "tool.task.rollbackFailed": "{cause} Откат не удался: {restore}. Прежнее определение задачи \"{name}\" сохранено в БД — проверьте list_tasks перед повтором.",
   "tool.task.rollbackKept": "{cause} Прежняя версия не тронута: удалить задачу из планировщика не удалось.",
   "tool.task.rollbackRestored": "{cause} Обновление отменено, прежняя версия восстановлена.",
   "tool.task.started": "Задача \"{name}\" запущена.",

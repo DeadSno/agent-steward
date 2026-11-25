@@ -886,7 +886,7 @@
   "tool.task.paused": "duraklatıldı",
   "tool.task.pausedText": "\"{name}\" görevi {verb}{until}.",
   "tool.task.resumed": "devam ettirildi",
-  "tool.task.rollbackFailed": "{cause} Geri alma başarısız: {restore}. \"{name}\" görevi zamanlayıcıda yok — yeniden oluşturun.",
+  "tool.task.rollbackFailed": "{cause} Geri alma başarısız: {restore}. \"{name}\" görevinin önceki tanımı veritabanında korundu — yeniden denemeden önce list_tasks kontrol edin.",
   "tool.task.rollbackKept": "{cause} Önceki sürüm dokunulmadan bırakıldı: görev zamanlayıcıdan kaldırılamadı.",
   "tool.task.rollbackRestored": "{cause} Güncelleme iptal edildi ve önceki sürüm geri yüklendi.",
   "tool.task.started": "\"{name}\" görevi başlatıldı.",

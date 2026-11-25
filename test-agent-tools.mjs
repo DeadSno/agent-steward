@@ -1140,6 +1140,66 @@ check(
   );
 }
 
+// QA-UPDATE-SCOPE: частичный update и откат не должны заново валидировать SCOPE прежнего промпта.
+{
+  const { getSchedulerBackend } = await import("./dist/core/scheduler/index.js");
+  const backend = getSchedulerBackend();
+  const originalBackend = {
+    createTask: backend.createTask,
+    listTasks: backend.listTasks,
+    deleteTask: backend.deleteTask,
+  };
+  const created = new Set();
+  backend.createTask = async ({ name }) => { created.add(name); };
+  backend.listTasks = async () => [...created].map((name) => ({ taskName: name }));
+  backend.deleteTask = async (name) => { created.delete(name); };
+
+  const scopePath = "reports/qa-update-scope-missing.json";
+  const scopedPrompt = `Собери отчёт. SCOPE: ${scopePath}`;
+  try {
+    const made = JSON.parse((await handlers.schedule_task({
+      name: "QA-UpdateScope", schedule: "0 9 * * *",
+      prompt: scopedPrompt, filesCreate: [scopePath],
+    })).content);
+    check(
+      "QA-UPDATE-SCOPE: задача с несуществующим SCOPE создаётся через filesCreate",
+      made.success === true
+    );
+
+    const updated = JSON.parse((await handlers.update_task({
+      name: "QA-UpdateScope", worktree: true,
+    })).content);
+    check(
+      "QA-UPDATE-SCOPE: partial update не перепроверяет SCOPE прежнего промпта",
+      updated.success === true && !String(updated.message).includes("PL-79/PL-82")
+    );
+
+    const badUpdate = JSON.parse((await handlers.update_task({
+      name: "QA-UpdateScope",
+      prompt: "SCOPE: reports/qa-update-scope-brand-new.json",
+    })).content);
+    check(
+      "QA-UPDATE-SCOPE: новый SCOPE-путь по-прежнему валидируется",
+      badUpdate.success === false && String(badUpdate.message).includes("PL-79/PL-82")
+    );
+    check(
+      "QA-UPDATE-SCOPE: откат восстановил задачу с прежним SCOPE",
+      created.has("QA-UpdateScope") === true
+    );
+  } finally {
+    backend.createTask = originalBackend.createTask;
+    backend.listTasks = originalBackend.listTasks;
+    backend.deleteTask = originalBackend.deleteTask;
+  }
+
+  const ru = JSON.parse(fs.readFileSync(new URL("./locales/ru.json", import.meta.url), "utf8"));
+  check(
+    "QA-UPDATE-SCOPE: rollbackFailed не утверждает ложное «задача отсутствует»",
+    ru["tool.task.rollbackFailed"].includes("сохранено в БД") &&
+      !ru["tool.task.rollbackFailed"].includes("отсутствует в планировщике")
+  );
+}
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\nAgent tools: ${results.length - failed.length}/${results.length} проверок пройдено.`);
 process.exit(failed.length > 0 ? 1 : 0);
