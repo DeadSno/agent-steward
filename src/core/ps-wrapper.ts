@@ -669,6 +669,16 @@ function Get-RecordVerdict {
             NormalizedExitCode = $AgentExitCode
         }
     }
+    # QA-D316-5: агент снят completion/idle-сторожем на финализации, артефакты
+    # уже записаны, но quality gate ещё не запускался — это частичный успех.
+    # Артефакты остаются на диске, прогон не помечается жёсткой ошибкой.
+    if ($IdleCompleted -and $WorkCompleted -and -not $GatePassed) {
+        return [pscustomobject]@{
+            Status = "partial"
+            Reason = "PL-134: артефакты сохранены, quality gate не запускался"
+            NormalizedExitCode = 0
+        }
+    }
     if ($GatePassed -and $killedByWatchdog) {
         return [pscustomobject]@{
             Status = "success"
@@ -821,21 +831,67 @@ function Invoke-OpenCodeOnce {
     # сохраняют приоритет: окно простоя по умолчанию 60 с, опрос каждые 5 с,
     # поэтому короткие timeout-прогоны (например, 2 с в регрессии) не затрагиваются.
     # Окно настраивается через AGENT_STEWARD_COMPLETION_IDLE_SEC / _POLL_SEC.
+    # QA-D316-5: AGENT_STEWARD_COMPLETION_IDLE_GRACE_SEC — дополнительное окно
+    # (по умолчанию 0 с, минимум 0 с), которое добавляется к окну простоя, когда
+    # за последнее время изменились артефакты задачи (git status/diff и файлы
+    # reports в рабочей папке). Финализация после записи отчёта не считается
+    # простоем. При grace=0 поведение и накладные расходы прежние (git не вызывается).
     if ($env:AGENT_STEWARD_COMPLETION_WATCH -ne "0") {
         $idlePoll = 5
         $idleWindow = 60
+        $idleGrace = 0
         try {
             if ($env:AGENT_STEWARD_COMPLETION_POLL_SEC -match '^\d+$') { $idlePoll = [Math]::Max(1, [int]$env:AGENT_STEWARD_COMPLETION_POLL_SEC) }
             if ($env:AGENT_STEWARD_COMPLETION_IDLE_SEC -match '^\d+$') { $idleWindow = [Math]::Max(30, [int]$env:AGENT_STEWARD_COMPLETION_IDLE_SEC) }
+            if ($env:AGENT_STEWARD_COMPLETION_IDLE_GRACE_SEC -match '^\d+$') { $idleGrace = [Math]::Max(0, [int]$env:AGENT_STEWARD_COMPLETION_IDLE_GRACE_SEC) }
         } catch {}
         $completionMarker = Join-Path ([System.IO.Path]::GetTempPath()) ("sched-idle-" + [guid]::NewGuid().ToString("N") + ".flag")
         $idleWatch = Start-Job -ScriptBlock {
-            param([int]$RootId, [string]$Marker, [int]$PollSec, [int]$IdleSec)
+            param([int]$RootId, [string]$Marker, [int]$PollSec, [int]$IdleSec, [int]$GraceSec, [string]$Workdir)
+            # QA-D316-5: отпечаток артефактов — git status/diff плюс mtime и размер
+            # файлов reports. Сравниваем со снимком, снятым до запуска агента.
+            function Get-CompletionArtifactStamp {
+                param([string]$Dir)
+                $stamp = ""
+                if (-not $Dir -or -not (Test-Path -LiteralPath $Dir)) { return $stamp }
+                try {
+                    $gitStatus = & git -C $Dir status --porcelain --untracked-files=all 2>$null
+                    $gitDiff = & git -C $Dir diff --stat 2>$null
+                    $stamp = [string]::Join([Environment]::NewLine, @($gitStatus)) + "#" +
+                        [string]::Join([Environment]::NewLine, @($gitDiff))
+                } catch {}
+                try {
+                    $reportDir = Join-Path $Dir "reports"
+                    if (Test-Path -LiteralPath $reportDir) {
+                        foreach ($file in @(Get-ChildItem -LiteralPath $reportDir -File -ErrorAction Stop | Sort-Object Name)) {
+                            $stamp = $stamp + "|" + $file.Name + ":" + $file.LastWriteTimeUtc.Ticks + ":" + $file.Length
+                        }
+                    }
+                } catch {}
+                return $stamp
+            }
             $lastCpu = -1.0
             $idleTicks = 0
-            $maxIdle = [Math]::Ceiling($IdleSec / [double]$PollSec)
+            $tick = 0
+            $baseMaxIdle = [Math]::Ceiling($IdleSec / [double]$PollSec)
+            $graceTicks = [Math]::Ceiling($GraceSec / [double]$PollSec)
+            $artifactStamp = $null
+            $lastChangeTick = -1
+            if ($GraceSec -gt 0) { $artifactStamp = Get-CompletionArtifactStamp -Dir $Workdir }
             while ($true) {
                 Start-Sleep -Seconds $PollSec
+                $tick++
+                # QA-D316-5: grace действует, только когда артефакты менялись
+                # в последние GraceSec секунд (graceTicks опросов).
+                $recentArtifacts = $false
+                if ($GraceSec -gt 0) {
+                    $currentStamp = Get-CompletionArtifactStamp -Dir $Workdir
+                    if ($currentStamp -ne $artifactStamp) {
+                        $artifactStamp = $currentStamp
+                        $lastChangeTick = $tick
+                    }
+                    $recentArtifacts = ($lastChangeTick -ge 0) -and (($tick - $lastChangeTick) -le $graceTicks)
+                }
                 $all = @()
                 try { $all = @(Get-CimInstance Win32_Process -Property ProcessId, ParentProcessId, KernelModeTime, UserModeTime -ErrorAction Stop) } catch { continue }
                 $targets = New-Object System.Collections.Generic.List[int]
@@ -863,8 +919,14 @@ function Invoke-OpenCodeOnce {
                         }
                     }
                 }
-                if ($lastCpu -ge 0 -and $cpu -le $lastCpu) { $idleTicks++ } else { $idleTicks = 0 }
+                # QA-D316-5: пока артефакты менялись недавно, счётчик простоя
+                # замораживается, а окно увеличивается на grace — финализация
+                # агента после записи отчёта не прерывается сторожем.
+                if ($recentArtifacts) {
+                    $idleTicks = 0
+                } elseif ($lastCpu -ge 0 -and $cpu -le $lastCpu) { $idleTicks++ } else { $idleTicks = 0 }
                 $lastCpu = $cpu
+                $maxIdle = $baseMaxIdle + $(if ($recentArtifacts) { $graceTicks } else { 0 })
                 if ($idleTicks -ge $maxIdle) {
                     # PL-134: маркер несёт понятную причину, а не безликое "idle" —
                     # она попадёт в лог при финализации обёртки.
@@ -876,7 +938,7 @@ function Invoke-OpenCodeOnce {
                     break
                 }
             }
-        } -ArgumentList $PID, $completionMarker, $idlePoll, $idleWindow
+        } -ArgumentList $PID, $completionMarker, $idlePoll, $idleWindow, $idleGrace, $Workdir
     }
 
     # QV-8: дочерний opencode run не должен загружать инструменты планировщика
@@ -2458,7 +2520,7 @@ export interface WrapperRecordVerdictInput {
 
 /** Результат вердикта записи: статус, причина и итоговый exit-код обёртки. */
 export interface WrapperRecordVerdict {
-  status: "success" | "timeout" | "error";
+  status: "success" | "partial" | "timeout" | "error";
   reason: string;
   normalizedExitCode: number;
 }
@@ -2499,6 +2561,16 @@ export function resolveWrapperRecordVerdict(
       normalizedExitCode: input.agentExitCode ?? input.exitCode,
     };
   }
+  // QA-D316-5: idle-сторож снял агента на финализации, когда артефакты уже
+  // записаны, а quality gate ещё не запускался. Это частичный успех: артефакты
+  // сохраняются, а не объявляются ошибкой (полностью пустой прогон — PL-160 выше).
+  if (input.idleCompleted === true && input.workCompleted === true && !input.gatePassed) {
+    return {
+      status: "partial",
+      reason: "PL-134: артефакты сохранены, quality gate не запускался",
+      normalizedExitCode: 0,
+    };
+  }
   if (input.gatePassed && killedByWatchdog) {
     return {
       status: "success",
@@ -2531,6 +2603,40 @@ export function resolveWrapperRecordVerdict(
     status: "error",
     reason: `Код возврата ${input.exitCode}`,
     normalizedExitCode: input.exitCode,
+  };
+}
+
+/**
+ * QA-D316-5: окно completion/idle-сторожа. Переменная окружения
+ * `AGENT_STEWARD_COMPLETION_IDLE_GRACE_SEC` (по умолчанию 0, минимум 0)
+ * добавляется к `idleSec`, только когда за последнее время менялись артефакты
+ * задачи (git status/diff или файлы reports в рабочей папке). В этот интервал
+ * счётчик простоя замораживается: генерация обёртки делает то же через
+ * Get-CompletionArtifactStamp в Start-Job. Чистая функция нужна для
+ * детерминированной регрессии без запуска powershell.exe.
+ */
+export function resolveCompletionIdleWindow(input: {
+  idleSec: number;
+  graceSec: number;
+  artifactsChangedRecently: boolean;
+}): {
+  idleSec: number;
+  graceSec: number;
+  effectiveWindowSec: number;
+  idleFrozen: boolean;
+} {
+  const idleSec = Number.isFinite(input.idleSec)
+    ? Math.max(30, Math.floor(input.idleSec))
+    : 60;
+  const graceSec = Number.isFinite(input.graceSec)
+    ? Math.max(0, Math.floor(input.graceSec))
+    : 0;
+  const appliedGrace = input.artifactsChangedRecently ? graceSec : 0;
+  return {
+    idleSec,
+    graceSec,
+    effectiveWindowSec: idleSec + appliedGrace,
+    idleFrozen: appliedGrace > 0,
   };
 }
 

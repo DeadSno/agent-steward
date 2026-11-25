@@ -24,6 +24,8 @@ const {
   writePromptFile,
   lockFilePath,
   ensureWrapper,
+  resolveWrapperRecordVerdict,
+  resolveCompletionIdleWindow,
 } = await import("./dist/core/ps-wrapper.js");
 
 const results = [];
@@ -228,6 +230,149 @@ if (process.platform === "win32") {
     fs.rmSync(hookRoot, { recursive: true, force: true });
   }
 }
+
+// QA-D316-5: таблица вердиктов записи — idle-финализация с артефактами больше
+// не error, но полностью пустой прогон остаётся error (PL-160).
+const verdictCases = [
+  {
+    name: "idle + артефакты без гейта → partial (PL-134)",
+    input: {
+      timedOut: false,
+      exitCode: 1,
+      gatePassed: false,
+      gateEvaluated: false,
+      agentExitCode: 1,
+      idleCompleted: true,
+      workCompleted: true,
+    },
+    expect: (v) =>
+      v.status === "partial" &&
+      v.reason.startsWith("PL-134:") &&
+      v.normalizedExitCode === 0,
+  },
+  {
+    name: "idle без артефактов с гейтом → error (PL-160)",
+    input: {
+      timedOut: false,
+      exitCode: 0,
+      gatePassed: true,
+      agentExitCode: 1,
+      idleCompleted: true,
+      workCompleted: false,
+    },
+    expect: (v) => v.status === "error" && v.reason.startsWith("PL-160:"),
+  },
+  {
+    name: "idle без артефактов без гейта → error",
+    input: {
+      timedOut: false,
+      exitCode: 1,
+      gatePassed: false,
+      gateEvaluated: false,
+      agentExitCode: 1,
+      idleCompleted: true,
+      workCompleted: false,
+    },
+    expect: (v) => v.status === "error",
+  },
+  {
+    name: "gate=pass после watchdog → success (PL-128)",
+    input: { timedOut: false, exitCode: 124, gatePassed: true },
+    expect: (v) =>
+      v.status === "success" &&
+      v.reason.startsWith("PL-128:") &&
+      v.normalizedExitCode === 0,
+  },
+  {
+    name: "idle + артефакты + gate=pass → success (PL-81 не сломан)",
+    input: {
+      timedOut: false,
+      exitCode: 0,
+      gatePassed: true,
+      agentExitCode: 1,
+      idleCompleted: true,
+      workCompleted: true,
+    },
+    expect: (v) => v.status === "success" && v.normalizedExitCode === 0,
+  },
+];
+for (const item of verdictCases) {
+  const verdict = resolveWrapperRecordVerdict(item.input);
+  check(`QA-D316-5: ${item.name}`, item.expect(verdict), JSON.stringify(verdict));
+}
+
+// QA-D316-5: grace-окно применяется только при изменённых артефактах.
+const winPlain = resolveCompletionIdleWindow({
+  idleSec: 60,
+  graceSec: 0,
+  artifactsChangedRecently: true,
+});
+const winGrace = resolveCompletionIdleWindow({
+  idleSec: 60,
+  graceSec: 30,
+  artifactsChangedRecently: true,
+});
+const winNoArtifacts = resolveCompletionIdleWindow({
+  idleSec: 60,
+  graceSec: 30,
+  artifactsChangedRecently: false,
+});
+const winNegative = resolveCompletionIdleWindow({
+  idleSec: 60,
+  graceSec: -5,
+  artifactsChangedRecently: true,
+});
+check(
+  "QA-D316-5: grace=0 не меняет окно простоя",
+  winPlain.effectiveWindowSec === 60 && winPlain.idleFrozen === false
+);
+check(
+  "QA-D316-5: grace>0 увеличивает окно при изменённых артефактах",
+  winGrace.effectiveWindowSec === 90 && winGrace.idleFrozen === true
+);
+check(
+  "QA-D316-5: grace не применяется без изменения артефактов",
+  winNoArtifacts.effectiveWindowSec === 60 && winNoArtifacts.idleFrozen === false
+);
+check(
+  "QA-D316-5: отрицательный grace ограничен минимумом 0",
+  winNegative.effectiveWindowSec === 60 && winNegative.graceSec === 0
+);
+
+check(
+  "QA-D316-5: переменная AGENT_STEWARD_COMPLETION_IDLE_GRACE_SEC читается с минимумом 0",
+  WRAPPER_SCRIPT.includes("AGENT_STEWARD_COMPLETION_IDLE_GRACE_SEC") &&
+    /\[Math\]::Max\(0, \[int\]\$env:AGENT_STEWARD_COMPLETION_IDLE_GRACE_SEC\)/.test(
+      WRAPPER_SCRIPT
+    )
+);
+check(
+  "QA-D316-5: grace и рабочая папка передаются в idle-watcher",
+  WRAPPER_SCRIPT.includes(
+    "-ArgumentList $PID, $completionMarker, $idlePoll, $idleWindow, $idleGrace, $Workdir"
+  )
+);
+check(
+  "QA-D316-5: watcher сравнивает git status/diff и файлы reports",
+  WRAPPER_SCRIPT.includes("Get-CompletionArtifactStamp") &&
+    WRAPPER_SCRIPT.includes("status --porcelain --untracked-files=all") &&
+    WRAPPER_SCRIPT.includes("diff --stat") &&
+    WRAPPER_SCRIPT.includes("Get-ChildItem -LiteralPath $reportDir")
+);
+check(
+  "QA-D316-5: счётчик простоя замораживается, окно растёт на graceTicks",
+  WRAPPER_SCRIPT.includes("if ($recentArtifacts) {") &&
+    WRAPPER_SCRIPT.includes(
+      "$maxIdle = $baseMaxIdle + $(if ($recentArtifacts) { $graceTicks } else { 0 })"
+    )
+);
+check(
+  "QA-D316-5: PowerShell-вердикт возвращает partial с причиной PL-134",
+  WRAPPER_SCRIPT.includes('Status = "partial"') &&
+    WRAPPER_SCRIPT.includes(
+      "PL-134: артефакты сохранены, quality gate не запускался"
+    )
+);
 
 console.log(`\n${passed}/${results.length} проверок сторожа пройдено.`);
 process.exit(failed === 0 ? 0 : 1);
