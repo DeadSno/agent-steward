@@ -29,6 +29,13 @@ import {
   buildLoraAdapterCandidate,
   evaluateLoraAdapter,
   promoteLoraAdapter,
+  LORA_ROLLOUT_FORMAT,
+  LORA_SHADOW_TRAFFIC_SHARE,
+  LORA_CANARY_TRAFFIC_SHARE,
+  activateLoraShadow,
+  compareLoraShadow,
+  promoteShadowToCanary,
+  rollbackLoraAdapter,
 } from "./dist/core/self-analysis.js";
 import { buildAnalytics } from "./dist/core/analytics.js";
 import { t } from "./dist/i18n.js";
@@ -694,6 +701,71 @@ console.log("\n=== EV-1: приёмка §11 ===");
       }
     })(),
   );
+}
+
+// --- LP-1.3: теневой режим, канареечный выход и откат ---------------------------
+
+{
+  const rows = [];
+  for (let i = 0; i < 24; i++) {
+    const first = makeGateRow({ gateHash: `lora3-gate-${i}` });
+    rows.push(first, { ...first, outcomeKey: `${first.outcomeKey}-dup` });
+  }
+  const dataset = buildLoraDataset(rows, { now: acceptanceNow });
+  const candidate = buildLoraAdapterCandidate(dataset, { now: acceptanceNow });
+  const baseline = { successRate: 0.4, firstPassRate: 0.5, netEconomyUsd: 10, cases: dataset.cases.length };
+  const decision = promoteLoraAdapter(
+    candidate,
+    evaluateLoraAdapter(candidate, dataset, baseline, { ...baseline }, { now: acceptanceNow }),
+  );
+  const shadow = activateLoraShadow(decision, { now: acceptanceNow });
+
+  check("LP-1.3: формат записи о включении", shadow.format === LORA_ROLLOUT_FORMAT && shadow.adapterId === candidate.adapterId);
+  check("LP-1.3: теневой режим с нулевой долей трафика", shadow.mode === "shadow" && shadow.trafficShare === LORA_SHADOW_TRAFFIC_SHARE && shadow.canaryShare === 0);
+  check("LP-1.3: включение зафиксировано с командой отката", shadow.decisionOk === true && shadow.rollbackCommand.includes("git checkout HEAD"));
+  check(
+    "LP-1.3: без положительного решения включение невозможно",
+    (() => {
+      try {
+        activateLoraShadow({ ...decision, ok: false }, { now: acceptanceNow });
+        return false;
+      } catch (error) {
+        return String(error.message).startsWith("LORA_PROMOTION_REQUIRED");
+      }
+    })(),
+  );
+
+  const comparison = compareLoraShadow(shadow, { metrics: { ...baseline }, baseline });
+  check("LP-1.3: сравнение на уровне эталона разрешает canary", comparison.ok && comparison.next === "canary");
+  check("LP-1.3: канареечная доля мала", comparison.canaryShare === LORA_CANARY_TRAFFIC_SHARE && LORA_CANARY_TRAFFIC_SHARE < 0.1);
+  const canary = promoteShadowToCanary(shadow, comparison, { now: acceptanceNow });
+  check("LP-1.3: переход в canary зафиксирован", canary.mode === "canary" && canary.trafficShare === LORA_CANARY_TRAFFIC_SHARE);
+  check(
+    "LP-1.3: полный трафик недостижим без отдельного решения",
+    canary.trafficShare < 1 && canary.canaryShare < 1,
+  );
+  check(
+    "LP-1.3: запрет перехода в canary без успешного сравнения",
+    (() => {
+      try {
+        promoteShadowToCanary(shadow, { ...comparison, next: "blocked", ok: false }, { now: acceptanceNow });
+        return false;
+      } catch (error) {
+        return String(error.message).startsWith("LORA_SHADOW_GATE_FAILED");
+      }
+    })(),
+  );
+
+  const degraded = compareLoraShadow(shadow, { metrics: { ...baseline, successRate: baseline.successRate - 0.05 }, baseline });
+  check("LP-1.3: деградация блокирует выход из тени", degraded.next === "blocked" && !degraded.ok);
+  const held = compareLoraShadow(shadow, { metrics: { ...baseline, cases: 0 }, baseline });
+  check("LP-1.3: нет данных — удержание в тени", held.next === "hold" && held.canaryShare === 0);
+
+  const rollback = rollbackLoraAdapter(canary, "деградация метрик", { now: acceptanceNow });
+  check("LP-1.3: откат обнуляет обе доли трафика", rollback.trafficShare === 0 && rollback.canaryShare === 0);
+  check("LP-1.3: откат сохраняет причину и команду возврата", rollback.reason === "деградация метрик" && rollback.command.includes("git checkout HEAD"));
+  check("LP-1.3: откат привязан к адаптеру", rollback.adapterId === candidate.adapterId);
+  check("LP-1.3: откат из тени тоже обнуляет трафик", rollbackLoraAdapter(shadow, "останов", { now: acceptanceNow }).trafficShare === 0);
 }
 
 // --- Итоги -------------------------------------------------------------------

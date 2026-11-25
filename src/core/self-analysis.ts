@@ -1636,6 +1636,173 @@ export function promoteLoraAdapter(
   };
 }
 
+// --- LP-1.3: теневой режим, канареечный выход и откат адаптера ----------------
+
+/** Версия формата записи о включении адаптера. */
+export const LORA_ROLLOUT_VERSION = "1.0";
+export const LORA_ROLLOUT_FORMAT = "agent-steward.lora-rollout";
+/** Доля трафика в теневом режиме: ответы модели не влияют на пользователя. */
+export const LORA_SHADOW_TRAFFIC_SHARE = 0;
+/** Доля трафика на первом канареечном шаге. */
+export const LORA_CANARY_TRAFFIC_SHARE = 0.05;
+
+/** Запись о включении адаптера: shadow или canary. */
+export interface LoraRollout {
+  kind: "lora-rollout";
+  format: typeof LORA_ROLLOUT_FORMAT;
+  version: string;
+  adapterId: string;
+  mode: "shadow" | "canary";
+  enabledAt: string;
+  trafficShare: number;
+  canaryShare: number;
+  decisionOk: boolean;
+  rollbackCommand: string;
+}
+
+/** Наблюдение за работой адаптера в теневом режиме. */
+export interface LoraShadowObservation {
+  metrics: LoraEvalMetrics;
+  baseline: LoraEvalMetrics;
+}
+
+/** Сравнение теневого прогона с эталоном. */
+export interface LoraShadowComparison {
+  ok: boolean;
+  checks: { id: string; ok: boolean; detail: string }[];
+  next: "blocked" | "hold" | "canary";
+  canaryShare: number;
+}
+
+/** Результат отката адаптера. */
+export interface LoraAdapterRollback {
+  kind: "lora-adapter-rollback";
+  version: string;
+  adapterId: string;
+  rolledBackAt: string;
+  reason: string;
+  trafficShare: 0;
+  canaryShare: 0;
+  command: string;
+}
+
+/**
+ * Включает адаптер только в теневом режиме: нулевая доля реального трафика.
+ * Без положительного решения promoteLoraAdapter включение невозможно.
+ */
+export function activateLoraShadow(
+  decision: LoraPromotionDecision,
+  options: { now?: Date } = {},
+): LoraRollout {
+  if (!decision.ok) {
+    throw new Error("LORA_PROMOTION_REQUIRED: включение без пройденного eval запрещено");
+  }
+  return {
+    kind: "lora-rollout",
+    format: LORA_ROLLOUT_FORMAT,
+    version: LORA_ROLLOUT_VERSION,
+    adapterId: decision.adapterId,
+    mode: "shadow",
+    enabledAt: (options.now ?? new Date()).toISOString(),
+    trafficShare: LORA_SHADOW_TRAFFIC_SHARE,
+    canaryShare: LORA_SHADOW_TRAFFIC_SHARE,
+    decisionOk: true,
+    rollbackCommand: decision.rollback,
+  };
+}
+
+/**
+ * Сравнивает метрики теневого прогона с эталоном. Переход в canary
+ * разрешён только при отсутствии деградации и соблюдении порогов.
+ */
+export function compareLoraShadow(
+  rollout: LoraRollout,
+  observation: LoraShadowObservation,
+): LoraShadowComparison {
+  const checks: LoraShadowComparison["checks"] = [];
+  const add = (id: string, ok: boolean, detail: string): void => {
+    checks.push({ id, ok, detail });
+  };
+  const current = observation.metrics;
+  const baseline = observation.baseline;
+  add(
+    "shadow_traffic_zero",
+    rollout.mode === "shadow" && rollout.trafficShare === LORA_SHADOW_TRAFFIC_SHARE && rollout.canaryShare === 0,
+    `mode=${rollout.mode}, trafficShare=${rollout.trafficShare}`,
+  );
+  add("decision_ok", rollout.decisionOk, `decisionOk=${rollout.decisionOk}`);
+  add(
+    "observation_present",
+    Number.isFinite(current.successRate) &&
+      Number.isFinite(current.firstPassRate) &&
+      Number.isFinite(current.netEconomyUsd) &&
+      current.cases > 0 &&
+      baseline.cases > 0,
+    `current=${JSON.stringify(current)}, baseline=${JSON.stringify(baseline)}`,
+  );
+  add(
+    "no_degradation",
+    current.successRate >= baseline.successRate - LORA_PROMOTION.maxSuccessRateDrop &&
+      current.firstPassRate >= baseline.firstPassRate - LORA_PROMOTION.maxFirstPassRateDrop &&
+      current.netEconomyUsd >= baseline.netEconomyUsd - LORA_PROMOTION.maxEconomyDropUsd,
+    `current=${JSON.stringify(current)}, baseline=${JSON.stringify(baseline)}`,
+  );
+  add(
+    "thresholds",
+    current.successRate >= ACCEPTANCE_THRESHOLDS.minSuccessRate &&
+      current.firstPassRate >= ACCEPTANCE_THRESHOLDS.minFirstPassRate &&
+      current.netEconomyUsd > ACCEPTANCE_THRESHOLDS.minNetEconomyUsd,
+    `successRate=${current.successRate}, firstPassRate=${current.firstPassRate}`,
+  );
+  const ok = checks.every((item) => item.ok);
+  const degraded = checks.some((item) => !item.ok && ["no_degradation", "thresholds"].includes(item.id));
+  return {
+    ok,
+    checks,
+    next: ok ? "canary" : degraded ? "blocked" : "hold",
+    canaryShare: ok ? LORA_CANARY_TRAFFIC_SHARE : LORA_SHADOW_TRAFFIC_SHARE,
+  };
+}
+
+/**
+ * Переводит теневую запись в канареечный режим с малой долей трафика.
+ * Прямой переход на полный трафик в этом интерфейсе отсутствует.
+ */
+export function promoteShadowToCanary(
+  rollout: LoraRollout,
+  comparison: LoraShadowComparison,
+  options: { now?: Date } = {},
+): LoraRollout {
+  if (comparison.next !== "canary" || !comparison.ok) {
+    throw new Error("LORA_SHADOW_GATE_FAILED: переход в canary разрешён только после успешного сравнения");
+  }
+  return {
+    ...rollout,
+    mode: "canary",
+    enabledAt: (options.now ?? new Date()).toISOString(),
+    trafficShare: LORA_CANARY_TRAFFIC_SHARE,
+    canaryShare: LORA_CANARY_TRAFFIC_SHARE,
+  };
+}
+
+/** Откатывает адаптер: обе доли трафика обнуляются, возврат к эталону явный. */
+export function rollbackLoraAdapter(
+  rollout: LoraRollout,
+  reason: string,
+  options: { now?: Date } = {},
+): LoraAdapterRollback {
+  return {
+    kind: "lora-adapter-rollback",
+    version: LORA_ROLLOUT_VERSION,
+    adapterId: rollout.adapterId,
+    rolledBackAt: (options.now ?? new Date()).toISOString(),
+    reason,
+    trafficShare: 0,
+    canaryShare: 0,
+    command: rollout.rollbackCommand,
+  };
+}
+
 function generateSummary(
   health: HealthScore,
   anomalies: Anomaly[],

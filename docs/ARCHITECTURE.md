@@ -258,9 +258,12 @@ applied through `PRAGMA user_version` on open. Step 11 adds functional indexes
   a versioned ledger-only dataset, validates it, and gates an external offline
   adapter artifact with mandatory eval against the acceptance baseline. The
   stored `weightsRef` is a symbolic link, online learning is forbidden by format,
-  and promotion requires a passing eval plus an explicit decision. Measured
-  baseline snapshot (2026-11-25): 183 rows, 122 cases, success rate 0.2593,
-  first pass rate 0.4208, net economy 2.5829 USD.
+  and promotion requires a passing eval plus an explicit decision. LP-1.3 adds
+  rollout metadata: shadow activation has zero traffic share, canary is limited
+  to 5% and requires a passing shadow comparison, rollback zeroes both shares and
+  restores the baseline snapshot. No adapter was routed to full traffic in the
+  measured run. Measured baseline snapshot (2026-11-25): 183 rows, 122 cases,
+  success rate 0.2593, first pass rate 0.4208, net economy 2.5829 USD.
 
 ## Data flow
 
