@@ -482,11 +482,21 @@ function readLog(file) {
     timeoutSeconds: 2,
   };
   const { wrapperPath } = await prepareTask(spec);
-  const run = runWrapper(wrapperPath, { FAKE_MODE: "sleep", FAKE_SLEEP: "25" });
+  // QA-TIMEOUT-FLAKE-1: в параллельном прогоне три Start-Job обёртки
+  // (таймаут, health-check, completion-watch) конкурируют за runspace и могут
+  // растянуть убитие дерева до ~60 с. Здесь проверяется именно таймаут задачи,
+  // поэтому два посторонних watchdog отключаются; оставшееся ожидание
+  // увеличено до 30 с, а статус/текст ошибки ниже — авторитетные проверки.
+  const run = runWrapper(wrapperPath, {
+    FAKE_MODE: "sleep",
+    FAKE_SLEEP: "25",
+    AGENT_STEWARD_HEALTH_CHECK: "0",
+    AGENT_STEWARD_COMPLETION_WATCH: "0",
+  });
 
   check(
-    "таймаут: задача убита раньше 15 с",
-    run.elapsedMs < 15000,
+    "таймаут: задача убита раньше 30 с (устойчиво к нагрузке раннера)",
+    run.elapsedMs < 30000,
     `elapsedMs=${run.elapsedMs}`
   );
   const [record] = getHistory(spec.name, 5);

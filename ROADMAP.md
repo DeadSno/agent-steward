@@ -29,8 +29,6 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 
 Все находки QA-D316-21…37 и все последующие QA-находки 25.11.2026 закрыты, удалены отсюда и перенесены в [CHANGELOG.md](./CHANGELOG.md). Ниже — только открытые находки, внесённые по факту воспроизведения 25.11.2026.
 
-**QA-TIMEOUT-FLAKE-1 — Нестабильная проверка таймаута под параллельной нагрузкой** · P2 · ⬜
-- [ ] `test-execution-hardening.mjs:487` — проверка `таймаут: задача убита раньше 15 с` один раз упала при `elapsedMs=63876` (ожидалось `<15000`) в прогоне `npm test` и при первом повторном запуске набора; два следующих запуска (одиночный и `npm test`) прошли 418/418 и exit 0. Задача: разобраться, что растягивает убитие дерева процессов (`FAKE_MODE=sleep`, `FAKE_SLEEP=25`, `timeoutSeconds=2`) под нагрузкой, и либо стабилизировать ожидание/тайминг проверки, либо зафиксировать, что это артефакт перегруженного раннера.
 
 ## Деталь 3.21 — Усиление в глубину (не расширение)
 `src/core/savings.ts`, `src/core/permissions.ts`, `src/core/worktree.ts`, `src/core/audit.ts`, `src/core/self-analysis.ts`, `src/shared/installation-warning.ts`, `src/version.ts`, `src/index.ts`, `src/rpc.ts`, `src/gui.tsx`, `TEST-PLAN.md`, `test-budget.mjs`, `test-permissions-policy.mjs`, `test-self-analysis.mjs`, `test-gui-bundle.mjs`, `test-agent-tools.mjs`, `docs/SAFETY.md`, `docs/EXECUTION-LOOP.md`
