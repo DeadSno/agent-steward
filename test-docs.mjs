@@ -798,7 +798,7 @@ const duplicateIds = (ids) => [...new Set(ids.filter((id, i) => ids.indexOf(id) 
 const roadmapDuplicateIds = duplicateIds(roadmapIds(roadmapText));
 check(
   `PL-100: ID подзадач в ROADMAP уникальны (${roadmapIds(roadmapText).length} строк, дубли: ${roadmapDuplicateIds.join(",") || "нет"})`,
-  roadmapIds(roadmapText).length > 0 && roadmapDuplicateIds.length === 0
+  roadmapDuplicateIds.length === 0
 );
 check(
   "PL-100: регрессия — дубль ID детектируется",

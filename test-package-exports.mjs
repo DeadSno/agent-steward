@@ -7,6 +7,7 @@
 // его генерирует prepublishOnly -> build:gui.
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -50,6 +51,20 @@ function packedFiles(packageDir) {
   return new Set(entry.files.map((file) => String(file.path).replace(/\\/g, "/")));
 }
 
+/**
+ * QA-D319-2: в свежем worktree `dist/` часто junction/симлинк на основной
+ * чек-аут. `npm pack` не упаковывает такие каталоги (QA-PORT-9), поэтому
+ * проверку артефактов `dist/` оставляем CI, где dist — обычная папка.
+ * Отсутствие dist/ не считается линком (graceful skip).
+ */
+function isLinkedDist(packageDir) {
+  try {
+    return fs.lstatSync(path.join(packageDir, "dist")).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
 /** Проверяет один пакет: all exports targets присутствуют в тарболе. */
 function checkPackage(label, packageDir, { allowUnbuiltGui = false } = {}) {
   const manifest = JSON.parse(
@@ -58,8 +73,15 @@ function checkPackage(label, packageDir, { allowUnbuiltGui = false } = {}) {
   const targets = [...new Set(collectExportTargets(manifest.exports ?? {}))];
   check(`${label}: exports содержит пути`, targets.length > 0, targets.join(", "));
 
+  const linkedDist = isLinkedDist(packageDir);
+  if (linkedDist) {
+    console.log(
+      `SKIP ${label}: dist/ — junction/симлинк, npm pack локально не включает его файлы; проверка артефактов dist/ в CI (QA-D319-2/QA-PORT-9)`,
+    );
+  }
   const packed = packedFiles(packageDir);
   for (const target of targets) {
+    if (linkedDist && target.startsWith("dist/")) continue;
     if (
       allowUnbuiltGui &&
       target === "gui-experimental.cjs" &&
@@ -87,6 +109,33 @@ checkPackage("legacy", path.join(root, "legacy"));
 
 // 2. Корневой пакет: dist и остальные exports должны быть в тарболе.
 checkPackage("root", root, { allowUnbuiltGui: true });
+
+// 2a. QA-D319-2: guard на линкованный dist и его graceful-поведение.
+{
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "steward-linked-dist-"));
+  const realDist = path.join(tmp, "real-dist");
+  const plain = path.join(tmp, "plain");
+  const link = path.join(tmp, "dist");
+  try {
+    check("QA-D319-2: отсутствующий dist не считается линком", isLinkedDist(tmp) === false);
+    fs.mkdirSync(realDist);
+    fs.mkdirSync(path.join(plain, "dist"), { recursive: true });
+    check("QA-D319-2: обычная папка dist не считается линком", isLinkedDist(plain) === false);
+    try {
+      // На Windows junction не требует прав администратора; на POSIX — dir-симлинк.
+      fs.symlinkSync(realDist, link, process.platform === "win32" ? "junction" : "dir");
+    } catch (err) {
+      console.log(`SKIP QA-D319-2: нет прав на junction/symlink dist (${err.code})`);
+    }
+    if (fs.existsSync(link)) {
+      check("QA-D319-2: junction/symlink dist детектируется guard-ом", isLinkedDist(tmp) === true);
+    }
+  } finally {
+    // Удаляем junction явно: rm -recursive не должен зайти в реальный dist/.
+    try { fs.unlinkSync(link); } catch {}
+    fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3 });
+  }
+}
 
 // 3. RPC-контракт — публичный экспорт: другие плагины/клиенты импортируют
 //    `agent-steward/rpc`, не загружая реализацию плагина.

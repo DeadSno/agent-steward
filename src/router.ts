@@ -28,7 +28,6 @@ import {
   type CapabilityLearningOutcome,
   type CapabilityLearningRecord,
   type CapabilityRouteThresholds,
-  type CapabilityTarget,
 } from "./core/router/capability-math.js";
 
 export {

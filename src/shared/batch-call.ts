@@ -6,7 +6,6 @@
  * вызова не отменяет остальные и не пробрасывает исключение наружу — наружу
  * возвращается структурированный отчёт с per-call результатами.
  */
-import type { z } from "zod";
 import type { ToolSpec } from "../tool-specs.js";
 
 export const BATCH_CALL_LIMIT = 20;
