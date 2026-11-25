@@ -346,13 +346,21 @@ const noSerializeDb = {
     return { all: () => [{ integrity_check: "ok" }] };
   },
 };
-let backupRefused = false;
-try {
-  createMigrationBackup(noSerializeDb, legacyDbPath, 1, 2);
-} catch {
-  backupRefused = true;
-}
-assert(backupRefused, "D15: без serialize() миграция прерывается, а не переписывает БД");
+// QA-D316-31: Node 22.22 в CI не всегда даёт serialize(); fallback читает
+// файл БД после чекпойнта WAL, поэтому бэкап создаётся, а не прерывает миграцию.
+// Уникальные версии, чтобы политика удержания не вырезала свежую копию.
+const fallbackBackup = createMigrationBackup(
+  noSerializeDb,
+  legacyDbPath,
+  99,
+  100,
+  new Date("2099-01-01T00:00:00Z")
+);
+assert(
+  fallbackBackup.created &&
+    fs.readFileSync(fallbackBackup.file).equals(fs.readFileSync(legacyDbPath)),
+  "D15: без serialize() бэкап создаётся из файла БД и совпадает с оригиналом"
+);
 closeDb();
 initDb(dbPath);
 

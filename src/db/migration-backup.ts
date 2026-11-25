@@ -77,9 +77,10 @@ export function createMigrationBackup(
   if (!dbFile || dbFile === ":memory:" || !fs.existsSync(dbFile)) {
     return { created: false, reason: "БД ещё не существует — миграция не нужна" };
   }
-  if (typeof db.serialize !== "function") {
-    throw new Error("Миграционный бэкап: node:sqlite не поддерживает serialize()");
-  }
+  // QA-D316-31: на Node 22.22 в CI node:sqlite может не предоставлять
+  // serialize(). Fallback — чекпойнт WAL + чтение файла БД: снимок остаётся
+  // консистентным, а миграции не падают до старта всех остальных тестов.
+  const canSerialize = typeof db.serialize === "function";
 
   const integrity = db.prepare("PRAGMA integrity_check").all() as { integrity_check?: string }[];
   if (integrity.length !== 1 || String(integrity[0]?.integrity_check).toLowerCase() !== "ok") {
@@ -95,8 +96,9 @@ export function createMigrationBackup(
     // вернёт консистентную картинку, а верификация ниже это подтвердит.
   }
 
-  const bytes = db.serialize();
-  if (!bytes?.length) throw new Error("Миграционный бэкап: serialize() вернул пустой снимок");
+  const bytes =
+    (canSerialize ? db.serialize?.() : undefined) ?? fs.readFileSync(path.resolve(dbFile));
+  if (!bytes?.length) throw new Error("Миграционный бэкап: снимок БД пуст");
   const sha = checksum(bytes);
   const dir = path.join(path.dirname(path.resolve(dbFile)), `${path.basename(dbFile)}.migration-backups`);
   fs.mkdirSync(dir, { recursive: true });
