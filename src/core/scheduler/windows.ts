@@ -817,8 +817,37 @@ export class WindowsScheduler implements SchedulerBackend {
     }
   }
 
+  /**
+   * QA-D316-28: задача может жить в папке другого профиля (например, агент
+   * из worktree использует свой профиль). Добавляем к двум обычным кандидатам
+   * все найденные в Планировщике папки плагина, чтобы run_task_now не падал
+   * сырой ошибкой legacy-пути.
+   */
+  private async runNameCandidates(name: string): Promise<string[]> {
+    const names = this.fullNames(name);
+    try {
+      const { stdout } = await execFileAsync("schtasks", ["/query", "/fo", "LIST"], {
+        windowsHide: true,
+        encoding: "buffer",
+        maxBuffer: MAX_OUTPUT_BUFFER,
+      });
+      const text = await decodeConsoleOutput(errorBuffer({ stdout }, "stdout"));
+      const prefix = `\\${TASK_FOLDER}\\`;
+      const re = new RegExp(prefix.replace(/\\/g, "\\\\") + "([^\\\\\\r\\n]+)\\\\", "gi");
+      for (const match of text.matchAll(re)) {
+        const folder = match[1];
+        if (!/^(agent-steward|windows-scheduler)(-.*)?$/i.test(folder)) continue;
+        const candidate = `${prefix}${folder}\\${name}`;
+        if (!names.includes(candidate)) names.push(candidate);
+      }
+    } catch {
+      // Опрос Планировщика — best effort; обычные кандидаты остаются.
+    }
+    return names;
+  }
+
   async runTask(name: string): Promise<RunTaskResult> {
-    const candidates = this.fullNames(name);
+    const candidates = await this.runNameCandidates(name);
     for (let i = 0; i < candidates.length; i++) {
       const args = ["/run", "/tn", candidates[i]];
 
@@ -859,7 +888,7 @@ export class WindowsScheduler implements SchedulerBackend {
       }
     }
     throw new SchtasksError(
-      `Не удалось запустить задачу "${name}": задача не найдена`,
+      `Не удалось запустить задачу "${name}": задача не найдена. Проверены пути: ${candidates.join(", ")}`,
       null,
       "",
     );

@@ -44,7 +44,7 @@ import {
   sessionStatePath,
   writeSessionStateFile,
 } from "./core/session.js";
-import { ensureWrapper, writePromptFile, writeWrapperCmd, lockFilePath, requestImmediateRun, gateAllowPathsFromScope } from "./core/ps-wrapper.js";
+import { ensureWrapper, withFileWriteRetry, writePromptFile, writeWrapperCmd, lockFilePath, requestImmediateRun, gateAllowPathsFromScope } from "./core/ps-wrapper.js";
 import { getSchedulerBackend, LinuxScheduler } from "./core/scheduler/index.js";
 import { SCHEDULER_SKILL_ID, loadSchedulerSkill } from "./skill.js";
 import { getTaskLogs, resolveTaskLogPath } from "./core/scheduler/logs.js";
@@ -7802,7 +7802,9 @@ export async function schedulerCreateTask(
     // прогон выглядел бы как «лог пуст». Дописываем маркер ПОДГОТОВКИ —
     // задача создана, но ещё не запускалась (не путать с реальным Run started,
     // который пишется обёрткой только при фактическом запуске; QA #8).
-    await fs.appendFile(logFile, formatLogRunMarker("prepare", name), "utf8");
+    await withFileWriteRetry(() =>
+      fs.appendFile(logFile, formatLogRunMarker("prepare", name), "utf8"),
+    );
   } catch (err) {
     throw new Error(
       t("tool.error.prepareFiles", {

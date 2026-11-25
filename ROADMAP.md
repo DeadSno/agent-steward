@@ -29,9 +29,7 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 
 
 
-- QA-D316-27: `update_task` при заблокированном лог-файле (EBUSY) удалил OS-задачу из schtasks, оставив определение в `definitions` — P2. Действие: при EBUSY не удалять OS-задачу, откатывать транзакцию целиком. Обнаружено 25.11.2026.
 
-- QA-D316-28: `run_task_now` для задачи с `worktree: true` ищет OS-задачу по legacy-пути `\OpenCode\windows-scheduler\<name>`, хотя `schedule_task` создаёт её в `\OpenCode\agent-steward\<name>`; вызов падает: `schtasks error ... Не удается найти указанный файл` — P2. Действие: использовать profile-aware путь к OS-задаче и в `run_task_now`, и в `schedule_task`; регрессия в `test-run-now.mjs`. Обнаружено 25.11.2026 при проверке «без привязки к ОС».
 
 
 

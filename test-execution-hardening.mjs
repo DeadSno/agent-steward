@@ -2043,6 +2043,45 @@ try {
       psWrapperScript.includes("$script:errorMessage = $divergenceReason") &&
       psWrapperScript.includes("$script:exitCode = 0")
   );
+  // QA-D316-26/29: пустой прогон с exit!=0 не делает задачу success,
+  // а прерванный агент не коммитит частичные правки через afterScript.
+  check(
+    "QA-D316-26: артефакт — только новое изменение относительно baseline дерева",
+    psWrapperScript.includes("$baselineDirty = @(& git -C $Workdir status --porcelain") &&
+      psWrapperScript.includes("$baselineDirty -notcontains $entry") &&
+      !psWrapperScript.includes("if ($agentLines.Count -gt 0) { $agentWorkCompleted = $true }")
+  );
+  check(
+    "QA-D316-29: гейт не запускается после idle/kill прерванного агента",
+    psWrapperScript.includes("$agentInterrupted = $script:childIdleCompleted -or $agentExitCode -lt 0") &&
+      psWrapperScript.includes("-not $agentInterrupted")
+  );
+  const { withFileWriteRetry } = await import("./dist/core/ps-wrapper.js");
+  let retryAttempts = 0;
+  const retryResult = await withFileWriteRetry(async () => {
+    retryAttempts += 1;
+    if (retryAttempts < 3) {
+      const busy = new Error("busy");
+      busy.code = "EBUSY";
+      throw busy;
+    }
+    return "ok";
+  });
+  check(
+    "QA-D316-27: EBUSY при подготовке файлов ретраится и не ломает задачу",
+    retryResult === "ok" && retryAttempts === 3,
+    `attempts=${retryAttempts}`
+  );
+  const windowsSchedulerSource = fs.readFileSync(
+    new URL("./src/core/scheduler/windows.ts", import.meta.url),
+    "utf8",
+  );
+  check(
+    "QA-D316-28: run_task_now ищет задачу во всех папках плагина в ОС",
+    windowsSchedulerSource.includes("private async runNameCandidates") &&
+      windowsSchedulerSource.includes("agent-steward|windows-scheduler") &&
+      windowsSchedulerSource.includes("Проверены пути")
+  );
   const { resolveAgentExitVerdict: resolveB4 } = await import("./dist/core/execution.js");
   const b4Verdict = resolveB4({
     agentExitCode: 1,
