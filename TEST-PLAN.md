@@ -949,12 +949,18 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 | D06 | DEEP-4.2 | `node test-matrix.mjs` 30/30, `node test-matrix-lifecycle.mjs` 22/22, `node test-matrix-sync.mjs` 19/19 | ✅ |
 | D07 | DEEP-4.3 | `node test-git-trigger.mjs` 31/31, `node test-glob.mjs` 49/49, `node test-watch-paths.mjs`, `node test-integrations.mjs` 139/139 | ✅ |
 | D08 | DEEP-4.3 | `node test-metrics.mjs` 28/28, `node test-retention.mjs` 19/19, `node test-dashboard-json.mjs`, `node test-history-load.mjs` 11/11, `node test-usage-from-log.mjs` 27/27 | ✅ |
-| D09 | DEEP-4.3 | `node test-notifications-v2.mjs` 46/46, `node test-notifications-v3.mjs` 59/59, `node test-notifications-dedup.mjs` 22/22, `node test-local-ai.mjs` 48/48, `node test-triage-shadow.mjs` 26/26 | ✅ |
+| D09 | DEEP-4.3 | `node test-notifications-v2.mjs` 46/46, `node test-notifications-v3.mjs` 59/59, `node test-notifications-dedup.mjs` 22/22, `node test-local-ai.mjs` 48/48, `node test-triage-shadow.mjs` 26/26; по карте локального сабагента добавлены `node test-notifications-embedding.mjs` 10/10 и `node test-notifications-summary.mjs` 9/9 | ✅ |
 | D10 | DEEP-4.3 | `node test-secrets.mjs` 55/55, `node test-audit.mjs` 81/81, `node test-role-scoped.mjs` 17/17, `node test-permissions-policy.mjs` 130/130 | ✅ |
 | D11 | DEEP-4.3 | `node test-profiles.mjs` 80/80, `node test-workspaces.mjs`, `node test-profile-isolation.mjs`, `node test-delete-profile.mjs` 14/14 | ✅ |
 | D12 | DEEP-4.3 | `node test-integrations.mjs` 139/139 — шаблоны и перенос покрыты частично, отдельного `test-*.mjs` нет (ограничение §4) | ⚠️ |
+| D13 | DEEP-4.4 | `node test-audit.mjs` 81/81, `node test-dashboard-trust.mjs` 21/21, `node test-self-analysis.mjs` 147/147, `node test-integrations.mjs` 139/139; OTel/Prometheus — только env процесса | ✅ |
+| D14 | DEEP-4.4 | `node test-dashboard.mjs`, `node test-i18n.mjs` 100/100, `node test-gui-bundle.mjs`, `npm run test:en`, `npm run test:zh`, `npm run test:tr` — 131/131 наборов на каждой локали | ✅ |
+| D15 | DEEP-4.4 | `node test-sqlite.mjs`, `node test-user-version.mjs`, `node test-run-state.mjs`, `node test-run-journal.mjs`, `node test-run-resume.mjs`, `node test-run-dlq.mjs`, `node test-migrate-partial.mjs` 5/5 | ✅ |
+| D16 | DEEP-4.4 | `npm run build`, `npm run build:gui`, `node test-docs.mjs`, `node test-package-exports.mjs`, `node test-portability-exports.mjs` 9/9, `npm run test:parallel` — 131/131 за 70.5 с; stale-установка зафиксирована как QA-DEEP4-1 в ROADMAP | ✅ |
+| D17 | DEEP-4.4 | `node test-feedback.mjs` 30/30, `node test-feedback-worker.mjs` 16/16 | ✅ |
+| D18 | DEEP-4.4 | `node test-pipeline.mjs` 67/67, `node test-open-spec.mjs`, `node test-router.mjs` 29/29 | ✅ |
 
-> D07–D12: первый запуск из корневого каталога дал 6 ложных падений (тесты ищут фикстуры/профили относительно cwd); из `.steward-dev` все 22 файла зелёные. Протокол фиксирует прогон из рабочего чек-аута.
+> D07–D12: первый запуск из корневого каталога дал 6 ложных падений (тесты ищут фикстуры/профили относительно cwd); из `.steward-dev` все 22 файла зелёные. D09 дополнительно проверен по карте локального сабагента (`ollama/hf.co/Qwen/Qwen3-4B-GGUF:Q4_K_M`). Протокол фиксирует прогон из рабочего чек-аута.
 
 ---
 

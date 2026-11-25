@@ -29,14 +29,14 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 
 Все находки QA-D316-21…37 и все последующие QA-находки 25.11.2026 закрыты, удалены отсюда и перенесены в [CHANGELOG.md](./CHANGELOG.md). Ниже — только открытые находки, внесённые по факту воспроизведения 25.11.2026.
 
+QA-DEEP4-1 — загруженный экземпляр плагина из другого чек-аута не помечается stale без манифеста воркспейса: `src/version.ts` `getPluginDiagnostics()` (`workspacePkg === null` → `reason:"no-workspace-manifest"`, `staleInstallation:false`) и проверка через `get_dashboard_info` Code Mode — `modulePath=.../qa-2411-dev/dist/version.js`, `workspaceRoot=C:\Users\TshK`, `loadedFromWorkspace=false` — P2. Действие: при `loadedFromWorkspace=false` и `modulePath` вне `workspaceRoot` возвращать `installationWarning`/`staleInstallation=true` по fail-open, покрыть регрессией в `test-agent-tools.mjs` и `test-self-analysis.mjs`.
 
 ## Деталь 3.21 — Усиление в глубину (не расширение)
 `src/core/savings.ts`, `src/core/permissions.ts`, `src/core/worktree.ts`, `src/core/audit.ts`, `src/core/self-analysis.ts`, `src/shared/installation-warning.ts`, `src/version.ts`, `src/index.ts`, `src/rpc.ts`, `src/gui.tsx`, `TEST-PLAN.md`, `test-budget.mjs`, `test-permissions-policy.mjs`, `test-self-analysis.mjs`, `test-gui-bundle.mjs`, `test-agent-tools.mjs`, `docs/SAFETY.md`, `docs/EXECUTION-LOOP.md`
 
-Обоснование: модули стратегии (CONCEPT §11–§13, ROADMAP-STRATEGY) в основном закрыты, но несколько контуров доверия остаются непроверяемыми извне. Это не новые возможности, а углубление существующих: измеримость, аудируемость и воспроизводимость приёмки. Разбивка уточнена 25.11.2026: каждая подзадача даёт один проверяемый артефакт и закрывается своим тестом; SC-1.1/SC-1.2 и вся матрица Детали 3.20 закрыты и перенесены в CHANGELOG, здесь не дублируются. DEEP-1, DEEP-2, DEEP-3, DEEP-4.1, DEEP-4.2 и DEEP-4.3 закрыты и перенесены в CHANGELOG. Порядок: дорогая приёмка (DEEP-4).
+Обоснование: модули стратегии (CONCEPT §11–§13, ROADMAP-STRATEGY) в основном закрыты, но несколько контуров доверия остаются непроверяемыми извне. Это не новые возможности, а углубление существующих: измеримость, аудируемость и воспроизводимость приёмки. Разбивка уточнена 25.11.2026: каждая подзадача даёт один проверяемый артефакт и закрывается своим тестом; SC-1.1/SC-1.2 и вся матрица Детали 3.20 закрыты и перенесены в CHANGELOG, здесь не дублируются. DEEP-1, DEEP-2, DEEP-3, DEEP-4.1, DEEP-4.2, DEEP-4.3 и DEEP-4.4 закрыты и перенесены в CHANGELOG. Порядок: дорогая приёмка (DEEP-4).
 
-**Задача DEEP-4 — Полная приёмка D01–D18 как воспроизводимая матрица** · P1 · ⬜ (DEEP-4.1/4.2/4.3 ✅, остальное в работе)
-- [ ] DEEP-4.4 Прогнать D13–D18 (интеграция/OS/параллельные сборки, включая stale-установку) по матрице; `TEST-PLAN.md`, `test:worktree`, `test-portability-exports.mjs`.
+**Задача DEEP-4 — Полная приёмка D01–D18 как воспроизводимая матрица** · P1 · ⬜ (DEEP-4.1/4.2/4.3/4.4 ✅, осталось DEEP-4.5)
 - [ ] DEEP-4.5 Подвести итог: переключить статус «принято с ограничениями» только при 18/18 и перенести закрытые записи в CHANGELOG; `TEST-PLAN.md`, `CHANGELOG.md`.
 
 ---
