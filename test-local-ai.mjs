@@ -14,9 +14,13 @@ process.env.APPDATA = tempRoot;
 process.env.OPENCODE_SCHEDULER_HOME = path.join(tempRoot, "opencode", "windows-scheduler");
 
 const { manageLocalAiSchema, runLocalAiTest } = await import("./dist/index.js");
-const { applyLocalAiPatch, summarizeLocalAi, protocolFor } = await import(
-  "./dist/core/local-ai.js"
-);
+const {
+  applyLocalAiPatch,
+  summarizeLocalAi,
+  protocolFor,
+  localAgentFallback,
+  LOCAL_AGENT_FALLBACK,
+} = await import("./dist/core/local-ai.js");
 const { saveSettings, loadSettings, defaultNotifications } = await import("./dist/settings.js");
 
 const results = [];
@@ -176,6 +180,39 @@ check(
   ["network", "timeout", "http"].includes(String(offline.result.failure))
 );
 check("недоступный провайдер: протокол ollama", offline.result.protocol === "ollama");
+
+// --- 7. QA-SUB-1: прозрачный fallback на локального агента -------------------
+check(
+  "QA-SUB-1: настроенный но недоступный провайдер даёт configured-unreachable",
+  offline.fallback?.status === "configured-unreachable" &&
+    offline.fallback?.reason === "provider-unreachable" &&
+    offline.fallback?.configured === true
+);
+check(
+  "QA-SUB-1: fallback предлагает конкретную модель Ollama и адрес",
+  offline.fallback?.model === LOCAL_AGENT_FALLBACK.model &&
+    offline.fallback?.baseUrl === "http://127.0.0.1:11434" &&
+    offline.fallback?.provider === "ollama"
+);
+check(
+  "QA-SUB-1: fallback содержит явные шаги и не молчит",
+  offline.fallback?.actions?.some((step) => step.includes("manage_local_ai")) === true &&
+    typeof offline.fallback?.note === "string" &&
+    offline.fallback.note.includes("Free usage limit reached")
+);
+const disabledSummary = summarizeLocalAi(applyLocalAiPatch(base, { mode: "off" }).settings);
+const recommended = localAgentFallback(disabledSummary, { ok: false, failure: "network" });
+check(
+  "QA-SUB-1: выключенный локальный ИИ даёт recommended/llm-disabled",
+  recommended.status === "recommended" && recommended.reason === "llm-disabled"
+);
+const verified = localAgentFallback(summarizeLocalAi(base), { ok: true });
+check(
+  "QA-SUB-1: успешный тест даёт verified без шага настройки",
+  verified.status === "verified" &&
+    verified.reason === "test-passed" &&
+    !verified.actions.some((step) => step.includes("'update'"))
+);
 
 // --- Итог --------------------------------------------------------------------
 fs.rmSync(tempRoot, { recursive: true, force: true });

@@ -175,3 +175,69 @@ export function summarizeLocalAi(settings: TriageSettings): LocalAiSummary {
     protocol: protocolFor(baseUrl),
   };
 }
+
+/**
+ * QA-SUB-1: прозрачный fallback на локального агента, когда облачный
+ * суб-агент недоступен (например, `Free usage limit reached`). Функция чистая:
+ * никаких сетевых вызовов и записи — только статус и явные шаги.
+ */
+export const LOCAL_AGENT_FALLBACK = Object.freeze({
+  provider: "ollama",
+  baseUrl: "http://127.0.0.1:11434",
+  model: "hf.co/Qwen/Qwen3-4B-GGUF:Q4_K_M",
+  note: "Cloud subagent failures (for example 'Free usage limit reached') are not propagated by the plugin; switch explicitly and report the status to the user.",
+});
+
+export interface LocalAgentFallback {
+  provider: "ollama";
+  baseUrl: string;
+  model: string;
+  /** `verified` — связь проверена, `configured-unreachable` — настроено, но недоступно, `recommended` — не настроено. */
+  status: "verified" | "configured-unreachable" | "recommended";
+  reason: "test-passed" | "provider-unreachable" | "llm-disabled" | "not-configured";
+  configured: boolean;
+  /** Явные шаги, которые агент должен выполнить и показать пользователю. */
+  actions: string[];
+  note: string;
+}
+
+export function localAgentFallback(
+  summary: LocalAiSummary,
+  test: { ok: boolean; failure?: string | null },
+): LocalAgentFallback {
+  const configured =
+    summary.mode !== "off" &&
+    summary.mode !== "rules" &&
+    summary.baseUrl.trim().length > 0 &&
+    summary.model.trim().length > 0;
+  const actions = [
+    "manage_local_ai({action: 'update', mode: 'llm', baseUrl: 'http://127.0.0.1:11434', model: 'hf.co/Qwen/Qwen3-4B-GGUF:Q4_K_M'})",
+    "manage_local_ai({action: 'test'})",
+    "Report the returned status to the user instead of failing silently.",
+  ];
+  if (test.ok) {
+    return {
+      ...LOCAL_AGENT_FALLBACK,
+      status: "verified",
+      reason: "test-passed",
+      configured,
+      actions: actions.slice(1),
+    };
+  }
+  if (configured) {
+    return {
+      ...LOCAL_AGENT_FALLBACK,
+      status: "configured-unreachable",
+      reason: "provider-unreachable",
+      configured,
+      actions,
+    };
+  }
+  return {
+    ...LOCAL_AGENT_FALLBACK,
+    status: "recommended",
+    reason: summary.mode === "off" || summary.mode === "rules" ? "llm-disabled" : "not-configured",
+    configured,
+    actions,
+  };
+}

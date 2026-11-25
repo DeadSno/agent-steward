@@ -818,6 +818,16 @@ plugin, no installation step required.
 The `manage_local_ai` tool reads, updates and tests the local triage settings
 (`action: "get" | "update" | "test"`); see [LOCAL-AI.md](LOCAL-AI.md).
 
+QA-SUB-1: when a cloud subagent fails (for example `Free usage limit reached`),
+the plugin does not swallow the failure. `manage_local_ai({action: "test"})` and
+`test_local_ai` return a `fallback` block with a transparent status
+(`verified`, `configured-unreachable` or `recommended`), a reason, the recommended
+local provider (`ollama`, `http://127.0.0.1:11434`, model
+`hf.co/Qwen/Qwen3-4B-GGUF:Q4_K_M`) and explicit next steps. The agent must show
+that status to the user instead of silently abandoning the task. Switching the
+local agent is an explicit action; the plugin never routes work to Ollama
+without the operator's consent.
+
 ## Author feedback (bug reports)
 
 `report_bug` sends a structured report to the plugin author through a **write-only**

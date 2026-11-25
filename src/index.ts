@@ -191,7 +191,12 @@ import {
   resetShadowDecisions,
 } from "./core/triage-shadow.js";
 import { compareTriage } from "./core/triage-compare.js";
-import { applyLocalAiPatch, summarizeLocalAi, type LocalAiPatch } from "./core/local-ai.js";
+import {
+  applyLocalAiPatch,
+  localAgentFallback,
+  summarizeLocalAi,
+  type LocalAiPatch,
+} from "./core/local-ai.js";
 import { classifyNotification, type TriageInput } from "./core/triage.js";
 import {
   loadTaskDefinitions,
@@ -4191,9 +4196,13 @@ export async function runLocalAiTest(patch: LocalAiPatch = {}) {
   const settings = await loadSettings();
   const { settings: candidate } = applyLocalAiPatch(triageOrDefault(settings), patch);
   const result = await classifyNotification(LOCAL_AI_SELF_TEST, candidate, { retries: 0 });
+  const localAi = summarizeLocalAi(candidate);
   return {
     success: result.ok,
-    localAi: summarizeLocalAi(candidate),
+    localAi,
+    // QA-SUB-1: при отказе облачного суб-агента или проблемы с моделью ответ
+    // всегда содержит явный статус локального fallback и шаги, а не тишину.
+    fallback: localAgentFallback(localAi, { ok: result.ok, failure: result.failure }),
     result: {
       ok: result.ok,
       failure: result.failure ?? null,
