@@ -122,10 +122,13 @@ check("QA-PORT-9: npm не упаковывает junction dist/ (новая п�
   try {
     fs.copyFileSync(path.join(root, "package.json"), path.join(tmp, "package.json"));
     fs.symlinkSync(path.join(root, "dist"), link, "junction");
-    const packed = spawnSync("npm pack --dry-run --json --ignore-scripts", {
+    const packed = spawnSync("npm pack --dry-run --json --ignore-scripts=true", {
       cwd: tmp,
       encoding: "utf8",
       shell: true,
+      // QA-D316-34: npm в Node 22 не всегда honors --ignore-scripts и всё равно
+      // запускает prepare (npm run build), которого в temp-каталоге нет.
+      env: { ...process.env, npm_config_ignore_scripts: "true" },
     });
     assert.equal(packed.status, 0, packed.stderr || "npm pack --dry-run в junction-каталоге завершился ошибкой");
     const files = Object.values(JSON.parse(packed.stdout))[0].files.map((entry) => entry.path);

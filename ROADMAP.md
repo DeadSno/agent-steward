@@ -31,7 +31,6 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 
 
 
-
 ## Деталь 3.20 — Матрица покрытия стратегии и незакрытые контуры
 `docs/CONCEPT.md` §11/§12/§13, `ROADMAP-STRATEGY.md`, `docs/ARCHITECTURE.md` Known limitations, `docs/EXECUTION-LOOP.md` §7–§9, `src/core/execution.ts`, `src/core/self-analysis.ts`, `src/db/capability-repo.ts`, `test-budget.mjs`, `test-permissions-policy.mjs`
 
