@@ -1014,6 +1014,18 @@ try {
     "PL-58: pl-commit.ps1 предупреждает о файлах вне manifest",
     /PL-58/.test(commitScript) && /WARN/.test(commitScript)
   );
+  check(
+    "QA-D316-11: pl-commit ждёт стабилизации манифеста до снятия diff",
+    commitScript.includes("function Wait-ManifestSettle") &&
+      commitScript.includes("Wait-ManifestSettle -Paths $fileList") &&
+      commitScript.includes("AGENT_STEWARD_COMMIT_SETTLE_SEC")
+  );
+  check(
+    "QA-D316-11: pl-commit проваливает коммит с неполным манифестом",
+    commitScript.includes("manifest not fully committed") &&
+      /exit 3/.test(commitScript) &&
+      commitScript.includes("manifest changed but no commit")
+  );
 } catch (err) {
   console.log("[diag] PL-58 section THREW:", err instanceof Error ? err.stack : String(err));
   check("PL-58: секция не выбросила исключение", false, "section threw");

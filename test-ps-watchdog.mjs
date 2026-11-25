@@ -363,6 +363,14 @@ check(
     WRAPPER_SCRIPT.includes("Get-ChildItem -LiteralPath $reportDir")
 );
 check(
+  "QA-D316-11: после PL-134 обёртка ждёт стабилизации артефактов до гейта/afterScript",
+  WRAPPER_SCRIPT.includes("function Wait-FinalizationSettle") &&
+    WRAPPER_SCRIPT.includes("Wait-FinalizationSettle -Dir $Workdir") &&
+    WRAPPER_SCRIPT.includes("AGENT_STEWARD_FINALIZE_SETTLE_SEC") &&
+    WRAPPER_SCRIPT.includes("status --porcelain --untracked-files=all") &&
+    WRAPPER_SCRIPT.includes("Get-ChildItem -LiteralPath $reportDir")
+);
+check(
   "QA-D316-5: счётчик простоя замораживается, окно растёт на graceTicks",
   WRAPPER_SCRIPT.includes("if ($recentArtifacts) {") &&
     WRAPPER_SCRIPT.includes(

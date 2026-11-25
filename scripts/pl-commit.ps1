@@ -42,6 +42,36 @@ function Log([string]$text) {
   Add-Content -LiteralPath $logFile -Value ("{0} {1}" -f (Get-Date -Format o), $text)
 }
 
+# QA-D316-11: the child agent may write the manifest after the wrapper took
+# its snapshot (PL-134 interrupted finalization). Wait until the task files
+# stop changing, then compute the diff. The time limit prevents a hang.
+function Wait-ManifestSettle {
+  param([string[]]$Paths, [int]$MaxSeconds)
+  if ($MaxSeconds -le 0 -or $Paths.Count -eq 0) { return }
+
+  function Get-ManifestStamp {
+    $oldPref = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+      return [string]::Join("`n", @(& git status --porcelain --untracked-files=all -- @Paths 2>$null))
+    }
+    finally { $ErrorActionPreference = $oldPref }
+  }
+
+  $stable = 0
+  $previous = Get-ManifestStamp
+  for ($i = 0; $i -lt $MaxSeconds; $i++) {
+    Start-Sleep -Seconds 1
+    $current = Get-ManifestStamp
+    if ($current -eq $previous) { $stable++ } else { $stable = 0; $previous = $current }
+    if ($stable -ge 2) {
+      Log "QA-D316-11: manifest stable before diff ($Message)"
+      return
+    }
+  }
+  Log "WARN QA-D316-11: manifest kept changing for ${MaxSeconds}s, committing current diff: $Message"
+}
+
 # git writes progress/errors to stderr; PowerShell 7 with ErrorActionPreference=Stop
 # turns that into a terminating ErrorRecord even when push succeeds. Capture the
 # real exit code instead (QA-A2/PL-7.1 lesson).
@@ -129,6 +159,15 @@ try {
   Remove-Item -LiteralPath $markerPath -Force
   Log "PL-142: gate marker consumed after successful verification: $Message"
 
+  # QA-D316-11: wait for final manifest edits before git diff (late writes to
+  # ROADMAP/CHANGELOG/tests would otherwise be missed while status stays
+  # success). Default 5s, 0 disables the wait.
+  $settleSec = 5
+  if ($env:AGENT_STEWARD_COMMIT_SETTLE_SEC -match '^\d+$') {
+    $settleSec = [Math]::Min(60, [int]$env:AGENT_STEWARD_COMMIT_SETTLE_SEC)
+  }
+  Wait-ManifestSettle -Paths $fileList -MaxSeconds $settleSec
+
   # Task manifest is the only source of file ownership. Normalize separators
   # to forward slashes so comparison is stable on Windows.
   $manifest = @{}
@@ -179,6 +218,18 @@ try {
     if ($changedSet.ContainsKey($key)) { $commitFiles += $item }
   }
   if ($commitFiles.Count -eq 0) {
+    # QA-D316-11: "nothing to commit" is not success if manifest files are
+    # actually changed (snapshot was taken before agent finalization).
+    $oldStatus = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+      $manifestStatus = @(& git status --porcelain --untracked-files=all -- @fileList 2>$null)
+    }
+    finally { $ErrorActionPreference = $oldStatus }
+    if ($manifestStatus.Count -gt 0) {
+      Log "FAIL QA-D316-11: manifest changed but no commit (agent finalization missed): $Message"
+      exit 3
+    }
     Log "SKIP (nothing to commit): $Message"
     exit 0
   }
@@ -186,6 +237,22 @@ try {
   if ((Invoke-Git 'commit' (@('commit', '-m', $Message, '--') + $commitFiles)) -ne 0) {
     Log "FAIL commit: $Message"
     exit 1
+  }
+
+  # QA-D316-11: the commit must contain ALL changed manifest files. After
+  # PL-134, edits appeared after the snapshot and the partial commit still
+  # left the task as success - fail such a run.
+  $oldLeftover = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try {
+    $leftoverRaw = @(& git diff --name-only HEAD -- @fileList 2>$null)
+  }
+  finally { $ErrorActionPreference = $oldLeftover }
+  $leftover = @($leftoverRaw | ForEach-Object { ([string]$_).Trim() -replace '\\', '/' } |
+    Where-Object { $_ -and $manifest.ContainsKey($_) })
+  if ($leftover.Count -gt 0) {
+    Log "FAIL QA-D316-11: manifest not fully committed: $($leftover -join '; '): $Message"
+    exit 3
   }
 
   $null = Invoke-Git 'fetch' @('fetch', 'origin', 'dev')

@@ -837,6 +837,53 @@ function Invoke-OpenCodeOnce {
     # (по умолчанию 0 с, минимум 0 с), которое добавляется к окну простоя, когда
     # за последнее время изменились артефакты задачи (git status/diff и файлы
     # reports в рабочей папке). Финализация после записи отчёта не считается
+    # QA-D316-11: после PL-134 конвейер разблокируется раньше, чем агент
+    # дозаписывает финальные правки (ROADMAP/CHANGELOG/тесты). Ждём
+    # стабилизации дерева ДО quality gate и afterScript, чтобы снимок и коммит
+    # видели полный манифест задачи. 0 отключает ожидание.
+    function Wait-FinalizationSettle {
+        param([string]$Dir)
+        if (-not $Dir -or -not (Test-Path -LiteralPath $Dir)) { return }
+        $max = 5
+        try {
+            if ($env:AGENT_STEWARD_FINALIZE_SETTLE_SEC -match '^\d+$') {
+                $max = [Math]::Min(60, [int]$env:AGENT_STEWARD_FINALIZE_SETTLE_SEC)
+            }
+        } catch {}
+        if ($max -le 0) { return }
+        function Get-FinalizationStamp {
+            param([string]$D)
+            $stamp = ""
+            $oldPref = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            try {
+                $stamp = [string]::Join([Environment]::NewLine, @(git -C $D status --porcelain --untracked-files=all 2>$null))
+            } catch {}
+            finally { $ErrorActionPreference = $oldPref }
+            try {
+                $reportDir = Join-Path $D "reports"
+                if (Test-Path -LiteralPath $reportDir) {
+                    foreach ($file in @(Get-ChildItem -LiteralPath $reportDir -File -ErrorAction Stop | Sort-Object Name)) {
+                        $stamp = $stamp + "|" + $file.Name + ":" + $file.LastWriteTimeUtc.Ticks + ":" + $file.Length
+                    }
+                }
+            } catch {}
+            return $stamp
+        }
+        $stable = 0
+        $previous = Get-FinalizationStamp -D $Dir
+        for ($i = 0; $i -lt $max; $i++) {
+            Start-Sleep -Seconds 1
+            $current = Get-FinalizationStamp -D $Dir
+            if ($current -eq $previous) { $stable++ } else { $stable = 0; $previous = $current }
+            if ($stable -ge 2) {
+                Write-Log "[agent-steward] QA-D316-11: артефакты финализации стабильны — гейт и afterScript видят полный манифест."
+                return
+            }
+        }
+        Write-Log "[agent-steward] QA-D316-11: артефакты менялись все $max с — полноту манифеста проверит afterScript."
+    }
+
     # простоем. При grace=0 поведение и накладные расходы прежние (git не вызывается).
     if ($env:AGENT_STEWARD_COMPLETION_WATCH -ne "0") {
         $idlePoll = 5
@@ -991,6 +1038,8 @@ function Invoke-OpenCodeOnce {
             if ($script:idleReason) {
                 Write-Log "[agent-steward] PL-134: причина завершения по простою: $script:idleReason"
             }
+            # QA-D316-11: дожидаемся последних правок агента до гейта/afterScript.
+            Wait-FinalizationSettle -Dir $Workdir
         }
         if ($watch) {
             Stop-Job -Job $watch -ErrorAction SilentlyContinue
