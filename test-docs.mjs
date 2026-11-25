@@ -1081,6 +1081,18 @@ check(
     "DEEP-4.x: негативный тест — подмена команды прогона детектируется",
     !validShape(log.replace(/`node test-[^`]+\.mjs`|`npm run [^`]+`/g, "")),
   );
+  check(
+    "DEEP-4.5: все 18 деталей зафиксированы в протоколе прогона",
+    parseRows(log).size === 18 && expectedIds.every((id) => parseRows(log).has(id)),
+  );
+  check(
+    "DEEP-4.5: непрогоняных деталей (⏳) не осталось",
+    ![...parseRows(log).values()].some((cells) => cells[2].includes("⏳")),
+  );
+  check(
+    "DEEP-4.5: итог §8 переключён на принято с 18/18",
+    /^\|\s*Итог\s*\|\s*✅[^\n]*18\/18/m.test(plan),
+  );
 }
 
 const failed = results.filter((r) => !r.ok);
