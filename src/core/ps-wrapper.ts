@@ -1548,6 +1548,12 @@ try {
     # (retryCount/retryDelay в БД), иначе на Windows получалось (1+N)^2
     # запусков: N попыток внутри обёртки × N+1 запуск из recorder'а.
     # Параметры -RetryCount/-RetryDelaySeconds принимаются, но игнорируются.
+    # QA-D316-26/29: фиксируем состояние дерева ДО запуска. Иностранные
+    # untracked-файлы (reports/*) не должны выдаваться за артефакт агента.
+    $baselineDirty = @()
+    if ($Workdir) {
+        try { $baselineDirty = @(& git -C $Workdir status --porcelain --untracked-files=all 2>$null) } catch {}
+    }
     Write-Stage -Stage "run" -Message "Запуск агента: $opencodeCmd"
     $script:exitCode = Invoke-OpenCodeOnce -CommandPath $opencodeCmd -Arguments $opencodeArgs
     # PL-81: код выхода процесса запоминаем до всех классификаторов (квота и т.д.),
@@ -1657,24 +1663,23 @@ try {
     $script:agentArtifactPresent = $false
     if ($Workdir) {
         try {
-            $dirty = & git -C $Workdir status --porcelain --untracked-files=all 2>$null
-            if ($LASTEXITCODE -eq 0 -and @($dirty).Count -gt 0) { $script:agentArtifactPresent = $true }
+            $dirty = @(& git -C $Workdir status --porcelain --untracked-files=all 2>$null)
+            if ($LASTEXITCODE -eq 0) {
+                # QA-D316-26: артефакт — только НОВОЕ изменение относительно
+                # состояния дерева до запуска, а не любой вывод агента в логе.
+                foreach ($entry in $dirty) {
+                    if ($baselineDirty -notcontains $entry) { $script:agentArtifactPresent = $true; break }
+                }
+            }
         } catch {}
     }
-    $agentWorkCompleted = $false
-    if ($LogFile -and (Test-Path -LiteralPath $LogFile)) {
-        try {
-            # Строки обёртки начинаются с "[yyyy-MM-dd HH:mm:ss]" или
-            # "[agent-steward]"; всё остальное — вывод самого агента.
-            $agentLines = @(Get-Content -LiteralPath $LogFile -Tail 200 -ErrorAction Stop |
-                Where-Object { $_ -and $_ -notmatch '^\[' } |
-                Select-Object -First 1)
-            if ($agentLines.Count -gt 0) { $agentWorkCompleted = $true }
-        } catch {}
-    }
-    if ($script:agentArtifactPresent) { $agentWorkCompleted = $true }
+    $agentWorkCompleted = $script:agentArtifactPresent
     $gatePassed = $null
-    $runQualityGate = $QualityGate -and -not $quotaDetected -and
+    # QA-D316-29: прерванный агент (idle/kill) не даёт гейту права
+    # коммитить частичные правки — маркер гейта не создаётся, afterScript
+    # (pl-commit.ps1) пропускает такой прогон.
+    $agentInterrupted = $script:childIdleCompleted -or $agentExitCode -lt 0 -or $agentExitCode -eq 124
+    $runQualityGate = $QualityGate -and -not $quotaDetected -and -not $agentInterrupted -and
         ($script:exitCode -eq 0 -or $agentWorkCompleted)
     if ($runQualityGate) {
         # G-1.2: перед запуском гейта сверяем его входы со snapshot'ом,
@@ -1964,6 +1969,31 @@ export async function ensureWrapper(): Promise<string> {
  * defence-in-depth против path traversal, если taskName когда-либо придёт
  * из недоверенного источника (импорт, шаблон, RPC).
  */
+/**
+ * QA-D316-27: Windows может вернуть EBUSY/EPERM на записи файла задачи,
+ * пока другой процесс (обёртка/логгер) держит его открытым. Раньше update_task
+ * падал, удалял задание из ОС и не мог восстановить прежнюю версию.
+ */
+export async function withFileWriteRetry<T>(
+  operation: () => Promise<T>,
+  attempts = 4,
+): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (attempt > 0) {
+      await new Promise((resolve) => setTimeout(resolve, 100 * attempt));
+    }
+    try {
+      return await operation();
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException)?.code;
+      if (code !== "EBUSY" && code !== "EPERM" && code !== "EACCES") throw err;
+      lastError = err;
+    }
+  }
+  throw lastError;
+}
+
 export async function writePromptFile(taskName: string, prompt: string): Promise<string> {
   const safety = inspectPromptSafety(prompt);
   if (!safety.safe) {
@@ -1975,7 +2005,7 @@ export async function writePromptFile(taskName: string, prompt: string): Promise
   // BOM помогает Windows PowerShell 5.1 правильно прочитать кириллицу.
   // На POSIX BOM попал бы в промпт как мусорный символ — не пишем его.
   const content = process.platform === "win32" ? "\uFEFF" + prompt : prompt;
-  await fs.writeFile(promptPath, content, "utf8");
+  await withFileWriteRetry(() => fs.writeFile(promptPath, content, "utf8"));
   return promptPath;
 }
 

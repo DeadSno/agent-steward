@@ -28,13 +28,11 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 ## QA-находки (проверка работоспособности плагина 24.11.2026)
 
 
-- QA-D316-26: обёртка `run-task.ps1` при задаче без явного `model` вызывает `opencode run --auto`, который выбирает модель с исчерпанной free-квотой и завершается exit 1 ('Free usage limit reached'), но qualityGate (build + test-docs) проходит на неизменённом дереве, поэтому PL-81 помечает задачу `success`, а afterScript пишет `SKIP (nothing to commit)` — P1. Действие: не считать задачу success при `exitCode` агента != 0 даже при qualityGate=pass; требовать явную модель. Воспроизведено: задача 'QA-D316-21 flaky cleanup OS' через `schtasks /run` в 10:38, `get_history` status=success, git status без изменений, `pl-commit.log` SKIP. Обнаружено 25.11.2026.
 
 - QA-D316-27: `update_task` при заблокированном лог-файле (EBUSY) удалил OS-задачу из schtasks, оставив определение в `definitions` — P2. Действие: при EBUSY не удалять OS-задачу, откатывать транзакцию целиком. Обнаружено 25.11.2026.
 
 - QA-D316-28: `run_task_now` для задачи с `worktree: true` ищет OS-задачу по legacy-пути `\OpenCode\windows-scheduler\<name>`, хотя `schedule_task` создаёт её в `\OpenCode\agent-steward\<name>`; вызов падает: `schtasks error ... Не удается найти указанный файл` — P2. Действие: использовать profile-aware путь к OS-задаче и в `run_task_now`, и в `schedule_task`; регрессия в `test-run-now.mjs`. Обнаружено 25.11.2026 при проверке «без привязки к ОС».
 
-- QA-D316-29: при принудительном завершении агента (PL-134 / Stop-Process) qualityGate проходит на неизменённом/частично изменённом дереве, PL-81 помечает задачу `success`, а afterScript коммитит незавершённые правки с финальным сообщением (на QA-D316-23 сначала ушёл коммит только `vite.config.ts`, документы пришлось дописывать отдельно) — P1. Действие: при `exitCode` агента != 0 и/или `idleCompleted` блокировать afterScript и коммит, даже если gate=pass; финализировать задачу как `partial`. Обнаружено 25.11.2026.
 
 
 ## Деталь 3.20 — Матрица покрытия стратегии и незакрытые контуры
