@@ -8919,8 +8919,17 @@ async function readOsTasksWithRetry(
  * Спринт 27.5.3: возвращает также состояние чтения ОС. Если ОС недоступна,
  * `tasks` — состояние из БД (задачи помечены `orphaned: true`), а не пустой
  * массив: иначе GUI и агент решали бы, что задач нет.
+ *
+ * QA-GHOST-1: archived-записи (прогоны в истории без definition и без задачи
+ * в ОС) по умолчанию не попадают в список: после уборки планировщика они
+ * выглядели как «Нет в планировщике» и мешали работе. История при этом не
+ * удаляется и остаётся доступной через get_history.
  */
-async function collectTasksView() {
+export function shouldIncludeArchivedTasks(includeArchived?: boolean): boolean {
+  return includeArchived === true;
+}
+
+async function collectTasksView(options: { includeArchived?: boolean } = {}) {
   const defs = await loadTaskDefinitions();
   const osRead = await readOsTasksWithRetry(defs.length > 0);
   const tasks = osRead.tasks;
@@ -8985,18 +8994,22 @@ async function collectTasksView() {
     })),
   ];
 
-  // QA-ARCHIVE: история хранит прогоны удалённых задач (в воспроизведении —
-  // `gui`: 130 записей без definition). Показываем их как archived-записи,
-  // чтобы счётчики list_tasks и истории не расходились молча.
-  const knownNames = new Set(sources.map(({ task }) => (task.taskName || "").toLowerCase()));
-  for (const [name, last] of lastByTask) {
-    if (knownNames.has(name) || !name) continue;
-    sources.push({
-      task: { taskName: name, status: last?.status ?? "" },
-      orphaned: true,
-      archived: true,
-    });
-    knownNames.add(name);
+  // QA-ARCHIVE / QA-GHOST-1: история хранит прогоны удалённых задач. Раньше
+  // они всегда добавлялись в список как archived-записи, из-за чего после
+  // уборки планировщика в GUI висели десятки карточек «Нет в планировщике».
+  // Теперь archived-записи включаются только по явному запросу; история
+  // остаётся на месте и доступна через get_history.
+  if (shouldIncludeArchivedTasks(options.includeArchived)) {
+    const knownNames = new Set(sources.map(({ task }) => (task.taskName || "").toLowerCase()));
+    for (const [name, last] of lastByTask) {
+      if (knownNames.has(name) || !name) continue;
+      sources.push({
+        task: { taskName: name, status: last?.status ?? "" },
+        orphaned: true,
+        archived: true,
+      });
+      knownNames.add(name);
+    }
   }
 
   const nowMs = Date.now();

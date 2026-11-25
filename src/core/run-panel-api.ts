@@ -121,6 +121,22 @@ const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
 const ACTIVE_STATUSES: RunStatus[] = ["pending", "running", "paused", "failed"];
 
+/**
+ * QA-DAG-STALE: старые записи `running`/`failed` от уже убитых задач продолжали
+ * считаться активными и светились в панели DAG. Считаем активной только запись,
+ * которая обновлялась недавно; неразбираемая дата считается свежей (fail-safe).
+ */
+const STALE_ACTIVE_MS = (() => {
+  const raw = Number(process.env.AGENT_STEWARD_STALE_RUN_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : 6 * 60 * 60 * 1000;
+})();
+
+export function isActiveRun(run: RunRecord, now: number = Date.now()): boolean {
+  if (!ACTIVE_STATUSES.includes(run.status)) return false;
+  const updated = Date.parse(run.updatedAt);
+  return !Number.isFinite(updated) || now - updated <= STALE_ACTIVE_MS;
+}
+
 function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
@@ -224,13 +240,13 @@ export function listRunPanel(
       filter === "all"
         ? true
         : filter === "active"
-          ? ACTIVE_STATUSES.includes(run.status)
+          ? isActiveRun(run)
           : run.status === filter,
     );
     return {
       success: true,
       runs: matching.slice(0, limit).map(toPanelRun),
-      active: all.filter((run) => ACTIVE_STATUSES.includes(run.status)).length,
+      active: all.filter((run) => isActiveRun(run)).length,
     };
   } catch (err) {
     return { success: false, runs: [], active: 0, error: errorText(err) };

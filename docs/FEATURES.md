@@ -205,6 +205,40 @@ and a macOS launchd agent runs only inside a user session. `list_tasks` reports 
 OS value (`logonMode`) and the plugin setting (`runWhenLoggedOff`); `dry_run` shows the
 same pair before the task is registered.
 
+### Windowless task launch (QA-CONSOLE-1)
+
+On Windows, Task Scheduler used to receive a bare `.cmd` path in `/tr`, so every registered
+run flashed a black `cmd.exe` window on the desktop. New tasks are now registered with a
+windowless WSH shim: `/tr` is `wscript.exe //B //Nologo "<launcher>" "<command>"`, where
+`run-hidden.vbs` starts the wrapper with window style 0 and waits for its exit code. The
+PowerShell wrapper and hook shims use `-WindowStyle Hidden` as well. A one-time startup
+migration rewrites the `/tr` of tasks registered by older builds (trigger and settings are
+left untouched), so existing schedules stop flashing too. `windowsHide: true` is passed to
+every spawned helper process on Windows; on Linux/macOS there is no console window to hide,
+but the same option is set for consistency.
+
+### DAG run panel: only live runs are “active” (QA-DAG-1)
+
+The “DAG runs” panel is fed by `list_durable_runs` / `listRunPanel()`, which reads durable
+SQLite run records — not the task definitions in the OS scheduler. Old runs left in
+`pending`, `running`, `paused` or `failed` after a crash or a killed task used to be counted
+as active forever. A run is now considered active only if its status is one of those four
+**and** its `updatedAt` is no older than `AGENT_STEWARD_STALE_RUN_MS` (default 6 hours); both
+the “active” counter and the `active` filter use the same `isActiveRun()` check. The records
+themselves are not deleted — historical run history stays available under the other filters.
+Additionally, the current step in a run row is now a button that scrolls to the step anchor
+instead of an `href="#..."` link: changing the URL hash inside the OpenCode renderer caused
+`Error: Unrecognised route!`.
+
+### Archived runs are hidden from the task list (QA-GHOST-1)
+
+`list_tasks` and the GUI task panel used to add every task name found in run history but
+missing from both the definitions database and the OS scheduler as an `archived: true`
+entry. After a cleanup this produced dozens of empty cards labelled “No scheduler entry”
+with stale dependency lists. History-only entries are now excluded from the default
+`collectTasksView()` result; they can still be requested explicitly for diagnostics, and
+the underlying history remains available through `get_history` and the DAG run panel.
+
 ## Execution policy
 
 ### Timeout and no-overlap

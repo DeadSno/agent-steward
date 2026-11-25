@@ -163,7 +163,7 @@ export class LinuxScheduler extends PosixSchedulerBase {
   /** Записывает crontab через stdin: `crontab -`. */
   private async writeCrontab(content: string): Promise<void> {
     await new Promise<void>((resolve, reject) => {
-      const child = spawn("crontab", ["-"], { stdio: ["pipe", "ignore", "pipe"] });
+      const child = spawn("crontab", ["-"], { stdio: ["pipe", "ignore", "pipe"], windowsHide: true });
       let stderr = "";
       child.stderr.on("data", (chunk) => {
         stderr += String(chunk);
@@ -230,6 +230,7 @@ export class LinuxScheduler extends PosixSchedulerBase {
     return new Promise<string>((resolve, reject) => {
       const child = spawn("at", ["-t", timestamp], {
         stdio: ["pipe", "pipe", "pipe"],
+        windowsHide: true,
       });
       let stdout = "";
       let stderr = "";

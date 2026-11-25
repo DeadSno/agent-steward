@@ -4673,9 +4673,18 @@ export default Plugin.define({
                         {run.currentStep ? (
                           <span>
                             {gt("gui.runsCurrentStep")}{" "}
-                            <a href={`#${run.currentStep.anchor}`} style="color:#5ac8fa;text-decoration:none">
+                            <button
+                              type="button"
+                              style="color:#5ac8fa;text-decoration:none;background:none;border:0;padding:0;font:inherit;cursor:pointer"
+                              onClick={(event) => {
+                                event.preventDefault();
+                                document
+                                  .getElementById(run.currentStep!.anchor)
+                                  ?.scrollIntoView({ behavior: "smooth", block: "center" });
+                              }}
+                            >
                               {run.currentStep.stepName}
-                            </a>{" "}
+                            </button>{" "}
                             <span style="color:#8e8e93">
                               · {run.currentStep.status} · attempt {run.currentStep.attempt}
                             </span>

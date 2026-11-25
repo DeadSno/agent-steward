@@ -25,7 +25,7 @@ export interface DetachedOneShotSpawn {
 export type DetachedOneShotSpawnFn = (
   file: string,
   args: string[],
-  options: { detached: boolean; stdio: "ignore" },
+  options: { detached: boolean; stdio: "ignore"; windowsHide: boolean },
 ) => DetachedOneShotSpawn;
 
 export interface ScheduleAtFallbackDeps {
@@ -175,6 +175,7 @@ export async function scheduleAtFallback(
     const child = spawnFn("/bin/bash", ["-c", script], {
       detached: true,
       stdio: "ignore",
+      windowsHide: true,
     });
     child.once("error", reject);
     child.once("spawn", () => {

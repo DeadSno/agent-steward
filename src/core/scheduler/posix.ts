@@ -132,6 +132,7 @@ export abstract class PosixSchedulerBase implements SchedulerBackend {
       detached: true,
       stdio: "ignore",
       cwd: entry.workingDirectory || process.cwd(),
+      windowsHide: true,
     });
 
     // spawn не бросает синхронно: ошибки (например, удалённый

@@ -34,6 +34,7 @@ const {
   coreUpdateTaskSchema,
   normalizeTaskStatus,
   isStaleTaskView,
+  shouldIncludeArchivedTasks,
 } = await import("./dist/index.js");
 const {
   CHILD_RUN_ENV,
@@ -1276,6 +1277,14 @@ check(
     "QA-ARCHIVE: история без definition попадает в list_tasks как archived",
     source.includes("archived: true") &&
       source.includes("stale: isStaleTaskView(orphaned, def, nowMs)")
+  );
+  check(
+    "QA-GHOST-1: archived-записи скрыты из list_tasks по умолчанию",
+    shouldIncludeArchivedTasks() === false &&
+      shouldIncludeArchivedTasks(false) === false &&
+      shouldIncludeArchivedTasks(true) === true &&
+      source.includes("if (shouldIncludeArchivedTasks(options.includeArchived))") &&
+      !source.includes("collectTasksView({ includeArchived: true })")
   );
   check(
     "QA-STALE: delete_task доступен в core-профиле",

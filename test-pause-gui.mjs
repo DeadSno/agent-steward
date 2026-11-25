@@ -91,6 +91,14 @@ assert(
     guiSrc.includes("setRunningSec(0)"),
   "GUI сбрасывает счётчик при переходе задачи в running",
 );
+assert(
+  !guiSrc.includes('href={`#${run.currentStep') &&
+    guiSrc.includes("<button") &&
+    guiSrc.includes("scrollIntoView(") &&
+    guiSrc.includes('behavior: "smooth"') &&
+    guiSrc.includes('block: "center"'),
+  "GUI не меняет hash для текущего шага (нет Unrecognised route)",
+);
 
 // --- 2. Локали: одинаковый набор ключей gui.runs* ---------------------------
 const localesDir = path.join(root, "locales");
@@ -194,6 +202,26 @@ const listActive = panel.listRunPanel({ filter: "active" });
 assert(
   listActive.runs.some((run) => run.id === runA.id),
   "фильтр active включает paused",
+);
+
+// --- 3.2.1. QA-DAG-1: stale-запуски не считаются активными -------------------
+const freshRun = repo.getRun(runA.id);
+const nowMs = Date.now();
+assert(
+  panel.isActiveRun(freshRun, nowMs),
+  "isActiveRun: свежий запуск с активным статусом активен",
+);
+assert(
+  !panel.isActiveRun(freshRun, nowMs + 7 * 60 * 60 * 1000),
+  "isActiveRun: запуск старше порога не активен",
+);
+assert(
+  !panel.isActiveRun({ ...freshRun, status: "success" }, nowMs),
+  "isActiveRun: терминальный статус не активен",
+);
+assert(
+  panel.isActiveRun({ ...freshRun, updatedAt: "not-a-date" }, nowMs),
+  "isActiveRun: неразбираемая дата не откидывает запуск (fail-open)",
 );
 
 // 3.3. Resume: снимает паузу и готовит шаг.

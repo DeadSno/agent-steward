@@ -94,6 +94,9 @@ const {
   gateAllowPathsFromScope,
   gateAllowPathsFromAfterScript,
   WRAPPER_SCRIPT: psWrapperScript,
+  HIDDEN_LAUNCHER_SCRIPT,
+  ensureHiddenLauncher,
+  buildWindowsHiddenTaskCommand,
 } = await import("./dist/core/ps-wrapper.js");
 const { buildBashWrapperScript } = await import("./dist/core/wrappers/bash.js");
 // ARCH-4: отложенные эффекты и saga-компенсация.
@@ -120,6 +123,63 @@ const { listRunPanel, pauseRunPanel, resumeRunPanel } = await import(
 
 initDb();
 await ensureWrapper();
+
+// QA-CONSOLE-1: Task Runner больше не показывает чёрное окно cmd.exe.
+// Скрытый запуск строится на WSH-шипе и не должен содержать голый cmd.exe.
+const hiddenLauncherPath = await ensureHiddenLauncher();
+const hiddenTaskCommand = buildWindowsHiddenTaskCommand(
+  "C:\\wrappers\\run task.cmd",
+  hiddenLauncherPath,
+);
+check(
+  "QA-CONSOLE-1: скрытый WSH-лаунчер записан рядом с обёрткой",
+  fs.existsSync(hiddenLauncherPath) &&
+    fs.readFileSync(hiddenLauncherPath, "ascii").includes('shell.Run(quoted, 0, True)'),
+);
+check(
+  "QA-CONSOLE-1: /tr запускает wscript.exe без внешних кавычек",
+  hiddenTaskCommand.startsWith("wscript.exe //B //Nologo ") &&
+    !hiddenTaskCommand.startsWith('"') &&
+    hiddenTaskCommand.includes(`"${hiddenLauncherPath}"`) &&
+    hiddenTaskCommand.includes('"C:\\wrappers\\run task.cmd"'),
+  hiddenTaskCommand,
+);
+check(
+  "QA-CONSOLE-1: /tr не содержит голого cmd.exe",
+  !/cmd\.exe/i.test(hiddenTaskCommand),
+);
+const psWrapperModuleSource = fs.readFileSync(
+  new URL("./dist/core/ps-wrapper.js", import.meta.url),
+  "utf8",
+);
+check(
+  "QA-CONSOLE-1: PS-хук-шим скрывает окно",
+  psWrapperModuleSource.includes("-WindowStyle Hidden -NoProfile -File"),
+);
+const windowsSource = fs.readFileSync(
+  new URL("./dist/core/scheduler/windows.js", import.meta.url),
+  "utf8",
+);
+const invokerSource = fs.readFileSync(
+  new URL("./dist/invokers/agent-invoker.js", import.meta.url),
+  "utf8",
+);
+check(
+  "QA-CONSOLE-1: powershell-вызовы локали Windows скрывают окно",
+  (windowsSource.match(/windowsHide: true/g) ?? []).length >= 2 &&
+    windowsSource.includes("buildWindowsHiddenTaskCommand"),
+);
+check(
+  "QA-CONSOLE-1: дочерний агент запускается без окна",
+  invokerSource.includes("windowsHide: true") && invokerSource.includes("shell: false"),
+);
+check(
+  "QA-CONSOLE-1: миграция старых /tr доступна и однократна",
+  windowsSource.includes("migrateWindowsTaskActionsToHiddenLauncher") &&
+    windowsSource.includes("hidden-launch-migration.v1") &&
+    windowsSource.includes('"/change",') &&
+    windowsSource.includes('"/tr",'),
+);
 
 // PL-83: исчерпание квоты модели классифицируется отдельно от обычного
 // «Код возврата 1» в обеих обёртках (PowerShell и bash).
@@ -380,7 +440,7 @@ function readLog(file) {
     "QA-D316-4: before .cmd — тонкий шим с powershell.exe -File",
     fs.existsSync(beforeCmd) &&
       fs.readFileSync(beforeCmd, "utf8") ===
-        `@echo off\r\npowershell.exe -NoProfile -ExecutionPolicy Bypass -File "${beforePs1}" %*\r\n`
+        `@echo off\r\npowershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "${beforePs1}" %*\r\n`
   );
   check("QA-D316-4: PS-тело gate → .ps1 создан", fs.existsSync(gatePs1));
   check(
@@ -391,7 +451,7 @@ function readLog(file) {
     "QA-D316-4: gate .cmd — тонкий шим с powershell.exe -File",
     fs.existsSync(gateCmd) &&
       fs.readFileSync(gateCmd, "utf8") ===
-        `@echo off\r\npowershell.exe -NoProfile -ExecutionPolicy Bypass -File "${gatePs1}" %*\r\n`
+        `@echo off\r\npowershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "${gatePs1}" %*\r\n`
   );
 
   // Чисто cmd-команда остаётся в прежнем формате (обратная совместимость).

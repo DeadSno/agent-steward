@@ -609,6 +609,7 @@ export function workingDirectoryDriftWarning(def: TaskDefinition, cwd: string): 
       cwd,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
+      windowsHide: true,
       timeout: 5000,
     }).trim();
     const headTime = new Date(headIso).getTime();

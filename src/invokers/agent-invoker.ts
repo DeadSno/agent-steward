@@ -84,7 +84,9 @@ abstract class BaseInvoker implements AgentInvoker {
     // D-2.1: runner (local/docker/ssh) получает команду, spawn сохраняет cwd/env.
     const invoke = (command: string, args: readonly string[]) =>
       new Promise<InvocationResult>((resolve, reject) => {
-        const child = spawn(command, args, { cwd, env, shell: false });
+        // QA-CONSOLE-1: windowsHide — no-op на POSIX, но убирает мигание
+        // консоли при запуске дочернего агента на Windows.
+        const child = spawn(command, args, { cwd, env, shell: false, windowsHide: true });
         let stdout = "";
         let stderr = "";
         child.stdout?.on("data", (chunk) => { stdout += String(chunk); });

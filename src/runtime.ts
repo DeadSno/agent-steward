@@ -13,6 +13,7 @@ import { checkJsonBackups, recoverInterruptedRuns } from "./db/recovery.js";
 import { verifyGateLedgerIntegrity } from "./core/audit.js";
 import { flushOutbox } from "./core/feedback.js";
 import { LinuxScheduler } from "./core/scheduler/index.js";
+import { migrateWindowsTaskActionsToHiddenLauncher } from "./core/scheduler/windows.js";
 import type { SchedulerBackend } from "./core/scheduler/types.js";
 import { maybeRunHistoryRetention } from "./core/retention.js";
 import { LockManager } from "./core/lock.js";
@@ -112,6 +113,13 @@ export async function createRuntimeCore(ctxLike: RuntimeContextLike, deps: Runti
       }`,
     );
   }
+  // QA-CONSOLE-1: один раз переписываем /tr уже зарегистрированных Windows-задач
+  // на скрытый WSH-запуск, чтобы старые реестры тоже не показывали cmd.exe.
+  // На POSIX вызов — no-op; ошибки не мешают старту (fail-open).
+  void migrateWindowsTaskActionsToHiddenLauncher().catch(() => {
+    // Миграция — оптимизация, а не условие работы плагина.
+  });
+
   // Деталь 3.8 (F-1.6): повторяем недоставленные отчёты из outbox.
   // Fire-and-forget: сеть не должна задерживать или ломать старт плагина.
   void loadSettings()

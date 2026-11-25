@@ -1,8 +1,10 @@
 import { execFile } from "node:child_process";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import iconv from "iconv-lite";
 import type { ScheduledTaskInfo } from "../../types.js";
-import { TASK_FOLDER, TASK_FOLDER_NAME, LEGACY_TASK_FOLDER_NAME, taskFolderNameForProfile, legacyTaskFolderNameForProfile } from "../../types.js";
+import { TASK_FOLDER, TASK_FOLDER_NAME, LEGACY_TASK_FOLDER_NAME, taskFolderNameForProfile, legacyTaskFolderNameForProfile, getPluginDir } from "../../types.js";
 import { getProfileName } from "../../profiles.js";
 import {
   buildScheduleFlags,
@@ -10,6 +12,7 @@ import {
   nextMonthlyStartBoundary,
 } from "../cron-to-schtasks.js";
 import { buildWindowsOneShotFlags } from "../one-shot.js";
+import { buildWindowsHiddenTaskCommand, ensureHiddenLauncher } from "../ps-wrapper.js";
 import { needsPollMode } from "../schedule-v2.js";
 import type {
   CreateTaskOptions,
@@ -32,7 +35,7 @@ async function getWindowsDateFormat(): Promise<string> {
         const { stdout } = await execFileAsync(
           "powershell.exe",
           ["-NoProfile", "-Command", "(Get-Culture).DateTimeFormat.ShortDatePattern"],
-          { maxBuffer: MAX_OUTPUT_BUFFER },
+          { maxBuffer: MAX_OUTPUT_BUFFER, windowsHide: true },
         );
         const pattern = String(stdout).trim();
         return pattern || "dd.MM.yyyy";
@@ -54,7 +57,7 @@ async function getWindowsLocale(): Promise<string | undefined> {
         const { stdout } = await execFileAsync(
           "powershell.exe",
           ["-NoProfile", "-Command", "(Get-Culture).Name"],
-          { maxBuffer: MAX_OUTPUT_BUFFER },
+          { maxBuffer: MAX_OUTPUT_BUFFER, windowsHide: true },
         );
         return String(stdout).trim() || undefined;
       } catch {
@@ -499,7 +502,7 @@ export class WindowsScheduler implements SchedulerBackend {
   }
 
   /** Оба возможных полных имени: новое и старое (для поиска legacy-задач). */
-  private fullNames(name: string): string[] {
+  fullNames(name: string): string[] {
     const candidate = this.fullName(name);
     const names = [candidate];
     if (!candidate.startsWith(this.legacyTaskPrefix)) {
@@ -585,12 +588,15 @@ export class WindowsScheduler implements SchedulerBackend {
     // входа нужен SYSTEM: он не требует пароля, но работает в session 0 без
     // профиля пользователя (нет доступа к пользовательским файлам/сети/ключам).
     const logonFlags = options.runWhenLoggedOff ? ["/ru", "SYSTEM"] : [];
+    // QA-CONSOLE-1: голый `.cmd` в /tr заставляет Планировщик показать окно
+    // cmd.exe на рабочем столе. Запускаем его через windowless WSH-шип.
+    const hiddenLauncherPath = await ensureHiddenLauncher();
     const args: string[] = [
       "/create",
       "/tn",
       fullName,
       "/tr",
-      `"${command}"`,
+      buildWindowsHiddenTaskCommand(command, hiddenLauncherPath),
       ...scheduleFlags,
       ...logonFlags,
       "/f",
@@ -896,6 +902,73 @@ export class WindowsScheduler implements SchedulerBackend {
 }
 
 /** Определяет, что ошибка schtasks означает «задач не найдено». */
+/**
+ * QA-CONSOLE-1: задачи, зарегистрированные до появления WSH-шипа, всё ещё
+ * запускают голый cmd.exe и показывают окно на рабочем столе. Один раз за
+ * установку переписываем их /tr на скрытый запуск, не трогая триггеры.
+ * Fail-open: ошибка отдельной задачи не мешает остальным и старту плагина.
+ */
+export async function migrateWindowsTaskActionsToHiddenLauncher(): Promise<{
+  migrated: number;
+  skipped: number;
+  failed: number;
+}> {
+  const stats = { migrated: 0, skipped: 0, failed: 0 };
+  if (process.platform !== "win32") return stats;
+
+  const marker = join(getPluginDir(), "hidden-launch-migration.v1");
+
+  if (existsSync(marker)) return stats;
+
+  try {
+    const launcherPath = await ensureHiddenLauncher();
+    const backend = new WindowsScheduler();
+    const names = await backend.listTasks();
+    for (const task of names) {
+      const name = task.taskName;
+      if (!name) continue;
+      let done = false;
+      for (const fullName of backend.fullNames(name)) {
+        const queryName = fullName.replace(/^\\+/, "");
+        try {
+          const { stdout } = await runSchtasks([
+            "/query",
+            "/tn",
+            queryName,
+            "/xml",
+          ]);
+          const commandMatch = /<Command>([\s\S]*?)<\/Command>/i.exec(stdout);
+          const rawCommand = commandMatch?.[1]?.trim() ?? "";
+          if (!rawCommand || /wscript\.exe/i.test(rawCommand)) {
+            stats.skipped += 1;
+            done = true;
+            break;
+          }
+          const command = rawCommand.replace(/^"+|"+$/g, "");
+          await runSchtasks([
+            "/change",
+            "/tn",
+            queryName,
+            "/tr",
+            buildWindowsHiddenTaskCommand(command, launcherPath),
+          ]);
+          stats.migrated += 1;
+          done = true;
+          break;
+        } catch {
+          // Задача исчезла, нет прав или имя из legacy-папки — пробуем дальше.
+        }
+      }
+      if (!done) stats.failed += 1;
+    }
+    mkdirSync(dirname(marker), { recursive: true });
+    writeFileSync(marker, new Date().toISOString(), "utf8");
+  } catch {
+    // Миграция — оптимизация, а не условие старта.
+  }
+  return stats;
+}
+
 function isEmptyQueryResult(err: SchtasksError): boolean {
   const text = `${err.message} ${err.stderr}`.toLowerCase();
   return (

@@ -2017,12 +2017,66 @@ exit $script:exitCode
  * Гарантирует existence директорий плагина и записывает generic-обёртку.
  * Возвращает путь к обёртке.
  */
+/**
+ * QA-CONSOLE-1: планировщик Windows запускает `.cmd` через `schtasks /tr`,
+ * и сам `cmd.exe` показывает консольное окно даже внутри PowerShell-обёртки
+ * с `-WindowStyle Hidden`. Единый windowless-шип на WScript.Shell запускает
+ * целевую обёртку с `intWindowStyle = 0` и дожидается её завершения,
+ * пробрасывая код выхода в Планировщик заданий.
+ *
+ * Скрипт намеренно ASCII-only: путь к `.cmd` передаётся аргументом в `/tr`,
+ * поэтому кириллица в пути не зависит от кодировки файла скрипта.
+ */
+export const HIDDEN_LAUNCHER_FILENAME = "run-hidden.vbs";
+
+export const HIDDEN_LAUNCHER_SCRIPT = `' agent-steward: hidden console launcher for Windows Task Scheduler
+Option Explicit
+Dim shell, target, quoted, code
+If WScript.Arguments.Count < 1 Then WScript.Quit 1
+Set shell = CreateObject("WScript.Shell")
+target = WScript.Arguments(0)
+quoted = """" & target & """"
+code = shell.Run(quoted, 0, True)
+WScript.Quit code
+`;
+
+/**
+ * QA-CONSOLE-1: гарантирует наличие скрытого launcher'а рядом с обёрткой.
+ * Возвращает путь к `.vbs`; запись идемпотентна и не зависит от таски.
+ */
+export async function ensureHiddenLauncher(): Promise<string> {
+  await fs.mkdir(WRAPPER_DIR, { recursive: true });
+  const launcherPath = path.join(WRAPPER_DIR, HIDDEN_LAUNCHER_FILENAME);
+  await fs.writeFile(launcherPath, HIDDEN_LAUNCHER_SCRIPT, "ascii");
+  return launcherPath;
+}
+
+/**
+ * QA-CONSOLE-1: собирает значение `/tr` для `schtasks /create`.
+ *
+ * `schtasks` сам разбивает `/tr` на Command и Arguments, поэтому строку нельзя
+ * оборачивать в внешние кавычки (иначе Command станет `wscript.exe //B...`).
+ * `wscript.exe //B //Nologo` подавляет собственный UI, а `shell.Run(..., 0, True)`
+ * внутри шипа скрывает консоль целевой `.cmd`-обёртки.
+ */
+export function buildWindowsHiddenTaskCommand(
+  command: string,
+  launcherPath: string,
+): string {
+  // НЕ оборачиваем всю строку в кавычки: schtasks сам разбивает /tr на
+  // <Command> (до первого пробела) и <Arguments> и не понимает \" внутри.
+  // `wscript.exe` живёт в System32 и не требует кавычек; кавычки нужны только
+  // вокруг путей-аргументов, которые могут содержать пробелы.
+  return `wscript.exe //B //Nologo "${launcherPath}" "${command}"`;
+}
+
 export async function ensureWrapper(): Promise<string> {
   await fs.mkdir(WRAPPER_DIR, { recursive: true });
   const wrapperPath = path.join(WRAPPER_DIR, WRAPPER_FILENAME);
   // BOM обязателен: Windows PowerShell 5.1 читает .ps1 без BOM как ANSI,
   // из-за чего кириллица в сообщениях Write-Log превращается в мусор.
   await fs.writeFile(wrapperPath, "\uFEFF" + WRAPPER_SCRIPT, "utf8");
+  await ensureHiddenLauncher();
   return wrapperPath;
 }
 
@@ -2203,7 +2257,7 @@ async function writeHookFile(
     const escapedPs1 = ps1File.replace(/"/g, '""');
     await fs.writeFile(
       file,
-      `@echo off\r\npowershell.exe -NoProfile -ExecutionPolicy Bypass -File "${escapedPs1}" %*\r\n`,
+      `@echo off\r\npowershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "${escapedPs1}" %*\r\n`,
       "utf8",
     );
   } else {
