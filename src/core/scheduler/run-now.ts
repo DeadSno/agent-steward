@@ -244,6 +244,22 @@ export function planRuntimeIsolation(input: {
   };
 }
 
+/**
+ * QA-ERROR-STREAK: терминальная серия ошибок снимает задачу с расписания.
+ * Порог по умолчанию — 3 подряд; 0 отключает авто-паузу (fail-open для
+ * пользовательских сценариев, где cron должен продолжать попытки).
+ */
+export const DEFAULT_ERROR_STREAK_PAUSE = 3;
+
+export function shouldPauseAfterConsecutiveErrors(
+  streak: number,
+  threshold: number = DEFAULT_ERROR_STREAK_PAUSE,
+): boolean {
+  const limit = Number.isFinite(threshold) ? Math.floor(threshold) : DEFAULT_ERROR_STREAK_PAUSE;
+  if (limit <= 0) return false;
+  return Number.isFinite(streak) && streak >= limit;
+}
+
 /** PL-99: признак уже закрытой находки. */
 export interface StaleVerdict {
   stale: boolean;

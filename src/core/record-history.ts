@@ -3,7 +3,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { runTaskNow } from "./scheduler/run-now.js";
+import {
+  DEFAULT_ERROR_STREAK_PAUSE,
+  runTaskNow,
+  shouldPauseAfterConsecutiveErrors,
+} from "./scheduler/run-now.js";
 import { createSchedulerBackend } from "./scheduler/index.js";
 import { notifyTaskCompletion } from "../notifications.js";
 import {
@@ -1209,6 +1213,24 @@ export async function cleanupWindowsOneShotTask(
   }
 }
 
+/** QA-ERROR-STREAK: число подряд идущих терминальных ошибок в истории задачи. */
+function countConsecutiveErrors(taskName: string, window = 50): number {
+  const rows = getDb()
+    .prepare(
+      `SELECT status FROM history
+       WHERE lower(task_name) = lower(?)
+       ORDER BY id DESC
+       LIMIT ?`,
+    )
+    .all(taskName, window) as { status: string }[];
+  let streak = 0;
+  for (const row of rows) {
+    if (row.status !== "error" && row.status !== "timeout") break;
+    streak += 1;
+  }
+  return streak;
+}
+
 /**
  * Общая пост-обработка завершённого запуска: уведомление, цепочки задач,
  * DAG-зависимости и повторы. Используется и legacy-режимом, и --finish.
@@ -1307,6 +1329,30 @@ async function handleCompletion(
       if (started) {
         logRecorderEvent("compensation.triggered", taskName, { nextTask: chainTarget });
       }
+    }
+
+    // QA-ERROR-STREAK: после серии терминальных ошибок cron-задача не должна
+    // молча гнать следующий тик с будущим nextRun. Снимаем её с расписания и
+    // требуем явный retry/resume. Повтор (retryScheduled) и skipped-прогоны
+    // не трогаются; порог 0 отключает поведение.
+    try {
+      const configured = Number(process.env.AGENT_STEWARD_ERROR_STREAK_PAUSE);
+      const threshold = Number.isFinite(configured) && configured >= 0
+        ? configured
+        : DEFAULT_ERROR_STREAK_PAUSE;
+      const streak = countConsecutiveErrors(taskName);
+      if (!retryScheduled && shouldPauseAfterConsecutiveErrors(streak, threshold)) {
+        await createSchedulerBackend().pauseTask(taskName);
+        logRecorderEvent("error.auto_pause", taskName, {
+          status: st,
+          reason: `QA-ERROR-STREAK: ${streak} подряд ошибок/таймаутов при пороге ${threshold}; нужен явный retry/resume`,
+        });
+      }
+    } catch (err: unknown) {
+      logRecorderEvent("error.auto_pause_failed", taskName, {
+        status: st,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 

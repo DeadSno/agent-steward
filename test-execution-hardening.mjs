@@ -104,7 +104,11 @@ const { listEffectIntents, readEffectIntentLedger } = await import(
   "./dist/core/gate-integrity.js"
 );
 const { readAuditLog } = await import("./dist/core/audit.js");
-const { planRuntimeIsolation } = await import("./dist/core/scheduler/run-now.js");
+const {
+  planRuntimeIsolation,
+  shouldPauseAfterConsecutiveErrors,
+  DEFAULT_ERROR_STREAK_PAUSE,
+} = await import("./dist/core/scheduler/run-now.js");
 // A-6: команды Telegram-бота. Никаких сетевых вызовов — только панель и БД.
 const { parseTelegramCommand, handleTelegramCommand } = await import(
   "./dist/core/telegram.js"
@@ -4056,7 +4060,8 @@ try {
   check(
     "PL-138: финализация записи и снятие счётчика PL-106 не ниже нуля",
     indexSrc.includes('finishRun(rec.id, "error", durationMs, reason, null, 0, 0, undefined, "skipped", "skipped")') &&
-      indexSrc.includes("activeNonIsolatedRuns = Math.max(0, activeNonIsolatedRuns - 1)")
+      indexSrc.includes("staleDefinition?.worktree ? null : checkoutKeyFor(staleDefinition)") &&
+      indexSrc.includes("activeNonIsolatedByCheckout.delete(checkoutKey)")
   );
   check(
     "PL-134: idle-сторож пишет осмысленную причину в маркер вместо \"idle\"",
@@ -4111,6 +4116,29 @@ try {
     "QW-14.2: prune fallback сохраняет реестр через transact под локом",
     atFallbackSrc.includes("registry.transact(async (entries)") &&
       registrySrc.includes("transact<T>(fn:"),
+  );
+}
+
+// QA-ERROR-STREAK: терминальная серия ошибок снимает задачу с расписания.
+{
+  check(
+    "QA-ERROR-STREAK: порог по умолчанию — 3 подряд ошибки",
+    DEFAULT_ERROR_STREAK_PAUSE === 3 &&
+      !shouldPauseAfterConsecutiveErrors(2) &&
+      shouldPauseAfterConsecutiveErrors(3)
+  );
+  check(
+    "QA-ERROR-STREAK: порог 0 отключает авто-паузу",
+    !shouldPauseAfterConsecutiveErrors(50, 0) &&
+      shouldPauseAfterConsecutiveErrors(1, 1)
+  );
+  const recorder = fs.readFileSync(new URL("./dist/core/record-history.js", import.meta.url), "utf8");
+  check(
+    "QA-ERROR-STREAK: рекордер считает серию и паузит только без retries",
+    recorder.includes("SELECT status FROM history") &&
+      recorder.includes("shouldPauseAfterConsecutiveErrors(streak, threshold)") &&
+      recorder.includes("!retryScheduled && shouldPauseAfterConsecutiveErrors") &&
+      recorder.includes("error.auto_pause")
   );
 }
 
