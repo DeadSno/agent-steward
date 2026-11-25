@@ -35,9 +35,6 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 **QA-SUB-1 — Суб-агент упирается в лимит тарифа** · P2 · ⬜
 - [ ] Суб-агент `explore` (`opencode/mimo-v2.6-flash-free`) завершился `Free usage limit reached`; лимит 1 суб-агента исчерпан (уже фиксировалось в CHANGELOG:17). Нужны явный local-agent fallback на Ollama (`hf.co/Qwen/Qwen3-4B-GGUF:Q4_K_M`, доступна на 127.0.0.1:11434; `qwen2.5:3b` при pull падает) и прозрачный statuses в ответе, чтобы задача не срывалась тихо.
 
-**QA-BRIDGE-1 — Code Mode bridge открывает 8 из 34 инструментов** · P2 · ⬜
-- [ ] Плагин регистрирует 34 инструмента, но в Code Mode catalog доступны только 8 (`src/index.ts:5284`, `CODE_MODE_BRIDGE_NOTE`). Проверить, какие инструменты теряются, и либо расширить мост, либо зафиксировать политику и причину в документации. Параллельно проверить плагин в вариантах с привязкой к ОС и без неё (HTTP/RPC `src/server.ts`: `/api/tasks`, `/api/history`, `/api/analytics`, `/api/health`, порт 3782) и результаты занести в CHANGELOG.
-
 **QA-BASELINE-1 — `test-tool-specs.mjs` падает на устаревших снапшотах** · P2 · ⬜
 - [ ] Воспроизведение 25.11.2026: `npm run test:parallel` — 128/130, exit 1; `test-tool-specs.mjs` — 46/52: снапшоты `get_history`/`schedule_task`/`schedule_advanced`/`update_task`/`update_advanced` не совпадают с текущими name+description+JSON-схемами, плюс `QA-PORT-4: core-профиль не тянет admin-инструменты` ожидает 10 инструментов core, а реестр отдаёт 11 (уже зафиксировано в CHANGELOG как 11). Часть находки про `test-run-now.mjs` (PL-106) закрыта отдельно как QA-D320-1 и перенесена в CHANGELOG; здесь остаётся только обновление снимков tool-specs и бейзлайна core-профиля по факту текущего реестра (34 инструмента).
 

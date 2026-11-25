@@ -786,6 +786,30 @@ and `emit_event`, `schedule_advanced`, `get_analytics` or `get_metrics` may be
 unknown. This is stale in-process state, not a missing capability in the fresh
 build; verify with `list_tasks`/`get_dashboard_info` after restarting.
 
+### Code Mode catalog and OS binding (QA-BRIDGE-1)
+
+The 34 tools above are the plugin's own registry. The host's Code Mode catalog is a
+separate, host-controlled bridge: it exposes only a subset (8 tools in the documented
+setup: `schedule_task`, `update_task`, `list_tasks`, `run_task_now`, `get_history`,
+`get_task_logs`, `dry_run`, `get_dashboard_info`). This is a bridge policy, not a
+plugin regression — all 34 tools stay callable by name through MCP tools, the CLI and
+HTTP RPC. Tool descriptions carry `CODE_MODE_BRIDGE_NOTE` with the same explanation,
+so "not in the Code Mode catalog" means "use MCP, CLI or RPC", not "tool missing".
+The exact subset depends on the host: in one observed session the catalog exposed
+none of the plugin tools while `node dist/cli.js --help` and the registered tool list
+still worked.
+
+The HTTP dashboard (`src/server.ts`, port 3782 by default) works in both OS-bound and
+non-OS-bound modes: `/api/health`, `/api/tasks`, `/api/history` and
+`/api/analytics?days=7` answer in each. Non-OS-bound `/api/health` reports scheduler
+`agent-steward by DeadSno`, resolved mode `polling` and no native host; on win32 with
+`OPENCODE_NATIVE_SCHEDULER=1` and the full capability set
+(`ledger,dlq,budgets,approval,execution-loop`) it reports `native-scheduler`, resolved
+mode `native` and contract version 1.0. Incomplete capability sets fail closed to
+polling. The same switch was verified at the core API level via `dist/core-entry.js`:
+`resolveSchedulerMode()`, `detectNativeSchedulerHost()`, `externalContractDescriptor()`
+and `buildExternalContractPlan()` match the HTTP view.
+
 A bundled skill, `scheduled-job-best-practices`, teaches the agent safe defaults:
 least privilege, Quality Gates, timeout, matrix concurrency, DAG rules and a
 create → dry-run → run-now → inspect loop. It is registered automatically by the
