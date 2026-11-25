@@ -484,6 +484,39 @@ export function verifyExecutionExampleReuse(
   return verifyExampleReuse(compiledContext, usedKeys, runId);
 }
 
+/** EV-2.2: результат сравнения вердиктов гейта ad-hoc и registered (§11.6). */
+export interface GateOutcomeParity {
+  same: boolean;
+  differences: string[];
+}
+
+/**
+ * EV-2.2: сравнивает вердикты по маршруту и содержимому гейта. Идентификаторы
+ * запуска и trigger_kind намеренно исключены: origin входов честно различается.
+ */
+export function compareGateOutcomeParity(
+  a: GateOutcomeRecord,
+  b: GateOutcomeRecord,
+): GateOutcomeParity {
+  const differences: string[] = [];
+  const scalar: [string, unknown, unknown][] = [
+    ["verdict", a.verdict, b.verdict],
+    ["gateHash", a.gateHash, b.gateHash],
+    ["policyHash", a.policyHash, b.policyHash],
+    ["promptHash", a.promptHash, b.promptHash],
+    ["taskType", a.taskType, b.taskType],
+    ["gateType", a.gateType, b.gateType],
+    ["modelVersion", a.modelVersion, b.modelVersion],
+    ["executor", a.executor, b.executor],
+    ["routeSource", a.routeSource, b.routeSource],
+    ["routeReason", a.routeReason, b.routeReason],
+  ];
+  for (const [field, left, right] of scalar) {
+    if (left !== right) differences.push(`${field}: ${String(left)} != ${String(right)}`);
+  }
+  return { same: differences.length === 0, differences };
+}
+
 /** Один шаг плана с готовым маршрутом (AC-1.3: трассировка). */
 export interface PlannedStep extends MissionStep {
   order: number;

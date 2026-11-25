@@ -356,6 +356,7 @@ check("PL-25: CLI worktree-verify — плохие аргументы → 2", cl
 // --- 8. ARCH-3: flake-aware вердикт гейта в едином пути ---------------------
 const escalation = await import("./dist/core/router/escalation.js");
 const capability = await import("./dist/db/capability-repo.js");
+const dispatch = await import("./dist/core/router/dispatch.js");
 
 let gateAttempts = 0;
 const flakeOutcome = await escalation.runGateWithRetry((attempt) => {
@@ -1069,6 +1070,92 @@ check(
     ev21Reuse.examples.some(
       (item) => item.fromRunId === "ev21-first-run" && item.usedInRunId === ev21Run.runId,
     ),
+);
+
+// --- EV-2.2: §11.6 — паритет ad-hoc/registered по маршруту и вердикту -------
+const ev22Registered = ac1.createRegisteredRunContext({
+  name: "ev22-parity",
+  prompt: "verify parity",
+  workingDirectory: tempRoot,
+  model: "local/model",
+  taskType: "run_tests",
+  allowedTools: ["read"],
+  deniedTools: ["shell"],
+  qualityGate: "ev22-parity-gate",
+});
+const ev22Adhoc = ac1.createAdHocRunContext(ev22Registered.prompt, {
+  taskName: ev22Registered.taskName,
+  cwd: ev22Registered.cwd,
+  taskType: ev22Registered.taskType,
+  policy: ev22Registered.safety.policy,
+  profile: { ...ev22Registered.profile },
+  safety: {
+    allowedTools: ev22Registered.safety.allowedTools,
+    deniedTools: ev22Registered.safety.deniedTools,
+  },
+  metadata: { qualityGate: "ev22-parity-gate" },
+});
+const ev22RegisteredPlan = await ac1.buildExecutionPlan(ev22Registered, {
+  compileContext: { tokenBudget: 2000 },
+});
+const ev22AdhocPlan = await ac1.buildExecutionPlan(ev22Adhoc, {
+  compileContext: { tokenBudget: 2000 },
+});
+const ev22RouteParity = dispatch.compareStepRoutes(
+  ev22RegisteredPlan.steps[0].route,
+  ev22AdhocPlan.steps[0].route,
+);
+check(
+  "EV-2.2: одинаковая спека даёт одинаковый маршрут",
+  ev22RouteParity.same === true && ev22RouteParity.differences.length === 0,
+);
+check(
+  "EV-2.2: паритет маршрута проверяет и расхождения",
+  dispatch.compareStepRoutes(
+    ev22RegisteredPlan.steps[0].route,
+    { ...ev22AdhocPlan.steps[0].route, target: "cloud" },
+  ).same === false,
+);
+const ev22ParityExecutor = {
+  id: "local",
+  supports: (route) => route.executor === "local",
+  execute: () => ({ output: "ev22-ok" }),
+};
+const ev22RegisteredRun = await ac1.executeExecutionPlan(ev22RegisteredPlan, {
+  executors: [ev22ParityExecutor],
+  gate: () => ({ ok: true }),
+});
+const ev22AdhocRun = await ac1.executeExecutionPlan(ev22AdhocPlan, {
+  executors: [ev22ParityExecutor],
+  gate: () => ({ ok: true }),
+});
+const ev22RegisteredOutcome = repo
+  .listGateOutcomes()
+  .find((row) => row.runId === ev22RegisteredRun.runId);
+const ev22AdhocOutcome = repo.listGateOutcomes().find((row) => row.runId === ev22AdhocRun.runId);
+check(
+  "EV-2.2: оба входа записали вердикт гейта",
+  Boolean(ev22RegisteredOutcome) && Boolean(ev22AdhocOutcome),
+);
+const ev22VerdictParity = ac1.compareGateOutcomeParity(
+  ev22RegisteredOutcome,
+  ev22AdhocOutcome,
+);
+check(
+  "EV-2.2: вердикты совпадают по гейту, политике и маршруту",
+  ev22VerdictParity.same === true && ev22VerdictParity.differences.length === 0,
+);
+check(
+  "EV-2.2: trigger_kind честно различает origin входов",
+  ev22RegisteredOutcome.triggerKind === "manual" &&
+    ev22AdhocOutcome.triggerKind === "adhoc",
+);
+check(
+  "EV-2.2: паритет вердикта ловит расхождение гейта",
+  ac1.compareGateOutcomeParity(ev22RegisteredOutcome, {
+    ...ev22AdhocOutcome,
+    verdict: "fail",
+  }).same === false,
 );
 
 // --- PL-91: вебхук — отдельный trigger_kind, а не «manual» -----------------

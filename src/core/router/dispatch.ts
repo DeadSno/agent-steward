@@ -44,6 +44,35 @@ export interface StepRoute {
   decision?: CapabilityDecision;
 }
 
+/** EV-2.2: результат сравнения двух маршрутов (§11.6). */
+export interface StepRouteParity {
+  same: boolean;
+  differences: string[];
+}
+
+/**
+ * EV-2.2: сравнивает маршруты ad-hoc и registered по полям решения.
+ * `decision` сравнивается по целевому исполнителю и причине, а не по
+ * объекту/статистике: они могут различаться временем снятия снимка.
+ */
+export function compareStepRoutes(a: StepRoute, b: StepRoute): StepRouteParity {
+  const differences: string[] = [];
+  const scalar: [string, unknown, unknown][] = [
+    ["taskType", a.taskType, b.taskType],
+    ["target", a.target, b.target],
+    ["transport", a.transport, b.transport],
+    ["executor", a.executor, b.executor],
+    ["source", a.source, b.source],
+    ["reason", a.reason, b.reason],
+    ["decision.target", a.decision?.target, b.decision?.target],
+    ["decision.reason", a.decision?.reason, b.decision?.reason],
+  ];
+  for (const [field, left, right] of scalar) {
+    if (left !== right) differences.push(`${field}: ${String(left)} != ${String(right)}`);
+  }
+  return { same: differences.length === 0, differences };
+}
+
 /**
  * Строит маршрут для типа задачи: статическое правило, затем Capability Map.
  * Пустой тип — ошибка, а не молчаливый `explore`: маршрутизировать нечего.
