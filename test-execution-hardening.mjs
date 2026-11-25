@@ -2958,6 +2958,126 @@ try {
   check("M-1..M-4: секция не выбросила исключение", false, "section threw");
 }
 
+// --- EX-1.2: роли и post-mortem внутри execution loop ---
+try {
+  const uniqueName = (tag) => `ex12-${tag}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const makePlan = async (tag) => {
+    const context = createAdHocRunContext(`EX-1.2 ${tag} миссия`, {
+      taskName: uniqueName(tag),
+      taskType: "mission",
+      riskClass: "R0",
+    });
+    return buildExecutionPlan(context);
+  };
+
+  // По умолчанию одна попытка, но разбор причины ошибки уже в loop.
+  {
+    const calls = [];
+    const result = await executeExecutionPlan(await makePlan("default"), {
+      executors: [
+        {
+          id: "ex12-default",
+          supports: () => true,
+          execute: async (input) => {
+            calls.push(input.agentRole);
+            return { error: "temporary network failure" };
+          },
+        },
+      ],
+    });
+    check(
+      "EX-1.2: по умолчанию One-shot retry, postmortem записан в шаг",
+      result.status === "failed" &&
+        calls.length === 1 &&
+        result.steps[0]?.postmortem?.kind === "transient" &&
+        result.steps[0]?.agentAttempts === 1,
+      JSON.stringify({ status: result.status, calls, step: result.steps[0] })
+    );
+  }
+
+  // Явный лимит попыток включает self-correcting retry через тот же StepExecutor.
+  {
+    const calls = [];
+    const result = await executeExecutionPlan(await makePlan("retry"), {
+      executors: [
+        {
+          id: "ex12-retry",
+          supports: () => true,
+          execute: async (input) => {
+            calls.push({ role: input.agentRole, attempt: input.attempt });
+            return calls.length === 1
+              ? { error: "ETIMEDOUT: step exceeded timeout" }
+              : { output: "recovered" };
+          },
+        },
+      ],
+      agentPolicies: { retry: { enabled: true, maxAttempts: 2 } },
+    });
+    check(
+      "EX-1.2: retry через StepExecutor чередует worker → reviewer",
+      result.status === "passed" &&
+        calls.length === 2 &&
+        calls[0].role === "worker" &&
+        calls[1].role === "reviewer" &&
+        calls[1].attempt === 2 &&
+        result.steps[0]?.agentAttempts === 2,
+      JSON.stringify({ status: result.status, calls, step: result.steps[0] })
+    );
+  }
+
+  // Секрет/квота не ретраятся даже при включённом лимите.
+  {
+    const calls = [];
+    const result = await executeExecutionPlan(await makePlan("secret"), {
+      executors: [
+        {
+          id: "ex12-secret",
+          supports: () => true,
+          execute: async () => {
+            calls.push(1);
+            return { error: "API_KEY=sk-abcdefgh12345678 leaked" };
+          },
+        },
+      ],
+      agentPolicies: { retry: { enabled: true, maxAttempts: 3 } },
+    });
+    check(
+      "EX-1.2: ошибка с секретом не ретраится",
+      result.status === "failed" &&
+        calls.length === 1 &&
+        result.steps[0]?.postmortem?.kind === "secret",
+      JSON.stringify({ status: result.status, calls, step: result.steps[0] })
+    );
+  }
+
+  // Роли чередуются между шагами плана, а не только между попытками.
+  {
+    const plan = await makePlan("roles");
+    plan.steps.push({ ...plan.steps[0], stepName: `${plan.steps[0].stepName}-review` });
+    const roles = [];
+    await executeExecutionPlan(plan, {
+      executors: [
+        {
+          id: "ex12-roles",
+          supports: () => true,
+          execute: async (input) => {
+            roles.push(input.agentRole);
+            return { output: "ok" };
+          },
+        },
+      ],
+    });
+    check(
+      "EX-1.2: роли шагов чередуются worker → reviewer",
+      plan.steps.length === 2 && roles[0] === "worker" && roles[1] === "reviewer",
+      JSON.stringify(roles)
+    );
+  }
+} catch (err) {
+  console.log("[diag] EX-1.2 section THREW:", err instanceof Error ? err.stack : String(err));
+  check("EX-1.2: секция не выбросила исключение", false, "section threw");
+}
+
 
 
 

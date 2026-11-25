@@ -253,10 +253,17 @@ applied through `PRAGMA user_version` on open. Step 11 adds functional indexes
   wrapper as an encoded `runner-run.js` bridge, so the scheduled run uses the same
   transport as the interactive one. Invalid, missing or unavailable runner config
   degrades to `local` (fail-open); `docker`/`ssh` additionally require the image/host
-  and the corresponding binary. The agent-executor abstraction
-  (`src/core/agents.ts` / `agents-advanced.ts`) is still re-exported from
-  `execution.ts`; enabling its retry/post-mortem policies remains opt-in and does
-  not change the default mission loop.
+  and the corresponding binary. Since EX-1.2 the role rotation and
+  post-mortem policies from `src/core/agents.ts` are part of the execution loop
+  itself: every step receives `assignRole(...)` (`worker` → `reviewer`) through
+  `StepExecutionInput.agentRole`, and failures are classified by `postmortem()`
+  and recorded in `ExecutedStep.postmortem`. The public re-export remains for
+  API compatibility but is no longer the only way to enable the policies.
+  Self-correcting retry is enabled explicitly with
+  `ExecutePlanOptions.agentPolicies.retry.maxAttempts > 1`; the default is one
+  attempt, so existing runs stay deterministic. Secrets, quota and unknown
+  causes are never retried. Advanced primitives in `agents-advanced.ts` are
+  still pure helpers and do not change the loop.
 - `checkBudgetGate` / `checkRunBudgetGate` are called at tool/RPC/manual entry
   points and on the registered OS-scheduler path via the wrapper's `--budget-gate`
   check (B-1.1, PL-125); an over-limit run is recorded as `skipped` with a reason.

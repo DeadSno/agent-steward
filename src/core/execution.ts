@@ -95,6 +95,12 @@ import {
   type EnvironmentVerdict,
   type RunArtifactRecord,
 } from "./environment.js";
+import {
+  assignRole,
+  retryWithPostmortem,
+  type AgentRole,
+  type Postmortem,
+} from "./agents.js";
 
 /** Откуда пришёл запуск. Оба источника идут одним путём. */
 export type RunOrigin = "registered" | "ad-hoc";
@@ -680,6 +686,10 @@ export interface StepExecutionInput {
   compiledContext?: CompiledContext;
   /** EV-2.1: ключи примеров, реально переданные исполнителю. */
   reusedExampleKeys?: string[];
+  /** EX-1.2: роль шага (worker → reviewer), назначенная execution loop. */
+  agentRole?: AgentRole;
+  /** EX-1.2: номер попытки исполнителя внутри шага. */
+  attempt?: number;
 }
 
 /** Результат исполнителя шага. */
@@ -751,6 +761,9 @@ export interface OpenCodeInvocation {
   contextHash?: string;
   /** EV-2.1: ключи gate-passed примеров, переданных исполнителю. */
   reusedExampleKeys?: string[];
+  /** EX-1.2: роль и попытка передаются исполнителю как часть контракта шага. */
+  agentRole?: AgentRole;
+  attempt?: number;
 }
 
 export function createOpenCodeExecutor(
@@ -761,7 +774,7 @@ export function createOpenCodeExecutor(
     id,
     descriptor: { kind: "opencode" },
     supports: (route) => route.executor !== null,
-    async execute({ step, context, plan, compiledContext, reusedExampleKeys }) {
+    async execute({ step, context, plan, compiledContext, reusedExampleKeys, agentRole, attempt }) {
       const output = await invoke({
         prompt: plan.context.prompt,
         cwd: plan.context.cwd,
@@ -772,6 +785,8 @@ export function createOpenCodeExecutor(
         context,
         ...(compiledContext ? { contextHash: compiledContext.contextHash } : {}),
         ...(reusedExampleKeys ? { reusedExampleKeys } : {}),
+        ...(agentRole ? { agentRole } : {}),
+        ...(attempt === undefined ? {} : { attempt }),
       });
       return { output };
     },
@@ -1188,6 +1203,12 @@ export interface ExecutedStep {
   attempt: number;
   output?: unknown;
   error?: string;
+  /** EX-1.2: роль, с которой шаг ушёл исполнителю. */
+  role?: AgentRole;
+  /** EX-1.2: число попыток исполнителя (journal-attempt — отдельно). */
+  agentAttempts?: number;
+  /** EX-1.2: разбор причины последней ошибки, даже если повтор не производился. */
+  postmortem?: Postmortem;
 }
 
 /** ARCH-7.2: параметры гейта ручных одобрений. */
@@ -1233,6 +1254,17 @@ export interface ExecutionEscalationOptions {
   maxEscalations?: number;
 }
 
+/**
+ * EX-1.2: политики мульти-агентной оркестрации из `agents.ts` внутри loop.
+ * Роли назначаются по умолчанию (только метаданные, поведение не меняют).
+ * Повтор исполнителя включается явным `retry.maxAttempts > 1`: по умолчанию
+ * одна попытка, поэтому существующие прогоны остаются детерминированными.
+ */
+export interface AgentPolicies {
+  roles?: boolean;
+  retry?: { enabled?: boolean; maxAttempts?: number };
+}
+
 /** Опции исполнения. */
 export interface ExecutePlanOptions {
   /** Исполнители в порядке приоритета. */
@@ -1265,6 +1297,8 @@ export interface ExecutePlanOptions {
    * файлы не читаются: регистратор чистит пути, считает SHA-256 и размер.
    */
   artifacts?: ArtifactEntries;
+  /** EX-1.2: роли и self-correcting retry в самом execution loop. */
+  agentPolicies?: AgentPolicies;
 }
 
 function pickExecutor(step: PlannedStep, executors: StepExecutor[]): StepExecutor | undefined {
@@ -1346,6 +1380,7 @@ async function executeStepWithEscalation(
   options: ExecutePlanOptions,
   pick: (route: StepRoute) => StepExecutor | undefined,
   onOutcome: (outcome: EscalationOutcome) => void,
+  agentRole?: AgentRole,
 ): Promise<EscalatedStepExecution> {
   const maxEscalations = Math.max(
     1,
@@ -1384,6 +1419,7 @@ async function executeStepWithEscalation(
       plan,
       compiledContext,
       reusedExampleKeys: compiledContext?.examples.map((example) => example.outcomeKey) ?? [],
+      ...(agentRole ? { agentRole } : {}),
     });
     const agentExitCode =
       typeof result.exitCode === "number" ? result.exitCode : result.error ? 1 : 0;
@@ -1622,6 +1658,7 @@ export async function executeExecutionPlan(
       })),
       ...(plan.context.metadata ?? {}),
       ...(options.metadata ?? {}),
+      ...(options.agentPolicies ? { agentPolicies: options.agentPolicies } : {}),
       ...(approval
         ? { approvalRequestId: approval.requestId, approvalRunRef: approval.runRef }
         : {}),
@@ -1650,6 +1687,8 @@ export async function executeExecutionPlan(
   const sagaResults: EffectSagaResult[] = [];
   let firstError: string | null = null;
   const stopOnError = options.stopOnError !== false;
+  // EX-1.2: роль предыдущего шага — детерминированное чередование worker → reviewer.
+  let previousRole: AgentRole | null = null;
 
   for (const step of plan.steps) {
     const executor =
@@ -1703,6 +1742,23 @@ export async function executeExecutionPlan(
       target: GateTarget | null;
     } = { outcome: null, executorId: null, target: null };
 
+    // EX-1.2: роли и post-mortem живут в loop, а не в opt-in реэкспорте.
+    const rolesEnabled = options.agentPolicies?.roles !== false;
+    let currentRole: AgentRole | undefined = rolesEnabled
+      ? assignRole(step, previousRole)
+      : undefined;
+    if (currentRole) previousRole = currentRole;
+    const retryEnabled = options.agentPolicies?.retry?.enabled !== false;
+    const attemptsRaw = options.agentPolicies?.retry?.maxAttempts ?? 1;
+    const maxAgentAttempts =
+      typeof attemptsRaw === "number" && Number.isFinite(attemptsRaw)
+        ? Math.max(1, Math.min(10, Math.trunc(attemptsRaw)))
+        : 1;
+    const policyState: { postmortem: Postmortem | null; agentAttempts: number } = {
+      postmortem: null,
+      agentAttempts: 1,
+    };
+
     try {
       const execution = await runStepStatefullyAsync(run.id, step.stepName, async () => {
         if (escalationEnabled) {
@@ -1715,50 +1771,99 @@ export async function executeExecutionPlan(
             (outcome) => {
               escalationState.outcome = outcome;
             },
+            currentRole,
           );
           escalationState.executorId = escalated.executorId;
           escalationState.target = escalated.target;
           return escalated.output;
         }
         consumeExploreBudgetForStep(step, step.compiledContext);
-        const result = await executor.execute({
-          step,
-          context: plan.context,
-          plan,
-          compiledContext: step.compiledContext,
-          reusedExampleKeys:
-            step.compiledContext?.examples.map((example) => example.outcomeKey) ?? [],
-        });
-        // PL-62: код выхода процесса агента — ещё не вердикт. Даже при
-        // ненулевом коде запускаем гейт, если агент оставил артефакты/вывод.
-        const agentExitCode =
-          typeof result.exitCode === "number" ? result.exitCode : result.error ? 1 : 0;
-        const workCompleted = result.output !== undefined;
-        let gatePassed: boolean | null = null;
-        if (
-          options.gate &&
-          shouldRunQualityGate({
-            agentExitCode,
-            hasQualityGate: true,
-            workCompleted,
-          })
-        ) {
-          const verdict = await options.gate({ step, context: plan.context, plan, result });
-          gatePassed = verdict.ok;
-          if (!verdict.ok) {
-            throw new GateRejectedError(verdict.reason ?? "GATE отклонил результат шага");
+        let attempt = 1;
+        for (;;) {
+          // EX-1.2: повтор — тот же StepExecutor, но с ролью следующего шага
+          // и обновлённым номером попытки (agents.ts: retryWithPostmortem).
+          const effectiveStep: PlannedStep = {
+            ...step,
+            ...(currentRole ? { role: currentRole } : {}),
+          };
+          const result = await executor.execute({
+            step: effectiveStep,
+            context: plan.context,
+            plan,
+            compiledContext: step.compiledContext,
+            reusedExampleKeys:
+              step.compiledContext?.examples.map((example) => example.outcomeKey) ?? [],
+            ...(currentRole ? { agentRole: currentRole } : {}),
+            attempt,
+          });
+          // PL-62: код выхода процесса агента — ещё не вердикт. Даже при
+          // ненулевом коде запускаем гейт, если агент оставил артефакты/вывод.
+          const agentExitCode =
+            typeof result.exitCode === "number" ? result.exitCode : result.error ? 1 : 0;
+          const workCompleted = result.output !== undefined;
+          let gatePassed: boolean | null = null;
+          let failure: Error | null = null;
+          if (
+            options.gate &&
+            shouldRunQualityGate({
+              agentExitCode,
+              hasQualityGate: true,
+              workCompleted,
+            })
+          ) {
+            const verdict = await options.gate({
+              step: effectiveStep,
+              context: plan.context,
+              plan,
+              result,
+            });
+            gatePassed = verdict.ok;
+            if (!verdict.ok) {
+              failure = new GateRejectedError(verdict.reason ?? "GATE отклонил результат шага");
+            }
+          }
+          if (!failure) {
+            const decision = resolveAgentExitVerdict({
+              agentExitCode,
+              gatePassed,
+              workCompleted,
+              taskName: plan.context.taskName,
+            });
+            if (decision.status === "error") {
+              failure = new Error(result.error ?? decision.reason ?? "Код возврата агента");
+            }
+          }
+          if (!failure) {
+            policyState.agentAttempts = attempt;
+            return result.output;
+          }
+          const retryDecision = retryWithPostmortem(
+            {
+              stepName: step.stepName,
+              status: "failed",
+              error: failure.message,
+              ...(typeof result.exitCode === "number" ? { exitCode: result.exitCode } : {}),
+              ...(gatePassed === false ? { verdict: "fail" } : {}),
+            },
+            {
+              stepName: step.stepName,
+              taskType: step.route.taskType,
+              attempt,
+              maxAttempts: maxAgentAttempts,
+            },
+            { maxAttempts: maxAgentAttempts },
+          );
+          policyState.postmortem = retryDecision.postmortem;
+          if (!retryEnabled || !retryDecision.retry) throw failure;
+          attempt = retryDecision.spec.attempt!;
+          policyState.agentAttempts = attempt;
+          if (rolesEnabled) {
+            // Явный `role: worker` на шаге — запрос на первую попытку; повтор
+            // уходит уже другой роли, иначе rotation никогда не наступит.
+            currentRole = assignRole(undefined, currentRole);
+            previousRole = currentRole;
           }
         }
-        const decision = resolveAgentExitVerdict({
-          agentExitCode,
-          gatePassed,
-          workCompleted,
-          taskName: plan.context.taskName,
-        });
-        if (decision.status === "error") {
-          throw new Error(result.error ?? decision.reason ?? "Код возврата агента");
-        }
-        return result.output;
       });
       // ARCH-4.1: гейт вернул pass — только теперь допустимы внешние эффекты.
       // ARCH-4.2: при падении одного эффекта сага сама откатит уже применённые
@@ -1799,6 +1904,8 @@ export async function executeExecutionPlan(
         status: "passed",
         attempt: execution.attempt,
         output: execution.result,
+        ...(currentRole ? { role: currentRole } : {}),
+        agentAttempts: policyState.agentAttempts,
       });
     } catch (error) {
       const message = errorMessage(error);
@@ -1840,6 +1947,9 @@ export async function executeExecutionPlan(
         status: "failed",
         attempt: failedAttempt,
         error: message,
+        ...(currentRole ? { role: currentRole } : {}),
+        agentAttempts: policyState.agentAttempts,
+        ...(policyState.postmortem ? { postmortem: policyState.postmortem } : {}),
       });
       if (stopOnError) break;
     }
@@ -1865,8 +1975,10 @@ export async function executeExecutionPlan(
 
 /* ------------------------------------------------------------------------- *
  * M-1..M-4: примитивы мульти-агентной оркестрации живут в ./agents.js и
- * реэкспортируются здесь как часть единого пути исполнения. Поведение самого
- * execution loop не меняется: это чистые функции без сети и без БД.
+ * реэкспортируются здесь как часть единого пути исполнения. EX-1.2: роли
+ * (assignRole) и self-correcting retry (retryWithPostmortem) теперь вызываются
+ * самим execution loop; реэкспорт сохранён для публичного API, а не вместо
+ * подключения. Функции остаются чистыми: без сети и без БД.
  * ------------------------------------------------------------------------- */
 export {
   DEFAULT_CONTEXT_LIMIT,

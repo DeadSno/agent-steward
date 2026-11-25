@@ -14,6 +14,8 @@ import { isStaticTaskType, normalizeTaskType, type RouterExecutor, type RouterTr
 export interface MissionStep {
   stepName: string;
   taskType: string;
+  /** EX-1.2: запрос роли worker/reviewer; execution loop уточняет его через assignRole. */
+  role?: string | null;
 }
 
 /** Источник плана: модель или эвристика. */
