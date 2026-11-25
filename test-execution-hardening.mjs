@@ -1302,11 +1302,36 @@ try {
     !missingCheck.ok && missingCheck.missing.includes("test-not-exists-marker.zzz"),
     JSON.stringify(missingCheck),
   );
+  // QA-D316-3: missing-путь обязан нести абсолютный путь, по которому он проверялся.
+  const expectedMissingPath = path.resolve(process.cwd(), "test-not-exists-marker.zzz");
+  check(
+    "QA-D316-3: validateScopePaths возвращает resolved для missing-пути",
+    Array.isArray(missingCheck.resolved) &&
+      missingCheck.resolved.length === missingCheck.missing.length &&
+      missingCheck.resolved.includes(expectedMissingPath),
+    JSON.stringify(missingCheck.resolved),
+  );
   const okCheck = validateScopePaths(["src/index.ts", "package.json"], process.cwd());
   check(
     "PL-82: реальные SCOPE-пути проходят pre-flight",
     okCheck.ok && okCheck.missing.length === 0,
     JSON.stringify(okCheck),
+  );
+  check(
+    "QA-D316-3: положительный SCOPE не ломается (resolved пуст)",
+    Array.isArray(okCheck.resolved) && okCheck.resolved.length === 0,
+    JSON.stringify(okCheck.resolved),
+  );
+  // QA-D316-3: в тексте ошибки явно видны база проверки и ожидаемый путь.
+  const scopeErrorSrc = fs.readFileSync(path.resolve("src/index.ts"), "utf8");
+  check(
+    "QA-D316-3: сообщение SCOPE содержит базовую папку и ожидаемый путь",
+    scopeErrorSrc.includes("scopeCheck.resolved[idx]") &&
+      scopeErrorSrc.includes("базовая папка проверки:") &&
+      scopeErrorSrc.includes("ожидалось:") &&
+      scopeErrorSrc.includes(
+        "Укажите workingDirectory или исправьте список путей до создания задачи.",
+      ),
   );
   check(
     "PL-82: preflightScope читает SCOPE из промпта",

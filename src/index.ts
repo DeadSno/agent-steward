@@ -7707,9 +7707,18 @@ export async function schedulerCreateTask(
   // PL-119: пути из filesCreate — ожидаемые создаваемые файлы, их пропускаем.
   const scopeCheck = preflightScope(prompt, effectiveWorkingDirectory, { filesCreate });
   if (!scopeCheck.ok) {
+    // QA-D316-3: показываем базовую папку проверки и ожидаемый абсолютный путь,
+    // иначе при отсутствии workingDirectory путь ищется в папке сессии, а в
+    // сообщении видно только имя файла — непонятно, где его ожидали найти.
+    const missingDetails = scopeCheck.missing
+      .map((item, idx) => {
+        const expected = scopeCheck.resolved[idx] ?? path.resolve(effectiveWorkingDirectory, item);
+        return `${item} (базовая папка проверки: ${effectiveWorkingDirectory}; ожидалось: ${expected})`;
+      })
+      .join(", ");
     throw new Error(
       `PL-79/PL-82: SCOPE задачи "${normalizedName}" содержит несуществующие пути: ` +
-        `${scopeCheck.missing.join(", ")}. Исправьте список путей до создания задачи.`,
+        `${missingDetails}. Укажите workingDirectory или исправьте список путей до создания задачи.`,
     );
   }
 

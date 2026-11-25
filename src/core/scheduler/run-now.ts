@@ -59,6 +59,8 @@ export interface ScopeCheck {
   paths: string[];
   /** Пути, которых нет на диске. */
   missing: string[];
+  /** QA-D316-3: абсолютные пути, по которым проверялись `missing` (параллельно `missing`). */
+  resolved: string[];
 }
 
 /**
@@ -126,17 +128,20 @@ export function validateScopePaths(
   // QA-PORT-2: явный флаг разрешает любые отсутствующие SCOPE-пути (например,
   // намерение создания expressed не текстом промпта).
   if (!Array.isArray(opts) && opts?.allowCreate === true) {
-    return { ok: true, paths, missing: [] };
+    return { ok: true, paths, missing: [], resolved: [] };
   }
   const filesCreate = Array.isArray(opts) ? opts : opts?.filesCreate;
   const created = new Set((filesCreate ?? []).map((item) => scopePathKey(item, root)));
+  // QA-D316-3: тот же резолв, что и при проверке существования, чтобы `resolved`
+  // показывал именно тот абсолютный путь, по которому файл искался.
+  const resolvePath = (item: string): string =>
+    path.isAbsolute(item) ? item : path.resolve(root || process.cwd(), item);
   const missing = paths.filter((item) => {
     // PL-119: create-intent — файл ещё не существует, но это ожидаемо.
     if (created.has(scopePathKey(item, root))) return false;
-    const resolved = path.isAbsolute(item) ? item : path.resolve(root || process.cwd(), item);
-    return !fsSync.existsSync(resolved);
+    return !fsSync.existsSync(resolvePath(item));
   });
-  return { ok: missing.length === 0, paths, missing };
+  return { ok: missing.length === 0, paths, missing, resolved: missing.map(resolvePath) };
 }
 
 /** PL-79 / PL-82 / PL-119: pre-flight проверка SCOPE из промпта задачи. */
