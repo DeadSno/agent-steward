@@ -947,6 +947,14 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 | D04 | DEEP-4.2 | `node test-tool-specs.mjs` 52/52, `node test-agent-tools.mjs` 129/129, `node test-skill.mjs` 28/28, `node test-env.mjs` 59/59, `node test-mcp-adapter.mjs` 9/9 | ✅ |
 | D05 | DEEP-4.2 | `node test-dag.mjs` 16/16, `node test-dag-latest-history.mjs` 5/5, `node test-dry-run.mjs` 103/103, `node test-retry-counter.mjs` 3/3 | ✅ |
 | D06 | DEEP-4.2 | `node test-matrix.mjs` 30/30, `node test-matrix-lifecycle.mjs` 22/22, `node test-matrix-sync.mjs` 19/19 | ✅ |
+| D07 | DEEP-4.3 | `node test-git-trigger.mjs` 31/31, `node test-glob.mjs` 49/49, `node test-watch-paths.mjs`, `node test-integrations.mjs` 139/139 | ✅ |
+| D08 | DEEP-4.3 | `node test-metrics.mjs` 28/28, `node test-retention.mjs` 19/19, `node test-dashboard-json.mjs`, `node test-history-load.mjs` 11/11, `node test-usage-from-log.mjs` 27/27 | ✅ |
+| D09 | DEEP-4.3 | `node test-notifications-v2.mjs` 46/46, `node test-notifications-v3.mjs` 59/59, `node test-notifications-dedup.mjs` 22/22, `node test-local-ai.mjs` 48/48, `node test-triage-shadow.mjs` 26/26 | ✅ |
+| D10 | DEEP-4.3 | `node test-secrets.mjs` 55/55, `node test-audit.mjs` 81/81, `node test-role-scoped.mjs` 17/17, `node test-permissions-policy.mjs` 130/130 | ✅ |
+| D11 | DEEP-4.3 | `node test-profiles.mjs` 80/80, `node test-workspaces.mjs`, `node test-profile-isolation.mjs`, `node test-delete-profile.mjs` 14/14 | ✅ |
+| D12 | DEEP-4.3 | `node test-integrations.mjs` 139/139 — шаблоны и перенос покрыты частично, отдельного `test-*.mjs` нет (ограничение §4) | ⚠️ |
+
+> D07–D12: первый запуск из корневого каталога дал 6 ложных падений (тесты ищут фикстуры/профили относительно cwd); из `.steward-dev` все 22 файла зелёные. Протокол фиксирует прогон из рабочего чек-аута.
 
 ---
 
