@@ -2519,14 +2519,31 @@ const runTaskNowExecute = wrapExecute<RunNowArgs>(async (args) => {
       : null;
 
   let alreadyRunning = false;
+  let skipped = false;
+  let skipReason: string | undefined;
   try {
     const result = await runTaskEntry(name);
     alreadyRunning = result.alreadyRunning;
+    skipped = result.skipped === true;
+    skipReason = result.reason;
   } catch (err) {
     return {
       content: JSON.stringify({
         success: false,
         error: err instanceof Error ? err.message : String(err),
+      }),
+    };
+  }
+
+  // QA-D316-8: пропущенный запуск (PL-99 / отсутствующее задание ОС после
+  // срабатывания once) не должен выглядеть успешным для вызывающего.
+  if (skipped) {
+    return {
+      content: JSON.stringify({
+        success: false,
+        message: skipReason || `Задача "${name}" не запущена.`,
+        reason: skipReason || "Запуск пропущен.",
+        ...(warning ? { warning } : {}),
       }),
     };
   }
@@ -8459,7 +8476,9 @@ async function reapStaleRuns(): Promise<number> {
   return reaped;
 }
 
-async function runTaskEntry(name: string): Promise<{ alreadyRunning: boolean }> {
+async function runTaskEntry(
+  name: string,
+): Promise<{ alreadyRunning: boolean; skipped?: boolean; reason?: string }> {
   if (shutdownGate.isShuttingDown()) {
     throw new PluginShutdownError(
       "Плагин выгружается: новые запуски не принимаются. Повторите после перезапуска.",
@@ -8515,6 +8534,26 @@ async function runTaskEntry(name: string): Promise<{ alreadyRunning: boolean }> 
       );
       if (!osExists) {
         throw new Error(t("tool.error.taskNotFound", { name: trimmed }));
+      }
+    } else if (definition.triggerType === "once") {
+      // QA-D316-7: после срабатывания once обёртка удаляет задание из
+      // планировщика ОС, но definition остаётся в БД. Повторный /run падал
+      // сырой ошибкой «Не удается найти указанный файл». Сообщаем внятно
+      // и помечаем запуск как пропущенный (success:false в run_task_now).
+      const osState = await readOsTasksWithRetry(true);
+      if (osState.osAvailable) {
+        const osExists = osState.tasks.some(
+          (task) => (task.taskName ?? "").toLowerCase() === trimmed.toLowerCase(),
+        );
+        if (!osExists) {
+          return {
+            alreadyRunning: false,
+            skipped: true,
+            reason:
+              `QA-D316-7: задание планировщика "${trimmed}" отсутствует ` +
+              "(возможно, once уже сработало). Пересоздайте задачу через schedule_task/update_task.",
+          };
+        }
       }
     }
 

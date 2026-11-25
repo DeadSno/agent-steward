@@ -94,6 +94,31 @@ check(
   /createSchedulerBackend\(\)\s*\.\s*deleteTask\s*\(/.test(recordHistory),
 );
 
+// QA-D316-8: skipped/reason от бэкенда должны доходить до вызывающего.
+const skipBackend = {
+  platform: process.platform,
+  title: "test",
+  async runTask() {
+    return { alreadyRunning: false, skipped: true, reason: "тест пропуска" };
+  },
+};
+const skipName = `run-now-skip-${process.pid}`;
+const skipResult = await runTaskNow(skipName, skipBackend);
+check("runTaskNow: skipped пробрасывается из бэкенда", skipResult.skipped === true);
+check("runTaskNow: причина пропуска пробрасывается", skipResult.reason === "тест пропуска");
+fs.rmSync(forceFilePath(skipName), { force: true });
+
+check(
+  "QA-D316-8: run_task_now возвращает success:false при skipped",
+  indexSrc.includes("if (skipped)") &&
+    /success:\s*false,[\s\S]{0,160}reason:\s*skipReason/.test(indexSrc),
+);
+check(
+  "QA-D316-7: once без задания ОС помечается как пропущенный запуск",
+  indexSrc.includes('definition.triggerType === "once"') &&
+    indexSrc.includes("QA-D316-7: задание планировщика"),
+);
+
 console.log(`\n${passed}/${passed + failed} OK`);
 if (failed > 0) {
   console.error(`Провалено: ${failed}`);
