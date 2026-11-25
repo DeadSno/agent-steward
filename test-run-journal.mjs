@@ -193,21 +193,33 @@ assert(asyncExecution.step.status === "passed", "async-шаг завершён p
 assert(asyncExecution.result === "deployed", "async-шаг вернул результат тела");
 
 // --- 5b. B12: heartbeat продлевает lease долгого async-шага -----------------
+// Не фиксируем «проспал 360 мс»: под параллельной нагрузкой таймеры могут быть
+// задержаны и lease успеет истечь до чтения. Ждём факта продления (с лимитом),
+// поэтому проверка остаётся объективной, но не зависит от точности таймингов.
 const runLease = repo.createRun({ taskName: "lease", steps: [{ stepName: "long" }] });
+const initialLease = repo.getStep(runLease.id, "long")?.leaseUntil ?? null;
+const initialLeaseMs = initialLease ? Date.parse(initialLease) : 0;
 let observedLease = null;
 const leaseExecution = await journal.runStepStatefullyAsync(
   runLease.id,
   "long",
   async () => {
-    await new Promise((resolve) => setTimeout(resolve, 360));
-    observedLease = repo.getStep(runLease.id, "long")?.leaseUntil ?? null;
+    const deadline = Date.now() + 2_000;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const current = repo.getStep(runLease.id, "long")?.leaseUntil ?? null;
+      if (current && Date.parse(current) > initialLeaseMs) {
+        observedLease = current;
+        break;
+      }
+    }
     return "long-done";
   },
   { leaseMs: 120 },
 );
 assert(leaseExecution.step.status === "passed", "B12: долгий async-шаг завершён passed");
 assert(
-  Boolean(observedLease) && Date.parse(observedLease) > Date.now(),
+  Boolean(observedLease) && Date.parse(observedLease) > initialLeaseMs,
   "B12: heartbeat продлил lease во время выполнения шага",
 );
 

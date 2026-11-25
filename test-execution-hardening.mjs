@@ -97,6 +97,7 @@ const {
   HIDDEN_LAUNCHER_SCRIPT,
   ensureHiddenLauncher,
   buildWindowsHiddenTaskCommand,
+  WINDOWS_SCHTASKS_TR_LIMIT,
 } = await import("./dist/core/ps-wrapper.js");
 const { buildBashWrapperScript } = await import("./dist/core/wrappers/bash.js");
 // ARCH-4: отложенные эффекты и saga-компенсация.
@@ -147,6 +148,26 @@ check(
 check(
   "QA-CONSOLE-1: /tr не содержит голого cmd.exe",
   !/cmd\.exe/i.test(hiddenTaskCommand),
+);
+// QA-CI-261: на CI APPDATA_temp и длинный путь чек-аута давали /tr > 261.
+// Для .cmd рядом с лаунчером передаём только basename — каталог дублироваться не должен.
+const longWrapperDir = path.join(path.dirname(hiddenLauncherPath), "q".repeat(80));
+const longLauncher = path.join(longWrapperDir, "run-hidden.vbs");
+const longWrapper = path.join(longWrapperDir, "run-DEEP3-Preflight.cmd");
+const longTaskCommand = buildWindowsHiddenTaskCommand(longWrapper, longLauncher);
+check(
+  "QA-CI-261: /tr укладывается в 261 символ на длинном WRAPPER_DIR",
+  longTaskCommand.length <= WINDOWS_SCHTASKS_TR_LIMIT &&
+    longTaskCommand.startsWith("wscript.exe //B //Nologo ") &&
+    longTaskCommand.includes('"run-DEEP3-Preflight.cmd"') &&
+    longTaskCommand.split(longWrapperDir).length === 2,
+  `${longTaskCommand.length} chars`,
+);
+check(
+  "QA-CI-261: VBS-лаунчер резолвит basename относительно своего каталога",
+  HIDDEN_LAUNCHER_SCRIPT.includes('InStrRev(WScript.ScriptFullName, "\\")') &&
+    HIDDEN_LAUNCHER_SCRIPT.includes("target = folder & target") &&
+    HIDDEN_LAUNCHER_SCRIPT.includes('shell.Run(quoted, 0, True)'),
 );
 const psWrapperModuleSource = fs.readFileSync(
   new URL("./dist/core/ps-wrapper.js", import.meta.url),

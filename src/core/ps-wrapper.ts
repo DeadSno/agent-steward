@@ -2026,15 +2026,27 @@ exit $script:exitCode
  *
  * Скрипт намеренно ASCII-only: путь к `.cmd` передаётся аргументом в `/tr`,
  * поэтому кириллица в пути не зависит от кодировки файла скрипта.
+ *
+ * QA-CI-261: предел `schtasks /tr` — 261 символ. При длинном APPDATA
+ * (CI-runner) полный путь к `.cmd` вместе с путём к лаунчеру не влезал.
+ * Теперь для обёрток из того же каталога передаётся только basename, а
+ * лаунчер сам приписывает `WScript.ScriptFullName` — каталог в `/tr` больше
+ * не дублируется. Абсолютные пути извне WRAPPER_DIR (legacy-задачи) работают
+ * как раньше.
  */
 export const HIDDEN_LAUNCHER_FILENAME = "run-hidden.vbs";
+export const WINDOWS_SCHTASKS_TR_LIMIT = 261;
 
 export const HIDDEN_LAUNCHER_SCRIPT = `' agent-steward: hidden console launcher for Windows Task Scheduler
 Option Explicit
-Dim shell, target, quoted, code
+Dim shell, target, quoted, code, folder
 If WScript.Arguments.Count < 1 Then WScript.Quit 1
-Set shell = CreateObject("WScript.Shell")
 target = WScript.Arguments(0)
+If InStr(target, "\\") = 0 And InStr(target, "/") = 0 Then
+  folder = Left(WScript.ScriptFullName, InStrRev(WScript.ScriptFullName, "\\"))
+  target = folder & target
+End If
+Set shell = CreateObject("WScript.Shell")
 quoted = """" & target & """"
 code = shell.Run(quoted, 0, True)
 WScript.Quit code
@@ -2058,6 +2070,10 @@ export async function ensureHiddenLauncher(): Promise<string> {
  * оборачивать в внешние кавычки (иначе Command станет `wscript.exe //B...`).
  * `wscript.exe //B //Nologo` подавляет собственный UI, а `shell.Run(..., 0, True)`
  * внутри шипа скрывает консоль целевой `.cmd`-обёртки.
+ *
+ * QA-CI-261: если `.cmd` лежит рядом с лаунчером, в `/tr` идёт только его имя —
+ * лаунчер сам резолвит каталог через `WScript.ScriptFullName`. Это убирает
+ * дублирование длинного WRAPPER_DIR и укладывает `/tr` в лимит 261 символ.
  */
 export function buildWindowsHiddenTaskCommand(
   command: string,
@@ -2067,7 +2083,17 @@ export function buildWindowsHiddenTaskCommand(
   // <Command> (до первого пробела) и <Arguments> и не понимает \" внутри.
   // `wscript.exe` живёт в System32 и не требует кавычек; кавычки нужны только
   // вокруг путей-аргументов, которые могут содержать пробелы.
-  return `wscript.exe //B //Nologo "${launcherPath}" "${command}"`;
+  const sameDir =
+    path.dirname(command).toLowerCase() === path.dirname(launcherPath).toLowerCase();
+  const target = sameDir ? path.basename(command) : command;
+  const tr = `wscript.exe //B //Nologo "${launcherPath}" "${target}"`;
+  if (tr.length > WINDOWS_SCHTASKS_TR_LIMIT) {
+    throw new Error(
+      `QA-CI-261: schtasks /tr exceeds ${WINDOWS_SCHTASKS_TR_LIMIT} chars (${tr.length}); ` +
+        "use a shorter profile/task path or a wrapper next to the launcher",
+    );
+  }
+  return tr;
 }
 
 export async function ensureWrapper(): Promise<string> {
