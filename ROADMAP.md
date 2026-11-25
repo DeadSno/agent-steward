@@ -47,8 +47,6 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 
 - QA-D316-16: CLI-помощник `dist/core/guard-run.js` в чек-ауте с `dist/`-junction (W-1) не выполняет `main()`: проверка `import.meta.url === pathToFileURL(path.resolve(process.argv[1]))` не срабатывает, потому что ESM резолвит реальный путь цели junction (`.steward-dev/dist`), а `argv[1]` остаётся путём через junction (`tp-audit-dev/dist`). Результат — тихий exit 0 с пустым stdout даже при skip; `npm test` падает на `test-guards.mjs` (3 FAIL + `SyntaxError: Unexpected end of JSON input` в `--json`), остальные сюиты зелёные — P1. Действие: сравнивать реальные пути через `fs.realpathSync` в `src/core/guard-run.ts` (или запускать тесты с `NODE_OPTIONS="--preserve-symlinks --preserve-symlinks-main"`: с обоими флагами `test-guards.mjs` проходит 56/56; одного `--preserve-symlinks` недостаточно). Воспроизведено 25.11.2026 в `tp-audit-dev` (`dist` → junction на `.steward-dev/dist`).
 
-- QA-D316-17: `test-mcp-adapter.mjs` (проверки P-2.1/P-2.4) ожидает ровно 34 инструмента в MCP-реестре и совпадение имён с контрактом `TOOL_NAMES`, но `src/mcp.ts` дополнительно регистрирует MCP-помощник `batch_call` (IM-4); отдельный прогон `node test-mcp-adapter.mjs` даёт `35 !== 34` и расхождение имён (5 проверок пройдено, exit 1), при этом `CHANGELOG.md` прямо фиксирует, что агентский реестр и счётчик 34 не меняются — P1 (красный `npm test`/CI). Действие: обновить `test-mcp-adapter.mjs` — ожидать 34 агентских инструмента плюс `batch_call` как отдельный MCP-помощник и явно проверять его изоляцию, чтобы полный прогон снова был зелёным. Воспроизведено 25.11.2026.
-
 ---
 
 # 4. Правила работы (канбан)

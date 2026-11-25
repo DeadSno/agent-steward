@@ -34,13 +34,23 @@ try {
   await client.connect(transport);
 
   const tools = await client.listTools();
-  check("P-2.1: MCP registry отдаёт полные 34 инструмента", () => {
-    assert.equal(tools.tools.length, 34);
-    assert.equal(new Set(tools.tools.map((t) => t.name)).size, 34);
+  // IM-4: `batch_call` — хелпер MCP-транспорта, а не агентский инструмент.
+  // Контракт TOOL_NAMES (34) не меняется; реестр MCP содержит 34 + 1.
+  const helperName = "batch_call";
+  const agentTools = tools.tools.filter((t) => t.name !== helperName);
+  check("P-2.1: MCP registry отдаёт 34 инструмента и хелпер batch_call", () => {
+    assert.equal(tools.tools.length, TOOL_NAMES.length + 1);
+    assert.equal(new Set(tools.tools.map((t) => t.name)).size, TOOL_NAMES.length + 1);
+    assert.equal(agentTools.length, TOOL_NAMES.length);
   });
   check("P-2.4: имена инструментов совпадают с контрактом TOOL_NAMES", () => {
-    const names = tools.tools.map((t) => t.name).sort();
+    const names = agentTools.map((t) => t.name).sort();
     assert.deepEqual(names, [...TOOL_NAMES].sort());
+  });
+  check("IM-4: batch_call изолирован от агентского реестра", () => {
+    assert.equal(tools.tools.filter((t) => t.name === helperName).length, 1);
+    assert.ok(!TOOL_NAMES.includes(helperName), "batch_call не должен входить в TOOL_NAMES");
+    assert.ok(tools.tools.find((t) => t.name === helperName)?.description);
   });
   check("P-2.1: каждый инструмент имеет описание и zod inputSchema", () => {
     for (const tool of tools.tools) {
@@ -67,6 +77,29 @@ try {
   check("P-2.1: MCP исполняет list_tasks без OpenCode-контекста", () => {
     assert.notEqual(listed.isError, true, JSON.stringify(listed.content));
     assert.ok(Array.isArray(listed.content) && listed.content.length > 0);
+  });
+
+  // IM-4: реальный вызов хелпера — ошибка одного подвызова не отменяет остальные.
+  const batched = await client.callTool({
+    name: helperName,
+    arguments: {
+      calls: [
+        { name: "list_tasks", args: {} },
+        { name: "__qa_unknown_tool__", args: {} },
+        { name: "get_task_logs", args: { name: "__qa_probe__", lines: "not-a-number" } },
+      ],
+    },
+  });
+  check("IM-4: batch_call изолирует ошибки подвызовов", () => {
+    assert.notEqual(batched.isError, true, JSON.stringify(batched.content));
+    const payload = JSON.parse(batched.content[0].text);
+    assert.equal(payload.results.length, 3);
+    assert.deepEqual(payload.results.map((r) => r.index), [0, 1, 2]);
+    assert.equal(payload.results[0].ok, true);
+    assert.equal(payload.results[0].name, "list_tasks");
+    assert.equal(payload.results[1].ok, false);
+    assert.match(payload.results[1].error, /неизвестный инструмент/);
+    assert.equal(payload.results[2].ok, false, "невалидные аргументы должны провалить только свой подвызов");
   });
 } catch (err) {
   console.error(`FAIL MCP transport: ${err.stack ?? err}`);
