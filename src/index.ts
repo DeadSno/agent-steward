@@ -124,7 +124,11 @@ import {
   resolvePermissions,
 } from "./core/permissions.js";
 import { runHistoryRetention } from "./core/retention.js";
-import { buildAnalytics, buildDailyBuckets } from "./core/analytics.js";
+import {
+  buildAnalytics,
+  buildDailyBuckets,
+  type AnalyticsRecord,
+} from "./core/analytics.js";
 import {
   buildBudgetReport,
   evaluateRunBudgetGate,
@@ -135,7 +139,12 @@ import {
   type BudgetSettings,
   type RunBudgetGateDecision,
 } from "./core/budget.js";
-import { generateSelfAnalysisReport } from "./core/self-analysis.js";
+import {
+  buildAcceptanceDataset,
+  computeAcceptanceMetrics,
+  generateSelfAnalysisReport,
+} from "./core/self-analysis.js";
+import { listAllGateOutcomes } from "./db/runs-repo.js";
 import {
   finishRun,
   getHistoryForAnalytics,
@@ -3908,6 +3917,38 @@ const getMetricsExecute = wrapExecute<MetricsArgs>(async () => {
   };
 });
 
+/**
+ * EV-1.2: метрики приёмки §11 и версионированный фикс-набор из ledger.
+ *
+ * Оба поля доступны в `get_analytics` и `self_analysis` без изменения схемы
+ * инструментов. Ошибка чтения ledger НЕ ломает основной отчёт — вместо метрик
+ * возвращается объект с `error` и причиной.
+ */
+function buildAcceptanceSnapshot(
+  records: readonly AnalyticsRecord[],
+  windowDays: number,
+  topLimit: number,
+) {
+  try {
+    const from = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000).toISOString();
+    const rows = listAllGateOutcomes().filter((row) => row.createdAt >= from);
+    return {
+      metrics: computeAcceptanceMetrics({
+        rows,
+        history: records,
+        days: windowDays,
+      }),
+      dataset: buildAcceptanceDataset(rows, { maxCases: topLimit }),
+    };
+  } catch (err) {
+    return {
+      metrics: null,
+      dataset: null,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
 /** get_analytics — аналитика запусков и стоимости за период. */
 const getAnalyticsExecute = wrapExecute<AnalyticsArgs>(async (args) => {
   const windowDays = Math.min(365, Math.max(1, Math.floor(Number(args.days) || 14)));
@@ -3933,7 +3974,16 @@ const getAnalyticsExecute = wrapExecute<AnalyticsArgs>(async (args) => {
   return {
     content: JSON.stringify({
       success: true,
-      report: { ...report, budgets, toolBlocked },
+      report: {
+        ...report,
+        budgets,
+        toolBlocked,
+        acceptance: buildAcceptanceSnapshot(
+          records,
+          windowDays,
+          Math.max(1, Math.floor(Number(args.topLimit) || 10)),
+        ),
+      },
     }),
   };
 });
@@ -3955,7 +4005,7 @@ const selfAnalysisExecute = wrapExecute<SelfAnalysisArgs>(async (args) => {
   });
 
   // Фильтруем секции если нужно
-  const result: Partial<typeof report> = {
+  const result: Partial<typeof report> & { acceptance?: unknown } = {
     generatedAt: report.generatedAt,
     windowDays: report.windowDays,
     health: report.health,
@@ -3963,6 +4013,12 @@ const selfAnalysisExecute = wrapExecute<SelfAnalysisArgs>(async (args) => {
     sources: report.sources,
     // PL-98: свежая проверка цепочки — отчёт всегда показывает текущее состояние.
     gateLedger: verifyGateLedgerIntegrity("self-analysis:tool"),
+    // EV-1.2: семь критериев §11 и фикс-набор из ledger.
+    acceptance: buildAcceptanceSnapshot(
+      records,
+      windowDays,
+      Math.max(1, Math.floor(Number(args.topLimit) || 10)),
+    ),
   };
 
   if (args.includeAnomalies !== false) {
@@ -6155,7 +6211,19 @@ const v2Plugin = Plugin.define({
           // PL-4.1: та же метрика корректности прав, что и в MCP get_analytics.
           const since = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000).toISOString();
           const toolBlocked = readAuditLog({ action: "tool.blocked", since, limit: 1 }).total;
-          return { success: true, report: { ...report, budgets, toolBlocked } };
+          return {
+            success: true,
+            report: {
+              ...report,
+              budgets,
+              toolBlocked,
+              acceptance: buildAcceptanceSnapshot(
+                records,
+                windowDays,
+                Math.max(1, Math.floor(Number(topLimit) || 10)),
+              ),
+            },
+          };
         } catch (err) {
           return {
             success: false,
@@ -6190,7 +6258,7 @@ const v2Plugin = Plugin.define({
           });
 
           // Фильтруем секции если нужно
-          const result: Partial<typeof report> = {
+          const result: Partial<typeof report> & { acceptance?: unknown } = {
             generatedAt: report.generatedAt,
             windowDays: report.windowDays,
             health: report.health,
@@ -6198,6 +6266,12 @@ const v2Plugin = Plugin.define({
             sources: report.sources,
             // PL-98: свежая проверка цепочки по RPC-пути самоанализа.
             gateLedger: verifyGateLedgerIntegrity("self-analysis:rpc"),
+            // EV-1.2: тот же срез метрик, что и в MCP-инструменте.
+            acceptance: buildAcceptanceSnapshot(
+              records,
+              windowDays,
+              Math.max(1, Math.floor(Number(topLimit) || 10)),
+            ),
           };
 
           if (includeAnomalies !== false) {

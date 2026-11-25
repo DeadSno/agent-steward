@@ -237,6 +237,40 @@ Worktree не защищает от сети/API/БД. Поэтому:
    `compareGateOutcomeParity` — вердикт/хэши/маршрут гейта; `runId`, `outcomeKey`
    и `trigger_kind` намеренно различаются (origin входов).
 
+7. Фикс-набор задач за **4 недели** (28 дней): local `success_rate` и
+   `first_pass_rate` не деградируют, чистая экономия остаётся положительной,
+   eval не деградировал. Набор версионирован (`agent-steward.acceptance-dataset`
+   v1.0) и строится **только из ledger** `gate_outcomes` — не из ручного списка.
+   В набор попадают objective-гейты (`verdict = pass|fail`, есть `gateHash`);
+   `flake`/`infra_fail` и subjective-записи исключаются, метки `stable_pass` /
+   `stable_fail` выставляются большинством повторов (>= 0.8 при >= 2 выборках),
+   иначе `unstable`. Секреты в путях доказательств маскируются.
+
+### Владелец, горизонт и пороги (EV-1.2)
+
+| Метрика | Владелец | Горизонт | Порог |
+|---|---|---|---|
+| `success_rate` фикс-набора | мейнтейнер agent-steward (цикл приёмки §11) | 28 дней / 4 недели, пересмотр еженедельно | абсолютный пол `0.25` (снимок 2026-11-25: `0.2593`) и не ниже baseline − `0.02` |
+| `first_pass_rate` фикс-набора | тот же владелец | 28 дней / 4 недели | абсолютный пол `0.40` (снимок: `0.4208`) и не ниже baseline − `0.02` |
+| `net economy`, USD | тот же владелец | 28 дней / 4 недели, контрфактика по `SAVINGS.md` | `> 0` и не ниже baseline − `1` USD |
+
+Метрики доступны в `self_analysis` и `get_analytics` без изменения схемы
+инструментов (поля `acceptance.metrics` и `acceptance.dataset`). Формат метрик —
+`agent-steward.acceptance` v1.0; источник всегда `gate_outcomes.ledger`.
+
+### CI-гейт «eval не деградировал» (EV-1.3)
+
+- Снимок: `reports/acceptance-baseline.json` (версия, время, строки ledger,
+  история запусков и метрики). Обновляется вручную `node scripts/acceptance-gate.mjs --collect`.
+- Проверка: `node scripts/acceptance-gate.mjs --check` в job `acceptance-gate`
+  `.github/workflows/ci.yml`. Метрики пересчитываются по сохранённым строкам при
+  сохранённом времени → результат детерминирован и не зависит от живой БД.
+- Гейт зелёный только вместе с метриками EV-1.2: проверяются размер набора,
+  абсолютные полы, baseline-деградация и нулевой паритетный mismatch.
+- Откат при FAIL: `git checkout HEAD -- reports/acceptance-baseline.json`,
+  `npm run build`, `node scripts/acceptance-gate.mjs --check`; артефакт
+  `reports/acceptance-gate.json` загружается в CI при любом исходе.
+
 Тесты: E2E всего среза + chaos (`kill -9` посреди миссии) + атака на гейт +
 попытка irreversible до pass + недоступность планировщика ОС.
 

@@ -10,7 +10,10 @@ import {
   type AnalyticsReport,
 } from "./analytics.js";
 import { t } from "../i18n.js";
+import { createHash } from "node:crypto";
 import type { GateLedgerVerification } from "./audit.js";
+import type { GateOutcomeContent, GateOutcomeRecord } from "../db/runs-repo.js";
+import { computeSavings, type SavingsRecord } from "./savings.js";
 
 // ==================== Типы ====================
 
@@ -158,6 +161,162 @@ export interface SelfAnalysisOptions {
   topLimit?: number;
   /** Известные задачи. */
   tasks?: { name: string; matrixParentId?: string | null }[];
+}
+
+// ==================== EV-1: воспроизводимая приёмка §11 ====================
+
+/** Строка ledger, пригодная для приёмки (без привязки к конкретной версии записи). */
+export type AcceptanceGateRow = GateOutcomeContent | GateOutcomeRecord;
+
+/** Метка стабильности кейса фикс-набора. */
+export type AcceptanceLabel = "stable_pass" | "stable_fail" | "unstable";
+
+/** Версия формата фикс-набора — меняется при изменении правил отбора/меток. */
+export const ACCEPTANCE_DATASET_VERSION = "1.0";
+
+/** Версия формата метрик приёмки. */
+export const ACCEPTANCE_METRICS_VERSION = "1.0";
+
+/** Идентификатор machine-readable метрик приёмки. */
+export const ACCEPTANCE_FORMAT = "agent-steward.acceptance";
+
+/** Горизонт наблюдаемого окна: 4 недели (CONCEPT §11.7). */
+export const ACCEPTANCE_HORIZON_DAYS = 28;
+
+/** Владелец метрик приёмки — фиксируется в EXECUTION-LOOP §9. */
+export const ACCEPTANCE_OWNER = "мейнтейнер agent-steward (цикл приёмки §11)";
+
+/** Пороги приёмки и допустимой деградации eval. */
+export const ACCEPTANCE_THRESHOLDS = {
+  /**
+   * Абсолютный пол success_rate, зафиксированный на снимке приёмки
+   * 2026-11-25 (0.2593 → 0.25). Основной гейт — сравнение с baseline.
+   */
+  minSuccessRate: 0.25,
+  /** Абсолютный пол first_pass_rate снимка приёмки 2026-11-25 (0.4208 → 0.40). */
+  minFirstPassRate: 0.4,
+  /** Чистая экономия (оценка по SAVINGS.md) должна быть положительной. */
+  minNetEconomyUsd: 0,
+  /** Минимальный размер фикс-набора. */
+  minDatasetCases: 3,
+  /** eval не деградировал: падение не больше 0.02 абс. по долям. */
+  maxRateDegradation: 0.02,
+  /** Допустимое падение чистой экономии, USD. */
+  maxEconomyDegradationUsd: 1,
+} as const;
+
+/** Один кейс версионированного фикс-набора. */
+export interface AcceptanceCase {
+  /** Детерминированный ID из стабильных полей записи (SHA-256, 12 hex). */
+  caseId: string;
+  taskType: string;
+  gateType: string;
+  gateHash: string;
+  policyHash: string;
+  promptHash: string;
+  verdict: "pass" | "fail";
+  attemptsToPass: number;
+  firstPass: number;
+  /** Путь к доказательству после маскировки секретов (никогда не сырой текст). */
+  evidencePath: string | null;
+  executor: string | null;
+  routeSource: string | null;
+  samples: number;
+  passes: number;
+  fails: number;
+  label: AcceptanceLabel;
+}
+
+/** Версионированный фикс-набор, собранный из ledger. */
+export interface AcceptanceDataset {
+  kind: "acceptance-dataset";
+  format: "agent-steward.acceptance-dataset";
+  version: string;
+  /** Источник — только ledger, не ручной список. */
+  source: "gate_outcomes.ledger";
+  generatedAt: string;
+  horizonDays: number;
+  cases: AcceptanceCase[];
+  /** Сколько строк ledger отклонено как нестабильные/субъективные. */
+  excluded: number;
+  rowsConsidered: number;
+}
+
+export interface AcceptanceDatasetOptions {
+  now?: Date;
+  /** Минимум повторов для метки «стабильный» (по умолчанию 2). */
+  minSamples?: number;
+  /** Доля голосов, нужная для стабильной метки (по умолчанию 0.8). */
+  stabilityRatio?: number;
+  /** Сколько кейсов оставить в отчёте (по умолчанию 50). */
+  maxCases?: number;
+}
+
+/** Метрики семи критериев §11, вычисленные из ledger + истории запусков. */
+export interface AcceptanceMetrics {
+  kind: "acceptance-metrics";
+  format: typeof ACCEPTANCE_FORMAT;
+  version: string;
+  source: "gate_outcomes.ledger";
+  generatedAt: string;
+  windowDays: number;
+  owner: string;
+  thresholds: typeof ACCEPTANCE_THRESHOLDS;
+  datasetVersion: string;
+  sampleSize: number;
+  confidence: "low" | "medium" | "high";
+  criteria: {
+    /** §11.1: ad-hoc с objective-гейтом и доказательством safety. */
+    adhocGateSafety: { observed: boolean; samples: number; objectiveWithEvidence: number };
+    /** §11.2: local-first маршрутизация. */
+    localFirstRouting: { localShare: number; local: number; total: number };
+    /** §11.3: объективный гейт, эскалация/откат без тихого провала. */
+    objectiveGate: { objectiveShare: number; objective: number; escalations: number; infraFails: number };
+    /** §11.4: честная net-экономия и escalation rate. */
+    honestEconomy: { netEconomyUsd: number; savedUsd: number; paidCostUsd: number; escalationRate: number };
+    /** §11.5: пример из learning-loop реально переиспользован (по routeSource). */
+    learningLoopReuse: { reused: number; reuseRate: number };
+    /** §11.6: паритет ad-hoc/registered по маршруту и вердикту. */
+    parity: { pairs: number; mismatches: number };
+    /** §11.7: фикс-набор за N недель с eval без деградации. */
+    fixedSet: {
+      cases: number;
+      stablePass: number;
+      stableFail: number;
+      successRate: number;
+      firstPassRate: number;
+      evalNotDegraded: boolean | null;
+      weeks: number;
+    };
+  };
+}
+
+export interface AcceptanceMetricsInput {
+  rows: readonly AcceptanceGateRow[];
+  /** История запусков для честной net-экономии (контрфактика SAVINGS.md). */
+  history?: readonly SavingsRecord[];
+  days?: number;
+  now?: Date;
+  datasetOptions?: AcceptanceDatasetOptions;
+}
+
+/** Базовая точка для CI-гейта «eval не деградировал». */
+export interface AcceptanceBaseline {
+  version: string;
+  generatedAt?: string;
+  successRate: number;
+  firstPassRate: number;
+  netEconomyUsd: number;
+}
+
+/** Результат сравнения текущих метрик с baseline. */
+export interface AcceptanceGateResult {
+  ok: boolean;
+  checks: { id: string; ok: boolean; detail: string }[];
+  baseline: AcceptanceBaseline | null;
+  current: { successRate: number; firstPassRate: number; netEconomyUsd: number; cases: number };
+  /** Команда отката при нарушении порога. */
+  rollback: string;
 }
 
 // ==================== Health Score ====================
@@ -735,6 +894,368 @@ export function generateSelfAnalysisReport(
       tasksAnalyzed: options.tasks?.length ?? analyticsReport.tasks.length,
       taskDefinitions: options.tasks?.length ?? analyticsReport.tasks.length,
     },
+  };
+}
+
+// --- EV-1.1: версионированный фикс-набор из ledger --------------------------
+
+/** Секреты не копируются в отчёт: маскируем в любом текстовом поле. */
+const ACCEPTANCE_SECRET_PATTERNS: RegExp[] = [
+  /\b(?:sk|pk)-[A-Za-z0-9_-]{8,}/g,
+  /\bBearer\s+[A-Za-z0-9._~-]{8,}/gi,
+  /[?&]?(?:token|api[_-]?key|password|secret)=[^\s&]+/gi,
+  /\bAKIA[0-9A-Z]{16}\b/g,
+];
+
+/** Маскирует известные форматы секретов; `null` остаётся `null`. */
+export function maskAcceptanceSecrets(value: string | null | undefined): string | null {
+  if (value === null || value === undefined) return null;
+  let masked = value;
+  for (const pattern of ACCEPTANCE_SECRET_PATTERNS) {
+    masked = masked.replace(pattern, "[MASKED]");
+  }
+  return masked;
+}
+
+/** Стабильный ключ группировки: только хэши и нейтральные тип/название гейта. */
+function acceptanceGroupKey(row: AcceptanceGateRow): string {
+  return [
+    row.gateHash ?? "",
+    row.policyHash ?? "",
+    row.promptHash ?? "",
+    row.taskType ?? "",
+    row.gateType ?? "",
+  ].join("|");
+}
+
+/** Объективный гейт: кодом посчитанный хэш + финальный вердикт. */
+function isObjectiveGateOutcome(row: AcceptanceGateRow): boolean {
+  return (
+    typeof row.gateHash === "string" &&
+    row.gateHash.length > 0 &&
+    (row.verdict === "pass" || row.verdict === "fail")
+  );
+}
+
+function roundAcceptance(value: number): number {
+  return Math.round(value * 10_000) / 10_000;
+}
+
+interface AcceptanceGroup {
+  sample: AcceptanceGateRow;
+  samples: number;
+  passes: number;
+  fails: number;
+  firstPass: number;
+  attempts: number;
+}
+
+/**
+ * Собирает версионированный фикс-набор ТОЛЬКО из строк ledger.
+ *
+ * Нестабильные (`flake`/`infra_fail`) и субъективные (без `gateHash`) строки
+ * отклоняются. Метка «стабильный pass/fail» выставляется по большинству
+ * повторов (>= `stabilityRatio`), при малой выборке — `unstable`.
+ */
+export function buildAcceptanceDataset(
+  rows: readonly AcceptanceGateRow[],
+  options: AcceptanceDatasetOptions = {},
+): AcceptanceDataset {
+  const minSamples = Math.max(1, Math.floor(options.minSamples ?? 2));
+  const stabilityRatio = Math.min(1, Math.max(0.5, options.stabilityRatio ?? 0.8));
+  const maxCases = Math.max(1, Math.floor(options.maxCases ?? 50));
+  const groups = new Map<string, AcceptanceGroup>();
+  let excluded = 0;
+
+  for (const row of rows) {
+    if (!isObjectiveGateOutcome(row)) {
+      excluded++;
+      continue;
+    }
+    const key = acceptanceGroupKey(row);
+    let group = groups.get(key);
+    if (!group) {
+      group = { sample: row, samples: 0, passes: 0, fails: 0, firstPass: 0, attempts: 0 };
+      groups.set(key, group);
+    }
+    group.samples++;
+    if (row.verdict === "pass") group.passes++;
+    else group.fails++;
+    if (Number(row.firstPass) === 1) group.firstPass++;
+    group.attempts += Math.max(1, Math.floor(row.attemptsToPass ?? 1));
+  }
+
+  const cases: AcceptanceCase[] = [];
+  for (const [key, group] of groups) {
+    const share = group.passes / group.samples;
+    let label: AcceptanceLabel = "unstable";
+    if (group.samples >= minSamples) {
+      if (share >= stabilityRatio) label = "stable_pass";
+      else if (share <= 1 - stabilityRatio) label = "stable_fail";
+    }
+    const sample = group.sample;
+    cases.push({
+      caseId: `case-${createHash("sha256").update(key).digest("hex").slice(0, 12)}`,
+      taskType: sample.taskType ?? "",
+      gateType: sample.gateType ?? "",
+      gateHash: sample.gateHash ?? "",
+      policyHash: sample.policyHash ?? "",
+      promptHash: sample.promptHash ?? "",
+      verdict: group.passes >= group.fails ? "pass" : "fail",
+      attemptsToPass: group.samples > 0 ? Math.round(group.attempts / group.samples) : 1,
+      firstPass: group.samples > 0 ? Math.round(group.firstPass / group.samples) : 0,
+      evidencePath: maskAcceptanceSecrets(sample.evidencePath),
+      executor: sample.executor,
+      routeSource: sample.routeSource,
+      samples: group.samples,
+      passes: group.passes,
+      fails: group.fails,
+      label,
+    });
+  }
+  cases.sort((a, b) => a.caseId.localeCompare(b.caseId));
+
+  return {
+    kind: "acceptance-dataset",
+    format: "agent-steward.acceptance-dataset",
+    version: ACCEPTANCE_DATASET_VERSION,
+    source: "gate_outcomes.ledger",
+    generatedAt: (options.now ?? new Date()).toISOString(),
+    horizonDays: ACCEPTANCE_HORIZON_DAYS,
+    cases: cases.slice(0, maxCases),
+    excluded,
+    rowsConsidered: rows.length,
+  };
+}
+
+// --- EV-1.2: семь критериев §11 ---------------------------------------------
+
+function acceptanceRate(numerator: number, denominator: number): number {
+  return denominator > 0 ? roundAcceptance(numerator / denominator) : 0;
+}
+
+function isEscalation(row: AcceptanceGateRow): boolean {
+  return (
+    row.executor === "cloud" ||
+    (typeof row.routeReason === "string" && /escalat/i.test(row.routeReason))
+  );
+}
+
+function isReuse(row: AcceptanceGateRow): boolean {
+  return (
+    row.routeSource === "capability-map" ||
+    (typeof row.routeReason === "string" && /reuse|recipe|example/i.test(row.routeReason))
+  );
+}
+
+/** Вычисляет метрики семи критериев §11 из ledger и истории запусков. */
+export function computeAcceptanceMetrics(input: AcceptanceMetricsInput): AcceptanceMetrics {
+  const days = Math.min(365, Math.max(1, Math.floor(input.days ?? ACCEPTANCE_HORIZON_DAYS)));
+  const now = input.now ?? new Date();
+  const end = now.getTime();
+  const cutoff = end - days * 24 * 60 * 60 * 1000;
+  const rows = input.rows.filter((row) => {
+    const ts = Date.parse(row.createdAt);
+    return Number.isFinite(ts) && ts >= cutoff && ts <= end + 60_000;
+  });
+
+  const dataset = buildAcceptanceDataset(rows, input.datasetOptions);
+  const stable = dataset.cases.filter((c) => c.label !== "unstable");
+  const stablePass = stable.filter((c) => c.label === "stable_pass").length;
+  const stableFail = stable.length - stablePass;
+  const objective = rows.filter(isObjectiveGateOutcome);
+
+  // eval не деградировал: вторая половина окна не хуже первой более чем на порог.
+  const mid = cutoff + (end - cutoff) / 2;
+  const rateForWindow = (from: number, to: number): number | null => {
+    const subset = rows.filter((row) => {
+      const ts = Date.parse(row.createdAt);
+      return Number.isFinite(ts) && ts >= from && ts < to && isObjectiveGateOutcome(row);
+    });
+    if (subset.length === 0) return null;
+    return acceptanceRate(
+      subset.filter((row) => row.verdict === "pass").length,
+      subset.length,
+    );
+  };
+  const firstHalf = rateForWindow(cutoff, mid);
+  const secondHalf = rateForWindow(mid, end + 60_000);
+  const evalNotDegraded =
+    firstHalf === null || secondHalf === null
+      ? null
+      : secondHalf >= firstHalf - ACCEPTANCE_THRESHOLDS.maxRateDegradation;
+
+  const withExecutor = rows.filter((row) => typeof row.executor === "string");
+  const local = withExecutor.filter((row) => row.executor === "local").length;
+  const escalations = rows.filter(isEscalation).length;
+  const infraFails = rows.filter((row) => row.verdict === "infra_fail").length;
+  const adhoc = rows.filter((row) => row.triggerKind === "adhoc");
+  const reuse = rows.filter(isReuse).length;
+
+  const savings = computeSavings([...(input.history ?? [])], { topLimit: 1 });
+  const netEconomyUsd = roundAcceptance(savings.savedUsd - savings.totalCostUsd);
+
+  // §11.6: одинаковый gate+prompt в ad-hoc и registered должен дать вердикт.
+  const parityGroups = new Map<string, { adhoc: string | null; registered: string | null }>();
+  for (const row of objective) {
+    const key = `${row.gateHash}|${row.promptHash}|${row.taskType ?? ""}`;
+    let entry = parityGroups.get(key);
+    if (!entry) {
+      entry = { adhoc: null, registered: null };
+      parityGroups.set(key, entry);
+    }
+    if (row.triggerKind === "adhoc") entry.adhoc = row.verdict;
+    else entry.registered = row.verdict;
+  }
+  let parityPairs = 0;
+  let parityMismatches = 0;
+  for (const entry of parityGroups.values()) {
+    if (entry.adhoc !== null && entry.registered !== null) {
+      parityPairs++;
+      if (entry.adhoc !== entry.registered) parityMismatches++;
+    }
+  }
+
+  const objectiveRows = rows.filter(isObjectiveGateOutcome);
+  const firstPassCount = objectiveRows.filter((row) => Number(row.firstPass) === 1).length;
+  const sampleSize = rows.length;
+
+  return {
+    kind: "acceptance-metrics",
+    format: ACCEPTANCE_FORMAT,
+    version: ACCEPTANCE_METRICS_VERSION,
+    source: "gate_outcomes.ledger",
+    generatedAt: now.toISOString(),
+    windowDays: days,
+    owner: ACCEPTANCE_OWNER,
+    thresholds: ACCEPTANCE_THRESHOLDS,
+    datasetVersion: dataset.version,
+    sampleSize,
+    confidence: sampleSize >= 30 ? "high" : sampleSize >= 10 ? "medium" : "low",
+    criteria: {
+      adhocGateSafety: {
+        observed: adhoc.length > 0,
+        samples: adhoc.length,
+        objectiveWithEvidence: adhoc.filter(
+          (row) => isObjectiveGateOutcome(row) && !!row.evidencePath,
+        ).length,
+      },
+      localFirstRouting: {
+        localShare: acceptanceRate(local, withExecutor.length),
+        local,
+        total: withExecutor.length,
+      },
+      objectiveGate: {
+        objectiveShare: acceptanceRate(objective.length, rows.length),
+        objective: objective.length,
+        escalations,
+        infraFails,
+      },
+      honestEconomy: {
+        netEconomyUsd,
+        savedUsd: roundAcceptance(savings.savedUsd),
+        paidCostUsd: roundAcceptance(savings.totalCostUsd),
+        escalationRate: acceptanceRate(escalations, rows.length),
+      },
+      learningLoopReuse: {
+        reused: reuse,
+        reuseRate: acceptanceRate(reuse, rows.length),
+      },
+      parity: { pairs: parityPairs, mismatches: parityMismatches },
+      fixedSet: {
+        cases: dataset.cases.length,
+        stablePass,
+        stableFail,
+        successRate: acceptanceRate(stablePass, stablePass + stableFail),
+        firstPassRate: acceptanceRate(firstPassCount, objectiveRows.length),
+        evalNotDegraded,
+        weeks: Math.round(days / 7),
+      },
+    },
+  };
+}
+
+// --- EV-1.3: CI-гейт «eval не деградировал» ---------------------------------
+
+/** Сравнивает текущие метрики с baseline и проверяет пороги приёмки. */
+export function evaluateAcceptanceGate(
+  current: AcceptanceMetrics,
+  baseline: AcceptanceBaseline | null,
+  thresholds?: Partial<Record<keyof typeof ACCEPTANCE_THRESHOLDS, number>>,
+): AcceptanceGateResult {
+  const limits = { ...ACCEPTANCE_THRESHOLDS, ...(thresholds ?? {}) };
+  const fixed = current.criteria.fixedSet;
+  const economy = current.criteria.honestEconomy.netEconomyUsd;
+  const checks: AcceptanceGateResult["checks"] = [];
+  const add = (id: string, ok: boolean, detail: string): void => {
+    checks.push({ id, ok, detail });
+  };
+
+  add(
+    "metrics_present",
+    current.sampleSize > 0 && fixed.cases > 0,
+    `sampleSize=${current.sampleSize}, cases=${fixed.cases}`,
+  );
+  add(
+    "dataset_size",
+    fixed.cases >= limits.minDatasetCases,
+    `cases=${fixed.cases}, min=${limits.minDatasetCases}`,
+  );
+  add(
+    "baseline_present",
+    baseline !== null && baseline.version === ACCEPTANCE_METRICS_VERSION,
+    `baseline=${baseline?.version ?? "отсутствует"}`,
+  );
+  add(
+    "success_rate_threshold",
+    fixed.successRate >= limits.minSuccessRate,
+    `success_rate=${fixed.successRate}, min=${limits.minSuccessRate}`,
+  );
+  add(
+    "first_pass_rate_threshold",
+    fixed.firstPassRate >= limits.minFirstPassRate,
+    `first_pass_rate=${fixed.firstPassRate}, min=${limits.minFirstPassRate}`,
+  );
+  add(
+    "net_economy_positive",
+    economy >= limits.minNetEconomyUsd,
+    `netEconomyUsd=${economy}, min=${limits.minNetEconomyUsd}`,
+  );
+
+  if (baseline) {
+    add(
+      "eval_not_degraded",
+      fixed.successRate >= baseline.successRate - limits.maxRateDegradation &&
+        fixed.firstPassRate >= baseline.firstPassRate - limits.maxRateDegradation &&
+        economy >= baseline.netEconomyUsd - limits.maxEconomyDegradationUsd,
+      `baseline=${JSON.stringify({
+        successRate: baseline.successRate,
+        firstPassRate: baseline.firstPassRate,
+        netEconomyUsd: baseline.netEconomyUsd,
+      })}, current=${JSON.stringify({
+        successRate: fixed.successRate,
+        firstPassRate: fixed.firstPassRate,
+        netEconomyUsd: economy,
+      })}`,
+    );
+    add(
+      "parity_no_mismatch",
+      current.criteria.parity.mismatches === 0,
+      `mismatches=${current.criteria.parity.mismatches}`,
+    );
+  }
+
+  return {
+    ok: checks.every((check) => check.ok),
+    checks,
+    baseline,
+    current: {
+      successRate: fixed.successRate,
+      firstPassRate: fixed.firstPassRate,
+      netEconomyUsd: economy,
+      cases: fixed.cases,
+    },
+    rollback: "git checkout HEAD -- reports/acceptance-baseline.json && npm run build && node scripts/acceptance-gate.mjs",
   };
 }
 

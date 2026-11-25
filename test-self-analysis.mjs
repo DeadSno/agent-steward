@@ -10,6 +10,11 @@ import {
   analyzeTrends,
   generateRecommendations,
   generateSelfAnalysisReport,
+  ACCEPTANCE_METRICS_VERSION,
+  buildAcceptanceDataset,
+  computeAcceptanceMetrics,
+  evaluateAcceptanceGate,
+  maskAcceptanceSecrets,
 } from "./dist/core/self-analysis.js";
 import { buildAnalytics } from "./dist/core/analytics.js";
 import { t } from "./dist/i18n.js";
@@ -388,6 +393,174 @@ console.log("\n=== Self Analysis Report ===");
   check("empty: нет аномалий", report.anomalies.length === 0);
   check("empty: нет трендов", report.trends.length === 0);
   check("empty: нет рекомендаций", report.recommendations.length === 0);
+}
+
+// --- EV-1: воспроизводимая приёмка §11 ---------------------------------------
+
+const acceptanceNow = new Date("2026-11-25T12:00:00.000Z");
+
+function makeGateRow(overrides = {}, hoursAgo = 1) {
+  return {
+    outcomeKey: `row-${Math.random().toString(36).slice(2)}`,
+    missionId: null,
+    runId: null,
+    stepId: null,
+    stepName: null,
+    taskType: "task-a",
+    triggerKind: "adhoc",
+    executor: "local",
+    routeSource: "capability-map",
+    routeReason: "reuse example",
+    gateType: "quality-gate",
+    verdict: "pass",
+    attemptsToPass: 1,
+    firstPass: 1,
+    evidencePath: "reports/evidence.json?token=sk-abcdefgh1234",
+    gateHash: "gate-a",
+    policyHash: "policy-a",
+    promptHash: "prompt-a",
+    modelVersion: "model-a",
+    createdAt: new Date(acceptanceNow.getTime() - hoursAgo * 3_600_000).toISOString(),
+    prevHash: "0".repeat(64),
+    ...overrides,
+  };
+}
+
+console.log("\n=== EV-1: приёмка §11 ===");
+
+{
+  const rows = [
+    makeGateRow({}, 5),
+    makeGateRow({ outcomeKey: "stable-pass-2" }, 4),
+    makeGateRow({ outcomeKey: "stable-pass-3" }, 3),
+    makeGateRow({ gateHash: "gate-b", verdict: "fail", firstPass: 0 }, 2),
+    makeGateRow({ gateHash: "gate-b", verdict: "fail", firstPass: 0 }, 1),
+    makeGateRow({ gateHash: "gate-c", verdict: "fail", firstPass: 0 }, 1),
+    makeGateRow({ gateHash: "gate-c" }, 1),
+    makeGateRow({ verdict: "flake" }, 1),
+    makeGateRow({ gateHash: null }, 1),
+  ];
+  const dataset = buildAcceptanceDataset(rows, { now: acceptanceNow });
+  const stablePassCases = dataset.cases.filter((c) => c.label === "stable_pass");
+  const stableFailCases = dataset.cases.filter((c) => c.label === "stable_fail");
+  const unstableCases = dataset.cases.filter((c) => c.label === "unstable");
+
+  check("EV-1.1: источник — ledger", dataset.source === "gate_outcomes.ledger");
+  check("EV-1.1: версия фикс-набора", dataset.version === "1.0");
+  check("EV-1.1: стабильный pass", stablePassCases.length === 1);
+  check("EV-1.1: стабильный fail", stableFailCases.length === 1);
+  check("EV-1.1: нестабильная группа помечена", unstableCases.length === 1);
+  check("EV-1.1: flake и субъективные строки отклонены", dataset.excluded === 2);
+  check(
+    "EV-1.1: секреты в доказательствах замаскированы",
+    dataset.cases.every((c) => !/sk-abcdefgh1234/.test(c.evidencePath ?? "")),
+  );
+
+  const again = buildAcceptanceDataset(rows, { now: acceptanceNow });
+  check(
+    "EV-1.1: сборка детерминирована",
+    JSON.stringify(again.cases) === JSON.stringify(dataset.cases),
+  );
+}
+
+{
+  const rows = [
+    makeGateRow({}, 10),
+    makeGateRow({ gateHash: "gate-b", verdict: "fail", firstPass: 0 }, 9),
+    makeGateRow({ gateHash: "gate-b", verdict: "fail", firstPass: 0 }, 8),
+    makeGateRow({ gateHash: "gate-c", triggerKind: "registered" }, 7),
+    makeGateRow({ gateHash: "gate-c", triggerKind: "registered" }, 6),
+    makeGateRow({ gateHash: "gate-c", executor: "cloud", routeReason: "escalation" }, 5),
+    makeGateRow({ gateHash: "gate-c", verdict: "infra_fail" }, 4),
+  ];
+  const history = [
+    {
+      taskName: "task-a",
+      status: "success",
+      startedAt: acceptanceNow.toISOString(),
+      tokens: 10000,
+      costUsd: 0,
+    },
+  ];
+  const metrics = computeAcceptanceMetrics({
+    rows,
+    history,
+    days: 28,
+    now: acceptanceNow,
+  });
+  const c = metrics.criteria;
+
+  check("EV-1.2: формат метрик", metrics.format === "agent-steward.acceptance");
+  check("EV-1.2: владелец и горизонт зафиксированы", !!metrics.owner && metrics.windowDays === 28);
+  check("EV-1.2: критерий 1 — ad-hoc гейт", c.adhocGateSafety.observed && c.adhocGateSafety.objectiveWithEvidence > 0);
+  check("EV-1.2: критерий 2 — local-first доля", c.localFirstRouting.localShare > 0 && c.localFirstRouting.localShare <= 1);
+  check("EV-1.2: критерий 3 — объективный гейт", c.objectiveGate.objective > 0 && c.objectiveGate.escalations > 0);
+  check("EV-1.2: критерий 4 — net-экономия и escalation rate", c.honestEconomy.netEconomyUsd > 0 && c.honestEconomy.escalationRate > 0);
+  check("EV-1.2: критерий 5 — переиспользование примера", c.learningLoopReuse.reused > 0);
+  check("EV-1.2: критерий 6 — паритет", c.parity.pairs > 0 && c.parity.mismatches === 0);
+  check("EV-1.2: критерий 7 — недели фикс-набора", c.fixedSet.weeks === 4 && c.fixedSet.cases === 3);
+  check("EV-1.2: first_pass_rate в диапазоне 0..1", c.fixedSet.firstPassRate >= 0 && c.fixedSet.firstPassRate <= 1);
+  check("EV-1.2: источник метрик — ledger", metrics.source === "gate_outcomes.ledger");
+  check(
+    "EV-1.2: строки вне окна отброшены",
+    (() => {
+      const stale = computeAcceptanceMetrics({
+        rows: [makeGateRow({}, 24 * 30)],
+        days: 28,
+        now: acceptanceNow,
+      });
+      return stale.sampleSize === 0;
+    })(),
+  );
+
+  const goodRows = [
+    ...Array.from({ length: 10 }, (_, i) => makeGateRow({}, 10 - i)),
+    makeGateRow({ gateHash: "gate-b", verdict: "fail", firstPass: 0 }, 1),
+    makeGateRow({ gateHash: "gate-c" }, 1),
+    makeGateRow({ gateHash: "gate-c" }, 1),
+  ];
+  const good = computeAcceptanceMetrics({
+    rows: goodRows,
+    history,
+    days: 28,
+    now: acceptanceNow,
+  });
+  const baseline = {
+    version: ACCEPTANCE_METRICS_VERSION,
+    successRate: 0.9,
+    firstPassRate: 0.9,
+    netEconomyUsd: 0.1,
+  };
+  const gate = evaluateAcceptanceGate(good, baseline);
+  check("EV-1.3: гейт проходит на здоровом наборе", gate.ok);
+  check("EV-1.3: все проверки гейта зелёные", gate.checks.every((check) => check.ok));
+  check("EV-1.3: инструкция отката присутствует", gate.rollback.includes("git checkout HEAD"));
+
+  const degradedBaseline = {
+    version: ACCEPTANCE_METRICS_VERSION,
+    successRate: 0.99,
+    firstPassRate: 0.99,
+    netEconomyUsd: 500,
+  };
+  const degradedGate = evaluateAcceptanceGate(good, degradedBaseline);
+  check("EV-1.3: деградация относительно baseline ломает гейт", !degradedGate.ok);
+  check(
+    "EV-1.3: провалена проверка eval_not_degraded",
+    degradedGate.checks.some((check) => check.id === "eval_not_degraded" && !check.ok),
+  );
+  check(
+    "EV-1.3: без метрик гейт не проходит",
+    !evaluateAcceptanceGate(metrics, null).ok,
+  );
+}
+
+{
+  check(
+    "EV-1.1: маскировка Bearer и password",
+    maskAcceptanceSecrets("Bearer abcdefgh1234 password=hunter2") ===
+      "[MASKED] [MASKED]",
+  );
+  check("EV-1.1: null остаётся null", maskAcceptanceSecrets(null) === null);
 }
 
 // --- Итоги -------------------------------------------------------------------

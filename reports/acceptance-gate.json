@@ -1,0 +1,57 @@
+{
+  "ok": true,
+  "format": "agent-steward.acceptance",
+  "version": "1.0",
+  "baselineGeneratedAt": "2026-11-25T10:37:56.608Z",
+  "source": "gate_outcomes.ledger",
+  "replaySampleSize": 183,
+  "checks": [
+    {
+      "id": "metrics_present",
+      "ok": true,
+      "detail": "sampleSize=183, cases=122"
+    },
+    {
+      "id": "dataset_size",
+      "ok": true,
+      "detail": "cases=122, min=3"
+    },
+    {
+      "id": "baseline_present",
+      "ok": true,
+      "detail": "baseline=1.0"
+    },
+    {
+      "id": "success_rate_threshold",
+      "ok": true,
+      "detail": "success_rate=0.2593, min=0.25"
+    },
+    {
+      "id": "first_pass_rate_threshold",
+      "ok": true,
+      "detail": "first_pass_rate=0.4208, min=0.4"
+    },
+    {
+      "id": "net_economy_positive",
+      "ok": true,
+      "detail": "netEconomyUsd=2.5829, min=0"
+    },
+    {
+      "id": "eval_not_degraded",
+      "ok": true,
+      "detail": "baseline={\"successRate\":0.2593,\"firstPassRate\":0.4208,\"netEconomyUsd\":2.5829}, current={\"successRate\":0.2593,\"firstPassRate\":0.4208,\"netEconomyUsd\":2.5829}"
+    },
+    {
+      "id": "parity_no_mismatch",
+      "ok": true,
+      "detail": "mismatches=0"
+    }
+  ],
+  "current": {
+    "successRate": 0.2593,
+    "firstPassRate": 0.4208,
+    "netEconomyUsd": 2.5829,
+    "cases": 122
+  },
+  "rollback": "git checkout HEAD -- reports/acceptance-baseline.json && npm run build && node scripts/acceptance-gate.mjs"
+}

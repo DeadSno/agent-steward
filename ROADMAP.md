@@ -29,6 +29,8 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 
 Все находки QA-D316-21…37 закрыты, удалены отсюда и перенесены в [CHANGELOG.md](./CHANGELOG.md). Раздел намеренно пуст — новые находки вносятся только по факту воспроизведения.
 
+- Плагин `agent_steward.worktree_create` вернул путь `C:\Users\TshK\AppData\Local\Temp\agent-steward-worktrees\ev-1-acceptance`, которого не существует на диске и который отсутствует в `git worktree list`; попытка записать туда файл создала обычную папку вне репозитория. Дополнительно после сжатия контекста инструменты пространства `agent_steward.*` (init/plan/tracking/worktree) перестали резолвиться (`Unknown tool`), тогда как отдельные `list_tasks`/`schedule_task`/`run_task_now` продолжали работать; скилл `agent-steward-dev` не загружался. Воспроизведено 25.11.2026 при EV-1. — P1. Действие: создавать worktree физически до возврата пути и проверять его через `git worktree list`; сохранять registration инструментов плагина после compaction; добавить smoke-тест «создал → путь существует → записал файл». Обнаружено 25.11.2026.
+
 - `pl-commit.ps1` при отклонённом push безвозвратно удаляет чужой незакоммиченный diff: `scripts/pl-commit.ps1:299` (`git reset --hard origin/dev` в PL-127/132 repair), воспроизведено 25.11.2026 при запуске EV-2.1: до коммита в `tp-audit-dev` были чужие незакоммиченные правки EV-1 в `src/core/self-analysis.ts` (+518 строк) и `src/index.ts` (+86), не входившие в `-Files`; после non-fast-forward push скрипт сделал `reset --hard`, cherry-pick своего коммита и эти правки исчезли (`git status` чистый). WARN PL-58 только исключает чужие файлы из коммита, но не защищает их от reset. — P1. Действие: перед reset сохранить чужой diff (patch/stash с последующим восстановлением) либо вместо `reset --hard` переключиться в временную worktree для cherry-pick; добавить регрессию, что repair не трогает файлы вне `-Files`. Обнаружено 25.11.2026.
 
 - PL-134/idle без артефактов маскируется под success, если qualityGate тривиален: `src/core/ps-wrapper.ts:1681-1683,1788-1816`, задача `EV-2 QA plugin smoke` (non-OS-bound worktree, 25.11.2026) — дочерний агент простаивал 60 с и был снят сторожем (`PL-134: агент не отвечает`, `PL-124: дерево снято`), не произвёл ни одного изменения, но `echo OK>ev2qa.passed` прошёл и `get_history` показал `status=success`, `error="PL-81: quality gate passed"`. Проверка QA-D316-10 сбрасывает gate только при `agentArtifactPresent=true`, а QA-D316-26/29 запрещают гейт при `childIdleCompleted` только в ветке `$runQualityGate` — здесь гейт запустился уже после финализации idle. — P1. Действие: запрещать success при `childIdleCompleted` независимо от артефактов (status `partial`/`error` с причиной PL-134), либо требовать подтверждающий артефакт до старта qualityGate; добавить регрессию в `test-execution-hardening.mjs`. Обнаружено 25.11.2026.
@@ -44,15 +46,10 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 | §13.1 — Этап 1: dual V1/V2, единая поверхность | ✅ `setup`/`server`, 34 инструмента ↔ 61 RPC, CI на 3 ОС | — |
 | §13.2 — Этап 2: Agent Executor Interface | ✅ AC-1.1…AC-1.5 (RunContext, StepExecutor, dry-run, паритет входов) | Runner выбирается только программно; `agents*.ts` opt-in → EX-1 |
 | §13.3 — Этап 3: MCP/API и совместимость с любым агентом | ✅ `./core`, `./mcp`, рецепты, verified-chat (S-1…S-6) | Внешний контракт не версионирован; режим `nativeScheduler` → AD-1 |
-| §11.1–§11.4 — ad-hoc, local-first, гейт без irreversible, net-экономия | ✅ ROU-*, ARCH-4.*, E-* | Нет одного приёмочного прогона с владельцем и порогом → EV-1.2 |
-| §11.5–§11.7 — переиспользование примера, паритет, eval не деградировал | 🔄 компиляция контекста и паритет AC-1.4 есть | Нет версионированного набора и CI-порога → EV-1/EV-2 |
+| §11.1–§11.4 — ad-hoc, local-first, гейт без irreversible, net-экономия | ✅ ROU-*, ARCH-4.*, E-*, EV-1.2 | Владелец, горизонт 28 дней и пороги зафиксированы в EXECUTION-LOOP §9 |
+| §11.5–§11.7 — переиспользование примера, паритет, eval не деградировал | ✅ EV-1.1/EV-1.3 + AC-1.4/EV-2.2 | Версионированный набор из ledger и CI-gate с откатом работают |
 | §12 — capped explore, staged LoRA | 🔄 EXECUTION-LOOP §7 требует бюджет | Нет датасета и shadow-включения → LP-1 |
 | §12 — cost of verification, права вне write-scope | 🔄 бюджеты и аудит есть | Нет кэша проверок и guard для write-scope → SC-1 |
-
-**Задача EV-1 — Воспроизводимая приёмка §11** · P1 · ⬜
-- [ ] EV-1.1 Собрать версионированный фикс-набор из стабильных объективных `gate_outcomes` гейта, с маскировкой секретов и разметкой «стабильный pass / стабильный fail»; источник — ledger, а не ручной список.
-- [ ] EV-1.2 Вывести семь критериев §11 из ledger через `self_analysis`/`get_analytics`; зафиксировать в `docs/EXECUTION-LOOP.md` §9 владельца метрик, горизонт N недель и пороги success_rate / first_pass_rate / net-экономии.
-- [ ] EV-1.3 Добавить CI-gate «eval не деградировал»: baseline, порог, откат при нарушении; гейт считается пройденным только вместе с метриками EV-1.2.
 
 **Задача EV-2 — Замкнутая петля обучения** · P1 · ⬜
 - [ ] EV-2.3 Включить capped explore-бюджет и bandit-выбор между локальным и внешним исполнителем, с жёсткой границей бюджета по EXECUTION-LOOP §7.
