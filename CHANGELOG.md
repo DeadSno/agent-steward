@@ -4,6 +4,8 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ## [Unreleased]
 
+- **QA-LAUNCH-1 — путь загрузки плагина в глобальном конфиге восстановлен (P1).** Воспроизведение: `~/.config/opencode/opencode.jsonc:9` грузил плагин по `file:///C:/analytics/.../qa-2411` — каталога нет (существует `qa-2411-dev`), поэтому инструменты плагина в Code Mode были недоступны; это регрессия после предыдущей правки `opencode-windows-scheduler` → `qa-2411`. Исправление: байтовая замена единственного вхождения на `.../qa-2411-dev` в UTF-8-файле (кириллический префикс пути не перекодировался), перед правкой создан бэкап `opencode.jsonc.bak.qa2411dev-20261125`. Проверка после перезагрузки хоста: вызов `get_dashboard_info` через Code Mode стал доступен и вернул `plugin` block: `version=0.0.8`, `modulePath=.../qa-2411-dev/dist/version.js`, `packageRoot=.../qa-2411-dev`, `staleInstallation=false`, `reason=no-workspace-manifest`; в каталоге Code Mode появились инструменты плагина (`get_dashboard_info`, `list_tasks`, `get_history`, `dry_run`, `backup_db` и др.). Plugin-часть находки (fail-open преflight с предупреждением о stale-установке в `schedule_task`/`run_task_now`) остаётся отдельной задачей DEEP-3.3 в ROADMAP и здесь не дублируется — диагностика `getPluginDiagnostics()` уже присутствует в `src/version.ts` и публикуется в `get_dashboard_info`. Exit-код: `node test-docs.mjs` — 0 (153/153). Строка QA-LAUNCH-1 удалена из ROADMAP.
+
 - **Архив Детали 3.20 — матрица покрытия стратегии перенесена из ROADMAP в CHANGELOG.** Все строки матрицы закрыты и дублировать их в роадмапе не требуется по правилу «закрытые задачи удаляются из ROADMAP». Архивная матрица CONCEPT §11–§13:
 
   | Утверждение CONCEPT / стратегии | Покрытие | Остаток |
