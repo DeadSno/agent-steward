@@ -21,6 +21,21 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 
 Обозначения: ⬜ не начато · 🔄 в работе · ⏸️ внешнее действие.
 
+## Стратегический роадмап (пересобран 25.11.2026 по итогам полного QA)
+
+Курс не изменился: локально-первый framework-супервизор, который сначала перестаёт быть OpenCode-специфичным, а затем становится MCP-нативным ([ROADMAP-STRATEGY.md](./ROADMAP-STRATEGY.md), CONCEPT §4/§8). Что изменилось — порядок и входные данные: в план положены воспроизведённые находки полного аудита 25.11.2026, а не только продуктовые гипотезы.
+
+| Горизонт | Ставка | Что должно быть правдой на выходе | Вход в канбан |
+|---|---|---|---|
+| 0 · сейчас (0–2 нед) | Доверие к релизу и честная диагностика | Находки аудита 25.11.2026 закрыты или документированы; версия, метрики и стратегия без противоречий; строгая установка не ломается | QA-DEEP4-1, QA-FULL-01…06 (ниже) |
+| 1 · 1–3 мес | P-1 изоляция ядра | `createToolSpecs`/`createRuntime`/`tool-specs.ts` отделены от OpenCode, контракт 34 specs зелёный, регрессия watch-paths исправлена | P-1 → P-2 → P-3 (жёсткий порядок) |
+| 2 · 3–6 мес | MCP-нативная оркестрация | `agent-steward mcp` и subpath `./core`, `./mcp` стабильны; capability router и reliability scorecard работают на реальной истории | S-1, S-2, S-3 после закрытия P-1/P-2 |
+| 3 · 6–12 мес | Экосистема и вторые харнессы | Рецепты/SKILL, верифицированный Telegram-чат, скаффолдинг из gate-passed примеров; P-4/P-5 — по боли пользователя | S-4, S-5, S-6, P-4, P-5 |
+
+**Новые входы аудита, которые меняют приоритеты:** nondeterministic-версия MCP (`serverInfo.version=0.0.7` при package 0.0.8) блокирует доверие к любому MCP-клиенту → QA-FULL-02 в горизонт 0; смешение skipped/interrupted с error в аналитике искажает scorecard горизонта 2 → QA-FULL-03 в горизонт 0; engine-рассинхрон блокирует `--engine-strict` → QA-FULL-01 в горизонт 0. Без закрытия этих трёх пунктов горизонты 1–2 не считаются готовыми к релизу.
+
+**Правило пересборки:** при закрытии подзадачи она уходит из ROADMAP в CHANGELOG; стратегия обновляется в тот же коммит, чтобы «Ближайшие две недели» не расходились с канбаном (QA-FULL-04). Одна подзадача за раз, слой не пропускается.
+
 
 ---
 
@@ -30,6 +45,18 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 Все находки QA-D316-21…37 и все последующие QA-находки 25.11.2026 закрыты, удалены отсюда и перенесены в [CHANGELOG.md](./CHANGELOG.md). Ниже — только открытые находки, внесённые по факту воспроизведения 25.11.2026.
 
 QA-DEEP4-1 — загруженный экземпляр плагина из другого чек-аута не помечается stale без манифеста воркспейса: `src/version.ts` `getPluginDiagnostics()` (`workspacePkg === null` → `reason:"no-workspace-manifest"`, `staleInstallation:false`) и проверка через `get_dashboard_info` Code Mode — `modulePath=.../qa-2411-dev/dist/version.js`, `workspaceRoot=C:\Users\TshK`, `loadedFromWorkspace=false` — P2. Действие: при `loadedFromWorkspace=false` и `modulePath` вне `workspaceRoot` возвращать `installationWarning`/`staleInstallation=true` по fail-open, покрыть регрессией в `test-agent-tools.mjs` и `test-self-analysis.mjs`.
+
+⬜ QA-FULL-01 — engine-декларация не совпадает с зависимостью: `package.json` `engines.node>=22.22.0`, а `@opentui/core@0.9.0` требует `node>=26.4.0`/`bun>=1.3.14`; `npm ci --dry-run --engine-strict` падает EBADENGINE (Node v24.21.0), хотя обычный `npm ci` только предупреждает и `import('@opentui/core')` работает (295 экспортов) — P2. Действие: поднять `engines.node` до >=26.4.0 или закрепить совместимую версию `@opentui/core`, отразить в README/SECURITY и CI; добавить smoke-тест установки с `--engine-strict`.
+
+⬜ QA-FULL-02 — версия MCP-сервера захардкожена: `src/mcp.ts:36` отдаёт `"0.0.7"` при `package.json` 0.0.8; проверено MCP-клиентом через `initialize` → `serverInfo={name:"agent-steward",version:"0.0.7"}`, тогда как `/api/health` даёт 0.0.8 — P2. Действие: брать версию из единого источника (`src/version.ts`/package.json), добавить контракт-тест в `test-mcp-adapter.mjs`, что `serverInfo.version === package.version`.
+
+⬜ QA-FULL-03 — аналитика смешивает статусы: `src/core/analytics.ts:295-297` относит всё, кроме success/partial, к `error`; MCP-проверка: `get_metrics` → `total:111, success:39, error:28, skipped:40, interrupted:4`, а `get_analytics` → `error:72` — P2. Действие: завести отдельные бакеты `skipped`/`interrupted` в `buildAnalytics`, сохранить обратную совместимость полей и покрыть регрессией в `test-analytics.mjs`.
+
+⬜ QA-FULL-04 — стратегия и канбан рассинхронизированы: `ROADMAP-STRATEGY.md` «Ближайшие две недели» (строки 215–220) всё ещё держит EV-1/EX-1/SC-1/LP-1/AD-1 и P-1/P-2 как активные, хотя все перечисленные закрыты и перенесены в CHANGELOG; ROADMAP.md содержит только QA-DEEP4-1 — P2. Действие: пересобрать блок «Ближайшие две недели» под реальные открытые задачи, завести проверку `test-docs.mjs`, что открытые ID strategy есть в ROADMAP или явно помечены как future.
+
+⬜ QA-FULL-05 — повреждён JSDoc после переноса кода: `src/runtime.ts` строки 1–7 (`/**` → `/*.` → `*/` вместо корректного блока) — P3. Действие: восстановить валидный JSDoc с описанием публичного контракта `src/runtime.ts`, прогнать `npm run build`/`npm run lint`.
+
+⬜ QA-FULL-06 — пропуски запуска по PL-121 не видны пользователю: `src/core/scheduler/run-now.ts:386`, `src/core/ps-wrapper.ts`, `src/index.ts` пропускают запуск в том же чек-ауте, 38/200 свежих записей истории имеют `status:skipped` с «PL-121: в чек-ауте ... уже идёт другая задача», но уведомления/отдельного контура нет — P2. Действие: передавать причину пропуска в дашборд/MCP (`get_history` фильтр по `skipReason`) и документировать в docs/SAFETY.md; не менять сам fail-open-lock.
 
 ## Деталь 3.21 — Усиление в глубину (не расширение)
 `src/core/savings.ts`, `src/core/permissions.ts`, `src/core/worktree.ts`, `src/core/audit.ts`, `src/core/self-analysis.ts`, `src/shared/installation-warning.ts`, `src/version.ts`, `src/index.ts`, `src/rpc.ts`, `src/gui.tsx`, `TEST-PLAN.md`, `test-budget.mjs`, `test-permissions-policy.mjs`, `test-self-analysis.mjs`, `test-gui-bundle.mjs`, `test-agent-tools.mjs`, `docs/SAFETY.md`, `docs/EXECUTION-LOOP.md`
