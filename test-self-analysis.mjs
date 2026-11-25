@@ -21,6 +21,14 @@ import {
   LORA_CRITERIA,
   buildLoraDataset,
   validateLoraDataset,
+  LORA_ADAPTER_VERSION,
+  LORA_ADAPTER_FORMAT,
+  LORA_TRAINING_MODE,
+  LORA_PROMOTION,
+  loraDatasetHash,
+  buildLoraAdapterCandidate,
+  evaluateLoraAdapter,
+  promoteLoraAdapter,
 } from "./dist/core/self-analysis.js";
 import { buildAnalytics } from "./dist/core/analytics.js";
 import { t } from "./dist/i18n.js";
@@ -610,6 +618,82 @@ console.log("\n=== EV-1: приёмка §11 ===");
   check("LP-1.1: не маскированный секрет ломает валидацию", failed(mutate({ cases: [{ ...dataset.cases[0], evidencePath: "reports/e?token=sk-abcdefgh1234" }, ...dataset.cases.slice(1)] }), "secrets_masked"));
   check("LP-1.1: онлайн-режим ломает валидацию", failed(mutate({ onlineLearning: "allowed" }), "online_learning_forbidden"));
   check("LP-1.1: пустой датасет не проходит валидацию", !validateLoraDataset(buildLoraDataset([], { now: acceptanceNow })).ok);
+}
+
+// --- LP-1.2: офлайн-адаптер с обязательным eval -------------------------------
+
+{
+  const rows = [];
+  for (let i = 0; i < 24; i++) {
+    const first = makeGateRow({ gateHash: `lora2-gate-${i}` });
+    rows.push(first, { ...first, outcomeKey: `${first.outcomeKey}-dup` });
+  }
+  const dataset = buildLoraDataset(rows, { now: acceptanceNow });
+  const candidate = buildLoraAdapterCandidate(dataset, { now: acceptanceNow, baseModelRef: "local:3-4B" });
+  const baseline = { successRate: 0.4, firstPassRate: 0.5, netEconomyUsd: 10, cases: dataset.cases.length };
+
+  check("LP-1.2: формат и версия кандидата", candidate.format === LORA_ADAPTER_FORMAT && candidate.version === LORA_ADAPTER_VERSION);
+  check("LP-1.2: режим только офлайн", candidate.trainingMode === LORA_TRAINING_MODE && candidate.promoted === false && candidate.eval === null);
+  check("LP-1.2: ссылка на внешние весы без онлайн-обучения", candidate.weightsRef.startsWith("offline://adapter/") && LORA_PROMOTION.onlineLearning === false);
+  check("LP-1.2: отпечаток датасета детерминирован", loraDatasetHash(dataset) === loraDatasetHash(buildLoraDataset(rows, { now: acceptanceNow })));
+  check(
+    "LP-1.2: идентификатор адаптера детерминирован",
+    candidate.adapterId === buildLoraAdapterCandidate(dataset, { now: acceptanceNow, baseModelRef: "local:3-4B" }).adapterId,
+  );
+  check(
+    "LP-1.2: другая модель даёт другой идентификатор",
+    candidate.adapterId !== buildLoraAdapterCandidate(dataset, { now: acceptanceNow, baseModelRef: "local:8B" }).adapterId,
+  );
+
+  const evalResult = evaluateLoraAdapter(candidate, dataset, baseline, { ...baseline }, { now: acceptanceNow });
+  check("LP-1.2: eval на уровне эталона проходит", evalResult.verdict === "pass" && evalResult.checks.every((item) => item.ok));
+  check("LP-1.2: eval не мутирует кандидата", candidate.eval === null && evalResult.metrics !== baseline);
+  const promotion = promoteLoraAdapter(candidate, evalResult);
+  check("LP-1.2: включение разрешено только после eval", promotion.ok && promotion.checks.every((item) => item.ok));
+  check("LP-1.2: команда отката присутствует", promotion.rollback.includes("git checkout HEAD"));
+
+  const failed = (result, id) => result.checks.some((item) => item.id === id && !item.ok);
+  const degraded = evaluateLoraAdapter(candidate, dataset, baseline, { ...baseline, successRate: baseline.successRate - 0.03 });
+  check("LP-1.2: деградация метрик ломает eval", degraded.verdict === "fail" && failed(degraded, "no_degradation"));
+  check("LP-1.2: проваленный eval запрещает включение", !promoteLoraAdapter(candidate, degraded).ok);
+  check(
+    "LP-1.2: подмена датасета ломает eval",
+    failed(evaluateLoraAdapter({ ...candidate, datasetHash: "podmena" }, dataset, baseline, { ...baseline }), "dataset_match"),
+  );
+  check(
+    "LP-1.2: онлайн-режим ломает eval и включение",
+    (() => {
+      const online = { ...candidate, trainingMode: "online" };
+      const evaluated = evaluateLoraAdapter(online, dataset, baseline, { ...baseline });
+      return failed(evaluated, "offline_only") && !promoteLoraAdapter(online, evaluated).ok;
+    })(),
+  );
+  check(
+    "LP-1.2: повторное включение запрещено",
+    !promoteLoraAdapter({ ...candidate, promoted: true }, evalResult).ok,
+  );
+  check(
+    "LP-1.2: отсутствующий eval ломает включение",
+    failed(promoteLoraAdapter(candidate, { ...evalResult, kind: "other" }), "eval_present"),
+  );
+  check(
+    "LP-1.2: метрики ниже порогов ломают eval",
+    failed(
+      evaluateLoraAdapter(candidate, dataset, baseline, { ...baseline, firstPassRate: 0.1 }),
+      "thresholds",
+    ),
+  );
+  check(
+    "LP-1.2: невалидный датасет отклоняется до весов",
+    (() => {
+      try {
+        buildLoraAdapterCandidate(buildLoraDataset([], { now: acceptanceNow }));
+        return false;
+      } catch (error) {
+        return String(error.message).startsWith("LORA_DATASET_INVALID");
+      }
+    })(),
+  );
 }
 
 // --- Итоги -------------------------------------------------------------------

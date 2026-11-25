@@ -254,6 +254,13 @@ applied through `PRAGMA user_version` on open. Step 11 adds functional indexes
   check (B-1.1, PL-125); an over-limit run is recorded as `skipped` with a reason.
 - Approval A-1 is closed and runs through `approval-api.ts`, but mission plans with
   deferred effects still need a manual restart after approval.
+- Staged LoRA (LP-1.1/LP-1.2) does not train weights in this repository. It builds
+  a versioned ledger-only dataset, validates it, and gates an external offline
+  adapter artifact with mandatory eval against the acceptance baseline. The
+  stored `weightsRef` is a symbolic link, online learning is forbidden by format,
+  and promotion requires a passing eval plus an explicit decision. Measured
+  baseline snapshot (2026-11-25): 183 rows, 122 cases, success rate 0.2593,
+  first pass rate 0.4208, net economy 2.5829 USD.
 
 ## Data flow
 

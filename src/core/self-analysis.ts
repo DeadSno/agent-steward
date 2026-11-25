@@ -1405,6 +1405,237 @@ export function validateLoraDataset(dataset: LoraDataset): LoraValidation {
   return { ok: checks.every((check) => check.ok), checks };
 }
 
+// --- LP-1.2: офлайн-адаптер с обязательным eval (без онлайн-обучения) ---------
+
+/** Версия формата кандидата адаптера. */
+export const LORA_ADAPTER_VERSION = "1.0";
+export const LORA_ADAPTER_FORMAT = "agent-steward.lora-adapter-candidate";
+export const LORA_TRAINING_MODE = "offline";
+
+/** Пороги сравнения с эталоном до любого включения адаптера. */
+export const LORA_PROMOTION = {
+  maxSuccessRateDrop: 0.02,
+  maxFirstPassRateDrop: 0.02,
+  maxEconomyDropUsd: 1,
+  requireEval: true,
+  onlineLearning: false,
+} as const;
+
+/** Метрики офлайн-оценки адаптера. */
+export interface LoraEvalMetrics {
+  successRate: number;
+  firstPassRate: number;
+  netEconomyUsd: number;
+  cases: number;
+}
+
+/** Результат обязательной офлайн-оценки кандидата. */
+export interface LoraAdapterEval {
+  kind: "lora-adapter-eval";
+  version: string;
+  adapterId: string;
+  datasetHash: string;
+  createdAt: string;
+  metrics: LoraEvalMetrics;
+  baseline: LoraEvalMetrics;
+  verdict: "pass" | "fail";
+  checks: { id: string; ok: boolean; detail: string }[];
+}
+
+/**
+ * Кандидат адаптера. Артефакт весов создаётся внешним офлайн-пайплайном;
+ * репозиторий хранит только символическую ссылку и гейт-решения.
+ */
+export interface LoraAdapterCandidate {
+  kind: "lora-adapter-candidate";
+  format: typeof LORA_ADAPTER_FORMAT;
+  version: string;
+  adapterId: string;
+  trainingMode: "offline";
+  datasetVersion: string;
+  datasetHash: string;
+  datasetCases: number;
+  createdAt: string;
+  baseModelRef: string;
+  weightsRef: string;
+  eval: LoraAdapterEval | null;
+  promoted: boolean;
+}
+
+/** Решение о переводе адаптера в shadow-режим. */
+export interface LoraPromotionDecision {
+  ok: boolean;
+  checks: { id: string; ok: boolean; detail: string }[];
+  adapterId: string;
+  rollback: string;
+}
+
+export interface LoraAdapterOptions {
+  now?: Date;
+  baseModelRef?: string;
+}
+
+/** Детерминированный отпечаток Outcome датасета для связки адаптера и eval. */
+export function loraDatasetHash(dataset: LoraDataset): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        version: dataset.version,
+        cases: dataset.cases.map((item) => `${item.caseId}:${item.verdict}:${item.label}`),
+      }),
+    )
+    .digest("hex");
+}
+
+/**
+ * Регистрирует офлайн-кандидата. Невалидный датасет отклоняется до любого
+ * обращения к весам; онлайн-обучение в интерфейсе отсутствует.
+ */
+export function buildLoraAdapterCandidate(
+  dataset: LoraDataset,
+  options: LoraAdapterOptions = {},
+): LoraAdapterCandidate {
+  const validation = validateLoraDataset(dataset);
+  if (!validation.ok) {
+    const failed = validation.checks.filter((item) => !item.ok).map((item) => item.id).join(", ");
+    throw new Error(`LORA_DATASET_INVALID: ${failed}`);
+  }
+  const datasetHash = loraDatasetHash(dataset);
+  const baseModelRef = options.baseModelRef ?? "local:3-4B";
+  const adapterId = createHash("sha256").update(`${datasetHash}|${baseModelRef}`).digest("hex").slice(0, 12);
+  return {
+    kind: "lora-adapter-candidate",
+    format: LORA_ADAPTER_FORMAT,
+    version: LORA_ADAPTER_VERSION,
+    adapterId,
+    trainingMode: LORA_TRAINING_MODE,
+    datasetVersion: dataset.version,
+    datasetHash,
+    datasetCases: dataset.cases.length,
+    createdAt: (options.now ?? new Date()).toISOString(),
+    baseModelRef,
+    weightsRef: `offline://adapter/${adapterId}`,
+    eval: null,
+    promoted: false,
+  };
+}
+
+/**
+ * Сравнивает метрики офлайн-оценки с эталоном. Не мутирует кандидата:
+ * inclusion возможен только после отдельного решения promoteLoraAdapter.
+ */
+export function evaluateLoraAdapter(
+  candidate: LoraAdapterCandidate,
+  dataset: LoraDataset,
+  baseline: LoraEvalMetrics,
+  evalMetrics: LoraEvalMetrics,
+  options: { now?: Date } = {},
+): LoraAdapterEval {
+  const checks: LoraAdapterEval["checks"] = [];
+  const add = (id: string, ok: boolean, detail: string): void => {
+    checks.push({ id, ok, detail });
+  };
+  const finite = (value: number): boolean => Number.isFinite(value);
+  add(
+    "eval_metrics_present",
+    finite(evalMetrics.successRate) &&
+      finite(evalMetrics.firstPassRate) &&
+      finite(evalMetrics.netEconomyUsd) &&
+      Number.isInteger(evalMetrics.cases) &&
+      evalMetrics.successRate >= 0 &&
+      evalMetrics.successRate <= 1 &&
+      evalMetrics.firstPassRate >= 0 &&
+      evalMetrics.firstPassRate <= 1,
+    `metrics=${JSON.stringify(evalMetrics)}`,
+  );
+  add(
+    "dataset_match",
+    candidate.datasetHash === loraDatasetHash(dataset) && candidate.datasetVersion === dataset.version,
+    `candidate=${candidate.datasetHash}, dataset=${loraDatasetHash(dataset)}`,
+  );
+  add(
+    "offline_only",
+    candidate.trainingMode === LORA_TRAINING_MODE,
+    `trainingMode=${candidate.trainingMode}`,
+  );
+  add(
+    "cases_match",
+    evalMetrics.cases === dataset.cases.length,
+    `eval=${evalMetrics.cases}, dataset=${dataset.cases.length}`,
+  );
+  add(
+    "baseline_present",
+    baseline.cases > 0 &&
+      finite(baseline.successRate) &&
+      finite(baseline.firstPassRate) &&
+      finite(baseline.netEconomyUsd),
+    `baseline=${JSON.stringify(baseline)}`,
+  );
+  add(
+    "no_degradation",
+    evalMetrics.successRate >= baseline.successRate - LORA_PROMOTION.maxSuccessRateDrop &&
+      evalMetrics.firstPassRate >= baseline.firstPassRate - LORA_PROMOTION.maxFirstPassRateDrop &&
+      evalMetrics.netEconomyUsd >= baseline.netEconomyUsd - LORA_PROMOTION.maxEconomyDropUsd,
+    `current=${JSON.stringify(evalMetrics)}, baseline=${JSON.stringify(baseline)}`,
+  );
+  add(
+    "thresholds",
+    evalMetrics.successRate >= ACCEPTANCE_THRESHOLDS.minSuccessRate &&
+      evalMetrics.firstPassRate >= ACCEPTANCE_THRESHOLDS.minFirstPassRate &&
+      evalMetrics.netEconomyUsd > ACCEPTANCE_THRESHOLDS.minNetEconomyUsd,
+    `minSuccessRate=${ACCEPTANCE_THRESHOLDS.minSuccessRate}, minFirstPassRate=${ACCEPTANCE_THRESHOLDS.minFirstPassRate}`,
+  );
+  return {
+    kind: "lora-adapter-eval",
+    version: LORA_ADAPTER_VERSION,
+    adapterId: candidate.adapterId,
+    datasetHash: candidate.datasetHash,
+    createdAt: (options.now ?? new Date()).toISOString(),
+    metrics: { ...evalMetrics },
+    baseline: { ...baseline },
+    verdict: checks.every((item) => item.ok) ? "pass" : "fail",
+    checks,
+  };
+}
+
+/**
+ * Разрешает включение только при пройденном eval, совпадении датасета,
+ * офлайн-режиме и отсутствии предыдущего включения.
+ */
+export function promoteLoraAdapter(
+  candidate: LoraAdapterCandidate,
+  evalResult: LoraAdapterEval,
+): LoraPromotionDecision {
+  const checks: LoraPromotionDecision["checks"] = [];
+  const add = (id: string, ok: boolean, detail: string): void => {
+    checks.push({ id, ok, detail });
+  };
+  add("eval_present", evalResult.kind === "lora-adapter-eval" && LORA_PROMOTION.requireEval, `kind=${evalResult.kind}`);
+  add(
+    "eval_pass",
+    evalResult.verdict === "pass" && evalResult.checks.every((item) => item.ok),
+    `verdict=${evalResult.verdict}`,
+  );
+  add(
+    "dataset_match",
+    evalResult.adapterId === candidate.adapterId && evalResult.datasetHash === candidate.datasetHash,
+    `adapter=${candidate.adapterId}, eval=${evalResult.adapterId}`,
+  );
+  add("offline_only", candidate.trainingMode === LORA_TRAINING_MODE, `trainingMode=${candidate.trainingMode}`);
+  add("not_promoted", !candidate.promoted, `promoted=${candidate.promoted}`);
+  add(
+    "no_online_learning",
+    LORA_PROMOTION.onlineLearning === false && candidate.trainingMode === LORA_TRAINING_MODE,
+    `mode=${candidate.trainingMode}`,
+  );
+  return {
+    ok: checks.every((item) => item.ok),
+    checks,
+    adapterId: candidate.adapterId,
+    rollback: "git checkout HEAD -- reports/acceptance-baseline.json && npm run build && node scripts/acceptance-gate.mjs",
+  };
+}
+
 function generateSummary(
   health: HealthScore,
   anomalies: Anomaly[],
