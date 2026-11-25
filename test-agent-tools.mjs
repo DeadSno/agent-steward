@@ -32,6 +32,7 @@ const {
   createToolSpecs,
   coreScheduleTaskSchema,
   coreUpdateTaskSchema,
+  normalizeTaskStatus,
 } = await import("./dist/index.js");
 const {
   CHILD_RUN_ENV,
@@ -1219,6 +1220,37 @@ check(
     "QA-UPDATE-SCOPE: rollbackFailed не утверждает ложное «задача отсутствует»",
     ru["tool.task.rollbackFailed"].includes("сохранено в БД") &&
       !ru["tool.task.rollbackFailed"].includes("отсутствует в планировщике")
+  );
+}
+
+// QA-STATUS-SYNC: list_tasks не должен показывать stale running/unknown,
+// если история и активные прогоны говорят обратное.
+{
+  check(
+    "QA-STATUS-SYNC: stale OS-running без истории → success",
+    normalizeTaskStatus("running", "success", false) === "success"
+  );
+  check(
+    "QA-STATUS-SYNC: stale OS-running без истории → idle",
+    normalizeTaskStatus("running", undefined, false) === "idle"
+  );
+  check(
+    "QA-STATUS-SYNC: реальный активный прогон → running",
+    normalizeTaskStatus("ready", "success", true) === "running"
+  );
+  check(
+    "QA-STATUS-SYNC: unknown без истории → idle",
+    normalizeTaskStatus("unknown", undefined, false) === "idle"
+  );
+  check(
+    "QA-STATUS-SYNC: unknown с историей error → error",
+    normalizeTaskStatus("unknown", "error", false) === "error"
+  );
+  const source = fs.readFileSync(new URL("./dist/index.js", import.meta.url), "utf8");
+  check(
+    "QA-STATUS-SYNC: list_tasks использует normalizeTaskStatus",
+    /normalizeTaskStatus\(t\.status,/.test(source) &&
+      /listRunningRecords\(\)\.map\(/.test(source)
   );
 }
 

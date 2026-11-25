@@ -8811,6 +8811,11 @@ async function collectTasksView() {
   const history = await loadHistory();
   // loadHistory() отдаёт записи от новых к старым; helper оставляет самую свежую.
   const lastByTask = latestHistoryByTask(history);
+  // QA-STATUS-SYNC: реально активные прогоны — только те, у кого есть запись
+  // в истории; сам по себе статус ОС "running" может быть stale.
+  const runningTaskNames = new Set(
+    listRunningRecords().map((record) => record.taskName.toLowerCase()),
+  );
 
   // Определения задач читаются один раз заранее (см. выше) — расписание,
   // повторы, цепочки, директория.
@@ -8862,27 +8867,23 @@ async function collectTasksView() {
     // Все бэкенды возвращают короткие имена (без папки планировщика).
     const name = t.taskName || "";
 
-    // Приоритет 1: статус, который сообщает планировщик ОС.
-    let status = mapStatus(t.status);
-
-    // Приоритет 2: если последняя запись в истории — error/timeout, перебиваем на error.
     const last = lastByTask.get(name.toLowerCase());
-    if (last) {
-      if (last.status === "error" || last.status === "timeout") status = "error";
-      else if (last.status === "success") status = "success";
-      // partial раньше терялся: задача после частичного запуска выглядела
-      // как «готова»/«не запускалась», хотя запуск был неуспешным.
-      else if (last.status === "partial") status = "partial";
-    }
-
     const def = defs.find((d) => d.name.toLowerCase() === name.toLowerCase());
     const workspace = def?.workspaceId ? workspaceById.get(def.workspaceId) : undefined;
 
     // Matrix-родитель: статус = агрегат по клонам (success/error/partial/running).
     const matrixAggregate = def?.matrix ? aggregateMatrixResults(name) : null;
-    if (matrixAggregate && matrixAggregate.status !== "empty") {
-      status = matrixAggregate.status === "running" ? "running" : matrixAggregate.status;
-    }
+
+    // QA-STATUS-SYNC / QA-STATUS-UNKNOWN: единая нормализация статуса.
+    // Раньше listing отдавал "running" от ОС даже без записи в истории и
+    // "unknown" для disabled/пустого статуса — оба состояния были неотличимы
+    // от реального прогона и мешали диагностике.
+    const status = normalizeTaskStatus(
+      t.status,
+      last?.status,
+      runningTaskNames.has(name.toLowerCase()),
+      matrixAggregate?.status,
+    );
 
     // Счётчики именно этой задачи (раньше GUI показывал на каждой карточке
     // общие итоги по всем задачам — отсюда одинаковые 201/130/71).
@@ -9014,6 +9015,43 @@ function matchesEventFilter(filter: string | undefined, payload: unknown): boole
   } catch {
     return text.toLowerCase().includes(raw.toLowerCase());
   }
+}
+
+/**
+ * QA-STATUS-SYNC / QA-STATUS-UNKNOWN: единая нормализация статуса задачи
+ * для list_tasks/GUI. `osStatus` — текст от планировщика, `lastStatus` —
+ * статус последней записи истории, `hasActiveRun` — есть ли живая запись
+ * history в статусе running, `matrixStatus` — агрегат по клонам матрицы.
+ */
+export function normalizeTaskStatus(
+  osStatus: string | undefined,
+  lastStatus: string | undefined,
+  hasActiveRun: boolean,
+  matrixStatus?: string | null,
+): string {
+  let status = mapStatus(osStatus);
+  const fromHistory =
+    lastStatus === "error" || lastStatus === "timeout"
+      ? "error"
+      : lastStatus === "success" || lastStatus === "partial" || lastStatus === "running"
+        ? lastStatus
+        : undefined;
+  if (fromHistory) status = fromHistory;
+
+  if (matrixStatus && matrixStatus !== "empty") {
+    status = matrixStatus === "running" ? "running" : matrixStatus;
+  }
+  if (hasActiveRun || matrixStatus === "running") {
+    status = "running";
+  } else if (status === "running") {
+    // Статус ОС "running" без активной записи в истории — stale, а не прогон.
+    status = fromHistory && fromHistory !== "running" ? fromHistory : "idle";
+  }
+  if (status === "unknown") {
+    // disabled/отсутствующий статус ОС не должен маскироваться под unknown.
+    status = fromHistory ?? "idle";
+  }
+  return status;
 }
 
 /** Превращает текстовый статус планировщика в короткий статус для GUI. */
