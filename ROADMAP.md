@@ -39,25 +39,10 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 - [ ] `test-execution-hardening.mjs:487` — проверка `таймаут: задача убита раньше 15 с` один раз упала при `elapsedMs=63876` (ожидалось `<15000`) в прогоне `npm test` и при первом повторном запуске набора; два следующих запуска (одиночный и `npm test`) прошли 418/418 и exit 0. Задача: разобраться, что растягивает убитие дерева процессов (`FAKE_MODE=sleep`, `FAKE_SLEEP=25`, `timeoutSeconds=2`) под нагрузкой, и либо стабилизировать ожидание/тайминг проверки, либо зафиксировать, что это артефакт перегруженного раннера.
 
 
-## Деталь 3.20 — Матрица покрытия стратегии и незакрытые контуры
-`docs/CONCEPT.md` §11/§12/§13, `ROADMAP-STRATEGY.md`, `docs/ARCHITECTURE.md` Known limitations, `docs/EXECUTION-LOOP.md` §7–§9, `src/core/execution.ts`, `src/core/self-analysis.ts`, `src/db/capability-repo.ts`, `test-budget.mjs`, `test-permissions-policy.mjs`
-
-Обоснование: спринты 40–47, экономика v2, Docker/SSH-модули, approvals, изоляция ядра и портативность уже закрыты и перенесены в CHANGELOG — повторно их в ROADMAP не вносим. Однако стратегия описывает не только модули, но и проверяемые критерии: CONCEPT §11 требует воспроизводимой петли обучения на фикс-наборе задач, §12 — управления cost of verification и прав вне write-scope, §13.2 — transport-независимого исполнения. Часть механизмов реализована, но не сведена в измеримый контур; часть осталась opt-in. Матрица ниже фиксирует, что именно ещё нужно закрыть, чтобы роадмап покрывал стратегию, а не только список файлов.
-
-| Утверждение CONCEPT / стратегии | Покрытие | Остаток |
-|---|---|---|
-| §13.1 — Этап 1: dual V1/V2, единая поверхность | ✅ `setup`/`server`, 34 инструмента ↔ 61 RPC, CI на 3 ОС | — |
-| §13.2 — Этап 2: Agent Executor Interface | ✅ AC-1.1…AC-1.5 (RunContext, StepExecutor, dry-run, паритет входов); EX-1.1 — runner через схему/CLI/RPC, fail-open на local; EX-1.2 — роли worker→reviewer и post-mortem/retry внутри execution loop; EX-1.3 — транспорт-независимость миссии на двух исполнителях доказана | — |
-| §13.3 — Этап 3: MCP/API и совместимость с любым агентом | ✅ `./core`, `./mcp`, рецепты, verified-chat (S-1…S-6); AD-1 — адаптивность хоста и внешний контракт `agent-steward.external-contract@1.0` | — |
-| §11.1–§11.4 — ad-hoc, local-first, гейт без irreversible, net-экономия | ✅ ROU-*, ARCH-4.*, E-*, EV-1.2 | Владелец, горизонт 28 дней и пороги зафиксированы в EXECUTION-LOOP §9 |
-| §11.5–§11.7 — переиспользование примера, паритет, eval не деградировал | ✅ EV-1.1/EV-1.3 + AC-1.4/EV-2.2 | Версионированный набор из ledger и CI-gate с откатом работают |
-| §12 — capped explore, staged LoRA | ✅ capped explore-бюджет и bandit (EV-2.3), LP-1.1/1.2/1.3 | Критерии датасета, офлайн-eval и shadow/canary с откатом зафиксированы; полный трафик не включался |
-| §12 — cost of verification, права вне write-scope | ✅ SC-1.1 + DEEP-1: кэш проверок, per-check receipts и пересчёт net-экономии с инвариантом в `report.savings`/`honestEconomy`; SC-1.2 + DEEP-2: write-scope guard deny-by-default с явным opt-in, детерминированным обнаружением конкурирующих write-заявок (worktree/session/id) и аудитом `write_scope.conflict` с обеими сторонами | — |
-
 ## Деталь 3.21 — Усиление в глубину (не расширение)
 `src/core/savings.ts`, `src/core/permissions.ts`, `src/core/worktree.ts`, `src/core/audit.ts`, `src/core/self-analysis.ts`, `src/version.ts`, `src/gui.tsx`, `TEST-PLAN.md`, `test-budget.mjs`, `test-permissions-policy.mjs`, `test-self-analysis.mjs`, `test-gui-bundle.mjs`, `test-agent-tools.mjs`, `docs/SAFETY.md`, `docs/EXECUTION-LOOP.md`
 
-Обоснование: модули стратегии (CONCEPT §11–§13, ROADMAP-STRATEGY) в основном закрыты, но несколько контуров доверия остаются непроверяемыми извне. Это не новые возможности, а углубление существующих: измеримость, аудируемость и воспроизводимость приёмки. Разбивка уточнена 25.11.2026: каждая подзадача даёт один проверяемый артефакт и закрывается своим тестом; SC-1.1/SC-1.2 уже заведены в Детали 3.20 и здесь не дублируются. DEEP-1 и DEEP-2 закрыты и перенесены в CHANGELOG. Порядок: сначала дешёвая диагностика установки (DEEP-3), затем дорогая приёмка (DEEP-4).
+Обоснование: модули стратегии (CONCEPT §11–§13, ROADMAP-STRATEGY) в основном закрыты, но несколько контуров доверия остаются непроверяемыми извне. Это не новые возможности, а углубление существующих: измеримость, аудируемость и воспроизводимость приёмки. Разбивка уточнена 25.11.2026: каждая подзадача даёт один проверяемый артефакт и закрывается своим тестом; SC-1.1/SC-1.2 и вся матрица Детали 3.20 закрыты и перенесены в CHANGELOG, здесь не дублируются. DEEP-1 и DEEP-2 закрыты и перенесены в CHANGELOG. Порядок: сначала дешёвая диагностика установки (DEEP-3), затем дорогая приёмка (DEEP-4).
 
 **Задача DEEP-3 — Версия установки видна до запуска задачи** · P2 · ⬜ (продолжение само-диагностики 1b18f55)
 - [ ] DEEP-3.1 Поднимать `plugin.reason === "identity-mismatch"` / `plugin.staleInstallation` как предупреждение в `self_analysis`; регрессия в `test-self-analysis.mjs`.
