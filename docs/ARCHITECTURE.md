@@ -243,12 +243,20 @@ applied through `PRAGMA user_version` on open. Step 11 adds functional indexes
   log/CPU progress) into the marker and `Write-Log`, while keeping PL-124 exit
   compatibility (the report is already written, exit code stays 0).
 - Durable steps currently execute through the same wrapper machinery. The runner
-  abstraction (`runner.ts` / `runner-docker.ts` / `runner-ssh.ts`, fail-open to
-  local) is wired into the production path through the `AgentInvoker` seam
-  (P-3.2): explicit invocations use `resolveRunner(...).runner.execute(...)`.
-  The agent-executor abstraction (`src/core/agents.ts` / `agents-advanced.ts`) is
-  still re-exported from `execution.ts`; enabling its retry/post-mortem policies
-  remains opt-in and does not change the default mission loop.
+  abstraction (`runner.ts` / `runner-docker.ts` / `runner-ssh.ts` / `runner-run.ts`,
+  fail-open to local) is wired into the production path through the `AgentInvoker`
+  seam (P-3.2): explicit invocations use `resolveRunner(...).runner.execute(...)`.
+  Since EX-1.1 the runner is selectable declaratively — via the `runner` field of
+  the task schema / RPC `create_task`, `steward add --runner local|docker|ssh`
+  (with `--runner-image/--runner-host/--runner-user/--runner-opt-out`), and
+  `run_mission` / ad-hoc runs. The choice is baked into the registered OS-scheduler
+  wrapper as an encoded `runner-run.js` bridge, so the scheduled run uses the same
+  transport as the interactive one. Invalid, missing or unavailable runner config
+  degrades to `local` (fail-open); `docker`/`ssh` additionally require the image/host
+  and the corresponding binary. The agent-executor abstraction
+  (`src/core/agents.ts` / `agents-advanced.ts`) is still re-exported from
+  `execution.ts`; enabling its retry/post-mortem policies remains opt-in and does
+  not change the default mission loop.
 - `checkBudgetGate` / `checkRunBudgetGate` are called at tool/RPC/manual entry
   points and on the registered OS-scheduler path via the wrapper's `--budget-gate`
   check (B-1.1, PL-125); an over-limit run is recorded as `skipped` with a reason.
@@ -452,7 +460,7 @@ SQLite-карта, и публичный сабпат `agent-steward/router`, к
 | `src/core/budget.ts` | Daily/weekly budget report and `checkBudgetGate`, 14-day `tokenEfficiencyScore` for `get_metrics` |
 | `src/core/approval-api.ts` | Approval queue facade (`list_approvals` / `decide_approval`) and auto-restart of approved plans |
 | `src/core/agents.ts`, `src/core/agents-advanced.ts` | Agent executor abstraction and advanced routing/execution paths |
-| `src/core/runner.ts`, `src/core/runner-docker.ts`, `src/core/runner-ssh.ts` | Runner abstraction and Docker/SSH implementations (`resolveRunner`, fail-open to local; wired into `AgentInvoker.invoke` — P-3.2) |
+| `src/core/runner.ts`, `src/core/runner-docker.ts`, `src/core/runner-ssh.ts`, `src/core/runner-run.ts` | Runner abstraction and Docker/SSH implementations (`resolveRunner`, fail-open to local; wired into `AgentInvoker.invoke` — P-3.2 and into scheduled wrappers via the `runner-run.js` bridge — EX-1.1) |
 | `src/core/environment.ts` | Environment resolver for runner/executor selection |
 | `src/core/matrix.ts` | Fan-out, aggregation, sync, cancel, orphan cleanup |
 | `src/core/dry-run.ts` | Pipeline simulation (topological order, commands, cwd, roles and estimates from recent runs; no execution) |

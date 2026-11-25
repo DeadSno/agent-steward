@@ -21,6 +21,12 @@ import path from "node:path";
 // QA-A2.7: безопасное приведение unknown к строке без no-base-to-string.
 import { safeStringify } from "./text.js";
 import { HARNESS_VALUES, resolveInvoker, type HarnessName } from "./invokers/agent-invoker.js";
+import {
+  RUNNER_KINDS,
+  encodeRunnerAgentDefaults,
+  normalizeRunnerConfig,
+  type RunnerConfig,
+} from "./core/runner.js";
 import { applyModelRecommendation } from "./core/dry-run.js";
 import {
   LOCK_DIR,
@@ -509,6 +515,19 @@ export function validateTaskInputRanges(input: {
   return null;
 }
 
+/**
+ * EX-1.1: выбор транспорта исполнения. Опущенное/неполное значение означает
+ * local (fail-open через resolveRunner), поэтому поле безопасно для старых
+ * клиентов и импорта выгрузок предыдущих версий.
+ */
+export const runnerTaskSchema = z.object({
+  kind: z.enum(RUNNER_KINDS).optional().describe("local (default) | docker | ssh."),
+  image: z.string().optional().describe("Docker image; required for docker (otherwise local)."),
+  host: z.string().optional().describe("SSH host; required for ssh (otherwise local)."),
+  user: z.string().optional().describe("SSH user (optional)."),
+  optOut: z.boolean().optional().describe("Explicit fail-open to local."),
+});
+
 /** Zod-схема аргументов schedule_task */
 export const scheduleTaskSchema = z.object({
   name: z
@@ -801,6 +820,11 @@ export const scheduleTaskSchema = z.object({
     .optional()
     .describe(
       "P-3.4: agent invoker for the task. Defaults to opencode CLI; unknown values are not accepted by the schema (import degrades to opencode for compatibility).",
+    ),
+  runner: runnerTaskSchema
+    .optional()
+    .describe(
+      "EX-1.1: execution transport local|docker|ssh. Omitted or incomplete config falls back to local (fail-open).",
     ),
 }).superRefine((value, ctx) => {
   const trigger = value.triggerType ?? "cron";
@@ -1104,6 +1128,10 @@ export const updateTaskSchema = z.object({
     .enum(HARNESS_VALUES)
     .optional()
     .describe("P-3.4: agent invoker for the task; omitted keeps the current harness."),
+  runner: runnerTaskSchema
+    .nullable()
+    .optional()
+    .describe("EX-1.1: new runner config; null clears it and returns to local."),
 }).superRefine((value, ctx) => {
   if (
     value.triggerType !== undefined &&
@@ -1191,6 +1219,7 @@ const CORE_FIELD_DESCRIPTIONS: Record<string, string> = {
   worktree: "Run in an isolated git worktree.",
   tokenBudget: "Maximum tokens per run.",
   harness: "Agent invoker: opencode (default) | dsh-headless | acp | cursor-cli.",
+  runner: "Execution transport: {kind: local|docker|ssh, image?, host?, user?, optOut?}; absent/incomplete → local.",
   allowedTools: "Tools the agent may use.",
   deniedTools: "Tools the agent must not use.",
   triggerType: "cron | once | file | mcp-event | git (default cron).",
@@ -1948,6 +1977,7 @@ const scheduleTaskExecute = wrapExecute<ScheduleArgs>(async (args) => {
     guards,
     tokenBudget,
     harness,
+    runner,
   } = args;
 
   // B-2: модель рекомендуется на write-пути, но явная модель всегда побеждает.
@@ -2028,6 +2058,7 @@ const scheduleTaskExecute = wrapExecute<ScheduleArgs>(async (args) => {
       autoSelectModel === true,
       modelChoice.autoSelected,
       harness,
+      runner,
     );
   } catch (err) {
     return {
@@ -2222,6 +2253,7 @@ async function cancelMatrixRun(
         undefined,
         undefined,
         clone.harness ?? definition.harness,
+        clone.runner ?? definition.runner,
       );
     } catch (err) {
       warnings.push(
@@ -2847,6 +2879,8 @@ async function updateTaskFromInput(
       modelChoice.autoSelected,
       // P-3.2: харнесс переживает пересоздание задачи.
       input.harness ?? previous.harness,
+      // EX-1.1: null явно сбрасывает runner на local; пропуск сохраняет старый.
+      input.runner === null ? undefined : (input.runner ?? previous.runner),
     );
 
     // Матрица отключена при обновлении — убираем клонов и агрегатор.
@@ -4376,6 +4410,7 @@ const transferTasksExecute = wrapExecute<TransferArgs>(async (args) => {
         undefined,
         undefined,
         def.harness,
+        def.runner,
       );
       await saveTaskDefinition(def);
       imported.push(def.name);
@@ -5797,6 +5832,7 @@ const v2Plugin = Plugin.define({
           worktree,
           guards,
           tokenBudget,
+          runner,
         } = input as {
           name: string;
           schedule?: string;
@@ -5831,6 +5867,7 @@ const v2Plugin = Plugin.define({
           worktree?: boolean;
           guards?: TaskGuards;
           tokenBudget?: number;
+          runner?: RunnerConfig;
         };
         let effectiveRunAt: string | undefined;
         if (triggerType === "once") {
@@ -5898,6 +5935,14 @@ const v2Plugin = Plugin.define({
             guards,
             // QA-P0.1 (E-2.1): создание через дашборд/RPC сохраняет tokenBudget.
             tokenBudget,
+            // EX-1.1: пропущенные параметры сохраняют прежние дефолты;
+            // runner нормализуется в local при неполной конфигурации.
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            normalizeRunnerConfig(runner),
           );
           const nextRun = computeTaskNextRun({
             schedule: schedule ?? "",
@@ -7406,6 +7451,8 @@ export async function schedulerCreateTask(
   autoSelectedModel?: boolean,
   /** P-3.2: харнесс задачи; undefined = opencode (полная обратная совместимость). */
   harness?: HarnessName,
+  /** EX-1.1: транспорт исполнения; undefined/неполный = local (fail-open). */
+  runner?: RunnerConfig,
 ): Promise<void> {
   // Спринт 27.5 (hotfix 1.5.1): проверяем имя до создания wrapper/prompt и записи
   // в БД. Недопустимые символы отклоняются с понятным сообщением, а не ошибкой
@@ -7887,14 +7934,21 @@ export async function schedulerCreateTask(
   // поэтому ротация подхватывается без пересоздания задачи.
   const sessionFile =
     effectiveSession === "reuse" ? sessionStatePath(name) : undefined;
-  // P-3.2: запекаем в обёртку только префикс команды не-opencode харнесса.
-  // Модель/сессию/промпт обёртка добавляет сама; env AGENT_* имеет приоритет.
-  const harnessDefaults =
-    harness && harness !== "opencode"
-      ? (() => {
-        const built = resolveInvoker(harness).buildCommand({ env: {} });
-        return { commandPath: built.commandPath, args: built.args };
-      })()
+  // P-3.2: запекаем в обёртку только префикс команды харнесса.
+  // EX-1.1: при выбранном runner вместо префикса запекается один base64-токен —
+  // `runner-run` разворачивает его и исполняет финальную команду через
+  // выбранный транспорт. Модель/сессию/промпт обёртка добавляет сама;
+  // env AGENT_* имеет приоритет над запечёнными дефолтами.
+  const builtHarness = resolveInvoker(harness).buildCommand({ env: {} });
+  const harnessCommand = {
+    commandPath: builtHarness.commandPath,
+    args: builtHarness.args,
+  };
+  const normalizedRunner = normalizeRunnerConfig(runner);
+  const harnessDefaults = normalizedRunner
+    ? encodeRunnerAgentDefaults({ runner: normalizedRunner, harness: harnessCommand })
+    : harness && harness !== "opencode"
+      ? harnessCommand
       : undefined;
   let wrapperPath: string;
   try {
@@ -8115,6 +8169,8 @@ export async function schedulerCreateTask(
     tokenBudget: normalizedTokenBudget,
     // P-3.2: харнесс задачи; undefined = opencode (обратная совместимость).
     ...(harness ? { harness } : {}),
+    // EX-1.1: транспорт исполнения; undefined = local (fail-open).
+    ...(normalizedRunner ? { runner: normalizedRunner } : {}),
     matrix: normalizedMatrix,
     isMatrixParent: normalizedMatrix ? true : undefined,
     matrixParentId,
@@ -8206,6 +8262,7 @@ export async function schedulerCreateTask(
         undefined,
         undefined,
         clone.harness ?? harness,
+        clone.runner ?? runner,
       );
     };
 
@@ -8428,6 +8485,7 @@ async function recreateTaskFromDefinition(definition: TaskDefinition): Promise<v
     undefined,
     undefined,
     definition.harness,
+    definition.runner,
   );
 }
 

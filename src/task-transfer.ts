@@ -16,6 +16,7 @@ import {
 import { isValidSessionId } from "./core/session.js";
 import { normalizeTaskGuards, type TaskGuards } from "./core/guard.js";
 import { HARNESS_VALUES, type HarnessName } from "./invokers/agent-invoker.js";
+import { normalizeRunnerConfig, type RunnerConfig } from "./core/runner.js";
 
 /** Триггер задачи по событию из MCP-шины. */
 export interface McpEventTrigger {
@@ -262,6 +263,11 @@ export interface TaskDefinition {
    * означает прежнее поведение (opencode CLI).
    */
   harness?: HarnessName;
+  /**
+   * EX-1.1: транспорт исполнения (local/docker/ssh). Отсутствие или неполная
+   * конфигурация означает local (fail-open) и сохраняет совместимость выгрузок.
+   */
+  runner?: RunnerConfig;
 }
 
 const PREFIX = `\\OpenCode\\${TASK_FOLDER_NAME}\\`;
@@ -444,6 +450,8 @@ export async function buildExportJson(
         : {}),
       // P-3.4: harness переживает экспорт/импорт задачи.
       ...(definition?.harness ? { harness: definition.harness } : {}),
+      // EX-1.1: runner переживает экспорт/импорт (fail-open на local).
+      ...(definition?.runner ? { runner: definition.runner } : {}),
       ...(Array.isArray(definition?.allowedTools) && definition.allowedTools.length > 0
         ? { allowedTools: definition.allowedTools }
         : {}),
@@ -699,6 +707,8 @@ export function parseImportJson(raw: string): ParsedImport {
       (HARNESS_VALUES as readonly string[]).includes(source.harness)
         ? (source.harness as HarnessName)
         : undefined;
+    // EX-1.1: некорректный runner из выгрузки деградирует в local, а не валит импорт.
+    const runner = normalizeRunnerConfig(source.runner);
 
     // Новое поле workingDirectory; workdir читаем для обратной совместимости.
     const workingDirectory =
@@ -1044,6 +1054,7 @@ export function parseImportJson(raw: string): ParsedImport {
       // QA-P0.1 (E-2.1): импорт сохраняет tokenBudget.
       ...(tokenBudget !== undefined ? { tokenBudget } : {}),
       ...(harness ? { harness } : {}),
+      ...(runner ? { runner } : {}),
       ...(mcpEvent ? { mcpEvent } : {}),
       ...(allowedTools !== undefined ? { allowedTools } : {}),
       ...(deniedTools !== undefined ? { deniedTools } : {}),

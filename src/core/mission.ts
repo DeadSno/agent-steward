@@ -50,6 +50,12 @@ import {
   type SessionMode,
 } from "./session.js";
 import { writeBashWrapper } from "./wrappers/bash.js";
+import { resolveInvoker } from "../invokers/agent-invoker.js";
+import {
+  encodeRunnerAgentDefaults,
+  normalizeRunnerConfig,
+  type RunnerConfig,
+} from "./runner.js";
 
 /**
  * Маркер начала прогона в логе задачи/миссии.
@@ -202,6 +208,8 @@ export interface MissionSpec {
   deniedTools?: string[];
   /** Только построить план и показать трассировку, не исполняя. */
   dryRun?: boolean;
+  /** EX-1.1: транспорт исполнения; omission/incomplete → local (fail-open). */
+  runner?: RunnerConfig;
 }
 
 /** Результат ad-hoc миссии. */
@@ -360,6 +368,7 @@ export function normalizeMissionSpec(input: MissionSpec): MissionSpec {
     deniedTools,
     riskClass,
     dryRun: input.dryRun === true,
+    runner: normalizeRunnerConfig(input.runner),
   };
 }
 
@@ -426,6 +435,18 @@ async function prepareWrapper(
   }
   const sessionFile = sessionMode === "reuse" ? sessionStatePath(taskName) : undefined;
   const timeoutSeconds = spec.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS;
+  // EX-1.1: при выбранном transport обёртка запускает `runner-run` с одним
+  // base64-токеном вместо прямой команды агента (fail-open внутри resolveRunner).
+  const runner = spec.runner;
+  const runnerDefaults = runner
+    ? (() => {
+      const built = resolveInvoker("opencode").buildCommand({ env: {} });
+      return encodeRunnerAgentDefaults({
+        runner,
+        harness: { commandPath: built.commandPath, args: built.args },
+      });
+    })()
+    : undefined;
 
   if (process.platform === "win32") {
     const permissionsConfig = buildOpencodeConfig({
@@ -458,6 +479,13 @@ async function prepareWrapper(
       permissionsConfig,
       { policy: context.safety.policy, legacyShell: false },
       sessionFile,
+      // worktree / helper / guards / guardHelper / gateAllowPaths — не используются в миссии.
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      runnerDefaults,
     );
     return { wrapperPath, logFile };
   }
@@ -480,6 +508,7 @@ async function prepareWrapper(
     sessionId,
     sessionFile,
     gateTimeoutSeconds: spec.gateTimeoutSeconds,
+    harnessDefaults: runnerDefaults,
   });
   return { wrapperPath, logFile };
 }

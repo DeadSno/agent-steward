@@ -22,6 +22,18 @@ const McpEventSchema = {
   required: ["server", "event"],
 } as const;
 
+/** EX-1.1: транспорт исполнения задачи/миссии (fail-open на local). */
+const RunnerSchema = {
+  type: ["object", "null"] as const,
+  properties: {
+    kind: { type: ["string", "null"], enum: ["local", "docker", "ssh", null] },
+    image: { type: ["string", "null"] },
+    host: { type: ["string", "null"] },
+    user: { type: ["string", "null"] },
+    optOut: { type: ["boolean", "null"] },
+  },
+} as const;
+
 /** Настройки matrix (fan-out, Спринт 15). */
 const MatrixSchema = {
   type: ["object", "null"] as const,
@@ -271,6 +283,8 @@ const CreateTaskInput = {
     gitIgnore: { type: "array", items: { type: "string" } },
     /** Git-триггер: период опроса в секундах (минимум 5, по умолчанию 60). */
     gitPollSeconds: { type: "number" },
+    /** EX-1.1: транспорт исполнения; неполная конфигурация → local. */
+    runner: RunnerSchema,
   },
   required: ["name", "prompt"],
 } as const;
@@ -323,6 +337,8 @@ const RunMissionInput = {
     allowedTools: { type: "array", items: { type: "string" } },
     deniedTools: { type: "array", items: { type: "string" } },
     dryRun: { type: "boolean" },
+    /** EX-1.1: транспорт исполнения миссии; неполная конфигурация → local. */
+    runner: RunnerSchema,
   },
   required: ["prompt"],
 } as const;
@@ -1649,6 +1665,8 @@ const UpdateTaskInput = {
     gitIgnore: { type: "array", items: { type: "string" } },
     /** Git-триггер: период опроса в секундах (минимум 5). */
     gitPollSeconds: { type: "number" },
+    /** EX-1.1: новый runner; null сбрасывает на local. */
+    runner: RunnerSchema,
   },
   required: ["name"],
 } as const;

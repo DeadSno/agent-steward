@@ -36,6 +36,7 @@ import { tasksToPipelineSpec } from "./core/pipeline-map.js";
 import { saveTaskDefinition, type TaskDefinition } from "./task-transfer.js";
 import { listWorkspaces } from "./workspaces.js";
 import { runMission, type MissionSpec } from "./core/mission.js";
+import { normalizeRunnerConfig, RUNNER_KINDS } from "./core/runner.js";
 import { DEBUG_ENV, debugLog, parseDebugArgs, setDebugEnabled } from "./shared/debug.js";
 
 const USAGE = `agent-steward — планировщик agent jobs
@@ -181,6 +182,15 @@ async function persistDefinition(def: TaskDefinition): Promise<void> {
     def.runWhenLoggedOff,
     def.paused,
     def.legacyShell,
+    def.worktree,
+    def.guards,
+    def.tokenBudget,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    def.runner,
   );
   await saveTaskDefinition(def);
 }
@@ -565,6 +575,10 @@ async function runAdHoc(args: string[]): Promise<number> {
     "--session",
     "--session-id",
     "--name",
+    "--runner",
+    "--runner-image",
+    "--runner-host",
+    "--runner-user",
   ]);
   let prompt: string | undefined;
   for (let index = 0; index < args.length; index++) {
@@ -581,7 +595,9 @@ async function runAdHoc(args: string[]): Promise<number> {
       "agent-steward run <prompt> [--cwd <dir>] [--gate <cmd>] [--task-type <type>] " +
         "[--model <model>] [--timeout <sec>] [--policy hybrid|secure|legacy] " +
         "[--allow-tools a,b] [--deny-tools a,b] [--session new|reuse|last] " +
-        "[--session-id ses_...] [--name <name>] [--dry-run] [--json]",
+        "[--session-id ses_...] [--runner local|docker|ssh] [--runner-image <img>] " +
+        "[--runner-host <host>] [--runner-user <user>] [--runner-opt-out] " +
+        "[--name <name>] [--dry-run] [--json]",
     );
     return 2;
   }
@@ -603,6 +619,20 @@ async function runAdHoc(args: string[]): Promise<number> {
     console.error("--session должен быть new, reuse или last.");
     return 2;
   }
+  // EX-1.1: выбор транспорта для ad-hoc миссии; неполная конфигурация
+  // нормализуется в local через resolveRunner (fail-open, без ошибки).
+  const runnerRaw = flagValue(args, "--runner");
+  if (runnerRaw && !(RUNNER_KINDS as readonly string[]).includes(runnerRaw)) {
+    console.error(`--runner должен быть ${RUNNER_KINDS.join(" | ")}.`);
+    return 2;
+  }
+  const runner = normalizeRunnerConfig({
+    kind: runnerRaw,
+    image: flagValue(args, "--runner-image"),
+    host: flagValue(args, "--runner-host"),
+    user: flagValue(args, "--runner-user"),
+    optOut: args.includes("--runner-opt-out") ? true : undefined,
+  });
 
   const spec: MissionSpec = {
     prompt,
@@ -619,6 +649,7 @@ async function runAdHoc(args: string[]): Promise<number> {
     allowedTools: listFlag(args, "--allow-tools"),
     deniedTools: listFlag(args, "--deny-tools"),
     dryRun: args.includes("--dry-run"),
+    runner,
   };
 
   initDb();

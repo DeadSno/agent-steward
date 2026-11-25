@@ -107,6 +107,70 @@ export interface ResolvedRunner {
   verdict(launch: RunnerLaunch): RunnerVerdict;
 }
 
+/** EX-1.1: единственный источник правды для поля `kind` в схемах и CLI. */
+export const RUNNER_KINDS = ["local", "docker", "ssh"] as const;
+
+/**
+ * EX-1.1: нормализация runner из схемы задачи, CLI и RPC. Неизвестные значения
+ * и неполные конфигурации деградируют в local через resolveRunner (fail-open).
+ * `deps` намеренно не принимается: это тестовая инъекция, а не данные задачи.
+ */
+export function normalizeRunnerConfig(value: unknown): RunnerConfig | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const raw = value as Record<string, unknown>;
+  const config: RunnerConfig = {};
+  if (raw.kind === "local" || raw.kind === "docker" || raw.kind === "ssh") {
+    config.kind = raw.kind;
+  }
+  const clean = (key: "image" | "host" | "user"): void => {
+    const rawValue = raw[key];
+    if (typeof rawValue === "string" && rawValue.trim()) config[key] = rawValue.trim();
+  };
+  clean("image");
+  clean("host");
+  clean("user");
+  if (raw.optOut === true) config.optOut = true;
+  return config;
+}
+
+/** EX-1.1: что запекается в обёртку после сборки команды харнесса. */
+export interface RunnerAgentDefaults {
+  runner: RunnerConfig;
+  /** Полный префикс команды агента; обёртка добавит только --model/--prompt. */
+  harness: { commandPath: string; args: string[] };
+}
+
+/**
+ * EX-1.1: кодирует выбор runner в один base64-токен без пробелов. Обе обёртки
+ * (PowerShell и bash) передают такой аргумент как одно слово, поэтому выбор
+ * транспорта переживает харнесс и не требует правки самих обёрток.
+ */
+export function encodeRunnerAgentDefaults(defaults: RunnerAgentDefaults): {
+  commandPath: string;
+  args: string[];
+} {
+  return {
+    commandPath: process.execPath,
+    args: [Buffer.from(JSON.stringify(defaults), "utf8").toString("base64")],
+  };
+}
+
+/** EX-1.1: декодирование токена в runner-run CLI; rejects malformed input. */
+export function decodeRunnerAgentDefaults(token: string): RunnerAgentDefaults {
+  const parsed = JSON.parse(Buffer.from(token, "base64").toString("utf8")) as RunnerAgentDefaults;
+  const normalized = normalizeRunnerConfig(parsed?.runner);
+  if (!normalized || !parsed?.harness?.commandPath || !Array.isArray(parsed.harness.args)) {
+    throw new Error("Runner: некорректная конфигурация запуска");
+  }
+  return {
+    runner: normalized,
+    harness: {
+      commandPath: String(parsed.harness.commandPath),
+      args: parsed.harness.args.map((arg) => String(arg)),
+    },
+  };
+}
+
 /** Возможные расширения исполняемого файла — проверяются на любой ОС. */
 const BINARY_SUFFIXES = ["", ".exe", ".cmd", ".bat", ".com"] as const;
 
