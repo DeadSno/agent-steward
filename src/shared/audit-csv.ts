@@ -48,7 +48,7 @@ export function maskAuditDetails(details: unknown): string {
     .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, "Bearer ****")
     .replace(
       /(token|secret|password|api[_-]?key|authorization)["']?\s*[:=]\s*["']?[^"',;\s]+/gi,
-      "$1: ****"
+      "$1: ****",
     );
 }
 
@@ -67,7 +67,7 @@ export function formatAuditCsv(records: readonly AuditCsvRecord[]): string {
       maskAuditDetails(record.details),
     ]
       .map(escapeCsvCell)
-      .join(",")
+      .join(","),
   );
   return `\uFEFF${[header, ...rows].join("\r\n")}\r\n`;
 }

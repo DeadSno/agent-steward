@@ -4,6 +4,7 @@
  * Запуск: node test-eslint-baseline.mjs (или npm run test:eslint-baseline).
  */
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import url from "node:url";
@@ -17,7 +18,11 @@ import {
 
 const root = path.dirname(url.fileURLToPath(import.meta.url));
 const results = [];
-function check(name, fn) {
+function check(name, fn, skip = false) {
+  if (skip) {
+    console.log(`SKIP ${name}: ESLint не установлен (нет node_modules)`);
+    return;
+  }
   try {
     fn();
     results.push(true);
@@ -143,6 +148,45 @@ check("QW-14.1: в flat-конфиге нет несуществующего @ty
   assert.ok(!config.includes("База: eslint:recommended"));
   assert.ok(config.includes("@typescript-eslint/recommended-type-checked + stylistic-type-checked"));
 });
+
+// QA-D316-1: baseline «0 errors» должен совпадать с реальным прогоном ESLint.
+// Воспроизведение: npm run lint падал с exit 1 при 23 errors, хотя
+// eslint-baseline.json объявлял totals.errors = 0 и afterScript pl-commit.ps1
+// никогда не коммитил/пушил результат задачи.
+const eslintBin = path.join(root, "node_modules", "eslint", "bin", "eslint.js");
+check("QA-D316-1: реальный прогон ESLint (JSON-formatter) даёт 0 errors", () => {
+  const result = spawnSync(process.execPath, [eslintBin, "src", "--format", "json"], {
+    cwd: root,
+    encoding: "utf8",
+    maxBuffer: 32 * 1024 * 1024,
+  });
+  assert.ifError(result.error);
+  assert.equal(
+    result.status,
+    0,
+    `ESLint завершился с кодом ${result.status}. stderr: ${(result.stderr ?? "").slice(0, 2000)}`,
+  );
+  let reports;
+  try {
+    reports = JSON.parse(result.stdout);
+  } catch (error) {
+    throw new Error(
+      `Не удалось разобрать JSON-вывод ESLint: ${error.message}. stdout: ${(result.stdout ?? "").slice(0, 2000)}`,
+    );
+  }
+  const errors = reports.reduce((sum, report) => sum + report.errorCount, 0);
+  if (errors > 0) {
+    const details = reports
+      .filter((report) => report.errorCount > 0)
+      .map((report) => ({
+        file: path.relative(root, report.filePath).replaceAll("\\", "/"),
+        messages: report.messages
+          .filter((message) => message.severity === 2)
+          .map((message) => `${message.ruleId}:${message.line}`),
+      }));
+    throw new Error(`ESLint нашёл ${errors} errors: ${JSON.stringify(details)}`);
+  }
+}, !fs.existsSync(eslintBin));
 
 const failed = results.filter((ok) => !ok).length;
 console.log(`\nESLint baseline: ${results.length - failed}/${results.length} проверок пройдено.`);

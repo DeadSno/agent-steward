@@ -126,7 +126,7 @@ export function createCapabilityRouter(
     if (rule && !(learnedOverridesStatic && record && record.runsTotal >= thresholds.minRuns)) {
       return {
         ...learned,
-        target: rule.executor as CapabilityTarget,
+        target: rule.executor,
         reason: "static-rule",
         source: "static",
         transport: rule.transport,
@@ -137,7 +137,7 @@ export function createCapabilityRouter(
 
   if (initial) {
     if (initial.version !== CAPABILITY_ROUTER_SNAPSHOT_VERSION) {
-      throw new Error(`S-2: неизвестная версия снимка роутера: ${initial.version}.`);
+      throw new Error(`S-2: неизвестная версия снимка роутера: ${String(initial.version)}.`);
     }
     const restored = normalizeThresholds(initial.thresholds);
     if (
@@ -179,7 +179,7 @@ export function createCapabilityRouter(
     },
     restore: (snapshot) => {
       if (snapshot.version !== CAPABILITY_ROUTER_SNAPSHOT_VERSION) {
-        throw new Error(`S-2: неизвестная версия снимка роутера: ${snapshot.version}.`);
+        throw new Error(`S-2: неизвестная версия снимка роутера: ${String(snapshot.version)}.`);
       }
       const restored = normalizeThresholds(snapshot.thresholds);
       if (

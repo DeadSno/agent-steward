@@ -264,7 +264,7 @@ function legacyRunsRequireStartedAt(): boolean {
   try {
     const columns = getDb()
       .prepare("PRAGMA table_info(runs)")
-      .all() as Array<{ name: string; notnull: number }>;
+      .all() as { name: string; notnull: number }[];
     return columns.some(
       (column) => column.name === "started_at" && Number(column.notnull) === 1,
     );

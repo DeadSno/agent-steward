@@ -165,18 +165,18 @@ export function buildReliabilityScorecard(
 
   const topLimit = Math.max(1, Math.floor(options.topLimit ?? 10));
   const minObjectiveGates = Number.isInteger(options.minObjectiveGates) &&
-    (options.minObjectiveGates as number) >= 1
-    ? (options.minObjectiveGates as number)
+    (options.minObjectiveGates!) >= 1
+    ? (options.minObjectiveGates!)
     : MIN_OBJECTIVE_GATES_FOR_SCORE;
 
-  const savings = computeSavings(runs as SavingsRecord[], {
+  const savings = computeSavings(runs, {
     referenceCostPer1kTokensUsd: options.referenceCostPer1kTokensUsd,
     topLimit,
   });
 
   let counted = 0;
   let paid = 0;
-  for (const record of runs as SavingsRecord[]) {
+  for (const record of runs) {
     if (String(record?.status ?? "") === "running") continue;
     const tokens = positiveNumber(record?.tokens);
     if (tokens <= 0) continue;
@@ -220,13 +220,13 @@ export function buildReliabilityScorecard(
     if (!row) continue;
     row.firstPassRate = row.passed > 0
       ? roundRate(
-          objective.filter(
-            (item) =>
-              item.taskName.trim() === row.taskName &&
+        objective.filter(
+          (item) =>
+            item.taskName.trim() === row.taskName &&
               item.passed &&
               (item.attempts === undefined || item.attempts === 1),
-          ).length / row.objective,
-        )
+        ).length / row.objective,
+      )
       : 0;
     row.passRate = roundRate(row.passed / row.objective);
   }

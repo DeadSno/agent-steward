@@ -90,7 +90,7 @@ export function createMcpServer(env: NodeJS.ProcessEnv = process.env): McpServer
       return {
         content: [{ type: "text" as const, text: JSON.stringify({ results }, null, 2) }],
       };
-    }) as never,
+    }),
   );
 
   // P-2.2: SKILL.md как ресурс + как промпт.

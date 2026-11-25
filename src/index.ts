@@ -1725,7 +1725,7 @@ export const getAuditLogSchema = z.object({
   format: z
     .enum(["json", "csv"])
     .optional()
-    .describe('D10: вывести CSV (с BOM) вместо JSON. Секреты в details маскируются.'),
+    .describe("D10: вывести CSV (с BOM) вместо JSON. Секреты в details маскируются."),
 });
 
 type ScheduleArgs = z.infer<typeof scheduleTaskSchema>;
@@ -7781,9 +7781,9 @@ export async function schedulerCreateTask(
   const harnessDefaults =
     harness && harness !== "opencode"
       ? (() => {
-          const built = resolveInvoker(harness).buildCommand({ env: {} });
-          return { commandPath: built.commandPath, args: built.args };
-        })()
+        const built = resolveInvoker(harness).buildCommand({ env: {} });
+        return { commandPath: built.commandPath, args: built.args };
+      })()
       : undefined;
   let wrapperPath: string;
   try {

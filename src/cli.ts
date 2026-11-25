@@ -259,7 +259,7 @@ async function runScorecard(args: string[]): Promise<number> {
   }
   let card;
   try {
-    card = buildReliabilityScorecard(input as Parameters<typeof buildReliabilityScorecard>[0]);
+    card = buildReliabilityScorecard(input);
   } catch (err) {
     console.error(`Некорректные данные scorecard: ${err instanceof Error ? err.message : String(err)}`);
     return 1;

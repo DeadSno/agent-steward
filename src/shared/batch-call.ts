@@ -65,7 +65,7 @@ export async function executeBatchCalls(
       continue;
     }
     try {
-      const parsed = (spec.input as z.ZodTypeAny).parse(call.args ?? {}) as unknown;
+      const parsed = (spec.input).parse(call.args ?? {});
       const raw = await (spec.execute as (args: unknown) => unknown)(parsed);
       results.push({ index, name, ok: true, result: textOf(raw) });
     } catch (err) {
