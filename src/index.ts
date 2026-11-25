@@ -8934,7 +8934,11 @@ async function collectTasksView() {
   const orphanNames = defs
     .filter((def) => !osNames.has(def.name.toLowerCase()))
     .map((def) => def.name);
-  const sources: { task: (typeof tasks)[number]; orphaned: boolean }[] = [
+  const sources: {
+    task: (typeof tasks)[number];
+    orphaned: boolean;
+    archived?: boolean;
+  }[] = [
     ...tasks.map((task) => ({ task, orphaned: false })),
     ...orphanNames.map((name) => ({
       task: { taskName: name },
@@ -8942,7 +8946,22 @@ async function collectTasksView() {
     })),
   ];
 
-  const view = sources.map(({ task: t, orphaned }) => {
+  // QA-ARCHIVE: история хранит прогоны удалённых задач (в воспроизведении —
+  // `gui`: 130 записей без definition). Показываем их как archived-записи,
+  // чтобы счётчики list_tasks и истории не расходились молча.
+  const knownNames = new Set(sources.map(({ task }) => (task.taskName || "").toLowerCase()));
+  for (const [name, last] of lastByTask) {
+    if (knownNames.has(name) || !name) continue;
+    sources.push({
+      task: { taskName: name, status: last?.status ?? "" },
+      orphaned: true,
+      archived: true,
+    });
+    knownNames.add(name);
+  }
+
+  const nowMs = Date.now();
+  const view = sources.map(({ task: t, orphaned, archived }) => {
     // Все бэкенды возвращают короткие имена (без папки планировщика).
     const name = t.taskName || "";
 
@@ -8997,6 +9016,10 @@ async function collectTasksView() {
       timeoutSeconds: def?.timeoutSeconds ?? null,
       status,
       orphaned,
+      /** QA-STALE: сирота/просроченный once — кандидат на уборку. */
+      stale: isStaleTaskView(orphaned, def, nowMs),
+      /** QA-ARCHIVE: прогон есть, definition удалён. */
+      archived: Boolean(archived),
       // Спринт 24 (фикс): явный признак паузы. Раньше GUI пытался вывести его
       // из текстового статуса, но mapStatus() превращает "disabled" в "unknown",
       // поэтому кнопка «возобновить» была недоступна.
@@ -9131,6 +9154,21 @@ export function normalizeTaskStatus(
     status = fromHistory ?? "idle";
   }
   return status;
+}
+
+/**
+ * QA-STALE: задача-сирота или разовый запуск с прошедшим временем — мусор,
+ * который core-пользователь должен видеть и иметь возможность удалить.
+ */
+export function isStaleTaskView(
+  orphaned: boolean,
+  def: { triggerType?: string; runAt?: string | null } | undefined,
+  nowMs: number,
+): boolean {
+  if (orphaned) return true;
+  if (def?.triggerType !== "once") return false;
+  const moment = def?.runAt ? Date.parse(def.runAt) : Number.NaN;
+  return Number.isFinite(moment) && moment < nowMs;
 }
 
 /** Превращает текстовый статус планировщика в короткий статус для GUI. */

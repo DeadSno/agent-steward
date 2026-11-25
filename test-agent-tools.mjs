@@ -33,6 +33,7 @@ const {
   coreScheduleTaskSchema,
   coreUpdateTaskSchema,
   normalizeTaskStatus,
+  isStaleTaskView,
 } = await import("./dist/index.js");
 const {
   CHILD_RUN_ENV,
@@ -424,8 +425,8 @@ check(
 const defaultNames = defaultSpecs.map((spec) => spec.name);
 const adminNames = adminSpecs.map((spec) => spec.name);
 check(
-  `QA-PORT-4/T-1: дефолтный профиль core = 10 инструментов, включая emit_event (${defaultSpecs.length})`,
-  defaultSpecs.length === 10 &&
+  `QA-PORT-4/T-1: дефолтный профиль core = 11 инструментов, включая emit_event и delete_task (${defaultSpecs.length})`,
+  defaultSpecs.length === 11 &&
     defaultNames.includes("schedule_task") &&
     defaultNames.includes("list_tasks") &&
     defaultNames.includes("emit_event") &&
@@ -433,14 +434,14 @@ check(
 );
 check(
   `QA-PORT-4/T-1/T-3: профиль admin = core + manage_* + advanced (${adminSpecs.length})`,
-  adminSpecs.length === 19 &&
+  adminSpecs.length === 20 &&
     adminNames.filter((name) => name.startsWith("manage_")).length === 6 &&
     adminNames.includes("schedule_advanced") &&
     adminNames.includes("update_advanced")
 );
 check(
   "T-1: невалидное значение профиля безопасно падает в core",
-  createToolSpecs({}, { AGENT_STEWARD_TOOL_PROFILE: "bogus" }).length === 10
+  createToolSpecs({}, { AGENT_STEWARD_TOOL_PROFILE: "bogus" }).length === 11
 );
 
 // T-2: «толстые» поля доступны только в advanced-инструментах; базовые схемы
@@ -777,7 +778,7 @@ check(
 );
 check(
   `T-1.2/T-1.4: дефолтный профиль ≤ 6k токенов (факт: ${coreSurface.estimatedTokens})`,
-  coreSurface.tools === 10 &&
+  coreSurface.tools === 11 &&
     coreSurface.estimatedTokens > 0 &&
     coreSurface.estimatedTokens <= 6000 &&
     coreSurface.estimatedTokens < surface.estimatedTokens / 3
@@ -1251,6 +1252,35 @@ check(
     "QA-STATUS-SYNC: list_tasks использует normalizeTaskStatus",
     /normalizeTaskStatus\(t\.status,/.test(source) &&
       /listRunningRecords\(\)\.map\(/.test(source)
+  );
+}
+
+// QA-STALE/QA-ARCHIVE: уборка мусора и видимость удалённых задач в core-профиле.
+{
+  const now = Date.parse("2026-11-25T12:00:00Z");
+  check(
+    "QA-STALE: сирота помечается stale",
+    isStaleTaskView(true, undefined, now) === true
+  );
+  check(
+    "QA-STALE: просроченный once помечается stale",
+    isStaleTaskView(false, { triggerType: "once", runAt: "2026-11-20T10:00:00Z" }, now) === true
+  );
+  check(
+    "QA-STALE: будущий once и cron не помечаются stale",
+    isStaleTaskView(false, { triggerType: "once", runAt: "2026-11-26T10:00:00Z" }, now) === false &&
+      isStaleTaskView(false, { triggerType: "cron", runAt: "2026-11-20T10:00:00Z" }, now) === false
+  );
+  const source = fs.readFileSync(new URL("./dist/index.js", import.meta.url), "utf8");
+  check(
+    "QA-ARCHIVE: история без definition попадает в list_tasks как archived",
+    source.includes("archived: true") &&
+      source.includes("stale: isStaleTaskView(orphaned, def, nowMs)")
+  );
+  check(
+    "QA-STALE: delete_task доступен в core-профиле",
+    defaultSpecs.filter((spec) => spec.name === "delete_task").length === 1 &&
+      coreSurface.tools === 11
   );
 }
 

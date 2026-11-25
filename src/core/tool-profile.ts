@@ -21,6 +21,8 @@ export const CORE_TOOL_NAMES = [
   "schedule_task",
   "update_task",
   "list_tasks",
+  // QA-STALE: уборка осиротевших/просроченных задач доступна без admin-профиля.
+  "delete_task",
   "run_task_now",
   "get_history",
   "get_task_logs",

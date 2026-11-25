@@ -435,7 +435,7 @@ SQLite-карта, и публичный сабпат `agent-steward/router`, к
 | Path | Role |
 | --- | --- |
 | `src/index.ts` | Plugin lifecycle, 34 agent tools (filtered by tool profile), 61 RPC handlers, task CRUD, view assembly; `dry_run`, `compact` history and short core-tool schemas |
-| `src/core/tool-profile.ts` | Tool profiles `core` (10 read/control tools incl. `emit_event`), `admin` (+9 advanced/manage tools), `all` (full 34); `AGENT_STEWARD_TOOL_PROFILE` selects the surface |
+| `src/core/tool-profile.ts` | Tool profiles `core` (11 read/control tools incl. `emit_event` and `delete_task` for stale-task cleanup), `admin` (+9 advanced/manage tools), `all` (full 34); `AGENT_STEWARD_TOOL_PROFILE` selects the surface |
 | `src/rpc.ts` | JSON-schema contracts for every RPC method |
 | `src/gui.tsx` | OpenCode sidebar panel (SolidJS, built to `gui-experimental.cjs`) |
 | `src/server.ts` | Local web dashboard HTTP server and HTML rendering |
@@ -607,9 +607,9 @@ block and `GET /api/history/export` serves CSV/JSON.
 The 3.10/3.11 work reduced the agent's token bill without changing the execution
 semantics:
 
-- **Tool profiles** (`src/core/tool-profile.ts`): `core` exposes 10 tools
-  (`schedule_task`, `update_task`, `list_tasks`, `run_task_now`, `get_history`,
-  `get_task_logs`, `dry_run`, `get_dashboard_info`, `backup_db`, `emit_event`),
+- **Tool profiles** (`src/core/tool-profile.ts`): `core` exposes 11 tools
+  (`schedule_task`, `update_task`, `list_tasks`, `delete_task`, `run_task_now`,
+  `get_history`, `get_task_logs`, `dry_run`, `get_dashboard_info`, `backup_db`, `emit_event`),
   `admin` adds 9 advanced/manage tools and `all` exposes all 34.
   `AGENT_STEWARD_TOOL_PROFILE` selects the profile and
   `filterToolSpecsByProfile` applies it at registration time. The 17 "thick" schema
