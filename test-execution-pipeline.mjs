@@ -999,6 +999,78 @@ check(
   pl94CloudSeen[0].compiledContext?.contextHash !== pl94LocalSeen[0].compiledContext?.contextHash,
 );
 
+// --- EV-2.1: пример из learning-loop реально переиспользуется в прогоне ----
+const ev21Evidence = path.join(tempRoot, "ev21-pass-example.log");
+const ev21EvidenceText = "EV-2.1 gate-passed evidence from the first run";
+fs.writeFileSync(ev21Evidence, ev21EvidenceText);
+const ev21Recorded = capability.recordGateVerdict({
+  outcomeKey: "ev21-source-pass",
+  taskType: "run_tests",
+  gateKey: "ev21-gate",
+  verdict: "pass",
+  attemptsToPass: 1,
+  firstPass: true,
+  runId: "ev21-first-run",
+  evidencePath: ev21Evidence,
+});
+check(
+  "EV-2.1: gate-passed вердикт обновил capability-карту",
+  ev21Recorded.capabilityUpdated === true && capability.getCapability("run_tests") !== null,
+);
+const ev21Plan = await ac1.buildExecutionPlan(
+  ac1.createAdHocRunContext("EV-2.1 reuse run", {
+    taskName: "ev21-reuse",
+    cwd: tempRoot,
+    taskType: "run_tests",
+    riskClass: "R0",
+  }),
+  {
+    compileContext: {
+      files: { [ev21Evidence]: ev21EvidenceText },
+      maxExamples: 20,
+      tokenBudget: 4000,
+    },
+  },
+);
+const ev21Compiled = ev21Plan.steps[0].compiledContext;
+const ev21Example = ev21Compiled?.examples.find(
+  (item) => item.outcomeKey === "ev21-source-pass",
+);
+check(
+  "EV-2.1: пример из learning-loop попал в CompiledContext",
+  Boolean(ev21Example) && ev21Example.learningLoop === true &&
+    ev21Example.fromRunId === "ev21-first-run",
+);
+const ev21Seen = [];
+const ev21Executor = {
+  id: "local",
+  supports: (route) => route.executor === "local",
+  execute: (input) => {
+    ev21Seen.push(input);
+    return { output: "ev21-ok" };
+  },
+};
+const ev21Run = await ac1.executeExecutionPlan(ev21Plan, { executors: [ev21Executor] });
+check("EV-2.1: второй прогон завершён", ev21Run.status === "passed");
+check(
+  "EV-2.1: исполнитель получил ключ gate-passed примера",
+  ev21Seen.length === 1 &&
+    Array.isArray(ev21Seen[0].reusedExampleKeys) &&
+    ev21Seen[0].reusedExampleKeys.includes("ev21-source-pass"),
+);
+const ev21Reuse = ac1.verifyExecutionExampleReuse(
+  ev21Seen[0]?.compiledContext,
+  ev21Seen[0]?.reusedExampleKeys ?? [],
+  ev21Run.runId,
+);
+check(
+  "EV-2.1: реальное переиспользование подтверждено в последующем прогоне",
+  ev21Reuse.verified === true && ev21Reuse.reason === "reused" &&
+    ev21Reuse.examples.some(
+      (item) => item.fromRunId === "ev21-first-run" && item.usedInRunId === ev21Run.runId,
+    ),
+);
+
 // --- PL-91: вебхук — отдельный trigger_kind, а не «manual» -----------------
 // origin=registered: у ad-hoc triggerKindFor всегда вернёт «adhoc», поэтому
 // проверяем именно зарегистрированный вход (как у POST /api/hooks/:task).

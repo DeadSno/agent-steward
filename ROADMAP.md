@@ -29,6 +29,8 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 
 Все находки QA-D316-21…37 закрыты, удалены отсюда и перенесены в [CHANGELOG.md](./CHANGELOG.md). Раздел намеренно пуст — новые находки вносятся только по факту воспроизведения.
 
+- PL-134/idle без артефактов маскируется под success, если qualityGate тривиален: `src/core/ps-wrapper.ts:1681-1683,1788-1816`, задача `EV-2 QA plugin smoke` (non-OS-bound worktree, 25.11.2026) — дочерний агент простаивал 60 с и был снят сторожем (`PL-134: агент не отвечает`, `PL-124: дерево снято`), не произвёл ни одного изменения, но `echo OK>ev2qa.passed` прошёл и `get_history` показал `status=success`, `error="PL-81: quality gate passed"`. Проверка QA-D316-10 сбрасывает gate только при `agentArtifactPresent=true`, а QA-D316-26/29 запрещают гейт при `childIdleCompleted` только в ветке `$runQualityGate` — здесь гейт запустился уже после финализации idle. — P1. Действие: запрещать success при `childIdleCompleted` независимо от артефактов (status `partial`/`error` с причиной PL-134), либо требовать подтверждающий артефакт до старта qualityGate; добавить регрессию в `test-execution-hardening.mjs`. Обнаружено 25.11.2026.
+
 
 ## Деталь 3.20 — Матрица покрытия стратегии и незакрытые контуры
 `docs/CONCEPT.md` §11/§12/§13, `ROADMAP-STRATEGY.md`, `docs/ARCHITECTURE.md` Known limitations, `docs/EXECUTION-LOOP.md` §7–§9, `src/core/execution.ts`, `src/core/self-analysis.ts`, `src/db/capability-repo.ts`, `test-budget.mjs`, `test-permissions-policy.mjs`
@@ -51,7 +53,6 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 - [ ] EV-1.3 Добавить CI-gate «eval не деградировал»: baseline, порог, откат при нарушении; гейт считается пройденным только вместе с метриками EV-1.2.
 
 **Задача EV-2 — Замкнутая петля обучения** · P1 · ⬜
-- [ ] EV-2.1 Передавать gate-passed пример из learning-loop в `CompiledContext` и проверять реальное переиспользование в последующем прогоне, а не только факт записи в capability-карту.
 - [ ] EV-2.2 Явно проверить §11.6 — паритет ad-hoc и registered по маршруту и вердикту поверх уже закрытого паритета RunContext/AC-1.4.
 - [ ] EV-2.3 Включить capped explore-бюджет и bandit-выбор между локальным и внешним исполнителем, с жёсткой границей бюджета по EXECUTION-LOOP §7.
 

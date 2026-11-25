@@ -26,6 +26,7 @@ import {
   type GateVerdictValue,
 } from "../db/runs-repo.js";
 import { runStepStatefullyAsync } from "../db/run-journal.js";
+import { verifyExampleReuse } from "../db/run-context.js";
 import type { CompiledContext, CompileContextOptions } from "../db/run-context.js";
 import { isGateQuarantined, recordGateVerdict } from "../db/capability-repo.js";
 import {
@@ -468,6 +469,21 @@ export function writeGateOutcome(options: WriteGateOutcomeOptions): GateOutcomeR
   });
 }
 
+/**
+ * EV-2.1: проверка реального переиспользования gate-passed примера в прогоне.
+ * `usedKeys` должны быть ключами, реально переданными исполнителю шага.
+ */
+export function verifyExecutionExampleReuse(
+  compiledContext: CompiledContext | undefined,
+  usedKeys: readonly string[],
+  runId: string | null = null,
+): ReturnType<typeof verifyExampleReuse> {
+  if (!compiledContext) {
+    return { verified: false, reason: "no-examples", examples: [] };
+  }
+  return verifyExampleReuse(compiledContext, usedKeys, runId);
+}
+
 /** Один шаг плана с готовым маршрутом (AC-1.3: трассировка). */
 export interface PlannedStep extends MissionStep {
   order: number;
@@ -592,6 +608,8 @@ export interface StepExecutionInput {
   plan: ExecutionPlan;
   /** PL-94: детерминированный контекст из ledger (может отсутствовать в старых планах). */
   compiledContext?: CompiledContext;
+  /** EV-2.1: ключи примеров, реально переданные исполнителю. */
+  reusedExampleKeys?: string[];
 }
 
 /** Результат исполнителя шага. */
@@ -661,6 +679,8 @@ export interface OpenCodeInvocation {
   context: RunContext;
   /** PL-94: хэш скомпилированного контекста для трассировки прогона. */
   contextHash?: string;
+  /** EV-2.1: ключи gate-passed примеров, переданных исполнителю. */
+  reusedExampleKeys?: string[];
 }
 
 export function createOpenCodeExecutor(
@@ -671,7 +691,7 @@ export function createOpenCodeExecutor(
     id,
     descriptor: { kind: "opencode" },
     supports: (route) => route.executor !== null,
-    async execute({ step, context, plan, compiledContext }) {
+    async execute({ step, context, plan, compiledContext, reusedExampleKeys }) {
       const output = await invoke({
         prompt: plan.context.prompt,
         cwd: plan.context.cwd,
@@ -681,6 +701,7 @@ export function createOpenCodeExecutor(
         step,
         context,
         ...(compiledContext ? { contextHash: compiledContext.contextHash } : {}),
+        ...(reusedExampleKeys ? { reusedExampleKeys } : {}),
       });
       return { output };
     },
@@ -1287,6 +1308,7 @@ async function executeStepWithEscalation(
       context: plan.context,
       plan,
       compiledContext,
+      reusedExampleKeys: compiledContext?.examples.map((example) => example.outcomeKey) ?? [],
     });
     const agentExitCode =
       typeof result.exitCode === "number" ? result.exitCode : result.error ? 1 : 0;
@@ -1625,6 +1647,8 @@ export async function executeExecutionPlan(
           context: plan.context,
           plan,
           compiledContext: step.compiledContext,
+          reusedExampleKeys:
+            step.compiledContext?.examples.map((example) => example.outcomeKey) ?? [],
         });
         // PL-62: код выхода процесса агента — ещё не вердикт. Даже при
         // ненулевом коде запускаем гейт, если агент оставил артефакты/вывод.

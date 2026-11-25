@@ -49,6 +49,7 @@ const repo = await import("./dist/db/runs-repo.js");
 const journal = await import("./dist/db/run-journal.js");
 const resume = await import("./dist/db/run-resume.js");
 const context = await import("./dist/db/run-context.js");
+const capability = await import("./dist/db/capability-repo.js");
 
 initDb(dbPath);
 
@@ -343,6 +344,24 @@ repo.recordGateOutcome({
   createdAt: "2026-01-01T00:01:00.000Z",
 });
 
+// EV-2.1: learning-loop = карта задачи + gate-passed пример с известным runId.
+const ev2Evidence = path.join(tempRoot, "ev2-learning-loop-example.txt");
+fs.writeFileSync(ev2Evidence, "gate-passed ev2 learning-loop evidence");
+capability.recordGateVerdict({
+  outcomeKey: "ev21-learning-loop-pass",
+  taskType: "run_tests",
+  gateKey: "ev21-gate",
+  verdict: "pass",
+  attemptsToPass: 1,
+  firstPass: true,
+  runId: "ev21-source-run",
+  evidencePath: ev2Evidence,
+});
+assert(
+  capability.getCapability("run_tests") !== null,
+  "EV-2.1: карта способности создана learning-loop",
+);
+
 const compileFiles = {
   "src/core/router/rules.ts": "export const RULES = 1; API_KEY=abc123",
   "src/core/router/dispatch.ts": "export function route() {}",
@@ -351,6 +370,7 @@ const compileFiles = {
   "src/db/capability-repo.ts": "duplicate payload",
   "src/core/execution.ts": "duplicate payload",
   [evidenceFile]: "gate example token=secretvalue run_tests",
+  [ev2Evidence]: "gate-passed ev2 learning-loop evidence",
 };
 const compileOptions = {
   taskType: "run_tests",
@@ -399,6 +419,49 @@ assert(
 assert(
   !compiled.examples.some((item) => item.outcomeKey === "arch5-example-fail"),
   "проваленный гейт в примеры не попал",
+);
+const ev2Example = compiled.examples.find(
+  (item) => item.outcomeKey === "ev21-learning-loop-pass",
+);
+assert(
+  ev2Example !== undefined &&
+    ev2Example.learningLoop === true &&
+    ev2Example.fromRunId === "ev21-source-run",
+  "EV-2.1: пример помечен как learning-loop и адресует исходный runId",
+);
+assert(
+  !compiled.examples.some((item) => item.learningLoop === false),
+  "EV-2.1: все примеры этого типа помечены как learning-loop",
+);
+
+// EV-2.1: проверка реального переиспользования, а не только записи в карту.
+const reusedKeys = compiled.examples.map((item) => item.outcomeKey);
+const reuseOk = context.verifyExampleReuse(compiled, reusedKeys, "ev21-next-run");
+assert(
+  reuseOk.verified === true &&
+    reuseOk.reason === "reused" &&
+    reuseOk.examples.every(
+      (item) => item.reused && item.usedInRunId === "ev21-next-run",
+    ),
+  "EV-2.1: все примеры реально переданы исполнителю",
+);
+assert(
+  reuseOk.examples.some((item) => item.fromRunId === "ev21-source-run"),
+  "EV-2.1: отчёт о переиспользовании сохраняет источник примера",
+);
+const reuseNone = context.verifyExampleReuse(compiled, []);
+assert(
+  reuseNone.verified === false && reuseNone.reason === "not-reused",
+  "EV-2.1: пустой вызов исполнителя не считается переиспользованием",
+);
+const reusePartial = context.verifyExampleReuse(compiled, [reusedKeys[0]]);
+assert(
+  reusePartial.verified === false && reusePartial.reason === "partial",
+  "EV-2.1: частичная передача примеров не считается полным переиспользованием",
+);
+assert(
+  context.verifyExampleReuse({ ...compiled, examples: [] }, []).reason === "no-examples",
+  "EV-2.1: отсутствие примеров явно фиксируется",
 );
 
 // Воспроизводимость: тот же ledger и параметры дают тот же хэш.

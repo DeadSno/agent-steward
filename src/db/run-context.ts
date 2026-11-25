@@ -12,6 +12,7 @@ import {
   type RunStepRecord,
 } from "./runs-repo.js";
 import { requireRun } from "./run-journal.js";
+import { getCapability } from "./capability-repo.js";
 import { safeStringify } from "../text.js";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -524,6 +525,57 @@ export interface ContextExample {
   evidencePath: string | null;
   content: string;
   createdAt: string;
+  /** EV-2.1: пример появился из learning-loop (карта + gate-passed ledger). */
+  learningLoop: boolean;
+  /** EV-2.1: запуск, чей gate-вердикт стал источником примера. */
+  fromRunId: string | null;
+}
+
+/** EV-2.1: проверка, что пример реально дошёл до исполнителя. */
+export interface ExampleReuseEntry {
+  outcomeKey: string;
+  evidencePath: string | null;
+  fromRunId: string | null;
+  usedInRunId: string | null;
+  learningLoop: boolean;
+  reused: boolean;
+}
+
+/** EV-2.1: результат сверки ключей примера с фактическим вызовом исполнителя. */
+export interface ExampleReuseVerification {
+  verified: boolean;
+  reason: "no-examples" | "not-reused" | "partial" | "reused";
+  examples: ExampleReuseEntry[];
+}
+
+/**
+ * EV-2.1: сверяет outcomeKey примеров CompiledContext с ключами, реально
+ * переданными исполнителю. Факт записи в capability-карту сам по себе
+ * доказательством переиспользования не является.
+ */
+export function verifyExampleReuse(
+  compiled: CompiledContext,
+  usedKeys: readonly string[],
+  usedInRunId: string | null = null,
+): ExampleReuseVerification {
+  const used = new Set(usedKeys.map((key) => String(key)));
+  const entries: ExampleReuseEntry[] = compiled.examples.map((example) => ({
+    outcomeKey: example.outcomeKey,
+    evidencePath: example.evidencePath,
+    fromRunId: example.fromRunId,
+    usedInRunId,
+    learningLoop: example.learningLoop,
+    reused: used.has(example.outcomeKey),
+  }));
+  if (entries.length === 0) {
+    return { verified: false, reason: "no-examples", examples: [] };
+  }
+  const reusedCount = entries.filter((entry) => entry.reused).length;
+  if (reusedCount === 0) return { verified: false, reason: "not-reused", examples: entries };
+  if (reusedCount < entries.length) {
+    return { verified: false, reason: "partial", examples: entries };
+  }
+  return { verified: true, reason: "reused", examples: entries };
 }
 
 /** Собранный контекст шага: полностью выводим из ledger и карты. */
@@ -650,6 +702,10 @@ export function compileRunContext(options: CompileContextOptions): CompiledConte
   }
 
   // --- Примеры: только gate-passed строки ledger с совпавшим типом -----------
+  // EV-2.1: наличие записи в capability-карте помечает пример как продукт
+  // learning-loop; источник прямо адресуется runId строки ledger.
+  const capability = getCapability(taskType);
+  const learningLoop = capability !== null;
   const examples: ContextExample[] = [];
   const seenEvidence = new Set<string>();
   const passed = readGateOutcomeLedger()
@@ -678,6 +734,8 @@ export function compileRunContext(options: CompileContextOptions): CompiledConte
       evidencePath,
       content,
       createdAt: row.createdAt,
+      learningLoop,
+      fromRunId: row.runId ?? null,
     });
   }
 
