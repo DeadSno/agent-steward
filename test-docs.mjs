@@ -939,6 +939,19 @@ check(
   markdownFiles.length > 0 && brokenDocLinks.length === 0
 );
 
+// QA-DIST: предпроверка согласованности dist обязательна для параллельных прогонов.
+{
+  const runner = fs.readFileSync(path.join(root, "scripts/run-tests.mjs"), "utf8");
+  const smoke = fs.readFileSync(path.join(root, "scripts/check-dist-coherence.mjs"), "utf8");
+  check(
+    "QA-DIST: run-tests вызывает smoke импорта dist до старта сюит",
+    runner.includes("scripts/check-dist-coherence.mjs") &&
+      runner.indexOf("spawnSync(") < runner.indexOf("let suites = pkg.scripts.test") &&
+      smoke.includes("consumeExploreUsage") &&
+      smoke.includes("dist/core/execution.js")
+  );
+}
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\nDocs: ${results.length - failed.length}/${results.length} проверок пройдено.`);
 process.exit(failed.length > 0 ? 1 : 0);

@@ -14,7 +14,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -69,6 +69,17 @@ function parseArgs(argv) {
 }
 
 const options = parseArgs(process.argv.slice(2));
+
+// QA-DIST: до старта сюит убеждаемся, что dist не рассинхронизирован между
+// worktree (иначе падение при загрузке модуля маскируется как провал теста).
+const distCheck = spawnSync(process.execPath, [path.join(root, "scripts/check-dist-coherence.mjs")], {
+  cwd: root,
+  stdio: "inherit",
+});
+if (distCheck.status !== 0) {
+  console.error("QA-DIST: предпроверка согласованности dist не пройдена — прогон сюит отменён.");
+  process.exit(1);
+}
 
 const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
 let suites = pkg.scripts.test
