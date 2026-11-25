@@ -26,6 +26,7 @@ import {
   recordCapabilityOutcome,
 } from "./dist/db/capability-repo.js";
 import { recordGateOutcome } from "./dist/db/runs-repo.js";
+import { deleteSetting } from "./dist/db/settings-repo.js";
 
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "sched-dispatch-"));
 process.env.APPDATA = tempRoot;
@@ -116,6 +117,25 @@ assert(custom.reason === "local-reliable", "причина local-reliable");
 
 // 7. Пустой тип — ошибка.
 assertThrows(() => routeStep("   "), "пустой тип задачи — ошибка");
+
+// 7a. EV-2.3: capped explore-бюджет превращает explore в исполняемый маршрут.
+deleteSetting("explore_budget_v1");
+const capped = routeStep("custom_migration", {}, {
+  exploreBudget: {
+    enabled: true,
+    maxRuns: 1,
+    windowRuns: 10,
+    maxTokens: 1000,
+    epsilon: 0,
+    nearLimitRuns: 0,
+  },
+});
+assert(capped.target === "local", "EV-2.3: bandit выбирает локального исполнителя");
+assert(capped.transport === "direct", "EV-2.3: у bandit-маршрута есть транспорт");
+assert(capped.exploreBandit?.exploration === true, "EV-2.3: решение помечено как исследование");
+assert(capped.exploreBandit?.reason === "explore-bandit-greedy", "EV-2.3: причина greedy");
+const legacy = routeStep("custom_migration", {}, { exploreBudget: { enabled: false } });
+assert(legacy.target === "explore", "EV-2.3: без бюджета старый explore сохранён");
 
 // 8. Исходники: модель в горячем пути не участвует.
 const dispatchSource = fs.readFileSync(

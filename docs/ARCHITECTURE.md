@@ -356,6 +356,20 @@ avg_cost / avg_time / last_10_runs`. Обучается на исходах ге
 `first_pass_count = runs_passed` (старые успехи считаются успехами с первой
 попытки). Покрытие — `test-capability-map.mjs`.
 
+EV-2.3: если данных мало и карта выдаёт `explore`, включается **capped
+explore-бюджет** и детерминированный bandit вместо бесконечного research.
+`decideExploreBandit` в `src/core/router/capability-math.ts` — чистая функция:
+ε-greedy с FNV-1a-хэшем `taskType` (без `Math.random`), local-first при равных
+наградах; лимиты по умолчанию `maxRuns=3`, `maxTokens=20000` на UTC-окно.
+Жёсткая граница: при исчерпании токенов или запусков маршрут становится
+`review` с причиной `explore-token-budget-exhausted` /
+`explore-budget-exhausted`, у границы — даунгрейд на `local`
+(`explore-budget-near-limit`). Расход хранится в `settings` под ключом
+`explore_budget_v1` (`getExploreUsage`/`consumeExploreUsage` в
+`src/db/capability-repo.ts`), списывается **до** старта исполнителя, миграции
+схемы не требует. Покрытие — `test-router.mjs`, `test-router-dispatch.mjs`,
+`test-execution-pipeline.mjs`.
+
 Деталь 3.19 / S-2: формулы и пороги вынесены в чистый модуль
 `src/core/router/capability-math.ts` (без БД и `@opencode-*`). Его используют и
 SQLite-карта, и публичный сабпат `agent-steward/router`, который хранит обучение
@@ -379,7 +393,7 @@ SQLite-карта, и публичный сабпат `agent-steward/router`, к
 
 **Реализация (Спринт 36.5.d):** `escalateAfterGate(current, gate)` в `src/core/router/escalation.ts` решает судьбу шага по одному флагу `passed` и таблице переходов `local → cloud → review → blocked`. Модуль не импортирует ни БД, ни модель, ни сеть: это чистые функции (`nextGateTarget`, `isEscalationExhausted`, `escalationChain`), поэтому 1000 решений стоят доли миллисекунды. Переход в `blocked` означает, что автоматических уровней больше нет и нужен человек.
 
-Слои 1–2 собираются в `routeStep(taskType, thresholds)` из `src/core/router/dispatch.ts`: сначала статическое правило (0 токенов), затем Capability Map. Для `review` и `explore` маршрут возвращается без транспорта и исполнителя — исполнять пока нечего. Модуль не импортирует `planner`, поэтому известный тип задачи не может случайно дойти до модели; это закреплено тестом `test-router-dispatch.mjs`, который также проверяет, что статика не оставляет записей в `capability_map` и работает ещё до инициализации БД.
+Слои 1–2 собираются в `routeStep(taskType, thresholds, options?)` из `src/core/router/dispatch.ts`: сначала статическое правило (0 токенов), затем Capability Map. При `options.exploreBudget.enabled` и решении карты `explore` включается bandit из EV-2.3: маршрут `local`/`cloud`/`review` с причиной bandit'а и полем `exploreBandit`; без опций поведение прежнее — `explore` без транспорта и исполнителя. Для `review` маршрут по-прежнему возвращается без транспорта и исполнителя — исполнять пока нечего. Модуль не импортирует `planner`, поэтому известный тип задачи не может случайно дойти до модели; это закреплено тестом `test-router-dispatch.mjs`, который также проверяет, что статика не оставляет записей в `capability_map` и работает ещё до инициализации БД.
 
 ### Эскалация
 

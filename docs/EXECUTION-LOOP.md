@@ -206,9 +206,16 @@ Worktree не защищает от сети/API/БД. Поэтому:
 ## 7. Роутинг, бюджет, issuance
 
 - `routeStep(taskType)` до сборки контекста; `explore` — с capped бюджетом.
+  EV-2.3: при `exploreBudget.enabled` детерминированный ε-greedy bandit
+  (`src/core/router/capability-math.ts`) выбирает `local`/`cloud` вместо
+  «не исполнять»; решение и расход записываются в маршрут. По умолчанию
+  бюджет включён в `buildExecutionPlan`; `exploreBudget: { enabled: false }`
+  сохраняет Legacy-поведение.
 - Решение учитывает `first_pass_rate`, `avg_attempts`, EWMA-decay; мало данных → `parent_type`.
 - **Живой бюджет** в durable-run: $ / токены / время / эскалации. При подходе к
   границе — даунгрейд модели или `review`; превышение → circuit-breaker.
+  EV-2.3: счётчик `explore_budget_v1` (settings, UTC-сутки) списывается до
+  старта исполнителя; лимит запусков/токенов → `review`, у границы → `local`.
 - **Capability issuance на шаг**: scoped-конфиг + короткоживущие секреты, очистка
   после шага. База — существующие `permissions` и scoped-инъекция секретов.
 

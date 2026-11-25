@@ -6,8 +6,15 @@
  * декомпозирует, поэтому известный тип задачи обходится в 0 токенов.
  */
 
-import { decideCapabilityRoute } from "../../db/capability-repo.js";
+import { decideCapabilityRoute, getExploreUsage } from "../../db/capability-repo.js";
 import type { CapabilityDecision, CapabilityThresholds } from "../../db/capability-repo.js";
+import {
+  decideExploreBandit,
+  normalizeExploreBudget,
+  type ExploreBanditDecision,
+  type ExploreBudgetConfig,
+  type NormalizedExploreBudget,
+} from "./capability-math.js";
 import {
   compileRunContext,
   recompileContextOnEscalation,
@@ -42,6 +49,15 @@ export interface StepRoute {
   reason: string;
   /** Решение слоя 2, если он участвовал. */
   decision?: CapabilityDecision;
+  /** EV-2.3: решение bandit'а, когда explore заменён исполнителем/ревью. */
+  exploreBandit?: ExploreBanditDecision;
+  /** EV-2.3: нормализованный бюджет, действующий для этого шага. */
+  exploreBudget?: NormalizedExploreBudget;
+}
+
+/** EV-2.3: опции роутинга. Без `exploreBudget` поведение совместимо со старым. */
+export interface RouteOptions {
+  exploreBudget?: ExploreBudgetConfig;
 }
 
 /** EV-2.2: результат сравнения двух маршрутов (§11.6). */
@@ -80,6 +96,7 @@ export function compareStepRoutes(a: StepRoute, b: StepRoute): StepRouteParity {
 export function routeStep(
   taskType: string,
   thresholds: CapabilityThresholds = {},
+  options: RouteOptions = {},
 ): StepRoute {
   const key = normalizeTaskType(taskType);
   if (key === "") {
@@ -99,6 +116,22 @@ export function routeStep(
   }
 
   const decision = decideCapabilityRoute(key, thresholds);
+  if (decision.target === "explore" && options.exploreBudget?.enabled === true) {
+    const budget = normalizeExploreBudget(options.exploreBudget);
+    const bandit = decideExploreBandit(key, decision.capability, getExploreUsage(key), budget);
+    const target: RouteTarget = bandit.target;
+    return {
+      taskType: key,
+      target,
+      transport: transportForTarget(target),
+      executor: executorForTarget(target),
+      source: "capability",
+      reason: bandit.reason,
+      decision,
+      exploreBandit: bandit,
+      exploreBudget: budget,
+    };
+  }
   const target: RouteTarget = decision.target;
   return {
     taskType: key,

@@ -329,4 +329,97 @@ check("S-2: граф импортов сабпата не тянет БД и Ope
   assert(files >= 3, `обошли слишком мало модулей: ${files}`);
 });
 
+check("EV-2.3: bandit детерминирован, local-first и epsilon-выбор", () => {
+  const budget = {
+    enabled: true,
+    maxRuns: 5,
+    windowRuns: 10,
+    maxTokens: 1000,
+    epsilon: 0,
+    nearLimitRuns: 0,
+  };
+  const first = router.decideExploreBandit("ev2_bandit", null, router.emptyExploreUsage(), budget);
+  const second = router.decideExploreBandit("ev2_bandit", null, router.emptyExploreUsage(), budget);
+  assert.deepEqual(first, second);
+  assert.equal(first.target, "local");
+  assert.equal(first.exploration, true);
+  assert.equal(first.localReward, first.cloudReward);
+
+  const unreliable = router.decideExploreBandit(
+    "ev2_bandit",
+    { taskType: "ev2_bandit", effectiveSuccessRate: 0.1 },
+    router.emptyExploreUsage(),
+    budget,
+  );
+  assert.equal(unreliable.target, "cloud");
+  const alwaysSample = router.decideExploreBandit(
+    "ev2_bandit",
+    null,
+    router.emptyExploreUsage(),
+    { ...budget, epsilon: 1 },
+  );
+  assert.equal(alwaysSample.target, "cloud");
+  assert.equal(alwaysSample.reason, "explore-bandit-sample");
+});
+
+check("EV-2.3: жёсткая граница запусков/токенов и даунгрейд у границы", () => {
+  const budget = {
+    enabled: true,
+    maxRuns: 2,
+    windowRuns: 10,
+    maxTokens: 1000,
+    epsilon: 0,
+    nearLimitRuns: 0,
+  };
+  const exhausted = router.decideExploreBandit(
+    "ev2_bandit",
+    null,
+    { runs: 2, tokens: 0, windowStart: "" },
+    budget,
+  );
+  assert.equal(exhausted.target, "review");
+  assert.equal(exhausted.reason, "explore-budget-exhausted");
+  assert.equal(exhausted.exploration, false);
+  assert.equal(exhausted.remainingRuns, 0);
+
+  const tokenExhausted = router.decideExploreBandit(
+    "ev2_bandit",
+    null,
+    { runs: 0, tokens: 1000, windowStart: "" },
+    budget,
+  );
+  assert.equal(tokenExhausted.reason, "explore-token-budget-exhausted");
+
+  const near = router.decideExploreBandit(
+    "ev2_bandit",
+    null,
+    { runs: 1, tokens: 0, windowStart: "" },
+    { ...budget, nearLimitRuns: 1 },
+  );
+  assert.equal(near.target, "local");
+  assert.equal(near.reason, "explore-budget-near-limit");
+  assert.equal(near.exploration, false);
+
+  const disabled = router.decideExploreBandit(
+    "ev2_bandit",
+    null,
+    router.emptyExploreUsage(),
+    { ...budget, enabled: false },
+  );
+  assert.equal(disabled.reason, "explore-budget-disabled");
+});
+
+check("EV-2.3: normalizeExploreBudget валидирует параметры", () => {
+  assert.deepEqual(router.normalizeExploreBudget({}), {
+    enabled: false,
+    maxRuns: 3,
+    windowRuns: 10,
+    maxTokens: 20000,
+    epsilon: 0.25,
+    nearLimitRuns: 1,
+  });
+  assert.throws(() => router.normalizeExploreBudget({ epsilon: 2 }));
+  assert.throws(() => router.normalizeExploreBudget({ maxRuns: 0 }));
+});
+
 console.log(`test-router: ${checks} checks passed`);

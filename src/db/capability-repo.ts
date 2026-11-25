@@ -7,7 +7,9 @@ import {
   RECENT_RUNS_LIMIT as MATH_RECENT_RUNS_LIMIT,
   decayedSuccessRate,
   effectiveReliability,
+  emptyExploreUsage,
   type CapabilityTarget,
+  type ExploreUsage,
 } from "../core/router/capability-math.js";
 export type { CapabilityTarget };
 import { getDb, withTransaction } from "./index.js";
@@ -621,5 +623,67 @@ export function listGateQuarantines(now: Date = new Date()): {
       quarantinedUntil: entry.quarantinedUntil,
       expired: !active && Boolean(entry.quarantinedUntil),
     };
+  });
+}
+
+/* ------------------------------------------------------------------------- *
+ * EV-2.3: расход capped explore-бюджета (settings, без миграции схемы)
+ * ------------------------------------------------------------------------- */
+
+const EXPLORE_BUDGET_SETTING_KEY = "explore_budget_v1";
+
+export type ExploreBudgetState = Record<string, ExploreUsage>;
+
+function readExploreBudgetState(): ExploreBudgetState {
+  const raw = getSetting<unknown>(EXPLORE_BUDGET_SETTING_KEY, {});
+  return raw && typeof raw === "object" && !Array.isArray(raw)
+    ? (raw as ExploreBudgetState)
+    : {};
+}
+
+/** Окно бюджета — UTC-сутки; расход прошлого окна не переносится. */
+function exploreWindowStart(now: Date): string {
+  return new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
+  ).toISOString();
+}
+
+/** Текущий расход по типу задачи (новое окно — обнуление). */
+export function getExploreUsage(taskType: string, now: Date = new Date()): ExploreUsage {
+  const key = requireTaskType(taskType);
+  const entry = readExploreBudgetState()[key];
+  if (entry?.windowStart !== exploreWindowStart(now)) return emptyExploreUsage();
+  return {
+    runs: Math.max(0, Math.floor(Number(entry.runs) || 0)),
+    tokens: Math.max(0, Math.floor(Number(entry.tokens) || 0)),
+    windowStart: entry.windowStart,
+  };
+}
+
+/**
+ * EV-2.3: списывает один explore-запуск и оценённые токены ДО старта
+ * исполнителя. Состояние живёт в settings и не требует миграции схемы.
+ */
+export function consumeExploreUsage(
+  taskType: string,
+  tokens = 0,
+  now: Date = new Date(),
+): ExploreUsage {
+  const key = requireTaskType(taskType);
+  if (!Number.isFinite(tokens) || tokens < 0) {
+    throw new Error(`EV-2.3: tokens должен быть неотрицательным числом, получено ${tokens}.`);
+  }
+  return withTransaction(() => {
+    const state = readExploreBudgetState();
+    const windowStart = exploreWindowStart(now);
+    const current = getExploreUsage(key, now);
+    const next: ExploreUsage = {
+      runs: (current.windowStart === windowStart ? current.runs : 0) + 1,
+      tokens: (current.windowStart === windowStart ? current.tokens : 0) + Math.floor(tokens),
+      windowStart,
+    };
+    state[key] = next;
+    setSetting(EXPLORE_BUDGET_SETTING_KEY, state);
+    return { ...next };
   });
 }

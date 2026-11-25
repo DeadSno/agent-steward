@@ -250,3 +250,167 @@ export function normalizeThresholds(thresholds: CapabilityRouteThresholds = {}):
   }
   return { localSuccess, cloudFailure, minRuns };
 }
+
+/* ------------------------------------------------------------------------- *
+ * EV-2.3: capped explore budget + детерминированный bandit local/cloud
+ * ------------------------------------------------------------------------- */
+
+/** Настройки бюджета исследования. По умолчанию лимит 3 запуска/20000 токенов. */
+export interface ExploreBudgetConfig {
+  enabled?: boolean;
+  maxRuns?: number;
+  windowRuns?: number;
+  maxTokens?: number;
+  epsilon?: number;
+  nearLimitRuns?: number;
+}
+
+export interface NormalizedExploreBudget {
+  enabled: boolean;
+  maxRuns: number;
+  windowRuns: number;
+  maxTokens: number;
+  epsilon: number;
+  nearLimitRuns: number;
+}
+
+/** Расход explore-бюджета по одному типу задачи в текущем окне. */
+export interface ExploreUsage {
+  runs: number;
+  tokens: number;
+  /** ISO-начала окна; пусто, если расхода ещё не было. */
+  windowStart: string;
+}
+
+export type ExploreBanditTarget = "local" | "cloud" | "review";
+
+/** Решение bandit'а с объяснением и остатком бюджета. */
+export interface ExploreBanditDecision {
+  taskType: string;
+  target: ExploreBanditTarget;
+  reason: string;
+  /** true, если решение — реальная попытка исследования исполнителем. */
+  exploration: boolean;
+  localReward: number;
+  cloudReward: number;
+  remainingRuns: number;
+  nearLimit: boolean;
+}
+
+export const DEFAULT_EXPLORE_BUDGET: Readonly<NormalizedExploreBudget> = Object.freeze({
+  enabled: false,
+  maxRuns: 3,
+  windowRuns: 10,
+  maxTokens: 20000,
+  epsilon: 0.25,
+  nearLimitRuns: 1,
+});
+
+function budgetNumber(
+  value: number | undefined,
+  fallback: number,
+  field: string,
+  min: number,
+  max: number,
+): number {
+  const resolved = value ?? fallback;
+  if (!Number.isFinite(resolved) || resolved < min || resolved > max) {
+    throw new Error(`EV-2.3: ${field} должен быть числом от ${min} до ${max}.`);
+  }
+  return resolved;
+}
+
+/** Проверяет и нормализует конфиг бюджета (без обращения к БД). */
+export function normalizeExploreBudget(
+  config: ExploreBudgetConfig = {},
+): NormalizedExploreBudget {
+  const maxRuns = budgetNumber(config.maxRuns, DEFAULT_EXPLORE_BUDGET.maxRuns, "maxRuns", 1, 10000);
+  const windowRuns = budgetNumber(
+    config.windowRuns,
+    DEFAULT_EXPLORE_BUDGET.windowRuns,
+    "windowRuns",
+    1,
+    100000,
+  );
+  const epsilon = budgetNumber(config.epsilon, DEFAULT_EXPLORE_BUDGET.epsilon, "epsilon", 0, 1);
+  return {
+    enabled: config.enabled === true,
+    maxRuns: Math.floor(maxRuns),
+    windowRuns: Math.floor(windowRuns),
+    maxTokens: budgetNumber(
+      config.maxTokens,
+      DEFAULT_EXPLORE_BUDGET.maxTokens,
+      "maxTokens",
+      1,
+      1_000_000_000,
+    ),
+    epsilon,
+    nearLimitRuns: budgetNumber(
+      config.nearLimitRuns,
+      DEFAULT_EXPLORE_BUDGET.nearLimitRuns,
+      "nearLimitRuns",
+      0,
+      Math.floor(maxRuns),
+    ),
+  };
+}
+
+/** Пустой счётчик расхода (для чистых тестов и старта окна). */
+export function emptyExploreUsage(): ExploreUsage {
+  return { runs: 0, tokens: 0, windowStart: "" };
+}
+
+/** Детерминированный FNV-1a в [0, 1) — без Math.random, воспроизводим в тестах. */
+export function exploreUnitInterval(seed: string): number {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < seed.length; index += 1) {
+    hash ^= seed.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash / 0x100000000;
+}
+
+/**
+ * EV-2.3: ε-greedy выбор между локальным и внешним исполнителем.
+ * Жёсткая граница: лимит запусков/токенов → `review` (circuit-breaker),
+ * подход к границе → даунгрейд на локального исполнителя. Ключ seed'а
+ * детерминирован: одинаковыйtaskType и расход дают одинаковый выбор.
+ */
+export function decideExploreBandit(
+  taskType: string,
+  capability: CapabilityLearningRecord | null,
+  usage: ExploreUsage,
+  config: ExploreBudgetConfig = {},
+): ExploreBanditDecision {
+  const key = requireTaskType(taskType);
+  const budget = normalizeExploreBudget(config);
+  const runs = Math.max(0, Math.floor(Number(usage?.runs) || 0));
+  const tokens = Math.max(0, Math.floor(Number(usage?.tokens) || 0));
+  const limit = Math.max(1, Math.min(budget.maxRuns, budget.windowRuns));
+  const remainingRuns = Math.max(0, limit - runs);
+  const reliable = capability?.taskType === key ? capability.effectiveSuccessRate : 0.5;
+  const localReward = Math.min(1, Math.max(0, reliable));
+  const cloudReward = capability?.taskType === key ? 1 - localReward : 0.5;
+  const base = { taskType: key, localReward, cloudReward, remainingRuns };
+
+  if (!budget.enabled) {
+    return { ...base, target: "local", reason: "explore-budget-disabled", exploration: false, nearLimit: false };
+  }
+  if (tokens >= budget.maxTokens) {
+    return { ...base, target: "review", reason: "explore-token-budget-exhausted", exploration: false, nearLimit: true };
+  }
+  if (runs >= limit) {
+    return { ...base, target: "review", reason: "explore-budget-exhausted", exploration: false, nearLimit: true };
+  }
+  if (remainingRuns <= budget.nearLimitRuns) {
+    return { ...base, target: "local", reason: "explore-budget-near-limit", exploration: false, nearLimit: true };
+  }
+
+  const greedyTarget: ExploreBanditTarget = localReward >= cloudReward ? "local" : "cloud";
+  const roll = exploreUnitInterval(`${key}:${runs}`);
+  if (roll < budget.epsilon) {
+    const sampled: ExploreBanditTarget = greedyTarget === "local" ? "cloud" : "local";
+    return { ...base, target: sampled, reason: "explore-bandit-sample", exploration: true, nearLimit: false };
+  }
+  return { ...base, target: greedyTarget, reason: "explore-bandit-greedy", exploration: true, nearLimit: false };
+}

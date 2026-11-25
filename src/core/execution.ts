@@ -28,7 +28,12 @@ import {
 import { runStepStatefullyAsync } from "../db/run-journal.js";
 import { verifyExampleReuse } from "../db/run-context.js";
 import type { CompiledContext, CompileContextOptions } from "../db/run-context.js";
-import { isGateQuarantined, recordGateVerdict } from "../db/capability-repo.js";
+import {
+  consumeExploreUsage,
+  getExploreUsage,
+  isGateQuarantined,
+  recordGateVerdict,
+} from "../db/capability-repo.js";
 import {
   MAX_ESCALATION_STEPS,
   escalateAfterGate,
@@ -62,6 +67,10 @@ import {
   type StepRoute,
 } from "./router/dispatch.js";
 import type { CapabilityThresholds } from "../db/capability-repo.js";
+import {
+  normalizeExploreBudget,
+  type ExploreBudgetConfig,
+} from "./router/capability-math.js";
 import {
   classifyRiskClass,
   compilePermissionPolicy,
@@ -544,6 +553,32 @@ export interface BuildPlanOptions {
   thresholds?: CapabilityThresholds;
   /** PL-94: параметры компиляции контекста (кроме taskType/model — их даёт маршрут). */
   compileContext?: Omit<CompileContextOptions, "taskType" | "model">;
+  /**
+   * EV-2.3: capped explore-бюджет. По умолчанию включён для реальных планов;
+   * `{ enabled: false }` сохраняет Legacy-поведение `explore` без исполнителя.
+   */
+  exploreBudget?: ExploreBudgetConfig;
+}
+
+/**
+ * EV-2.3: жёсткая граница бюджета уже на этапе исполнения. План мог быть
+ * построен до расхода, поэтому лимит проверяется повторно перед executor'ом.
+ */
+function exploreBudgetBlockReason(route: StepRoute): string | null {
+  if (!route.exploreBandit) return null;
+  const budget = route.exploreBudget ?? normalizeExploreBudget({ enabled: true });
+  const usage = getExploreUsage(route.taskType);
+  const limit = Math.max(1, Math.min(budget.maxRuns, budget.windowRuns));
+  if (usage.tokens >= budget.maxTokens) return "explore-token-budget-exhausted";
+  if (usage.runs >= limit) return "explore-budget-exhausted";
+  return null;
+}
+
+/** EV-2.3: списание расхода до запуска исполнителя (не после гейта). */
+function consumeExploreBudgetForStep(step: PlannedStep, compiled?: CompiledContext): void {
+  if (step.route.exploreBandit?.exploration === true) {
+    consumeExploreUsage(step.route.taskType, compiled?.estimatedTokens ?? 0);
+  }
 }
 
 function planStepsForContext(
@@ -587,7 +622,9 @@ export async function buildExecutionPlan(
     warnings.push(`Гейт "${qualityGate}" в карантине: автоматический роутинг отключён.`);
   }
   const steps = planned.steps.map((step, order) => {
-    const baseRoute = routeStep(step.taskType, options.thresholds);
+    const baseRoute = routeStep(step.taskType, options.thresholds, {
+      exploreBudget: options.exploreBudget ?? { enabled: true },
+    });
     const route: StepRoute = quarantined
       ? {
         ...baseRoute,
@@ -1336,6 +1373,11 @@ async function executeStepWithEscalation(
         `Нет исполнителя для маршрута ${route.executor ?? "review"}/${String(route.transport)} после эскалации на ${target}`,
       );
     }
+    const blocked = exploreBudgetBlockReason(route);
+    if (blocked !== null) {
+      throw new Error(`EV-2.3: explore-бюджет исчерпан (${blocked}) для ${route.taskType}.`);
+    }
+    consumeExploreBudgetForStep(effectiveStep, compiledContext);
     const result = await executor.execute({
       step: effectiveStep,
       context: plan.context,
@@ -1613,13 +1655,16 @@ export async function executeExecutionPlan(
     const executor =
       step.route.executor === null ? undefined : pickExecutor(step, options.executors);
 
-    // review/explore или нет подходящего транспорта — шаг не исполняется.
-    if (!executor) {
+    // review/explore, исчерпанный бюджет или нет транспорта — шаг не исполняется.
+    const budgetBlockedReason = exploreBudgetBlockReason(step.route);
+    if (!executor || budgetBlockedReason !== null) {
       const record = getStep(run.id, step.stepName);
       const reason =
-        step.route.executor === null
-          ? `маршрут ${step.route.target}: ${step.route.reason}`
-          : `нет исполнителя для маршрута ${step.route.executor}/${String(step.route.transport)}`;
+        budgetBlockedReason !== null
+          ? `explore-бюджет исчерпан: ${budgetBlockedReason}`
+          : step.route.executor === null
+            ? `маршрут ${step.route.target}: ${step.route.reason}`
+            : `нет исполнителя для маршрута ${step.route.executor}/${String(step.route.transport)}`;
       if (record) {
         finishStep(record.id, "skipped", { error: reason });
       }
@@ -1675,6 +1720,7 @@ export async function executeExecutionPlan(
           escalationState.target = escalated.target;
           return escalated.output;
         }
+        consumeExploreBudgetForStep(step, step.compiledContext);
         const result = await executor.execute({
           step,
           context: plan.context,

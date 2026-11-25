@@ -42,6 +42,7 @@ const audit = await import("./dist/core/audit.js");
 const mission = await import("./dist/core/mission.js");
 // record-history имеет isDirectInvocation guard — импорт не запускает main().
 const recorder = await import("./dist/core/record-history.js");
+const settings = await import("./dist/db/settings-repo.js");
 
 initDb(dbPath);
 
@@ -208,6 +209,8 @@ const reviewPlan = await ac1.buildExecutionPlan(
     // ARCH-7: проверяем пропуск review-шага, а не очередь одобрений.
     riskClass: "R0",
   }),
+  // EV-2.3: этот тест проверяет Legacy-поведение пропуска explore, а не bandit.
+  { exploreBudget: { enabled: false } },
 );
 check("plan: неизвестный тип уходит в explore", reviewPlan.steps[0].route.target === "explore");
 check("plan: предупреждение о пропуске", reviewPlan.warnings.length === 1);
@@ -1157,6 +1160,95 @@ check(
     verdict: "fail",
   }).same === false,
 );
+
+// --- EV-2.3: capped explore-бюджет и bandit в реальном execution loop -----
+const ev23Budget = {
+  enabled: true,
+  maxRuns: 2,
+  windowRuns: 10,
+  maxTokens: 10000,
+  epsilon: 0,
+  nearLimitRuns: 0,
+};
+const ev23Context = () =>
+  ac1.createAdHocRunContext("ev2 bandit task", {
+    taskName: `ev23-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    cwd: tempRoot,
+    taskType: "ev2_bandit_task",
+    riskClass: "R0",
+  });
+settings.setSetting("explore_budget_v1", {});
+check(
+  "EV-2.3: начальный расход нулевой",
+  capability.getExploreUsage("ev2_bandit_task").runs === 0,
+);
+const ev23Plan1 = await ac1.buildExecutionPlan(ev23Context(), { exploreBudget: ev23Budget });
+check(
+  "EV-2.3: bandit заменяет explore на локального исполнителя",
+  ev23Plan1.steps[0].route.target === "local" &&
+    ev23Plan1.steps[0].route.exploreBandit?.exploration === true,
+);
+let ev23UsageAtExecution = null;
+const ev23Executor = {
+  id: "ev23-bandit",
+  supports: () => true,
+  execute: async () => {
+    ev23UsageAtExecution = capability.getExploreUsage("ev2_bandit_task");
+    return { output: "ok" };
+  },
+};
+const ev23Run1 = await ac1.executeExecutionPlan(ev23Plan1, {
+  executors: [ev23Executor],
+  gate: () => ({ ok: true }),
+});
+check("EV-2.3: первый bandit-прогон passed", ev23Run1.status === "passed");
+check(
+  "EV-2.3: расход списан ДО вызова исполнителя",
+  ev23UsageAtExecution?.runs === 1 && ev23UsageAtExecution.tokens > 0,
+);
+const ev23Plan2 = await ac1.buildExecutionPlan(ev23Context(), { exploreBudget: ev23Budget });
+check(
+  "EV-2.3: второй план видит расход и остаётся исполняемым",
+  ev23Plan2.steps[0].route.target === "local" &&
+    ev23Plan2.steps[0].route.exploreBandit?.remainingRuns === 1 &&
+    ev23Plan2.steps[0].route.exploreBandit?.exploration === true,
+);
+const ev23Run2 = await ac1.executeExecutionPlan(ev23Plan2, {
+  executors: [ev23Executor],
+  gate: () => ({ ok: true }),
+});
+check("EV-2.3: второй bandit-прогон passed", ev23Run2.status === "passed");
+check(
+  "EV-2.3: лимит запусков соблюдён",
+  capability.getExploreUsage("ev2_bandit_task").runs === 2,
+);
+const ev23Plan3 = await ac1.buildExecutionPlan(ev23Context(), { exploreBudget: ev23Budget });
+check(
+  "EV-2.3: после лимита circuit-breaker уводит в review",
+  ev23Plan3.steps[0].route.target === "review" &&
+    ev23Plan3.steps[0].route.exploreBandit?.reason === "explore-budget-exhausted",
+);
+const ev23Run3 = await ac1.executeExecutionPlan(ev23Plan3, {
+  executors: [ev23Executor],
+  gate: () => ({ ok: true }),
+});
+check("EV-2.3: шаг после лимита пропущен", ev23Run3.steps[0].status === "skipped");
+check(
+  "EV-2.3: расход не вырос после circuit-breaker",
+  capability.getExploreUsage("ev2_bandit_task").runs === 2,
+);
+
+settings.setSetting("explore_budget_v1", {});
+capability.consumeExploreUsage("ev2_bandit_task", 20000);
+const ev23TokenPlan = await ac1.buildExecutionPlan(ev23Context(), {
+  exploreBudget: { ...ev23Budget, maxTokens: 10000 },
+});
+check(
+  "EV-2.3: лимит токенов тоже ведёт в review",
+  ev23TokenPlan.steps[0].route.target === "review" &&
+    ev23TokenPlan.steps[0].route.exploreBandit?.reason === "explore-token-budget-exhausted",
+);
+settings.setSetting("explore_budget_v1", {});
 
 // --- PL-91: вебхук — отдельный trigger_kind, а не «manual» -----------------
 // origin=registered: у ad-hoc triggerKindFor всегда вернёт «adhoc», поэтому

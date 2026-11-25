@@ -48,11 +48,8 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 | §13.3 — Этап 3: MCP/API и совместимость с любым агентом | ✅ `./core`, `./mcp`, рецепты, verified-chat (S-1…S-6) | Внешний контракт не версионирован; режим `nativeScheduler` → AD-1 |
 | §11.1–§11.4 — ad-hoc, local-first, гейт без irreversible, net-экономия | ✅ ROU-*, ARCH-4.*, E-*, EV-1.2 | Владелец, горизонт 28 дней и пороги зафиксированы в EXECUTION-LOOP §9 |
 | §11.5–§11.7 — переиспользование примера, паритет, eval не деградировал | ✅ EV-1.1/EV-1.3 + AC-1.4/EV-2.2 | Версионированный набор из ledger и CI-gate с откатом работают |
-| §12 — capped explore, staged LoRA | 🔄 EXECUTION-LOOP §7 требует бюджет | Нет датасета и shadow-включения → LP-1 |
+| §12 — capped explore, staged LoRA | ✅ capped explore-бюджет и bandit (EV-2.3) | Нет датасета и shadow-включения → LP-1 |
 | §12 — cost of verification, права вне write-scope | 🔄 бюджеты и аудит есть | Нет кэша проверок и guard для write-scope → SC-1 |
-
-**Задача EV-2 — Замкнутая петля обучения** · P1 · ⬜
-- [ ] EV-2.3 Включить capped explore-бюджет и bandit-выбор между локальным и внешним исполнителем, с жёсткой границей бюджета по EXECUTION-LOOP §7.
 
 **Задача LP-1 — Staged LoRA без онлайн-обучения** · P3 · ⬜
 - [ ] LP-1.1 Сформулировать критерии датасета: объём, доля стабильных pass/fail, дедупликация, маскировка секретов, версия, запрет онлайн-обучения.
