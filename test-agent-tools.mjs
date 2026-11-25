@@ -1275,6 +1275,55 @@ check(
   );
 }
 
+// QA-P1 (25.11): само-диагностика загруженной копии плагина в get_dashboard_info.
+// Без неё рассинхрон конфига OpenCode (v0.0.7 по старому пути) невидим агентам.
+{
+  const { getPluginDiagnostics } = await import("./dist/version.js");
+  const diag = getPluginDiagnostics();
+  check(
+    "QA-PLUGIN-DIAG: диагностика содержит версию и абсолютные пути",
+    typeof diag.version === "string" &&
+      diag.version.length > 0 &&
+      path.isAbsolute(diag.modulePath) &&
+      path.isAbsolute(diag.packageRoot) &&
+      path.isAbsolute(diag.workspaceRoot) &&
+      typeof diag.loadedFromWorkspace === "boolean"
+  );
+  const dash = JSON.parse((await handlers.get_dashboard_info({})).content);
+  check(
+    "QA-PLUGIN-DIAG: get_dashboard_info возвращает блок plugin",
+    dash.plugin?.version === diag.version &&
+      dash.plugin?.packageRoot === diag.packageRoot &&
+      dash.plugin?.staleInstallation === diag.staleInstallation
+  );
+  // Имитируем рабочий каталог с манифестом другой версии того же пакета.
+  const staleRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ws-stale-plugin-"));
+  const originalCwd = process.cwd();
+  try {
+    fs.writeFileSync(
+      path.join(staleRoot, "package.json"),
+      JSON.stringify({ name: "agent-steward", version: "0.0.0-stale" })
+    );
+    process.chdir(staleRoot);
+    const staleDiag = getPluginDiagnostics();
+    check(
+      "QA-PLUGIN-DIAG: версия из старого чек-аута помечает установку как stale",
+      staleDiag.staleInstallation === true &&
+        staleDiag.reason === "identity-mismatch" &&
+        staleDiag.workspaceVersion === "0.0.0-stale" &&
+        staleDiag.version !== staleDiag.workspaceVersion
+    );
+  } finally {
+    process.chdir(originalCwd);
+    fs.rmSync(staleRoot, { recursive: true, force: true });
+  }
+  const ownDiag = getPluginDiagnostics();
+  check(
+    "QA-PLUGIN-DIAG: свой чек-аут не помечается как stale",
+    ownDiag.reason === "ok" && ownDiag.staleInstallation === false
+  );
+}
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\nAgent tools: ${results.length - failed.length}/${results.length} проверок пройдено.`);
 process.exit(failed.length > 0 ? 1 : 0);

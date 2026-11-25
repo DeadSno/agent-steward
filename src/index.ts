@@ -20,6 +20,8 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 // QA-A2.7: безопасное приведение unknown к строке без no-base-to-string.
 import { safeStringify } from "./text.js";
+// QA-P1: само-диагностика загруженной копии плагина (версия/путь/рассинхрон).
+import { getPluginDiagnostics } from "./version.js";
 import { HARNESS_VALUES, resolveInvoker, type HarnessName } from "./invokers/agent-invoker.js";
 import {
   RUNNER_KINDS,
@@ -4645,6 +4647,9 @@ const getDashboardInfoExecute = wrapExecute<DashboardInfoArgs>(async () => {
       title: scheduler.title,
       profile: getProfileName(),
       reachable: probe?.dashboard ?? false,
+      // QA-P1: если OpenCode грузит плагин по старому пути, агент видит
+      // рассинхрон между работающим кодом и текущим чек-аутом.
+      plugin: getPluginDiagnostics(),
     }),
   };
 });
