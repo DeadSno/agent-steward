@@ -45,6 +45,8 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 
 - QA-D316-15: `schedule_task` возвращает в ответе `task.workingDirectory` = каталог проекта, но в `scheduler.db` definition задачи поле `workingDirectory` не сохраняется; `dry_run` после этого показывает `cwd=""` и предупреждение о неявном каталоге — P2. Действие: либо сохранять неявный `workingDirectory` в definition, либо не показывать его в ответе `schedule_task`, чтобы ответ и `dry_run` не расходились. Воспроизведено 25.11.2026 на тестовой задаче `TP-AUDIT-OS-PROBE-20261125` (после проверки задача удалена). Обнаружено 25.11.2026.
 
+- QA-D316-16: CLI-помощник `dist/core/guard-run.js` в чек-ауте с `dist/`-junction (W-1) не выполняет `main()`: проверка `import.meta.url === pathToFileURL(path.resolve(process.argv[1]))` не срабатывает, потому что ESM резолвит реальный путь цели junction (`.steward-dev/dist`), а `argv[1]` остаётся путём через junction (`tp-audit-dev/dist`). Результат — тихий exit 0 с пустым stdout даже при skip; `npm test` падает на `test-guards.mjs` (3 FAIL + `SyntaxError: Unexpected end of JSON input` в `--json`), остальные сюиты зелёные — P1. Действие: сравнивать реальные пути через `fs.realpathSync` в `src/core/guard-run.ts` (или запускать тесты с `NODE_OPTIONS="--preserve-symlinks --preserve-symlinks-main"`: с обоими флагами `test-guards.mjs` проходит 56/56; одного `--preserve-symlinks` недостаточно). Воспроизведено 25.11.2026 в `tp-audit-dev` (`dist` → junction на `.steward-dev/dist`).
+
 ---
 
 # 4. Правила работы (канбан)
