@@ -5736,6 +5736,14 @@ const v2Plugin = Plugin.define({
     // иначе все in-process запуски навсегда получают PLUGIN_SHUTTING_DOWN.
     shutdownGate.reset();
     const runtime = await createRuntime(ctx);
+    // P1-C: regenerate the shared run wrapper on every plugin load so wrapper
+    // verdict fixes take effect after an upgrade even when no task is created.
+    // Fail-open: a write error must never block tool registration.
+    try {
+      if (process.platform === "win32") await ensureWrapper();
+    } catch (err) {
+      console.error(`[agent-steward] ensureWrapper failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
     const registration = await ctx.tool.transform((editor) => {
       // editor.add регистрирует новые инструменты плагина с codemode: true,
       // чтобы они были видны в Code Mode. Встроенные schedule_* отключены
@@ -7254,6 +7262,12 @@ export async function createV1Hooks(
     return { tool: {}, dispose: async () => undefined };
   }
   // PL-45: см. V2 setup — повторная регистрация должна открывать ворота.
+  // P1-C: same wrapper refresh for V1 (see V2 setup). Fail-open by design.
+  try {
+    if (process.platform === "win32") await ensureWrapper();
+  } catch (err) {
+    console.error(`[agent-steward] ensureWrapper failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
   shutdownGate.reset();
   const runtime = await createRuntime({ location: { directory: input.directory } });
   const tools = createV1Tools(runtime);

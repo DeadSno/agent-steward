@@ -276,6 +276,35 @@ const verdictCases = [
     expect: (v) => v.status === "error",
   },
   {
+    name: "P1-C: idle без артефактов, agentExitCode=0, без гейта → error (PL-160)",
+    input: {
+      timedOut: false,
+      exitCode: 0,
+      gatePassed: false,
+      gateEvaluated: false,
+      agentExitCode: 0,
+      idleCompleted: true,
+      workCompleted: false,
+    },
+    expect: (v) =>
+      v.status === "error" &&
+      v.reason.startsWith("PL-160:") &&
+      v.normalizedExitCode === 1,
+  },
+  {
+    name: "P1-C: idle без артефактов, тривиальный gate=pass → error (PL-160)",
+    input: {
+      timedOut: false,
+      exitCode: 0,
+      gatePassed: true,
+      gateEvaluated: true,
+      agentExitCode: 0,
+      idleCompleted: true,
+      workCompleted: false,
+    },
+    expect: (v) => v.status === "error" && v.reason.startsWith("PL-160:"),
+  },
+  {
     name: "gate=pass после watchdog → success (PL-128)",
     input: { timedOut: false, exitCode: 124, gatePassed: true },
     expect: (v) =>

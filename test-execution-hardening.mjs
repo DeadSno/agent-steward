@@ -2197,13 +2197,56 @@ try {
     exitCode: 0,
     gatePassed: true,
     agentExitCode: 0,
-    idleCompleted: true,
+    idleCompleted: false,
     workCompleted: false,
   });
   check(
     "PL-160: корректный выход агента без изменений остаётся success",
     pl160CleanExit.status === "success" && pl160CleanExit.normalizedExitCode === 0,
     JSON.stringify(pl160CleanExit)
+  );
+  const p1cNoGate = resolveWrapperRecordVerdict({
+    timedOut: false,
+    exitCode: 0,
+    gatePassed: false,
+    gateEvaluated: false,
+    agentExitCode: 0,
+    idleCompleted: true,
+    workCompleted: false,
+  });
+  check(
+    "P1-C: idle без артефактов без гейта — error (не success)",
+    p1cNoGate.status === "error" &&
+      p1cNoGate.reason.startsWith("PL-160:") &&
+      p1cNoGate.normalizedExitCode === 1,
+    JSON.stringify(p1cNoGate)
+  );
+  const p1cTrivialGate = resolveWrapperRecordVerdict({
+    timedOut: false,
+    exitCode: 0,
+    gatePassed: true,
+    gateEvaluated: true,
+    agentExitCode: 0,
+    idleCompleted: true,
+    workCompleted: false,
+  });
+  check(
+    "P1-C: idle + тривиальный gate=pass (echo OK>файл) не даёт success",
+    p1cTrivialGate.status !== "success" && p1cTrivialGate.reason.startsWith("PL-160:"),
+    JSON.stringify(p1cTrivialGate)
+  );
+  check(
+    "P1-C: PowerShell-вердикт запрещает success при idle без артефактов",
+    psWrapperScript.includes("if ($IdleCompleted -and -not $WorkCompleted -and -not $killedByWatchdog)") &&
+      psWrapperScript.includes("$idleExit") &&
+      !psWrapperScript.includes("$GatePassed -and $AgentExitCode -ne 0 -and $IdleCompleted")
+  );
+  const p1cIndexSrc = fs.readFileSync(path.resolve("src/index.ts"), "utf8");
+  check(
+    "P1-C: обёртка пересоздаётся при загрузке плагина (V1 и V2, fail-open)",
+    (p1cIndexSrc.match(/await ensureWrapper\(\)/g) || []).length >= 3 &&
+      p1cIndexSrc.includes("ensureWrapper failed:"),
+    `ensureWrapper calls: ${(p1cIndexSrc.match(/await ensureWrapper\(\)/g) || []).length}`
   );
   check(
     "PL-160: PowerShell-вердикт получает код агента, idle и артефакты",

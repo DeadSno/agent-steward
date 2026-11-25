@@ -660,13 +660,18 @@ function Get-RecordVerdict {
         [bool]$WorkCompleted = $false
     )
     $killedByWatchdog = $TimedOut -or ($ExitCode -eq $WatchdogExitCode)
-    # PL-160: сторож простоя убил агента, артефактов работы нет, а гейт прошёл
-    # на неизменённом дереве — это не успех, а пустой прогон (PL-81 его маскировал).
-    if ($GatePassed -and $AgentExitCode -ne 0 -and $IdleCompleted -and -not $WorkCompleted) {
+    # P1-C / PL-160: снятие сторожем простоя — НИКОГДА не success: с артефактами
+    # или без, с гейтом или без. Обёртка возвращает 0 после idle (PL-124), поэтому
+    # AgentExitCode=0 не должен маскировать прерванный прогон, а тривиальный
+    # гейт (echo OK>файл) не подтверждает запуск, остановленный сторожем.
+    # Таймаут по watchdog сохраняет свой вердикт (PL-128/timeout).
+    if ($IdleCompleted -and -not $WorkCompleted -and -not $killedByWatchdog) {
+        $idleExit = $AgentExitCode
+        if ($idleExit -eq 0) { $idleExit = 1 }
         return [pscustomobject]@{
             Status = "error"
             Reason = "PL-160: агент завершён сторожем простоя без изменений"
-            NormalizedExitCode = $AgentExitCode
+            NormalizedExitCode = $idleExit
         }
     }
     # QA-D316-5 / QA-D316-10: агент снят completion/idle-сторожем на
@@ -2678,18 +2683,18 @@ export function resolveWrapperRecordVerdict(
       normalizedExitCode: input.exitCode,
     };
   }
-  // PL-160: гейт прошёл на неизменённом дереве, но агент был убит сторожем
-  // простоя и не оставил артефактов — пустой прогон не считается успехом.
+  // P1-C / PL-160: idle без артефактов — error независимо от гейта и кода
+  // возврата. PL-124 возвращает 0 после idle, поэтому agentExitCode=0 не должен
+  // маскировать прерванный прогон. Watchdog-timeout сохраняет свой вердикт.
   if (
-    input.gatePassed &&
-    (input.agentExitCode ?? input.exitCode) !== 0 &&
     input.idleCompleted === true &&
-    input.workCompleted !== true
+    input.workCompleted !== true &&
+    !killedByWatchdog
   ) {
     return {
       status: "error",
       reason: "PL-160: агент завершён сторожем простоя без изменений",
-      normalizedExitCode: input.agentExitCode ?? input.exitCode,
+      normalizedExitCode: (input.agentExitCode ?? input.exitCode) || 1,
     };
   }
   // QA-D316-5 / QA-D316-10: idle-сторож снял агента на финализации, когда
