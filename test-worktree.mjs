@@ -130,6 +130,10 @@ let first;
     check("worktree: sidecar для очистки записан", fs.existsSync(`${wt.path}.json`));
     const sidecar = JSON.parse(fs.readFileSync(`${wt.path}.json`, "utf8"));
     check("worktree: sidecar содержит имя задачи", sidecar.taskName === "Ночная сборка / fan-out");
+    // P1-A: smoke «создал → путь существует → записал файл внутрь worktree».
+    const p1aSmoke = path.join(wt.path, "p1a-smoke.txt");
+    fs.writeFileSync(p1aSmoke, "ok\n", "utf8");
+    check("worktree: файл записывается внутрь созданного worktree", fs.existsSync(p1aSmoke));
     check(
       "worktree: ветка видна в git worktree list",
       git(repo, ["worktree", "list", "--porcelain"]).includes(wt.branch),
