@@ -935,6 +935,19 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 | Предложенные улучшения (§7.3) | QA-D316-12 … QA-D316-15 (доступность инструментов и согласованность настроек) закрыты и перенесены в `CHANGELOG.md`; осталась актуализация счётчиков и даты плана |
 | Итог | ⚠️ принято с ограничениями: структура плана и доступ инструментов проверены, найденные дефекты заведены в ROADMAP, полный E2E-прогон D01–D18 — отдельный этап |
 
+### 8.1 Результаты прогона матрицы DEEP-4
+
+> Запись ведётся по мере закрытия подзадач DEEP-4.2/4.3/4.4. `⏳` — деталь ещё не прогонялась, `✅` — команды из §4.1 выполнены, `⚠️` — выполнено с ограничением (причина указана в колонке). Итоговая замена статуса §8 — DEEP-4.5. Все прогоны выполнялись после `npm run build` (иначе `dist/index.js` остаётся от предыдущей ревизии — см. D02).
+
+| Деталь | Подзадача | Команды (итог прогона) | Результат |
+|---|---|---|---|
+| D01 | DEEP-4.2 | `node test-schedule-v2.mjs` 68/68, `node test-window-v3.mjs` 49/49, `node test-one-shot.mjs` 65/65, `node test-cron-to-schtasks.mjs` 50/50, `node test-mac-launchctl.mjs`, `node test-mac-cron.mjs`, `node test-at-fallback.mjs` — OK; macOS runtime N/A на win32 (CI-матрица) | ✅ |
+| D02 | DEEP-4.2 | `node test-agent-tools.mjs` 129/129 (после `npm run build`), `node test-task-status.mjs` 6/6, `node test-task-name-limit.mjs`, `node test-task-name-collision.mjs`, `node test-validation.mjs` 32/32 | ✅ |
+| D03 | DEEP-4.2 | `node test-execution-pipeline.mjs`, `node test-crash-recovery.mjs`, `node test-ps-watchdog.mjs` 36/36, `node test-run-now.mjs` 20/20, `node test-stale-lock.mjs` 27/27, `node test-lock-format.mjs` 38/38 | ✅ |
+| D04 | DEEP-4.2 | `node test-tool-specs.mjs` 52/52, `node test-agent-tools.mjs` 129/129, `node test-skill.mjs` 28/28, `node test-env.mjs` 59/59, `node test-mcp-adapter.mjs` 9/9 | ✅ |
+| D05 | DEEP-4.2 | `node test-dag.mjs` 16/16, `node test-dag-latest-history.mjs` 5/5, `node test-dry-run.mjs` 103/103, `node test-retry-counter.mjs` 3/3 | ✅ |
+| D06 | DEEP-4.2 | `node test-matrix.mjs` 30/30, `node test-matrix-lifecycle.mjs` 22/22, `node test-matrix-sync.mjs` 19/19 | ✅ |
+
 ---
 
 ## 9. Модель выполнения: агент параллельно с человеком

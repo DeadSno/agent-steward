@@ -1042,6 +1042,47 @@ check(
   );
 }
 
+// DEEP-4.2–DEEP-4.4: протокол прогона матрицы D01–D18.
+{
+  const plan = fs.readFileSync(path.join(root, "TEST-PLAN.md"), "utf8");
+  const marker = "### 8.1 Результаты прогона матрицы DEEP-4";
+  const start = plan.indexOf(marker);
+  const end = start >= 0 ? plan.indexOf("\n---", start) : -1;
+  const log = start >= 0 && end > start ? plan.slice(start, end) : "";
+  check("DEEP-4.x: §8.1 протокол прогона матрицы присутствует", log.length > 0);
+
+  const expectedIds = Array.from({ length: 18 }, (_, i) => `D${String(i + 1).padStart(2, "0")}`);
+  const parseRows = (text) => {
+    const rows = new Map();
+    for (const line of text.split("\n")) {
+      const m = /^\|\s*(D\d{2})\s*\|(.+)\|$/.exec(line);
+      if (m) rows.set(m[1], m[2].split(/(?<!\\)\|/).map((c) => c.trim()));
+    }
+    return rows;
+  };
+  const validShape = (text) => {
+    const rows = parseRows(text);
+    const ids = [...rows.keys()];
+    if (!ids.length || new Set(ids).size !== ids.length) return false;
+    if (ids.some((id) => !expectedIds.includes(id))) return false;
+    if (ids.join(",") !== ids.slice().sort().join(",")) return false;
+    return ids.every((id) => {
+      const cells = rows.get(id);
+      return (
+        cells?.length === 3 &&
+        cells.every((c) => c.length > 0) &&
+        /`node test-[^`]+\.mjs`|`npm run [^`]+`/.test(cells[1]) &&
+        /✅|⚠️|⏳/.test(cells[2])
+      );
+    });
+  };
+  check("DEEP-4.x: строки §8.1 уникальны, упорядочены и в пределах D01–D18", validShape(log));
+  check(
+    "DEEP-4.x: негативный тест — подмена команды прогона детектируется",
+    !validShape(log.replace(/`node test-[^`]+\.mjs`|`npm run [^`]+`/g, "")),
+  );
+}
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\nDocs: ${results.length - failed.length}/${results.length} проверок пройдено.`);
 process.exit(failed.length > 0 ? 1 : 0);
