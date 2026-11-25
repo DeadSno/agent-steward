@@ -50,7 +50,7 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 
 - Текущая схема БД: `SCHEMA_VERSION = 14` (таблицы обратной связи `feedback_outbox`/`feedback_spam`; миграция с legacy-БД 10 → 14 описана в S15.1.2).
 - GUI: OpenCode → боковая панель «Планировщик Windows». После пересборки панель перезагрузить.
-- MCP: 34 инструмента доступны агенту после подключения плагина (проверено через мост Code Mode: `list_tasks`, `get_dashboard_info`).
+- MCP: 34 инструмента доступны агенту после подключения плагина. Каталог Code Mode раннера показывает только 8 (`schedule_task`, `update_task`, `list_tasks`, `run_task_now`, `get_history`, `get_task_logs`, `dry_run`, `get_dashboard_info`); остальные вызываются по имени через MCP/CLI/HTTP RPC — ограничение моста, а не реестра (QA-D316-19).
 - Дашборд: `http://127.0.0.1:3782/` (порт может отличаться, смотреть `get_dashboard_info`).
 - Логи прогона: вывод `npm test` (при необходимости перенаправить в `test-run.log`); артефакты GUI — `gui-experimental.cjs` (создаётся `npm run build:gui`).
 - Актуальная ветка плана: `dev` (34 инструмента, 129 npm-скриптов). Legacy-чек-аут `steward-work` содержит 30 инструментов и 113 npm-скриптов — его счётчики здесь не используются.
@@ -94,7 +94,7 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 | D01 | Ядро расписаний и ОС-бэкенды | `src/core/schedule-v2.ts`, `cron-to-schtasks.ts`, `one-shot.ts`, `core/scheduler/*` | `schedule_task`, `update_task`, `dry_run` | GUI-форма, дашборд | `test-schedule-v2`, `test-one-shot`, `test-window-v3`, `test-cron-to-schtasks`, `test-mac-launchctl`, `test-mac-cron`, `test-at-fallback` |
 | D02 | Жизненный цикл задач (CRUD) | `src/db/tasks-repo.ts`, `src/index.ts` | `schedule_task`, `schedule_advanced`, `list_tasks`, `update_task`, `update_advanced`, `delete_task`, `pause_task`, `resume_task` | GUI-таблица + форма | `test-agent-tools`, `test-task-status`, `test-task-name-limit`, `test-task-name-collision` |
 | D03 | Исполнение, блокировки, сессии | `src/core/ps-wrapper.ts`, `lock.ts`, `session.ts`, `record-history.ts` | `run_task_now`, `get_task_logs`, `get_history`, `dry_run` | GUI «Запустить/Логи/История», дашборд | `test-crash-recovery`, `test-session-continuity`, `test-ps-watchdog`, `test-prompt-argv`, `test-execution-pipeline`, `test-mission-run`, `test-run-now`, `test-pause-one-shot`, `test-stale-lock`, `test-lock-format` |
-| D04 | MCP-слой и скилл для агента | `src/index.ts`, `src/skill.ts`, `skills/` | 34 инструмента (Приложение B); через мост Code Mode — 9 (`report_bug` не найден, QA-D316-14) | — (служебная деталь) | `test-agent-tools`, `test-skill`, `test-env` |
+| D04 | MCP-слой и скилл для агента | `src/index.ts`, `src/skill.ts`, `skills/` | 34 инструмента (Приложение B); каталог Code Mode — 8 из 34, остальные через MCP/CLI/RPC (QA-D316-19) | — (служебная деталь) | `test-agent-tools`, `test-skill`, `test-env`, `test-tool-specs` |
 | D05 | DAG и цепочки задач | `src/core/dry-run.ts`, `src/index.ts` | `dry_run`, `schedule_task.dependsOn`, `nextTaskOn*` | GUI-форма, дашборд-граф | `test-dag`, `test-dag-latest-history`, `test-dry-run`, `test-dashboard-dag`, `test-retry-counter` |
 | D06 | Matrix (fan-out по workspace) | `src/core/matrix.ts` | `matrix_control`, `schedule_task.matrix` | GUI-форма, дашборд | `test-matrix`, `test-matrix-lifecycle`, `test-matrix-sync` |
 | D07 | Триггеры: cron/file/git/MCP/webhook | `src/core/file-watcher.ts`, `git-trigger.ts`, `glob.ts`, `src/server.ts` | `schedule_task`, `update_task`, `emit_event` | GUI-форма, `POST /api/hooks/:name` | `test-git-trigger`, `test-glob`, `test-integrations`, `test-watch-paths` |
@@ -230,7 +230,7 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 | S04.1.1 | 🤖 Регистрация | список инструментов сессии | Ровно 34 инструмента из Приложения B |
 | S04.1.2 | 🤖 Описания | проверить description каждого | Непустые, объясняют побочные эффекты |
 | S04.1.3 | 🧪 Невалидные аргументы | `schedule_task` без `name` | Ошибка схемы, задача не создана |
-| S04.1.4 | 🧪 Code Mode | вызовы через `execute`/`tools.*` | Работают так же, как прямые, кроме инструментов, отсутствующих в каталоге Code Mode (`delete_task`, `report_bug`, `schedule_advanced`) — QA-D316-14 в `ROADMAP.md` |
+| S04.1.4 | 🧪 Code Mode | вызовы через `execute`/`tools.*` | 8 доступных инструментов работают так же, как прямые; остальные 26 вызываются через MCP/CLI/RPC, absence in Code Mode catalog ≠ missing tool (QA-D316-19) |
 | S04.1.5 | 🧪 Аудит агента | любая мутация | `get_audit_log` → actor `mcp`, корректный `action` |
 | S04.1.6 | 🧪 Скилл | новая сессия агента | `scheduled-job-best-practices` доступен и содержит рабочие примеры |
 | S04.1.7 | 🧪 Отключение расписаний | `experimental.schedules=false` | `schedule_*` не регистрируются, остальные инструменты не падают |
@@ -658,7 +658,7 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 | D01 Расписания | `schedule_task`, `update_task`, `dry_run` | ✅ форма | ✅ nextRun | — | `create_task`, `update_task`, `dry_run` |
 | D02 CRUD | `schedule_task/list/update/delete`, `pause/resume` | ✅ | ✅ run/delete | ⌨️ run/pause/resume | `get_tasks`, `create_task`, `delete_task`, `pause_task`, `resume_task` |
 | D03 Исполнение | `run_task_now`, `get_task_logs`, `get_history` | ✅ | ✅ run | ⌨️ log | `run_task`, `get_task_logs`, `get_history` |
-| D04 MCP-слой | 34 (Приложение B); в Code Mode — 9, `report_bug` недоступен (QA-D316-14) | — | — | — | — |
+| D04 MCP-слой | 34 (Приложение B); в каталоге Code Mode — 8, остальные через MCP/CLI/RPC (QA-D316-19) | — | — | — | — |
 | D05 DAG | `dry_run` + поля | ✅ | ✅ граф | — | `dry_run`, `dry_run_all` |
 | D06 Matrix | `matrix_control` | ✅ | ✅ бейдж/отмена | — | `get_matrix_results`, `cancel_matrix`, `cleanup_matrix_orphans`, `expand_matrix_preview` |
 | D07 Триггеры | `schedule_task`, `emit_event` | ✅ | ✅ hook | — | `emit_event`, `POST /api/hooks/:name` |
@@ -834,7 +834,7 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 ## 6. Чек-лист приёмки (финальный)
 
 - [ ] Все 18 деталей закрыты, у каждой выполнены 3 критерия (работает / доступ агента / доступ пользователя) + все `Sxx.BP.*` подзадачи.
-- [ ] Все 34 MCP-инструмента вызываются и валидируют аргументы (D04); исключения Code Mode — по QA-D316-14.
+- [ ] Все 34 MCP-инструмента вызываются и валидируют аргументы (D04); каталог Code Mode ограничен 8 инструментами, остальные доступны через MCP/CLI/RPC (QA-D316-19).
 - [ ] Все 61 RPC-методов доступны GUI (D14.1, приложение A).
 - [ ] Все 19 HTTP API эндпоинтов, задокументированных в Приложении C (21 уникальный маршрут в коде, включая статику `/`, `/favicon.ico`, `/index.html` и `/metrics`), отвечают корректно (D14.4).
 - [ ] Задача, созданная в GUI, видна агенту и на дашборде; и наоборот (E2E-4).

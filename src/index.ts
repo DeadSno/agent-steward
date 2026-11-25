@@ -5225,6 +5225,16 @@ export const PLUGIN_HELP_NOTE =
   ` OpenCode /help displays at most ${PLUGIN_HELP_VISIBLE_TOOL_LIMIT} tool entries; this plugin registers more tools than that — every registered tool stays callable by name.`;
 
 /**
+ * QA-D316-19: каталог Code Mode раннера открывает лишь подмножество
+ * зарегистрированных инструментов. Это ограничение моста/раннера, а не
+ * реестра: все 34 инструмента остаются доступны по имени через MCP/CLI/RPC.
+ * Пометка добавляется централизованно к каждому описанию, чтобы агент не
+ * делал вывод «инструмента нет» по отсутствию его в каталоге Code Mode.
+ */
+export const CODE_MODE_BRIDGE_NOTE =
+  " Code Mode bridge exposes only 8 of 34 registered tools (schedule_task, update_task, list_tasks, run_task_now, get_history, get_task_logs, dry_run, get_dashboard_info); all 34 stay callable by name via MCP tools, CLI and HTTP RPC — absence from the Code Mode catalog does not mean the tool is missing.";
+
+/**
  * Собирает полный список инструментов для конкретного ядра.
  *
  * V2-адаптер (`ctx.tool.transform`) и V1-адаптер (`createV1Tools`) получают
@@ -5581,9 +5591,15 @@ export function createToolSpecs(
       execute: handlers.emit_event,
     },
   ];
+  // QA-D316-19: честное пояснение про лимит каталога Code Mode добавляется
+  // ко всем описаниям централизованно, чтобы не править 34 объявления.
+  const annotated = specs.map((spec) => ({
+    ...spec,
+    description: spec.description + CODE_MODE_BRIDGE_NOTE,
+  }));
   // T-1/T-3: фильтрация по профилю и запрет инструментов в дочернем прогоне
   // применяются общим построителем из src/tool-specs.ts.
-  return buildToolSpecs(runtime, env, specs);
+  return buildToolSpecs(runtime, env, annotated);
 }
 
 /**

@@ -13,46 +13,46 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 
-import { coreScheduleTaskSchema, createToolSpecs } from "./dist/index.js";
+import { CODE_MODE_BRIDGE_NOTE, coreScheduleTaskSchema, createToolSpecs } from "./dist/index.js";
 import { SchedulerRpc } from "./dist/rpc.js";
 
 const EXPECTED_NAMES = ["backup_db", "cleanup_history","delete_task","dry_run","emit_event","get_analytics","get_audit_log","get_dashboard_info","get_history","get_metrics","get_task_logs","list_tasks","manage_local_ai","manage_profiles","manage_secrets","manage_settings","manage_templates","manage_workspaces","matrix_control","pause_task","pipeline_apply","pipeline_export","pipeline_validate","report_bug","restore_db","resume_task","run_task_now","schedule_advanced","schedule_task","self_analysis","send_notification","transfer_tasks","update_advanced","update_task"];
 
 const EXPECTED_HASHES = {
-  "backup_db": "73be63e5b6f4cad3f0506862685fe11272d43e86cae164e1d5ad44959f253b8b",
-  "cleanup_history": "e0d8444307eee168d08818ceb0e36ce87b76be33e9594a346720a1b11cf5fac9",
-  "delete_task": "77272ebbe2d4bca7ec82ce966d5f8ecd7a78f561c40c239569d225fdb53536a8",
-  "dry_run": "67b796bae3827c90edd3876793fcc642c1e10aad8c12fed6e36dbc1e74888214",
-  "emit_event": "b9abb6a5a0401639869af52e05eda62e08126fbe9b8034b493075ff188bc6e89",
-  "get_analytics": "670d13b7fa742830125f7858cadd7b2b0c5b5c891d430bca5503104f7fabfeaa",
-  "get_audit_log": "941d5f39efa358bf77deb3e139650b2417de344c4322cc6cf98eae45f5cfaccf",
-  "get_dashboard_info": "35585e2d07b4e1a4be6e4363578356e8f4c9f122b9b932d109bc0551e0adfe0b",
-  "get_history": "d493aca4a2d50598b1320c006bb74b01ab82ab9cb1cb31b364b9666b5d71c11d",
-  "get_metrics": "6cc97118655743a29c01757ab200ed3dc1152eddf6e77c314c88034dff1fdd71",
-  "get_task_logs": "e283a97a52a0ceb44dae5a604411787b53fc34e327656d89cb3da6902f1e207d",
-  "list_tasks": "2165c5cde418227f0eb6eb6a6cf24f2bf8b19899c5f609cf1eaa30111e35424a",
-  "manage_local_ai": "6b8c022c60d6537d603b7e8f8d95373bc2e5dfa57cb3b9ff5177aae35833e76f",
-  "manage_profiles": "ffe6782eed04c22f44b4a023511b302326cb8d076915b4af0112ca22a52f039f",
-  "manage_secrets": "6e2f507bcc3183532b5b8df28e3162a540dbd0b2e400f7afe5ff2deda3638673",
-  "manage_settings": "eb9cd62e562ac48ced6c95cc95cd0a38f7db8602ecba018ae6d4ec12c05ca1a1",
-  "manage_templates": "d5a9d3f9a28da70836e7b67da45bffa34714cb7110a2a11bef8824f8365716b6",
-  "manage_workspaces": "2a926ad681c50d609d5c2aeb647c4fe5a0bc54849f9399de4951004046749d78",
-  "matrix_control": "fd759c49ea39fd334fa036664e608a04469accae922dc2bf58c7f9463ccf074e",
-  "pause_task": "922a6255827534146daa175289aeaa1e6ae2cc5db4b9517a2d5fc38de32ff107",
-  "pipeline_apply": "359f6926d430cf5ec92231138fa219ee8a838eaacde999131903d404920c24dd",
-  "pipeline_export": "7bd07dba920d68b05def4137fbd17974fa84fb66a30ab80d348169763830d0cc",
-  "pipeline_validate": "1e5793f4446041b7403c5a89894f7f6a65e5dba685910b79f76e9cbe149e3568",
-  "report_bug": "cbed52370760f1e9629b55d868b8dc7f746eb653e90f3e5d62c978797eda17ca",
-  "resume_task": "37a8eb0da28e78a7c8bb58cc43b9c68a10a428cce0014fe94e13170fb1b17311",
-  "restore_db": "831883a897c117984f283a976654f320a4a6724171fc2016b7077344351f058a",
-  "run_task_now": "adcfc004fce2d39ca95953df502b8f9587c475af4a377e7d7213b7ff83347e8a",
-  "schedule_advanced": "a3f0f250efdbd3a6390f318b19fa4b85fcc4286cb7c1bec293a239eefa25f04b",
-  "schedule_task": "aa0585815012695d1cd7c013d9333a697d5fee55579841472c3be75917a4a7b3",
-  "self_analysis": "1455ca31e66913748fbf3803567919e1a0c0781b46ddaa25015d11e6d27973ab",
-  "send_notification": "c212dcbf36e38363577dc1afc60a32a3b780e18bdc55c93aed609b9f38033b1d",
-  "transfer_tasks": "d6392ba65a6124d7e7213fa8b64f0732a92f080f5526067ed424a66e878b0662",
-  "update_advanced": "844abfea03bdfa50cece13a2b8211ba3251a613c19f4b35d843511f6e933d374",
-  "update_task": "63258645de384d6b8daa8b8bc8b43bcc65d988b37dacb43346dc9054d2b11b60",
+  "backup_db": "1e2e5c835f456cc1ec6d59cc5aee886cbec145704c7ce20245fe863f24e9f425",
+  "cleanup_history": "853127264ab9854c23fc5ff576ced049c5e11a2e98f9a233736bb2bb7f097710",
+  "delete_task": "c5e32479d6445c8703607930f67068b74628a54fc99416f3ed1b86447c53bbd6",
+  "dry_run": "a2745de0884064bc48501fb1a22a53cd81b0c221abc6d66769c99f0ebd2b70ce",
+  "emit_event": "69a4a1ecee1fd24248c3aecaf88e3de6640e0da7b7d9857ab79ac80e422431e3",
+  "get_analytics": "8268cf115cbfc78835f6cd77c0d40c569a69398b62e4b18a17a4320cbbbc1211",
+  "get_audit_log": "95d7f3b67594675a9ba227eaf5a7669fc327389ffb63fc7a875e08a8c32c38eb",
+  "get_dashboard_info": "cb06f02d12e893bbf3f8275942acd09fa36c03d9dca20a20b7b5bec30d3de69d",
+  "get_history": "b92edfe1fac86da7085b542b3e7168d217226c23dc04e393e19d9ed28f6287cf",
+  "get_metrics": "0d6fc70379c301efdbe9880a676e6d40038b2ea4d085f7dd7056b11c85cb2731",
+  "get_task_logs": "103d0eef118e78b781b8e000d438ba398da175e387756771609c6007fa18d273",
+  "list_tasks": "f0ade897b2eeee46dd8da469a5839ce5f8f4bb2ef2d3afbd5170dcf4f091f966",
+  "manage_local_ai": "9930720739344e9915c7883a093df45edab8d1199d4e26a1817ee255b941a179",
+  "manage_profiles": "91452c69f58c6a05d32b34cc33f3763c8cfa550ab24110f11f9405d0d1324cb6",
+  "manage_secrets": "6f299e9d7b9f6d0f274c039e967ade1ef724c0bce4c21cd79febea3005c18d57",
+  "manage_settings": "07ebca5724ee6f582d598a25811cf0e151c27b292cb9f184c887acc421368a02",
+  "manage_templates": "190af9f84ae9ef2fe6a79deee0c78cfb8513e5e7cce79d5b52a6d2f50e0b0de3",
+  "manage_workspaces": "496dfda65aa16e53309a12552af317aea66287e29d7e51d3fc9abb3278bb811c",
+  "matrix_control": "5f30777453632898950abad42549762b912275c1129a4718d70779a7cf58f979",
+  "pause_task": "7b692a53a254694db74a5241f009bb6bbfa1459fa1eec6ba0a58c206142fc7ec",
+  "pipeline_apply": "e7790906f23cbc53b7cbe487cb791129ce86bbf67fda76b683f5149b0158234e",
+  "pipeline_export": "4189bd7e5fda81c5482d342d96df0957d4774fa8ac905f16bfb691540eb85c0e",
+  "pipeline_validate": "e318c099197757950eb430129b2915e2233b38fbe099dcf138b066249dc2353a",
+  "report_bug": "4f4864272c626a31c9a3f8f0a3131223615066969741b7a2104766fc957d8a8b",
+  "resume_task": "79fbf775bd98b0d683461c9dd729991967ef0efe4af1b3e941a6824abe13d8c2",
+  "restore_db": "04716abf698825be1a921f42c07ae45906abbf258847585397fa1b3e2b559c68",
+  "run_task_now": "d2e78054ed564c0b64c7289a0e4c27aeb73ce6dc77b70e5bfce8bc77016cf7df",
+  "schedule_advanced": "908ea14e55f69bc3c91e8a51895827348f63602a643b4e4f5ccee29525dd49d4",
+  "schedule_task": "3d545ca3ff6e9ce65bf0ff793302c75a97198a5b565c32afcb3fc0cd56ee8c1e",
+  "self_analysis": "a6ea0752bda3e7b3509eeeb92dff665252817d5348592a0a69bda75af98919a9",
+  "send_notification": "fcbbf72f33ad244e024d296e164b21ebaca5fca26f820321666599f50bece6f1",
+  "transfer_tasks": "aaefe6d85a8266003ecc86a637064634d3e82a2bf187808d39b515ed42493f0d",
+  "update_advanced": "a67187006d35114108e0d072f2b6b8248bec39c519e1d4a524b28596c6a5d8f9",
+  "update_task": "a7cd4d0d5333ead463954c0eb9ffb29fbc3d375873699de845713e1edce1ad67",
 };
 
 const EXPECTED_RPC_METHODS = ["add_workspace","backup_db","cancel_matrix","cleanup_history","cleanup_matrix_orphans","compare_triage","create_profile","create_task","decide_approval","delete_profile","delete_secret","delete_task","delete_template","delete_workspace","discard_dlq","dry_run","dry_run_all","emit_event","expand_matrix_preview","export_tasks","get_analytics","get_audit","get_dashboard_port","get_history","get_matrix_results","get_metrics","get_platform","get_profiles","get_settings","get_shadow_report","get_task_logs","get_tasks","get_templates","get_workspaces","import_tasks","list_approvals","list_dlq","list_durable_runs","list_secrets","pause_durable_run","pause_task","pipeline_apply","pipeline_export","pipeline_validate","reset_shadow_report","restore_db","resume_durable_run","resume_task","retry_dlq","run_mission","run_task","save_secret","save_settings","save_template","self_analysis","send_digest","set_profile","test_local_ai","test_notification","update_task","update_workspace"];
@@ -166,6 +166,14 @@ check("P-1.2: имена и порядок (детерминированная �
 });
 check("P-1.2: уникальность имён инструментов", () => {
   assert.equal(new Set(specs.map((spec) => spec.name)).size, specs.length);
+});
+check("QA-D316-19: все описания честно называют лимит каталога Code Mode", () => {
+  assert.equal(
+    specs.filter((spec) => spec.description.includes(CODE_MODE_BRIDGE_NOTE)).length,
+    34,
+  );
+  assert.match(CODE_MODE_BRIDGE_NOTE, /8 of 34 registered tools/);
+  assert.match(CODE_MODE_BRIDGE_NOTE, /MCP tools, CLI and HTTP RPC/);
 });
 for (const spec of specs) {
   check(`P-1.2: снимок ${spec.name} (name + description + JSON-схемы)`, () => {
