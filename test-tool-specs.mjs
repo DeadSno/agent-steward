@@ -31,7 +31,7 @@ const EXPECTED_HASHES = {
   "get_analytics": "670d13b7fa742830125f7858cadd7b2b0c5b5c891d430bca5503104f7fabfeaa",
   "get_audit_log": "941d5f39efa358bf77deb3e139650b2417de344c4322cc6cf98eae45f5cfaccf",
   "get_dashboard_info": "35585e2d07b4e1a4be6e4363578356e8f4c9f122b9b932d109bc0551e0adfe0b",
-  "get_history": "d493aca4a2d50598b1320c006bb74b01ab82ab9cb1cb31b364b9666b5d71c11d",
+  "get_history": "f79834fe5c91d4e3f3214968bfd4dd8f64019ed1a7449386ce8ccb4760df9c1b",
   "get_metrics": "6cc97118655743a29c01757ab200ed3dc1152eddf6e77c314c88034dff1fdd71",
   "get_task_logs": "e283a97a52a0ceb44dae5a604411787b53fc34e327656d89cb3da6902f1e207d",
   "list_tasks": "2165c5cde418227f0eb6eb6a6cf24f2bf8b19899c5f609cf1eaa30111e35424a",
@@ -50,13 +50,13 @@ const EXPECTED_HASHES = {
   "resume_task": "37a8eb0da28e78a7c8bb58cc43b9c68a10a428cce0014fe94e13170fb1b17311",
   "restore_db": "831883a897c117984f283a976654f320a4a6724171fc2016b7077344351f058a",
   "run_task_now": "adcfc004fce2d39ca95953df502b8f9587c475af4a377e7d7213b7ff83347e8a",
-  "schedule_advanced": "a3f0f250efdbd3a6390f318b19fa4b85fcc4286cb7c1bec293a239eefa25f04b",
-  "schedule_task": "aa0585815012695d1cd7c013d9333a697d5fee55579841472c3be75917a4a7b3",
+  "schedule_advanced": "271f228762a8402c6b01e88aac3e28e5c7bcc499700e949cfff8e1b42a7acfe2",
+  "schedule_task": "3e6c4b2812bf0e56b2401e1effb9a7496407c21c9b3ec601ff693381b6d7ecbf",
   "self_analysis": "1455ca31e66913748fbf3803567919e1a0c0781b46ddaa25015d11e6d27973ab",
   "send_notification": "c212dcbf36e38363577dc1afc60a32a3b780e18bdc55c93aed609b9f38033b1d",
   "transfer_tasks": "d6392ba65a6124d7e7213fa8b64f0732a92f080f5526067ed424a66e878b0662",
-  "update_advanced": "844abfea03bdfa50cece13a2b8211ba3251a613c19f4b35d843511f6e933d374",
-  "update_task": "63258645de384d6b8daa8b8bc8b43bcc65d988b37dacb43346dc9054d2b11b60",
+  "update_advanced": "af5a091a9651ca3fe0f3f127327c5efdd7bf197748833b513cd612895da35d1f",
+  "update_task": "f462bab76357eb70dc179555943b6cb665a1a458db3cf6821e17b669813e7fff",
 };
 
 const EXPECTED_RPC_METHODS = ["add_workspace","backup_db","cancel_matrix","cleanup_history","cleanup_matrix_orphans","compare_triage","create_profile","create_task","decide_approval","delete_profile","delete_secret","delete_task","delete_template","delete_workspace","discard_dlq","dry_run","dry_run_all","emit_event","expand_matrix_preview","export_tasks","get_analytics","get_audit","get_dashboard_port","get_history","get_matrix_results","get_metrics","get_platform","get_profiles","get_settings","get_shadow_report","get_task_logs","get_tasks","get_templates","get_workspaces","import_tasks","list_approvals","list_dlq","list_durable_runs","list_secrets","pause_durable_run","pause_task","pipeline_apply","pipeline_export","pipeline_validate","reset_shadow_report","restore_db","resume_durable_run","resume_task","retry_dlq","run_mission","run_task","save_secret","save_settings","save_template","self_analysis","send_digest","set_profile","test_local_ai","test_notification","update_task","update_workspace"];
@@ -213,7 +213,10 @@ check("QA-PORT-4: emit_event зарегистрирован в core-профил
   assert.ok(coreSpecs.some((spec) => spec.name === "emit_event"));
 });
 check("QA-PORT-4: core-профиль не тянет admin-инструменты", () => {
-  assert.equal(coreSpecs.length, 10);
+  // 11 инструментов вместо исторических 10: `delete_task` переведён в core,
+  // чтобы пользователь core-профиля мог чистить stale/archived задачи.
+  assert.equal(coreSpecs.length, 11);
+  assert.equal(coreSpecs.some((spec) => spec.name === "delete_task"), true);
   assert.equal(coreSpecs.some((spec) => spec.name === "schedule_advanced"), false);
 });
 check("QA-PORT-4: coreScheduleTaskSchema сохраняет mcpEvent", () => {

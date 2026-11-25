@@ -35,9 +35,6 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 **QA-SUB-1 — Суб-агент упирается в лимит тарифа** · P2 · ⬜
 - [ ] Суб-агент `explore` (`opencode/mimo-v2.6-flash-free`) завершился `Free usage limit reached`; лимит 1 суб-агента исчерпан (уже фиксировалось в CHANGELOG:17). Нужны явный local-agent fallback на Ollama (`hf.co/Qwen/Qwen3-4B-GGUF:Q4_K_M`, доступна на 127.0.0.1:11434; `qwen2.5:3b` при pull падает) и прозрачный statuses в ответе, чтобы задача не срывалась тихо.
 
-**QA-BASELINE-1 — `test-tool-specs.mjs` падает на устаревших снапшотах** · P2 · ⬜
-- [ ] Воспроизведение 25.11.2026: `npm run test:parallel` — 128/130, exit 1; `test-tool-specs.mjs` — 46/52: снапшоты `get_history`/`schedule_task`/`schedule_advanced`/`update_task`/`update_advanced` не совпадают с текущими name+description+JSON-схемами, плюс `QA-PORT-4: core-профиль не тянет admin-инструменты` ожидает 10 инструментов core, а реестр отдаёт 11 (уже зафиксировано в CHANGELOG как 11). Часть находки про `test-run-now.mjs` (PL-106) закрыта отдельно как QA-D320-1 и перенесена в CHANGELOG; здесь остаётся только обновление снимков tool-specs и бейзлайна core-профиля по факту текущего реестра (34 инструмента).
-
 
 ## Деталь 3.20 — Матрица покрытия стратегии и незакрытые контуры
 `docs/CONCEPT.md` §11/§12/§13, `ROADMAP-STRATEGY.md`, `docs/ARCHITECTURE.md` Known limitations, `docs/EXECUTION-LOOP.md` §7–§9, `src/core/execution.ts`, `src/core/self-analysis.ts`, `src/db/capability-repo.ts`, `test-budget.mjs`, `test-permissions-policy.mjs`
