@@ -13,8 +13,12 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 
-import { coreScheduleTaskSchema, createToolSpecs } from "./dist/index.js";
-import { SchedulerRpc } from "./dist/rpc.js";
+// QA-D316-37: сообщения об ошибках локализуются, и на ubuntu CI локаль может
+// быть китайской ('任务 ... 不存在'). Фиксируем EN до загрузки dist, чтобы
+// regex проверки QA-PORT-14 не зависел от локали раннера.
+process.env.OPENCODE_SCHEDULER_LOCALE = "en";
+const { coreScheduleTaskSchema, createToolSpecs } = await import("./dist/index.js");
+const { SchedulerRpc } = await import("./dist/rpc.js");
 
 const EXPECTED_NAMES = ["backup_db", "cleanup_history","delete_task","dry_run","emit_event","get_analytics","get_audit_log","get_dashboard_info","get_history","get_metrics","get_task_logs","list_tasks","manage_local_ai","manage_profiles","manage_secrets","manage_settings","manage_templates","manage_workspaces","matrix_control","pause_task","pipeline_apply","pipeline_export","pipeline_validate","report_bug","restore_db","resume_task","run_task_now","schedule_advanced","schedule_task","self_analysis","send_notification","transfer_tasks","update_advanced","update_task"];
 
