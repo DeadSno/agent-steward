@@ -39,6 +39,43 @@ const assertThrows = (fn, msg) => {
   assert(false, msg);
 };
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// QA-D316-21: на Windows антивирус/ещё не отпущенный дескриптор БД может
+// удерживать каталог уже после closeDb(), поэтому EPERM/EBUSY при удалении
+// temp-каталога считаем транзиентными и повторяем с экспоненциальной задержкой.
+// Любая другая ошибка (и EPERM/EBUSY после исчерпания попыток) пробрасывается.
+const RETRYABLE_RM_CODES = new Set(["EPERM", "EBUSY"]);
+const DEFAULT_RM_ATTEMPTS = 4;
+const DEFAULT_RM_DELAYS = [100, 200, 400];
+
+const removeWithRetry = (target, options = {}) => {
+  const {
+    remove = (p) => fs.rmSync(p, { recursive: true, force: true }),
+    attempts = DEFAULT_RM_ATTEMPTS,
+    delays = DEFAULT_RM_DELAYS,
+    onRetry = () => {},
+  } = options;
+
+  const removeAsync = async () => {
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      try {
+        remove(target);
+        return attempt;
+      } catch (error) {
+        const retryable = RETRYABLE_RM_CODES.has(error?.code);
+        if (!retryable || attempt === attempts) throw error;
+        const delay = delays[Math.min(attempt - 1, delays.length - 1)] ?? 0;
+        onRetry({ attempt, delay, error });
+        await sleep(delay);
+      }
+    }
+    throw new Error("removeWithRetry: unreachable");
+  };
+
+  return removeAsync();
+};
+
 const { initDb, closeDb, getDb } = await import("./dist/db/index.js");
 const { SCHEMA_VERSION, getSchemaVersion } = await import("./dist/db/schema.js");
 const repo = await import("./dist/db/runs-repo.js");
@@ -327,8 +364,56 @@ const positionIndex = getDb()
   .get();
 assert(Boolean(positionIndex?.name), "индекс idx_run_steps_position создан после миграции");
 
+// --- 11. Регрессия QA-D316-21: cleanup с retry ---------------------------
+// Подменяем функцию удаления: первая попытка бросает EPERM (как на Windows
+// сразу после closeDb), вторая — успешно удаляет реальный каталог.
+const retryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "sched-rm-retry-"));
+fs.writeFileSync(path.join(retryRoot, "probe.txt"), "stub");
+let transientAttempts = 0;
+const retryLog = [];
+const transientResult = await removeWithRetry(retryRoot, {
+  remove: (p) => {
+    transientAttempts += 1;
+    if (transientAttempts === 1) {
+      const error = new Error("EPERM, Permission denied");
+      error.code = "EPERM";
+      throw error;
+    }
+    fs.rmSync(p, { recursive: true, force: true });
+  },
+  onRetry: ({ attempt, delay }) => retryLog.push({ attempt, delay }),
+});
+assert(transientResult === 2, `helper вернул число попыток = 2 (${transientResult})`);
+assert(transientAttempts === 2, `после EPERM сделано ровно 2 попытки (${transientAttempts})`);
+assert(
+  retryLog.length === 1 && retryLog[0].attempt === 1 && retryLog[0].delay === 100,
+  "первый retry ждёт 100 мс (экспоненциальная задержка)",
+);
+assert(!fs.existsSync(retryRoot), "итоговая очистка каталога после EPERM успешна");
+
+// После исчерпания попыток ошибка пробрасывается, а не глушится.
+let exhaustedAttempts = 0;
+let propagatedError = null;
+try {
+  await removeWithRetry(path.join(os.tmpdir(), "sched-rm-never"), {
+    remove: () => {
+      exhaustedAttempts += 1;
+      const error = new Error("EBUSY, resource busy");
+      error.code = "EBUSY";
+      throw error;
+    },
+    attempts: 3,
+    delays: [0, 0, 0],
+  });
+} catch (error) {
+  propagatedError = error;
+}
+assert(exhaustedAttempts === 3, `постоянный EBUSY: сделано 3 попытки (${exhaustedAttempts})`);
+assert(propagatedError?.code === "EBUSY", "после исчерпания попыток EBUSY проброшен");
+
+// --- 12. Финальная очистка с retry (вызов после closeDb) ------------------
 closeDb();
-fs.rmSync(tempRoot, { recursive: true, force: true });
+await removeWithRetry(tempRoot);
 
 console.log(
   process.exitCode ? "\nЕсть падения теста." : "\nВсе проверки durable-состояния пройдены.",
