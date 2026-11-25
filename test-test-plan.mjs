@@ -109,8 +109,9 @@ check("PL-3.2: Деталь 1.4 / TP-3…TP-6 зафиксированы в CHAN
     /TP-3\s*[–—-]\s*TP-6/.test(changelog) &&
     /удалена из ROADMAP/i.test(changelog));
 
-// TPS-1.3 (Деталь 3.16): guard против возврата закрытых ID §7.4 в открытые статусы.
-const s74 = section(plan, "### 7.4 Доработки из ROADMAP.md (бэклог)", "## 8.");
+// TPS-1.3 (Деталь 3.16): закрытые ID удалены из §2/§7, в §7.4 осталась только X-4.
+const details = section(plan, "## 2. Детали, задачи, подзадачи", "## 3.");
+const s74 = section(plan, "### 7.4 Доработки из ROADMAP.md (открытые)", "## 8.");
 
 // Закрытые ID привязаны к строке таблицы §7.4. Составные строки дают несколько
 // ID на одну строку: E-1/E-2.1/E-2.2, M-1..M-8, F-2/F-2.5 (F-2.5 — в «Сути»).
@@ -133,41 +134,43 @@ const rowFor = (text, key) => {
 };
 const cellsOf = (row) => row.split("|").map((c) => c.trim());
 
-function auditClosed74(text) {
-  const issues = [];
-  for (const [id, key] of CLOSED_74) {
-    const row = rowFor(text, key);
-    if (!row) {
-      issues.push(`${id}: строка §7.4 не найдена (${key})`);
-      continue;
-    }
-    const status = cellsOf(row)[4] ?? "";
-    const essence = cellsOf(row)[5] ?? "";
-    if (!status.includes("✅")) issues.push(`${id}: статус «${status}» — ожидается ✅`);
-    if (!/CHANGELOG/i.test(essence)) issues.push(`${id}: нет ссылки на CHANGELOG в «Сути»`);
-  }
-  return issues;
-}
+// Закрытые ID больше не должны присутствовать в таблицах плана.
+const reintroduced = (text) => CLOSED_74.filter(([, key]) => rowFor(text, key)).map(([id]) => id);
 
-const s74Issues = auditClosed74(s74);
-check(`TPS-1.3: ${CLOSED_74.length} закрытых ID §7.4 имеют ✅ и ссылку на CHANGELOG`,
-  s74Issues.length === 0);
-if (s74Issues.length) console.error(s74Issues.map((s) => " - " + s).join("\n"));
+check(`TPS-1.3: ${CLOSED_74.length} закрытых ID §7.4 удалены из плана`,
+  reintroduced(s74).length === 0);
 
-// X-4 намеренно исключён из обязательных: ему разрешено оставаться 🔄.
+// Закрытые подзадачи §2 (BN/IM/QA-P3 и весь D17) тоже удалены.
+const CLOSED_S2 = [
+  "S01.1.BP.1", "S02.1.BP.2", "S03.1.BP.1", "S03.1.BP.2", "S03.1.BP.3",
+  "S03.1.BP.4", "S04.1.BP.2", "S05.1.BP.2", "S06.1.BP.3", "S06.1.BP.4",
+  "S08.1.BP.1", "S08.1.BP.2", "S09.1.BP.1", "S09.1.BP.2", "S10.1.BP.2",
+  "S10.1.BP.3", "S11.1.BP.2", "S12.1.BP.1", "S12.1.BP.2", "S13.1.BP.1",
+  "S13.1.BP.2", "S14.1.BP.1", "S14.1.BP.2", "S15.1.BP.1", "S15.1.BP.2",
+  "S16.1.BP.1", "S16.1.BP.2",
+  ...Array.from({ length: 6 }, (_, i) => `S17.1.${i + 1}`),
+  "S17.1.BP.1", "S17.1.BP.2",
+];
+check(`TPS-1.3: ${CLOSED_S2.length} закрытых подзадач §2 удалены из плана`,
+  CLOSED_S2.every((id) => !rowFor(details, id)));
+
+// X-4 намеренно остаётся единственной открытой строкой §7.4.
 const x4Row = rowFor(s74, "X-4");
-check("TPS-1.3: X-4 разрешён оставаться 🔄 (не требует закрытия)",
-  !!x4Row && /[✅🔄]/.test(cellsOf(x4Row)[4] ?? ""));
+check("TPS-1.3: X-4 — единственная открытая строка §7.4 (🔄)",
+  !!x4Row && /🔄/.test(cellsOf(x4Row)[4] ?? "") &&
+    s74.split("\n").filter((line) => /^\s*\|/.test(line) && !/^\s*\|\s*(ID|---)/.test(line)).length === 1);
 
-// Негативный тест: подменяем статус F-1 на ⬜ и убеждаемся, что guard это ловит.
-const f1Row = rowFor(s74, "F-1");
-const mutated = f1Row ? s74.replace(f1Row, f1Row.replace("✅", "⬜")) : s74;
-check("TPS-1.3: негативный тест — регрессия F-1 → ⬜ обнаруживается guard-ом",
-  mutated !== s74 && auditClosed74(mutated).some((s) => s.startsWith("F-1:")));
-// Восстановление: правка была только в памяти, на диске §7.4 не менялся.
-const restored = s74;
+// Негативный тест: возврат закрытой строки F-1 в §7.4 должен ловиться guard-ом.
+const injected = `${s74}\n| F-1 | D17 | P2 | ✅ закрыто | перенесено в CHANGELOG.md |\n`;
+check("TPS-1.3: негативный тест — возврат F-1 в §7.4 обнаруживается",
+  reintroduced(injected).includes("F-1"));
 check("TPS-1.3: исходное состояние §7.4 восстановлено",
-  restored === s74 && auditClosed74(restored).length === 0);
+  reintroduced(s74).length === 0 && !rowFor(s74, "F-1"));
+
+// Устаревшие счётчики и ссылки на удалённые секции не должны вернуться.
+check("актуализация: нет 32 инструментов, 21 проверки, Деталей 3.9/3.19",
+  !/32 инструмент/i.test(plan) && !/21 проверка/.test(plan) &&
+    !/Деталь 3\.19/.test(plan) && !/Деталь 3\.9/.test(plan));
 
 const failed = results.filter((r) => !r.ok);
 console.log(`\nИТОГО: ${results.length - failed.length}/${results.length} проверок пройдено.`);
