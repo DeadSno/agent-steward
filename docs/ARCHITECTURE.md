@@ -228,6 +228,15 @@ applied through `PRAGMA user_version` on open. Step 11 adds functional indexes
 
 ### Known limitations (execution)
 
+- AD-1.1: the scheduler source is selectable via `nativeScheduler.mode`
+  (`polling` / `native` / `auto`) in `settings.json`. `auto` switches to the
+  host-native trigger only when the host advertises the capability
+  (`OPENCODE_NATIVE_SCHEDULER`, caps `ledger,dlq,budgets,approval,execution-loop`),
+  otherwise it stays on `schtasks`/`cron`/`launchd`. The native backend only
+  registers in the same `TaskRegistry` and delegates the trigger to the existing
+  execution loop; ledger, DLQ, budgets and approval are never reimplemented in
+  the host. See `docs/NATIVE-SCHEDULER.md` and `test-native-scheduler.mjs`.
+
 - Startup recovery (`recoverInterrupted*`) marks unfinished rows as `error` without
   a liveness check, so a plugin restart during a live run may finalize it early.
   v8 added `owner_pid` / `owner_host` / `owner_started_at` and

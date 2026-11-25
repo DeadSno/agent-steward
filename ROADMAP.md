@@ -32,6 +32,10 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 
 - Остаток ops-находки 25.11: глобальный `~/.config/opencode/opencode.jsonc` по-прежнему грузит плагин по старому пути `.../opencode-windows-scheduler` (v0.0.7); само-диагностика теперь есть в сборке dev (`get_dashboard_info` → `plugin.staleInstallation`), но сам конфиг меняется вне репозитория. Повторная проверка после пуша через Code Mode подтвердила старый экземпляр: ответ `get_dashboard_info` не содержит поля `plugin`, а `get_history({status:"success",limit:5,compact:true})` вернул 1876 записей. — P2 (ops). Действие: владельцу окружения обновить путь до актуального чек-аута и перезапустить сервис; агент может проверить `plugin.reason === "identity-mismatch"` до и после. Обнаружено 25.11.2026.
 
+- `PLUGIN_DIR` в `src/types.ts` вычисляется один раз на импорте модуля, поэтому смена `APPDATA`/`OPENCODE_SCHEDULER_HOME` после импорта не влияет на путь `settings.json`. Воспроизведено 25.11.2026 при AD-1.1: тест с изолированным каталогом, импортировавший `dist/core/scheduler/index.js` статически до подмены env, записал `nativeScheduler` в реальный профиль пользователя. — P2. Действие: сделать путь каталога разрешаемым через функцию (`getPluginDir()` с кэшем по профилю) либо явно документировать требование задавать env до первого импорта во всех тестах, работающих с настройками.
+
+- Мета-гейт `test-docs.mjs` (DOCS-008) сканирует все Markdown-файлы в корне репозитория, поэтому временные `_tmp_*.md` с историческими ссылками вида `src/core/execution.ts:478` ломают проверку локальных ссылок (150/151), хотя сами файлы не являются частью проекта. Воспроизведено 25.11.2026 при AD-1.1. — P2. Действие: сканеру ссылок явно исключать временные/неотслеживаемые файлы (`_tmp_*`, `.tmp*`) либо Regex для `:line`-суффиксов в путях, либо не держать временные файлы в корне репозитория.
+
 ## Деталь 3.20 — Матрица покрытия стратегии и незакрытые контуры
 `docs/CONCEPT.md` §11/§12/§13, `ROADMAP-STRATEGY.md`, `docs/ARCHITECTURE.md` Known limitations, `docs/EXECUTION-LOOP.md` §7–§9, `src/core/execution.ts`, `src/core/self-analysis.ts`, `src/db/capability-repo.ts`, `test-budget.mjs`, `test-permissions-policy.mjs`
 
@@ -47,8 +51,7 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 | §12 — capped explore, staged LoRA | ✅ capped explore-бюджет и bandit (EV-2.3), LP-1.1/1.2/1.3 | Критерии датасета, офлайн-eval и shadow/canary с откатом зафиксированы; полный трафик не включался |
 | §12 — cost of verification, права вне write-scope | ✅ SC-1.1: кэш проверок и честная net-экономия в `report.savings`/`honestEconomy`; SC-1.2: write-scope guard deny-by-default с явным opt-in и аудитом | — |
 
-**Задача AD-1 — Адаптивность хоста и внешний контракт Этапа 3** · P2 · ⬜
-- [ ] AD-1.1 Подготовить режим `nativeScheduler` как ответ на триггер из раздела «Риски и триггеры пересмотра»: сохранить ledger, DLQ, бюджет и approval, fallback на текущую polling-обвязку.
+**Задача AD-1 — Адаптивность хоста и внешний контракт Этапа 3** · P2 · 🔄
 - [ ] AD-1.2 Зафиксировать версионируемый внешний контракт (pipeline YAML + SQLite ledger, MCP/API-вход через тот же execution loop) и golden-контрактные тесты без нового движка.
 
 ## Деталь 3.21 — Усиление в глубину (не расширение)

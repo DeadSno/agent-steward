@@ -44,7 +44,7 @@
 # Выполнять из корня чек-аута agent-steward (например, .steward-dev или tp-audit-dev)
 npm run build          # tsc: dist/ (сервер, RPC, ядро)
 npm run build:gui      # vite: gui-experimental.cjs (панель OpenCode)
-npm test               # 137 файлов test-*.mjs (129 npm-скриптов), полный регресс
+npm test               # 139 файлов test-*.mjs (130 npm-скриптов), полный регресс
 node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с сид-данными
 ```
 
@@ -53,7 +53,7 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 - MCP: 34 инструмента доступны агенту после подключения плагина. Каталог Code Mode раннера показывает только 8 (`schedule_task`, `update_task`, `list_tasks`, `run_task_now`, `get_history`, `get_task_logs`, `dry_run`, `get_dashboard_info`); остальные вызываются по имени через MCP/CLI/HTTP RPC — ограничение моста, а не реестра (QA-D316-19).
 - Дашборд: `http://127.0.0.1:3782/` (порт может отличаться, смотреть `get_dashboard_info`).
 - Логи прогона: вывод `npm test` (при необходимости перенаправить в `test-run.log`); артефакты GUI — `gui-experimental.cjs` (создаётся `npm run build:gui`).
-- Актуальная ветка плана: `dev` (34 инструмента, 129 npm-скриптов). Legacy-чек-аут `steward-work` содержит 30 инструментов и 113 npm-скриптов — его счётчики здесь не используются.
+- Актуальная ветка плана: `dev` (34 инструмента, 130 npm-скриптов). Legacy-чек-аут `steward-work` содержит 30 инструментов и 113 npm-скриптов — его счётчики здесь не используются.
 
 ### 0.3.1 Счётчики (TP-6.2, автогенерация)
 
@@ -64,7 +64,7 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 | RPC-методов | 61 | Приложение A |
 | HTTP-эндпоинтов | 19 | Приложение C |
 | Файлов test-*.mjs | 137 | корень репозитория |
-| npm-скриптов test* | 129 | package.json |
+| npm-скриптов test* | 130 | package.json |
 | Покрытие в §5 | 137 | TEST-PLAN §5 |
 | SCHEMA_VERSION | 14 | src/db/schema.ts |
 <!-- counters:end -->
@@ -550,7 +550,7 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 | S16.1.1 | 🧪 tsc | `npm run build` | 0 ошибок |
 | S16.1.2 | 🧪 vite | `npm run build:gui` | `gui-experimental.cjs` создан, каталоги внутри |
 | S16.1.3 | 🧪 Экспорты | `package.json.exports` | `./gui-experimental` и основные точки входа валидны |
-| S16.1.4 | 🧪 Тесты | `npm test` | 137 файлов `test-*.mjs` (129 npm-скриптов), 0 падений |
+| S16.1.4 | 🧪 Тесты | `npm test` | 139 файлов `test-*.mjs` (130 npm-скриптов), 0 падений |
 | S16.1.5 | 🧪 Docs | `node test-docs.mjs` | Команды и ключи в README/CHANGELOG актуальны |
 | S16.1.6 | 🧪 Чистая установка | `npm pack` → установка в пустой проект | Плагин стартует, панель открывается |
 | S16.1.7 | 🧪 Версия | `version.ts` / CHANGELOG | Совпадают, дата и раздел Fixed на месте |
@@ -824,6 +824,8 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 | `test-model-validation.mjs` | D04 (валидация идентификатора модели в tool-аргументах, P2-11) |
 | `test-chaos-dag.mjs` | D05, D15 (nightly crash/kill-9 DAG) |
 | `test-task-logs.mjs` | D16 (PL-67: поиск лога задачи по короткому/префиксному имени) |
+| `test-runner-selection.mjs` | D16 (EX-1.1: выбор runner local/docker/ssh, fail-open) |
+| `test-native-scheduler.mjs` | D16 (AD-1.1: режим nativeScheduler, host-capability и fallback) |
 
 > Исторические мета-задачи аудита плана закрыты и зафиксированы в `CHANGELOG.md`:
 > TP-1 (корректность счётчиков), TP-2 (полнота §5) и TP-3–TP-6 (верификация

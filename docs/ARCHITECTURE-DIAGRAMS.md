@@ -40,6 +40,7 @@ src/core/lock.ts
 src/core/matrix.ts
 src/core/mission.ts
 src/core/native-notify.ts
+src/core/native-scheduler.ts
 src/core/one-shot.ts
 src/core/opencode-cli.ts
 src/core/opencode-models.ts
@@ -77,6 +78,7 @@ src/core/scheduler/index.ts
 src/core/scheduler/linux.ts
 src/core/scheduler/logs.ts
 src/core/scheduler/mac.ts
+src/core/scheduler/native.ts
 src/core/scheduler/posix.ts
 src/core/scheduler/registry.ts
 src/core/scheduler/run-now.ts
@@ -124,7 +126,7 @@ src/db/tasks-repo.ts
 src/db/templates-repo.ts
 ```
 
-**Что видно:** 88 модулей в `src/core/` (из них 5 — `router/`, 10 — `scheduler/`, 1 — `wrappers/`) и 19 модулей в `src/db/`. Durable-слой вынесен в `src/db/`, оркестрация — в `src/core/`. Счётчик сверен с `src/core/**/*.ts` 25.11.2026 (71 → 80 после D-1/D-3, M-1…M-4, A-2, T-1, S3-D36 и QW-2; 81 после QW-9; 82 после S-1; 83 после S-2; 84 после S-3; 85 после S-4; 86 после S-5; 87 после S-6; 88 после EX-1.1 — добавлен `runner-run.ts`; 18 → 19 в `src/db/` после BN-7).
+**Что видно:** 90 модулей в `src/core/` (из них 5 — `router/`, 12 — `scheduler/`, 1 — `wrappers/`) и 19 модулей в `src/db/`. Durable-слой вынесен в `src/db/`, оркестрация — в `src/core/`. Счётчик сверен с `src/core/**/*.ts` 25.11.2026 (71 → 80 после D-1/D-3, M-1…M-4, A-2, T-1, S3-D36 и QW-2; 81 после QW-9; 82 после S-1; 83 после S-2; 84 после S-3; 85 после S-4; 86 после S-5; 87 после S-6; 88 после EX-1.1 — добавлен `runner-run.ts`; 90 после AD-1.1 — добавлены `native-scheduler.ts` и `scheduler/native.ts`; 18 → 19 в `src/db/` после BN-7).
 
 **Ключевые выводы:** Принцип «ядро не зависит от транспорта» реализован через [`execution.ts`](../src/core/execution.ts): исполнитель (`StepExecutor`) передаётся в `executeExecutionPlan` снаружи. Отдельного `gate-repo.ts` не существует — операции с `gate_outcomes` распределены между [`execution.ts`](../src/core/execution.ts), [`runs-repo.ts`](../src/db/runs-repo.ts) и [`capability-repo.ts`](../src/db/capability-repo.ts).
 

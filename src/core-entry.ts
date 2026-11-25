@@ -104,6 +104,22 @@ export {
   type ScaffoldOptions,
   type ScaffoldResult,
 } from "./core/scaffold.js";
+// AD-1.1: режим планировщика и capability хоста (без OpenCode-контекста).
+export {
+  DEFAULT_NATIVE_SCHEDULER_SETTINGS,
+  NATIVE_SCHEDULER_HOST_ENV,
+  NATIVE_SCHEDULER_INVARIANTS,
+  NativeSchedulerUnavailableError,
+  assertNativeSchedulerHost,
+  detectNativeSchedulerHost,
+  nativeSchedulerContract,
+  normalizeNativeSchedulerSettings,
+  resolveSchedulerMode,
+  type NativeSchedulerHostInfo,
+  type NativeSchedulerInvariant,
+  type NativeSchedulerSettings,
+  type SchedulerMode,
+} from "./core/native-scheduler.js";
 export {
   TOOL_NAMES,
   buildToolSpecs,

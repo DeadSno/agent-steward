@@ -9,6 +9,11 @@ import {
   type PermissionPolicy,
 } from "./core/permissions.js";
 import { defaultBudgetSettings, type BudgetSettings } from "./core/budget.js";
+import {
+  DEFAULT_NATIVE_SCHEDULER_SETTINGS,
+  normalizeNativeSchedulerSettings,
+  type NativeSchedulerSettings,
+} from "./core/native-scheduler.js";
 
 /** Настройки webhook-уведомлений (Discord/Slack/generic). */
 export interface WebhookNotificationSettings {
@@ -431,6 +436,8 @@ export interface SchedulerSettings {
   budgets: BudgetSettings;
   /** Обратная связь пользователей (Деталь 3.8). */
   feedback: FeedbackSettings;
+  /** AD-1.1: источник триггера фоновых задач (polling / native / auto). */
+  nativeScheduler: NativeSchedulerSettings;
 }
 
 /**
@@ -1474,6 +1481,10 @@ export async function loadSettings(): Promise<SchedulerSettings> {
       ),
       budgets: normalizeBudgetSettings(parsed?.budgets, fallbackBudgets),
       feedback: normalizeFeedbackSettings(parsed?.feedback, fallbackFeedback),
+      nativeScheduler: normalizeNativeSchedulerSettings(
+        parsed?.nativeScheduler,
+        DEFAULT_NATIVE_SCHEDULER_SETTINGS,
+      ),
     };
   } catch {
     return {
@@ -1488,6 +1499,7 @@ export async function loadSettings(): Promise<SchedulerSettings> {
       permissions: fallbackPermissions,
       budgets: fallbackBudgets,
       feedback: fallbackFeedback,
+      nativeScheduler: { ...DEFAULT_NATIVE_SCHEDULER_SETTINGS },
     };
   }
 }
@@ -1542,6 +1554,10 @@ export async function saveSettings(
       patch.feedback !== undefined
         ? normalizeFeedbackSettings(patch.feedback, current.feedback)
         : current.feedback,
+    nativeScheduler:
+      patch.nativeScheduler !== undefined
+        ? normalizeNativeSchedulerSettings(patch.nativeScheduler, current.nativeScheduler)
+        : current.nativeScheduler,
   };
 
   // Удобство: при включении хуков без явных учётных данных генерируем их,
