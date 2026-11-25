@@ -53,21 +53,29 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 - [ ] AD-1.2 Зафиксировать версионируемый внешний контракт (pipeline YAML + SQLite ledger, MCP/API-вход через тот же execution loop) и golden-контрактные тесты без нового движка.
 
 ## Деталь 3.21 — Усиление в глубину (не расширение)
-`src/core/savings.ts`, `src/core/permissions.ts`, `src/version.ts`, `src/gui.tsx`, `TEST-PLAN.md`, `test-budget.mjs`, `test-permissions-policy.mjs`, `test-agent-tools.mjs`, `docs/SAFETY.md`
+`src/core/savings.ts`, `src/core/permissions.ts`, `src/core/worktree.ts`, `src/core/audit.ts`, `src/core/self-analysis.ts`, `src/version.ts`, `src/gui.tsx`, `TEST-PLAN.md`, `test-budget.mjs`, `test-permissions-policy.mjs`, `test-self-analysis.mjs`, `test-gui-bundle.mjs`, `test-agent-tools.mjs`, `docs/SAFETY.md`, `docs/EXECUTION-LOOP.md`
 
-Обоснование: модули стратегии (CONCEPT §11–§13, ROADMAP-STRATEGY) в основном закрыты, но несколько контуров доверия остаются непроверяемыми извне. Это не новые возможности, а углубление существующих: измеримость, аудируемость и воспроизводимость приёмки. AD-1.2 и SC-1.1/SC-1.2 уже заведены в Детали 3.20 и здесь не дублируются.
+Обоснование: модули стратегии (CONCEPT §11–§13, ROADMAP-STRATEGY) в основном закрыты, но несколько контуров доверия остаются непроверяемыми извне. Это не новые возможности, а углубление существующих: измеримость, аудируемость и воспроизводимость приёмки. Разбивка уточнена 25.11.2026: каждая подзадача даёт один проверяемый артефакт и закрывается своим тестом; AD-1.2 и SC-1.1/SC-1.2 уже заведены в Детали 3.20 и здесь не дублируются. Порядок: сначала дешёвая диагностика установки (DEEP-3), затем измеримость и изоляция (DEEP-1/2), затем дорогая приёмка (DEEP-4).
 
 **Задача DEEP-1 — Аудируемая экономия верификации** · P2 · ⬜ (продолжение SC-1.1)
-- [ ] DEEP-1.1 Добавить в `report.savings` per-check receipts: стоимость каждой проверки, hit/miss кэша и итоговую `honestEconomy`, чтобы экономию можно было пересчитать из артефактов, а не принять на веру; golden-тест в `test-budget.mjs`.
+- [ ] DEEP-1.1 Эмитировать per-check receipt в `computeVerificationBudget`: стабильный ключ проверки, стоимость, решение hit/miss/evicted; юнит-тест в `test-budget.mjs`. Агрегаты `verificationCache` и `netEconomyUsd` уже существуют и заново не добавляются.
+- [ ] DEEP-1.2 Пересчитывать `verificationCache` и `netEconomyUsd` из receipts и проверять инвариант `recompute(receipts) === report.savings` golden-тестом в `test-budget.mjs`; обновить `docs/EXECUTION-LOOP.md` §9.
 
 **Задача DEEP-2 — Write-scope между параллельными worktree** · P2 · ⬜ (продолжение SC-1.2)
-- [ ] DEEP-2.1 При конкурирующих write-заявках из разных worktree deny по умолчанию и писать событие конфликта в журнал аудита; регрессия в `test-permissions-policy.mjs`, обновить `docs/SAFETY.md`.
+- [ ] DEEP-2.1 Ввести identity write-заявки (worktree/session/id) и детерминированное обнаружение конкурирующих заявок в `src/core/worktree.ts`; регрессия в `test-permissions-policy.mjs`.
+- [ ] DEEP-2.2 При конфликте — deny по умолчанию и событие в `src/core/audit.ts` с идентификаторами обеих заявок; регрессия в `test-permissions-policy.mjs`, обновить `docs/SAFETY.md`.
 
 **Задача DEEP-3 — Версия установки видна до запуска задачи** · P2 · ⬜ (продолжение само-диагностики 1b18f55)
-- [ ] DEEP-3.1 Поднимать `plugin.reason === "identity-mismatch"` / `plugin.staleInstallation` в GUI и `self_analysis` как предупреждение, а не только как поле ответа; регрессия в `test-agent-tools.mjs`.
+- [ ] DEEP-3.1 Поднимать `plugin.reason === "identity-mismatch"` / `plugin.staleInstallation` как предупреждение в `self_analysis`; регрессия в `test-self-analysis.mjs`.
+- [ ] DEEP-3.2 Отображать то же предупреждение в GUI до запуска задачи; регрессия в `test-gui-bundle.mjs`.
+- [ ] DEEP-3.3 Добавить fail-open preflight в `schedule_task`/`run_task_now`: предупреждение о stale-установке попадает в ответ до старта исполнения; регрессия в `test-agent-tools.mjs`.
 
 **Задача DEEP-4 — Полная приёмка D01–D18 как воспроизводимая матрица** · P1 · ⬜
-- [ ] DEEP-4.1 Прогнать все 18 деталей по трём критериям («работает / доступ агента / доступ пользователя»), убрать criteria-хвост D17 и зафиксировать результаты в `TEST-PLAN.md` и `test-docs.mjs`; до полного прогона статус «принято с ограничениями» сохраняется.
+- [ ] DEEP-4.1 Свести три критерия («работает / доступ агента / доступ пользователя») к объективным артефактам для каждой D01–D18 и убрать criteria-хвост D17; `TEST-PLAN.md`, `test-docs.mjs`.
+- [ ] DEEP-4.2 Прогнать D01–D06 (ядро/инструменты) по матрице и зафиксировать результаты; `TEST-PLAN.md`, точечные `test-*.mjs`.
+- [ ] DEEP-4.3 Прогнать D07–D12 (оркестрация/DAG/качество) по матрице; `TEST-PLAN.md`, точечные `test-*.mjs`.
+- [ ] DEEP-4.4 Прогнать D13–D18 (интеграция/OS/параллельные сборки, включая stale-установку) по матрице; `TEST-PLAN.md`, `test:worktree`, `test-portability-exports.mjs`.
+- [ ] DEEP-4.5 Подвести итог: переключить статус «принято с ограничениями» только при 18/18 и перенести закрытые записи в CHANGELOG; `TEST-PLAN.md`, `CHANGELOG.md`.
 
 ---
 
