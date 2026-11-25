@@ -1864,6 +1864,31 @@ try {
   check("PL-140: секция не выбросила исключение", false, "section threw");
 }
 
+// --- QA-D316-6: вывод проваленного гейта и фаза qualityGate в журнале ---
+try {
+  check(
+    "QA-D316-6: причина гейта берёт хвост из 10 строк с лимитом 2000",
+    psWrapperScript.includes("$gateTailLines = @($gateOutputLines | Select-Object -Last 10)") &&
+      psWrapperScript.includes("Get-SanitizedReason -ReasonLines $gateTailLines -MaxLength 2000") &&
+      psWrapperScript.includes("param([string[]]$ReasonLines, [int]$MaxLength = 200)")
+  );
+  check(
+    "QA-D316-6: санитизация причины маскирует секреты и склеивает строки",
+    psWrapperScript.includes('[A-Za-z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|APIKEY|CREDENTIAL|AUTH)') &&
+      psWrapperScript.includes("$1=***") &&
+      psWrapperScript.includes("$sanitizedLines -join")
+  );
+  check(
+    "QA-D316-6: обёртка пишет структурированный вывод гейта",
+    psWrapperScript.includes('Write-HookStructuredOutput -Phase "qualityGate" -ExitCode $gateCode') &&
+      psWrapperScript.includes("Write-HookStructuredOutput") &&
+      fs.readFileSync(new URL("./dist/hook-output.js", import.meta.url), "utf8").includes("qualityGate")
+  );
+} catch (err) {
+  console.log("[diag] QA-D316-6 section THREW:", err instanceof Error ? err.stack : String(err));
+  check("QA-D316-6: секция не выбросила исключение", false, "section threw");
+}
+
 // --- PL-150: в allow-пути гейта попадают SCOPE и filesCreate, а не только afterScript ---
 try {
   check(

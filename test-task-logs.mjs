@@ -10,12 +10,14 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ws-task-logs-"));
 process.env.OPENCODE_SCHEDULER_HOME = path.join(tempRoot, "home");
 
 const { LOG_DIR, sanitizeName } = await import("./dist/types.js");
 const { getTaskLogs } = await import("./dist/core/scheduler/logs.js");
+const { readStructuredLogs } = await import("./dist/core/structured-log.js");
 const {
   readTaskLogTail,
   readTaskLogTailSync,
@@ -228,6 +230,63 @@ check(
 check(
   "D13: PS-обёртка добавляет runId в метки этапов",
   psSource.includes('Write-Log "[stage:$Stage][run:$script:runId] $Message"'),
+);
+
+// --- QA-D316-6: структурный вывод quality gate виден в runs.jsonl ---
+const gateOutFile = path.join(tempRoot, "qa-d316-6-gate.out");
+const gateErrFile = path.join(tempRoot, "qa-d316-6-gate.err");
+fs.writeFileSync(gateOutFile, "gate stdout line 1\ngate stdout line 2\n", "utf8");
+fs.writeFileSync(gateErrFile, "gate stderr line 1\nGITHUB_TOKEN=supersecret123\n", "utf8");
+const gateHook = spawnSync(
+  process.execPath,
+  [
+    path.join(process.cwd(), "dist/hook-output.js"),
+    "qualityGate",
+    "QA-D316-6-gate",
+    "1",
+    gateOutFile,
+    gateErrFile,
+    "4321",
+  ],
+  { encoding: "utf8" },
+);
+check(
+  "QA-D316-6: CLI hook-output принимает фазу qualityGate",
+  gateHook.status === 0,
+  gateHook.stderr,
+);
+const gateRecords = readStructuredLogs({
+  event: "hook.output",
+  task: "QA-D316-6-gate",
+  limit: 5,
+}).records;
+const gateRecord = gateRecords.find((record) => record.phase === "qualityGate");
+check(
+  "QA-D316-6: структурный вывод гейта несёт фазу qualityGate и реальный exitCode",
+  gateRecord?.event === "hook.output" &&
+    gateRecord.phase === "qualityGate" &&
+    gateRecord.qualityGateExitCode === 1 &&
+    gateRecord.runId === 4321,
+  JSON.stringify(gateRecord),
+);
+check(
+  "QA-D316-6: структурный вывод гейта содержит stdout и stderr",
+  gateRecord?.qualityGateStdout?.includes("gate stdout line 1") === true &&
+    gateRecord.qualityGateStdout.includes("gate stdout line 2") &&
+    gateRecord.qualityGateStderr?.includes("gate stderr line 1") === true,
+  JSON.stringify(gateRecord),
+);
+check(
+  "QA-D316-6: secreты в выводе гейта вырезаются санитайзером structured-log",
+  gateRecord?.qualityGateStderr?.includes("supersecret123") !== true &&
+    gateRecord?.qualityGateStderr?.includes("***") === true,
+  JSON.stringify(gateRecord),
+);
+check(
+  "QA-D316-6: обёртка пишет структурированный вывод сразу после прогона гейта",
+  psSource.includes('Write-HookStructuredOutput -Phase "qualityGate" -ExitCode $gateCode') &&
+    psSource.indexOf("$gateCode = Invoke-HookScript -Command $QualityGate") <
+      psSource.indexOf('Write-HookStructuredOutput -Phase "qualityGate"'),
 );
 
 const failed = results.filter((r) => !r.ok);

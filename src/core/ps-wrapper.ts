@@ -1106,16 +1106,33 @@ function Format-LogLine {
 
 # PL-140: общая санитизация причины — используется и веткой ошибки агента
 # (PL-130), и веткой провала Quality Gate. Принимает уже отобранные строки,
-# режет ANSI/управляющие символы и ограничивает длину 200 символами.
+# режет ANSI/управляющие символы, маскирует присваивания секретов (QA-D316-6)
+# и ограничивает длину (по умолчанию 200 символов, для гейта — 2000).
 function Get-SanitizedReason {
-    param([string[]]$ReasonLines)
+    param([string[]]$ReasonLines, [int]$MaxLength = 200)
     $errorReason = ""
     if ($ReasonLines -and $ReasonLines.Count -gt 0) { $errorReason = [string]$ReasonLines[0] }
     if (-not $errorReason) { return "" }
-    # Санитизация ANSI/управляющих символов и ограничение длины (как в PL-83).
-    $errorReason = [regex]::Replace($errorReason, "$esc\\[[0-9;?]*[A-Za-z]", "")
-    $errorReason = ($errorReason -replace '[^\x20-\x7EА-Яа-яЁё]', '').Trim()
-    if ($errorReason.Length -gt 200) { $errorReason = $errorReason.Substring(0, 200) + '...' }
+    $limit = $MaxLength
+    if ($limit -lt 1) { $limit = 200 }
+    $sanitizedLines = @()
+    foreach ($reasonLine in $ReasonLines) {
+        $errorReason = [string]$reasonLine
+        if (-not $errorReason) { continue }
+        # Санитизация ANSI/управляющих символов и ограничение длины (как в PL-83).
+        $errorReason = [regex]::Replace($errorReason, "$esc\\[[0-9;?]*[A-Za-z]", "")
+        $errorReason = ($errorReason -replace '[^\x20-\x7EА-Яа-яЁё]', '').Trim()
+        # QA-D316-6: вывод гейта уходит в историю задачи — маскируем типичные
+        # присваивания TOKEN=/API_KEY=/password:, как и redactSecretsInText().
+        $errorReason = [regex]::Replace($errorReason, '(?i)\\b([A-Za-z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|APIKEY|CREDENTIAL|AUTH)[A-Za-z0-9_]*)\\s*[=:]\\s*(""|'')?[^\\s"",;]+', '$1=***')
+        if (-not $errorReason) { continue }
+        if ($errorReason.Length -gt $limit) { $errorReason = $errorReason.Substring(0, $limit) + '...' }
+        $sanitizedLines += $errorReason
+    }
+    # QA-D316-6: причина гейта — несколько строк вывода, а не одна последняя.
+    $errorReason = $sanitizedLines -join "\`n"
+    if ($errorReason.Length -gt 200 -and $limit -eq 200) { $errorReason = $errorReason.Substring(0, 200) + '...' }
+    elseif ($errorReason.Length -gt $limit) { $errorReason = $errorReason.Substring(0, $limit) + '...' }
     return $errorReason
 }
 
@@ -1672,6 +1689,9 @@ try {
             # Тот же таймаут, что у хуков: зависший gate не должен держать lock.
             # PL-107: хук видит список файлов задачи -> scoped lint вместо eslint src.
             $gateCode = Invoke-HookScript -Command $QualityGate -AllowPaths $GateAllowPaths
+            # QA-D316-6: структурированный вывод гейта пишется сразу после прогона —
+            # get_history/get_task_logs получают stdout/stderr и фазу qualityGate.
+            Write-HookStructuredOutput -Phase "qualityGate" -ExitCode $gateCode
 
             if ($gateCode -eq 124) {
                 if ($script:timedOut) {
@@ -1697,6 +1717,12 @@ try {
                 }
                 $gateReasonLines = @($gateOutputLines | Select-Object -Last 1)
                 $gateReason = Get-SanitizedReason -ReasonLines $gateReasonLines
+                # QA-D316-6: причина — хвост из ~10 непустых строк stdout+stderr,
+                # санитизированный общим хелпером и ограниченный 2000 символов.
+                $gateTailLines = @($gateOutputLines | Select-Object -Last 10)
+                if ($gateTailLines.Count -gt 1) {
+                    $gateReason = Get-SanitizedReason -ReasonLines $gateTailLines -MaxLength 2000
+                }
                 $gateDetail = "Quality Gate провален. Код возврата: $gateCode"
                 if ($gateReason) { $gateDetail = "$gateDetail. Причина: $gateReason" }
                 Write-Log "[agent-steward] ОШИБКА: $gateDetail"

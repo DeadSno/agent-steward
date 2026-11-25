@@ -28,10 +28,15 @@ import { safeStringify } from "../text.js";
 // QA-A2.7: литеральные события поглощаются string — оставляем доменный тип.
 export type StructuredLogEvent = string;
 
+/** PL-7.2 / QA-D316-6: фазы, для которых обёртка пишет разделённые потоки. */
+export type HookPhase = "preFlight" | "postFlight" | "qualityGate";
+
 export interface StructuredLogRecord {
   /** Время записи (ISO). */
   ts: string;
   event: StructuredLogEvent;
+  /** QA-D316-6: фаза события hook.output (машиночитаемый discriminator). */
+  phase?: HookPhase;
   /** id записи history (для run.*). */
   runId?: number;
   task?: string;
@@ -63,6 +68,12 @@ export interface StructuredLogRecord {
   postFlightStdout?: string;
   /** PL-7.2: stderr afterScript — может содержать diagnostics успешного git push. */
   postFlightStderr?: string;
+  /** QA-D316-6: реальный код завершения quality gate. */
+  qualityGateExitCode?: number | null;
+  /** QA-D316-6: stdout quality gate (в history/get_task_logs). */
+  qualityGateStdout?: string;
+  /** QA-D316-6: stderr quality gate (в history/get_task_logs). */
+  qualityGateStderr?: string;
   /** Источник события: schedule, dashboard, hook, cli, mcp и т.п. */
   source?: string;
   /** HTTP-статус ответа на hook.received. */
@@ -253,6 +264,14 @@ export function appendStructuredLog(
     if (typeof payload.postFlightStderr === "string") {
       payload.postFlightStderr = redactSecretsInText(payload.postFlightStderr);
     }
+    // QA-D316-6: вывод гейта может содержать токены из env — та же редакция,
+    // что и для остальных потоков, до попадания в JSONL/history.
+    if (typeof payload.qualityGateStdout === "string") {
+      payload.qualityGateStdout = redactSecretsInText(payload.qualityGateStdout);
+    }
+    if (typeof payload.qualityGateStderr === "string") {
+      payload.qualityGateStderr = redactSecretsInText(payload.qualityGateStderr);
+    }
     pendingStructuredLines.push(`${JSON.stringify(payload)}\n`);
     if (pendingStructuredLines.length >= STRUCTURED_LOG_BUFFER_MAX_LINES) {
       void flushStructuredLog();
@@ -281,12 +300,20 @@ export interface HookOutputDetails {
  * (типичный случай git push под PowerShell $ErrorActionPreference='Stop').
  */
 export function appendHookOutputLog(
-  phase: "preFlight" | "postFlight",
+  phase: HookPhase,
   task: string,
   details: HookOutputDetails,
   runId?: number,
 ): boolean {
-  const base = { event: "hook.output", task, runId } as const;
+  const base = { event: "hook.output", task, runId, phase } as const;
+  if (phase === "qualityGate") {
+    return appendStructuredLog({
+      ...base,
+      qualityGateExitCode: details.exitCode,
+      qualityGateStdout: details.stdout ?? "",
+      qualityGateStderr: details.stderr ?? "",
+    });
+  }
   if (phase === "postFlight") {
     return appendStructuredLog({
       ...base,

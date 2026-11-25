@@ -359,6 +359,38 @@ check(
     )
 );
 
+// QA-D316-6: проваленный quality gate пишет фазу qualityGate и свой вывод.
+const gateOut = path.join(tempRoot, "gate-stdout.txt");
+const gateErr = path.join(tempRoot, "gate-stderr.txt");
+fs.writeFileSync(gateOut, "npm error: missing module\n", "utf8");
+fs.writeFileSync(gateErr, 'TOKEN=supersecret\n', "utf8");
+const gateHookRun = spawnSync(
+  process.execPath,
+  [fileURLToPath(new URL("./dist/hook-output.js", import.meta.url)), "qualityGate", "QA-D316-6-probe", "1", gateOut, gateErr, "43"],
+  { encoding: "utf8" },
+);
+const gateHookLogs = readStructuredLogs({ event: "hook.output", task: "QA-D316-6-probe", limit: 5 });
+check(
+  "QA-D316-6: hook-output.js пишет фазу qualityGate с stdout/stderr гейта",
+  gateHookRun.status === 0 &&
+    gateHookLogs.records.some(
+      (record) =>
+        record.phase === "qualityGate" &&
+        record.qualityGateExitCode === 1 &&
+        record.qualityGateStdout?.includes("missing module") &&
+        record.runId === 43,
+    )
+);
+check(
+  "QA-D316-6: секреты в выводе quality gate маскируются в журнале",
+  gateHookLogs.records.some(
+    (record) =>
+      record.phase === "qualityGate" &&
+      typeof record.qualityGateStderr === "string" &&
+      !record.qualityGateStderr.includes("supersecret"),
+  )
+);
+
 // QV-8: дочерний `opencode run` помечается обёрткой и не получает инструменты.
 check(
   "QV-8: isChildRunMode распознаёт только явные truthy-значения",
