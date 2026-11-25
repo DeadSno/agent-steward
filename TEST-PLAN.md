@@ -560,15 +560,7 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 
 ### D17. Обратная связь / report_bug
 
-> Все подзадачи D17 (S17.1.1–S17.1.BP.2) закрыты и перенесены в `CHANGELOG.md` (Деталь 3.8 / F-1…F-4); критерии оставлены как эталон, регрессионные тесты — в §5. Фактическая доступность `report_bug` через Code Mode — QA-D316-14 в `ROADMAP.md`.
-
-
-**Критерии приёмки:** форма обратной связи собирает описание и опциональные логи; секреты редактивуются; `report_bug` отправляет отчёт и возвращает результат; при недоступном приёмнике срабатывает fail-open; кнопка доступна в хуке/отчёте; диагностика `self_analysis` помогает приложить метрики.  
-**Доступ агента:** `report_bug` (MCP), `self_analysis` (диагностика перед отправкой).  
-**Доступ пользователя:** кнопка «Сообщить о баге» в отчёте/хуке дашборда, показ payload перед отправкой.
-
-| ID | Подзадача | Шаги | Ожидаемый результат |
-|---|---|---|---|
+> Все подзадачи D17 (S17.1.1–S17.1.BP.2) закрыты и перенесены в `CHANGELOG.md` (Деталь 3.8 / F-1…F-4); регрессионные тесты — в §5, объективные артефакты приёмки — в §4.1. Диагностика `self_analysis` помогает приложить метрики к отчёту. Фактическая доступность `report_bug` через Code Mode — QA-D316-14 в `ROADMAP.md`.
 
 ### D18. Pipeline-as-code
 
@@ -680,6 +672,39 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 3. **D14:** TUI умеет только run/pause/resume/log; CRUD, матрицы и настройки — через GUI, дашборд или агента.
 4. **D10:** дашборд отдаёт аудит только через API (`/api/audit`), отдельного экрана аудита в нём нет.
 5. **D14.4:** HTTP API привязан к `127.0.0.1` (loopback); каждый запрос проверяет заголовки `Origin`/`Host` по списку `LOCAL_HOSTNAMES = [127.0.0.1, localhost, ::1, [::1]]` — чужие хосты и `Origin: null` отклоняются; webhook `POST /api/hooks/:name` дополнительно защищён токеном, HMAC-подписью и timestamp. Доступ к API — только локальный контур с проверкой заголовков; отдельной учётной записи пользователя нет, но запрос извне не принимается.
+
+---
+
+## 4.1 Матрица объективных артефактов приёмки (DEEP-4)
+
+> Три критерия из шапки плана («работает / доступ агента / доступ пользователя»)
+> заменяются проверяемыми артефактами: командой прогона, MCP-вызовом и UI-поверхностью
+> с конкретным маршрутом/элементом. Субъективная оценка «работает» более не используется:
+> деталь принимается только при наличии всех трёх артефактов и зелёной команды из первой колонки.
+> `N/A` со ссылкой на CI допускается только для бэкендов другой ОС (D01).
+
+| Деталь | Работает (команда / артефакт) | Доступ агента (MCP / артефакт) | Доступ пользователя (UI / артефакт) |
+|---|---|---|---|
+| D01 | `node test-schedule-v2.mjs`, `node test-window-v3.mjs`, `node test-one-shot.mjs`, `node test-cron-to-schtasks.mjs`, `node test-at-fallback.mjs`; macOS — `node test-mac-launchctl.mjs`, `node test-mac-cron.mjs` (N/A на win32, CI-матрица) | `schedule_task`, `update_task`, `dry_run`; `list_tasks` → `osAvailable=true` | GUI-форма (пресеты, окно, timezone); дашборд `GET /api/tasks` → `nextRun` |
+| D02 | `node test-agent-tools.mjs`, `node test-task-status.mjs`, `node test-task-name-limit.mjs`, `node test-task-name-collision.mjs`, `node test-validation.mjs` | `list_tasks`, `update_task`, `delete_task`, `pause_task`, `resume_task`; `get_audit_log` | GUI-таблица и форма; дашборд `POST /api/run/:name`, `POST /api/delete/:name` |
+| D03 | `node test-execution-pipeline.mjs`, `node test-crash-recovery.mjs`, `node test-ps-watchdog.mjs`, `node test-run-now.mjs`, `node test-stale-lock.mjs`, `node test-lock-format.mjs` | `run_task_now`, `get_task_logs`, `get_history` | GUI «Запустить/Логи/История»; дашборд `POST /api/run/:name`; TUI log |
+| D04 | `node test-tool-specs.mjs`, `node test-agent-tools.mjs`, `node test-skill.mjs`, `node test-env.mjs`, `node test-mcp-adapter.mjs` | 34 инструмента из Приложения B (например, `list_tasks`, `schedule_task`); каталог Code Mode — 8, остальные через MCP/CLI/RPC (QA-D316-19) | GUI-аудит с `actor=mcp`; дашборд `GET /api/audit` |
+| D05 | `node test-dag.mjs`, `node test-dag-latest-history.mjs`, `node test-dry-run.mjs`, `node test-retry-counter.mjs` | `dry_run`, поля `dependsOn` / `nextTaskOnSuccess` / `nextTaskOnError` в `schedule_task` | GUI-форма DAG; дашборд-граф `GET /api/summary` |
+| D06 | `node test-matrix.mjs`, `node test-matrix-lifecycle.mjs`, `node test-matrix-sync.mjs` | `matrix_control`, поле `matrix` в `schedule_task` | GUI-форма Matrix; дашборд `GET /api/matrix/:parent`, `POST /api/cancel-matrix/:name` |
+| D07 | `node test-git-trigger.mjs`, `node test-glob.mjs`, `node test-watch-paths.mjs`, `node test-integrations.mjs` | `schedule_task`, `update_task`, `emit_event`, `run_task_now` | GUI-форма триггеров; дашборд `POST /api/hooks/:name` |
+| D08 | `node test-metrics.mjs`, `node test-retention.mjs`, `node test-dashboard-json.mjs`, `node test-history-load.mjs`, `node test-usage-from-log.mjs` | `get_history`, `get_metrics`, `get_analytics`, `cleanup_history` | GUI-история; дашборд `GET /api/history/export?format=csv\|json` |
+| D09 | `node test-notifications-v2.mjs`, `node test-notifications-v3.mjs`, `node test-notifications-dedup.mjs`, `node test-local-ai.mjs`, `node test-triage-shadow.mjs` | `send_notification`, `manage_settings`, `manage_local_ai` | GUI-секция «Уведомления» и блок триажа (режим/модель/порог/shadow) |
+| D10 | `node test-secrets.mjs`, `node test-audit.mjs`, `node test-role-scoped.mjs`, `node test-permissions-policy.mjs` | `manage_secrets`, `get_audit_log`, `manage_settings` | GUI-секреты и аудит; дашборд `GET /api/audit` |
+| D11 | `node test-profiles.mjs`, `node test-workspaces.mjs`, `node test-profile-isolation.mjs`, `node test-delete-profile.mjs` | `manage_profiles`, `manage_workspaces` | GUI-профили/workspace; дашборд-табы workspace |
+| D12 | `node test-integrations.mjs` (шаблоны и перенос — частично, ограничение §4) | `manage_templates`, `transfer_tasks` | GUI «Сохранить как шаблон», «Экспорт/Импорт» |
+| D13 | `node test-audit.mjs`, `node test-dashboard-trust.mjs`, `node test-self-analysis.mjs`, `node test-integrations.mjs` | `get_audit_log`, `get_dashboard_info`, `self_analysis`; OTel/Prometheus — env процесса | GUI-аудит; дашборд `GET /api/health`, `GET /api/logs` |
+| D14 | `node test-dashboard.mjs`, `node test-i18n.mjs`, `node test-gui-bundle.mjs`, `npm run test:en`, `npm run test:zh`, `npm run test:tr` | RPC/Code Mode мост: `tools.list_tasks`, `get_dashboard_info` | GUI OpenCode; дашборд `get_dashboard_info` → `url`; TUI `run/pause/resume/log` |
+| D15 | `node test-sqlite.mjs`, `node test-user-version.mjs`, `node test-run-state.mjs`, `node test-run-journal.mjs`, `node test-run-resume.mjs`, `node test-run-dlq.mjs`, `node test-migrate-partial.mjs` | `backup_db`, `restore_db`; мутации через все tool-вызовы | дашборд `GET /api/export-db`; GUI-история |
+| D16 | `npm run build`, `npm run build:gui`, `node test-docs.mjs`, `node test-package-exports.mjs`, `node test-portability-exports.mjs`, `npm run test:parallel` | `get_dashboard_info` → `plugin.version` / `modulePath`; Code Mode каталог | установка плагина; GUI-панель; CLI `agent-steward --help` |
+| D17 | `node test-feedback.mjs`, `node test-feedback-worker.mjs` (подзадачи закрыты, CHANGELOG F-1…F-4) | `report_bug`, `self_analysis` | GUI-кнопка «Сообщить о баге»; дашборд форма отчёта |
+| D18 | `node test-pipeline.mjs`, `node test-open-spec.mjs`, `node test-router.mjs` | `pipeline_validate`, `pipeline_apply`, `pipeline_export` | CLI `agent-steward pipeline validate\|apply\|export`; конфиг `opencode.pipeline.yaml` |
+
+Гейт целостности матрицы — `node test-docs.mjs` (DEEP-4.1). Результаты прогонов каждой группы фиксируются в §8.
 
 ---
 

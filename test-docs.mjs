@@ -961,6 +961,87 @@ check(
   );
 }
 
+// DEEP-4.1: матрица объективных артефактов приёмки D01–D18 вместо трёх субъективных критериев.
+{
+  const plan = fs.readFileSync(path.join(root, "TEST-PLAN.md"), "utf8");
+  const marker = "## 4.1 Матрица объективных артефактов приёмки (DEEP-4)";
+  const start = plan.indexOf(marker);
+  const end = start >= 0 ? plan.indexOf("\n## 5. Матрица покрытия автотестами", start) : -1;
+  const matrix = start >= 0 && end > start ? plan.slice(start, end) : "";
+  check("DEEP-4.1: §4.1 матрица объективных артефактов присутствует", matrix.length > 0);
+
+  const ids = [...matrix.matchAll(/^\|\s*(D\d{2})\s*\|/gm)].map((m) => m[1]);
+  const expectedIds = Array.from({ length: 18 }, (_, i) => `D${String(i + 1).padStart(2, "0")}`);
+  check(
+    "DEEP-4.1: матрица содержит ровно D01–D18 в порядке",
+    ids.join(",") === expectedIds.join(","),
+  );
+
+  const rows = new Map();
+  for (const line of matrix.split("\n")) {
+    const m = /^\|\s*(D\d{2})\s*\|(.+)\|$/.exec(line);
+    // Экранированные `\|` внутри URL/CLI не должны делить ячейки.
+    if (m) rows.set(m[1], m[2].split(/(?<!\\)\|/).map((cell) => cell.trim()));
+  }
+  check(
+    "DEEP-4.1: у каждой детали заполнены все три колонки",
+    expectedIds.every((id) => {
+      const cells = rows.get(id);
+      return cells?.length === 3 && cells.every((cell) => cell.length > 0);
+    }),
+  );
+  check(
+    "DEEP-4.1: колонка «работает» содержит команду прогона",
+    expectedIds.every((id) =>
+      /`node test-[^`]+\.mjs`|`npm run [^`]+`/.test(rows.get(id)?.[0] ?? ""),
+    ),
+  );
+
+  const appendixB = plan.slice(
+    plan.indexOf("## Приложение B"),
+    plan.indexOf("## Приложение C"),
+  );
+  const mcpNames = new Set([...appendixB.matchAll(/`([a-z_]+)`/g)].map((m) => m[1]));
+  check(
+    "DEEP-4.1: колонка «агент» ссылается на MCP-инструмент из Приложения B",
+    mcpNames.size === 34 &&
+      expectedIds.every((id) =>
+        [...(rows.get(id)?.[1] ?? "").matchAll(/`([a-z_]+)`/g)].some((m) =>
+          mcpNames.has(m[1]),
+        ),
+      ),
+  );
+  check(
+    "DEEP-4.1: колонка «пользователь» указывает GUI/дашборд/TUI/CLI",
+    expectedIds.every((id) => /GUI|дашборд|TUI|CLI/i.test(rows.get(id)?.[2] ?? "")),
+  );
+
+  const section = (text, from, to) => {
+    const a = text.indexOf(from);
+    const b = a < 0 ? -1 : text.indexOf(to, a + from.length);
+    return a >= 0 && b > a ? text.slice(a, b) : "";
+  };
+  const d17 = section(plan, "### D17. Обратная связь / report_bug", "### D18.");
+  const hasCriteriaTail = (text) =>
+    /\*\*Критерии приёмки:\*\*/.test(text) &&
+    /\*\*Доступ агента:\*\*/.test(text) &&
+    /\*\*Доступ пользователя:\*\*/.test(text);
+  check(
+    "DEEP-4.1: criteria-хвост D17 удалён (заметка и self_analysis сохранены)",
+    d17.includes("self_analysis") &&
+      !hasCriteriaTail(d17) &&
+      !d17.includes("| ID | Подзадача | Шаги | Ожидаемый результат |"),
+  );
+  check(
+    "DEEP-4.1: регрессия criteria-хвоста D17 детектируется",
+    hasCriteriaTail(
+      d17 +
+        "\n**Критерии приёмки:** x\n**Доступ агента:** y\n**Доступ пользователя:** z\n" +
+        "| ID | Подзадача | Шаги | Ожидаемый результат |",
+    ),
+  );
+}
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\nDocs: ${results.length - failed.length}/${results.length} проверок пройдено.`);
 process.exit(failed.length > 0 ? 1 : 0);
