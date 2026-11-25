@@ -126,22 +126,27 @@ check(
 
 // QA-D316-20: early-return для once без задания ОС находился ДО try/finally,
 // поэтому счётчик PL-106 оставался поднятым и следующий run_task_now
-// без worktree отклонялся. Проверяем порядок: инкремент → try → skip → снятие.
-const incAt = indexSrc.indexOf("if (!isolation.isolated) activeNonIsolatedRuns++;");
+// без worktree отклонялся. PL-138 заменил глобальный activeNonIsolatedRuns
+// на activeNonIsolatedByCheckout (ключ — нормализованный checkout), поэтому
+// проверяем тот же инвариант на актуальной реализации: инкремент → try →
+// skip → finally со снятием по checkoutKey.
+const incAt = indexSrc.indexOf("if (!isolation.isolated) {", indexSrc.indexOf("const isolation = planRuntimeIsolation("));
 const guardTryAt = indexSrc.indexOf("try {", incAt);
 const skipAt = indexSrc.indexOf("skipped: true", incAt);
-const releaseAt = indexSrc.indexOf("releaseNonIsolatedRun(isolation.isolated);", incAt);
+const finallyAt = indexSrc.indexOf("} finally {", incAt);
+const releaseAt = indexSrc.indexOf("releaseNonIsolatedRun(isolation.isolated ? null : checkoutKey);", incAt);
 check(
   "QA-D316-20: early-return once снимает счётчик PL-106",
   incAt > 0 &&
     guardTryAt > incAt &&
     guardTryAt < skipAt &&
-    releaseAt > skipAt &&
+    skipAt < finallyAt &&
+    releaseAt > finallyAt &&
     !/^\s*(return|throw)\b/m.test(indexSrc.slice(incAt, guardTryAt)),
 );
 check(
   "QA-D316-20: единая функция снятия счётчика PL-106",
-  indexSrc.includes("function releaseNonIsolatedRun(isolated: boolean): void") &&
+  indexSrc.includes("function releaseNonIsolatedRun(checkoutKey: string | null): void") &&
     (indexSrc.match(/releaseNonIsolatedRun\(/g) || []).length >= 3,
 );
 
