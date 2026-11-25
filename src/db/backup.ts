@@ -55,13 +55,11 @@ export function backupDatabase(file?: string): DbBackupResult {
   try {
     checkpointDb();
     const db = getDb();
-    if (typeof db.serialize !== "function") {
-      return {
-        success: false,
-        error: "node:sqlite не поддерживает serialize() — обновите Node.js до 22.5+",
-      };
-    }
-    const bytes = db.serialize();
+    // QA-D316-33: на Node 22.22 CI node:sqlite не всегда даёт serialize().
+    // После checkpointDb() файл консистентен, поэтому читаем его напрямую —
+    // так же, как в миграционном бэкапе (QA-D316-31).
+    const serialized = db.serialize?.();
+    const bytes = serialized?.length ? serialized : fs.readFileSync(getDbFile());
     const sha = checksum(bytes);
     const target = path.resolve(file?.trim() || defaultBackupPath());
     fs.mkdirSync(path.dirname(target), { recursive: true });

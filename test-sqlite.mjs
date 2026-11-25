@@ -554,6 +554,24 @@ assert(
   "BN-7: после восстановления данные вернулись к моменту бэкапа"
 );
 
+// QA-D316-33: Node 22.22 в CI может не предоставлять serialize(); бэкап
+// обязан откатиться к чтению уже проверенного чекпойнтом файла БД.
+const liveDb = getDb();
+const originalSerialize = Object.getOwnPropertyDescriptor(liveDb, "serialize");
+const fallbackBackupPath = path.join(tempRoot, "scheduler.no-serialize.backup.db");
+try {
+  Object.defineProperty(liveDb, "serialize", { value: undefined, configurable: true });
+  const fallback = backupDatabase(fallbackBackupPath);
+  assert(
+    fallback.success &&
+      fs.readFileSync(fallbackBackupPath).equals(fs.readFileSync(dbPath)),
+    "QA-D316-33: без serialize() бэкап создаётся из файла БД и совпадает с оригиналом"
+  );
+} finally {
+  if (originalSerialize) Object.defineProperty(liveDb, "serialize", originalSerialize);
+  else Reflect.deleteProperty(liveDb, "serialize");
+}
+
 const corruptPath = path.join(tempRoot, "corrupt.backup.db");
 fs.writeFileSync(corruptPath, "not a sqlite backup", "utf8");
 const badRestore = restoreDatabase(corruptPath, "0".repeat(64));
