@@ -33,6 +33,10 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 
 - QA-D316-27: `update_task` при заблокированном лог-файле (EBUSY) удалил OS-задачу из schtasks, оставив определение в `definitions` — P2. Действие: при EBUSY не удалять OS-задачу, откатывать транзакцию целиком. Обнаружено 25.11.2026.
 
+- QA-D316-28: `run_task_now` для задачи с `worktree: true` ищет OS-задачу по legacy-пути `\OpenCode\windows-scheduler\<name>`, хотя `schedule_task` создаёт её в `\OpenCode\agent-steward\<name>`; вызов падает: `schtasks error ... Не удается найти указанный файл` — P2. Действие: использовать profile-aware путь к OS-задаче и в `run_task_now`, и в `schedule_task`; регрессия в `test-run-now.mjs`. Обнаружено 25.11.2026 при проверке «без привязки к ОС».
+
+- QA-D316-29: при принудительном завершении агента (PL-134 / Stop-Process) qualityGate проходит на неизменённом/частично изменённом дереве, PL-81 помечает задачу `success`, а afterScript коммитит незавершённые правки с финальным сообщением (на QA-D316-23 сначала ушёл коммит только `vite.config.ts`, документы пришлось дописывать отдельно) — P1. Действие: при `exitCode` агента != 0 и/или `idleCompleted` блокировать afterScript и коммит, даже если gate=pass; финализировать задачу как `partial`. Обнаружено 25.11.2026.
+
 
 ## Деталь 3.20 — Матрица покрытия стратегии и незакрытые контуры
 `docs/CONCEPT.md` §11/§12/§13, `ROADMAP-STRATEGY.md`, `docs/ARCHITECTURE.md` Known limitations, `docs/EXECUTION-LOOP.md` §7–§9, `src/core/execution.ts`, `src/core/self-analysis.ts`, `src/db/capability-repo.ts`, `test-budget.mjs`, `test-permissions-policy.mjs`
