@@ -2,7 +2,10 @@ import fs from "node:fs/promises";
 import fsSync from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { requestImmediateRun } from "../ps-wrapper.js";
+import { isProcessAlive, parseLockToken } from "../lock.js";
+import { LOCK_DIR, STALE_LOCK_MAX_AGE_MS } from "../../types.js";
 import { getTask } from "../../db/tasks-repo.js";
 import { createSchedulerBackend } from "./index.js";
 import type { RunTaskResult, SchedulerBackend } from "./types.js";
@@ -284,7 +287,10 @@ export function detectStaleTask(input: {
 }
 
 /** PL-99: читает ROADMAP/CHANGELOG и git diff задачи перед запуском. */
-async function checkStaleTaskBeforeRun(taskName: string): Promise<StaleVerdict | null> {
+async function checkStaleTaskBeforeRun(
+  taskName: string,
+  checkoutRoot?: string,
+): Promise<StaleVerdict | null> {
   let definition: ReturnType<typeof getTask>;
   try {
     definition = getTask(taskName);
@@ -296,7 +302,7 @@ async function checkStaleTaskBeforeRun(taskName: string): Promise<StaleVerdict |
     .map((text) => /\bPL-\d+\b/i.exec(text ?? "")?.[0])
     .find(Boolean);
   if (!id) return null;
-  const root = definition.workingDirectory?.trim() || process.cwd();
+  const root = checkoutRoot || definition.workingDirectory?.trim() || process.cwd();
   const [roadmap, changelog] = await Promise.all([
     fs.readFile(path.join(root, "ROADMAP.md"), "utf8").catch(() => ""),
     fs.readFile(path.join(root, "CHANGELOG.md"), "utf8").catch(() => ""),
@@ -317,6 +323,60 @@ async function checkStaleTaskBeforeRun(taskName: string): Promise<StaleVerdict |
 }
 
 /**
+ * QA-D316-18: путь checkout-lock'а, который PowerShell-обёртка создаёт перед
+ * запуском агента. Ключ — первые 16 hex-символов SHA256 от корня чек-аута
+ * (точная формула из `ps-wrapper.ts`), иначе Node не сможет увидеть пропуск.
+ */
+export function checkoutLockPath(checkoutRoot: string): string {
+  const key = createHash("sha256").update(checkoutRoot, "utf8").digest("hex").slice(0, 16);
+  return path.join(LOCK_DIR, `checkout-${key}.lock`);
+}
+
+/** QA-D316-18: активный checkout-lock и причина пропуска. */
+export interface CheckoutLockVerdict {
+  path: string;
+  reason: string;
+}
+
+/**
+ * QA-D316-18: определяет, удерживается ли checkout-lock другой задачей.
+ *
+ * Логика повторяет ps-wrapper: живой PID-владелец означает активный запуск;
+ * мёртвый PID (или age > STALE_LOCK_MAX_AGE_MS без PID) — осиротевший lock,
+ * который обёртка всё равно вытеснит, поэтому пропускать запуск не нужно.
+ * Ошибки чтения трактуем fail-open: обёртка остаётся последней защитой.
+ */
+export async function activeCheckoutLock(
+  checkoutRoot: string,
+): Promise<CheckoutLockVerdict | null> {
+  const lockPath = checkoutLockPath(checkoutRoot);
+  let stat: fsSync.Stats;
+  try {
+    stat = await fs.stat(lockPath);
+  } catch {
+    return null;
+  }
+  if (!stat.isFile() && !stat.isDirectory()) return null;
+  let content = "";
+  try {
+    content = await fs.readFile(
+      stat.isDirectory() ? path.join(lockPath, "pid") : lockPath,
+      "utf8",
+    );
+  } catch {
+    // Нет токена — решение принимаем по времени изменения файла.
+  }
+  const token = parseLockToken(content);
+  const reason = `PL-121: в чек-ауте ${checkoutRoot} уже идёт другая задача — запуск пропущен`;
+  if (token.pid !== null) {
+    return isProcessAlive(token.pid) ? { path: lockPath, reason } : null;
+  }
+  const fromToken = token.createdAt ? Date.parse(token.createdAt) : NaN;
+  const age = Number.isFinite(fromToken) ? Date.now() - fromToken : Date.now() - stat.mtimeMs;
+  return age <= STALE_LOCK_MAX_AGE_MS ? { path: lockPath, reason } : null;
+}
+
+/**
  * Немедленный запуск задачи в обход schedule-gate.
  *
  * Зачем: для poll-режима (расширенный cron / чужая IANA-таймзона / окно
@@ -333,9 +393,19 @@ export async function runTaskNow(
   taskName: string,
   backend: SchedulerBackend = createSchedulerBackend(),
 ): Promise<RunTaskResult> {
+  // QA-D316-18: корень чек-аута совпадает с рабочим каталогом задачи — именно
+  // его хеширует обёртка. Для worktree-задач это тоже репозиторий (обёртка
+  // выставляет AGENT_STEWARD_WORKTREE_REPO = effectiveWorkdir).
+  let checkoutRoot = process.cwd();
+  try {
+    checkoutRoot = getTask(taskName)?.workingDirectory?.trim() || checkoutRoot;
+  } catch {
+    // Диагностика не должна ломать сам запуск.
+  }
+
   // PL-99: до запуска отсекаем задачи по уже закрытым находкам.
   try {
-    const stale = await checkStaleTaskBeforeRun(taskName);
+    const stale = await checkStaleTaskBeforeRun(taskName, checkoutRoot);
     if (stale?.stale) {
       return {
         alreadyRunning: false,
@@ -346,6 +416,19 @@ export async function runTaskNow(
   } catch {
     // Диагностика не должна ломать сам запуск.
   }
+
+  // QA-D316-18: обёртка могла пропустить запуск из-за чужого checkout-lock и
+  // вернуть exit 0 — бэкенд ОС при этом доложил об успехе. Проверяем lock в
+  // Node-слое ДО `/run`, чтобы skipped/reason дошли до run_task_now.
+  try {
+    const locked = await activeCheckoutLock(checkoutRoot);
+    if (locked) {
+      return { alreadyRunning: false, skipped: true, reason: locked.reason };
+    }
+  } catch {
+    // Fail-open: последняя защита остаётся в PowerShell-обёртке.
+  }
+
   const forceFile = await requestImmediateRun(taskName);
   try {
     return await backend.runTask(taskName);

@@ -1,7 +1,12 @@
 import fs from "node:fs";
+import path from "node:path";
+import crypto from "node:crypto";
 
-const { runTaskNow } = await import("./dist/core/scheduler/run-now.js");
+const { runTaskNow, checkoutLockPath, activeCheckoutLock } = await import(
+  "./dist/core/scheduler/run-now.js"
+);
 const { forceFilePath } = await import("./dist/core/ps-wrapper.js");
+const { saveTask, deleteTask } = await import("./dist/db/tasks-repo.js");
 
 let passed = 0;
 let failed = 0;
@@ -138,6 +143,64 @@ check(
   "QA-D316-20: единая функция снятия счётчика PL-106",
   indexSrc.includes("function releaseNonIsolatedRun(isolated: boolean): void") &&
     (indexSrc.match(/releaseNonIsolatedRun\(/g) || []).length >= 3,
+);
+
+// QA-D316-18: пропуск из-за чужого checkout-lock принимается в обёртке ПОСЛЕ
+// того, как бэкенд ОС сообщил об успехе /run. Node обязан увидеть lock до запуска
+// и вернуть skipped/reason, иначе run_task_now показывает success:true.
+const root18 = path.join(process.cwd(), `qa-d316-18-test-${process.pid}`);
+fs.mkdirSync(root18, { recursive: true });
+const lock18 = checkoutLockPath(root18);
+const expectedKey18 = crypto
+  .createHash("sha256")
+  .update(root18, "utf8")
+  .digest("hex")
+  .slice(0, 16);
+check(
+  "QA-D316-18: путь checkout-lock совпадает с хешем PowerShell-обёртки",
+  path.basename(lock18) === `checkout-${expectedKey18}.lock`,
+);
+fs.writeFileSync(lock18, `${process.pid}-${new Date().toISOString()}`);
+const verdict18 = await activeCheckoutLock(root18);
+check(
+  "QA-D316-18: активный checkout-lock определяется по живому PID",
+  verdict18 !== null && verdict18.reason.includes("PL-121"),
+);
+fs.writeFileSync(lock18, `99999999-${new Date().toISOString()}`);
+check(
+  "QA-D316-18: lock с мёртвым PID считается осиротевшим",
+  (await activeCheckoutLock(root18)) === null,
+);
+fs.writeFileSync(lock18, `${process.pid}-${new Date().toISOString()}`);
+
+const taskName18 = `qa-d316-18-${process.pid}`;
+saveTask({
+  name: taskName18,
+  schedule: "once",
+  prompt: "QA-D316-18: проверка пропуска по checkout-lock",
+  workingDirectory: root18,
+});
+let backendCalled18 = false;
+const backend18 = {
+  platform: process.platform,
+  title: "test",
+  async runTask() {
+    backendCalled18 = true;
+    return { alreadyRunning: false };
+  },
+};
+const result18 = await runTaskNow(taskName18, backend18);
+check(
+  "QA-D316-18: runTaskNow возвращает skipped с причиной PL-121",
+  result18.skipped === true && /PL-121/.test(result18.reason ?? ""),
+);
+check("QA-D316-18: бэкенд ОС не вызывается при активном checkout-lock", backendCalled18 === false);
+deleteTask(taskName18);
+fs.rmSync(lock18, { force: true });
+fs.rmSync(root18, { recursive: true, force: true });
+check(
+  "QA-D316-18: run_task_now превращает skipped в success:false",
+  indexSrc.includes("if (skipped)") && /success:\s*false/.test(indexSrc),
 );
 
 console.log(`\n${passed}/${passed + failed} OK`);
