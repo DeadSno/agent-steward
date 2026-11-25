@@ -33,6 +33,9 @@ await fs.writeFile(
 
 process.env.APPDATA = appData;
 process.env.OPENCODE_SCHEDULER_HOME = path.join(appData, "opencode", "windows-scheduler");
+// QA-D316-35: CI/ubuntu выполняет тест в EN-локали; фиксируем её явно,
+// чтобы регрессия подписи критического пути воспроизводилась и локально.
+process.env.OPENCODE_SCHEDULER_LOCALE = "en";
 
 // Спринт 12: дашборд читает SQLite. Переносим тестовый history.json в БД
 // той же миграцией, что и при реальном обновлении плагина.
@@ -101,8 +104,10 @@ try {
     page.includes("var critical = {}") &&
       page.includes("critical[endKey] = true") &&
       page.includes("levels[candidate] === currentLevel - 1")));
+  // QA-D316-35: dashboard-i18n.ts переводит эту подпись на EN в не-ru локали.
   ok("JS: подсветка узлов и рёбер критического пути", () => assert.ok(
-    page.includes("criticalg") && page.includes("★ критический путь") &&
+    page.includes("criticalg") &&
+      ["★ критический путь", "★ critical path"].some((label) => page.includes(label)) &&
       page.includes("isCriticalEdge")));
 
   const tasks = await (await fetch(base + "/api/tasks")).json();
