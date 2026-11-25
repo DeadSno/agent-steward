@@ -451,6 +451,14 @@ if ($RecorderFile) {
     } catch {}
 }
 
+# QA-D316-4: маркеры PowerShell-тела те же, что в writeHookFile() на Node-стороне.
+# Сюда попадает уже сгенерированный .cmd-шим (обратная совместимость), но если
+# raw PS-тело пришло напрямую, временный .cmd не должен разбираться cmd.exe.
+function Test-PowerShellHookBody {
+    param([string]$Text)
+    return ($Text -match '\\$[A-Za-z_]' -or $Text -match '&\\s')
+}
+
 # Выполняет команду оболочки и построчно пишет её вывод в лог.
 # GateTimeoutSeconds ограничивает время хука: зависший pre-flight/Quality Gate
 # раньше держал lock до истечения общего таймаута задачи (до 24 ч).
@@ -500,9 +508,18 @@ function Invoke-HookScript {
     # ВАЖНО: расширение должно быть .cmd. GetTempFileName() даёт .tmp, а
     # запуск файла .tmp через cmd.exe /c может зависнуть вместо быстрого выполнения.
     $hookFile = Join-Path ([System.IO.Path]::GetTempPath()) ("sched-hook-" + [guid]::NewGuid().ToString("N") + ".cmd")
+    $ps1File = $null
     try {
-        # Команду кладём в .cmd, чтобы кавычки/пайпы не ломали аргументы.
+        # QA-D316-4: для PowerShell-тела пишем .ps1 и делаем .cmd тонким шимом —
+        # cmd.exe не разбирает '$r = ...' и '& ...'.
+        # Обычная команда остаётся в старом формате (обратная совместимость).
         $lines = @('@echo off', 'chcp 65001 >nul', $Command)
+        if (Test-PowerShellHookBody -Text $Command) {
+            $ps1File = Join-Path ([System.IO.Path]::GetTempPath()) ("sched-hook-" + [guid]::NewGuid().ToString("N") + ".ps1")
+            Set-Content -LiteralPath $ps1File -Value $Command -Encoding UTF8
+            $escapedPs1 = $ps1File.Replace('"', '""')
+            $lines = @('@echo off', "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \`"$escapedPs1\`" %*")
+        }
         Set-Content -LiteralPath $hookFile -Value $lines -Encoding Default
         # Не используем Start-Process с -RedirectStandardOutput/-RedirectStandardError:
         # в Windows PowerShell 5.1 такой вызов может зависнуть на закрытии потоков,
@@ -570,6 +587,8 @@ function Invoke-HookScript {
         return 1
     } finally {
         Remove-Item -LiteralPath $hookFile -Force -ErrorAction SilentlyContinue
+        # QA-D316-4: временный .ps1 живет ровно столько же, сколько и .cmd-шим.
+        if ($ps1File) { Remove-Item -LiteralPath $ps1File -Force -ErrorAction SilentlyContinue }
     }
 }
 
@@ -1910,7 +1929,19 @@ export function gateAllowPathsFromScope(
  * а кавычки внутри неё заменялись на апострофы: `echo x > "C:\Program Files\out.txt"`
  * превращался в нерабочий `echo x > 'C:\Program Files\out.txt'`. Файл снимает
  * проблему целиком — внутри .cmd можно использовать любые кавычки и пайпы.
+ *
+ * QA-D316-4: cmd.exe не понимает PowerShell-синтаксис — `$r = ...` даёт
+ * «'$r' is not recognized», а `& ...` — «'& was unexpected at this time».
+ * Поэтому PS-тело уезжает в соседний .ps1, а .cmd становится тонким шимом,
+ * который дёргает powershell.exe -File. Чисто cmd-команды остаются в старом
+ * формате для обратной совместимости.
  */
+
+/** QA-D316-4: те же маркеры, что и в Invoke-HookScript внутри WRAPPER_SCRIPT. */
+function isPowerShellHookBody(command: string): boolean {
+  return /\$[A-Za-z_]|&\s/.test(command);
+}
+
 async function writeHookFile(
   sanitizedName: string,
   kind: "before" | "after" | "gate",
@@ -1919,7 +1950,19 @@ async function writeHookFile(
   const dir = path.join(WRAPPER_DIR, "hooks");
   await fs.mkdir(dir, { recursive: true });
   const file = path.join(dir, `run-${sanitizedName}-${kind}.cmd`);
-  await fs.writeFile(file, `@echo off\r\nchcp 65001 >nul\r\n${command}\r\n`, "utf8");
+  if (isPowerShellHookBody(command)) {
+    const ps1File = path.join(dir, `run-${sanitizedName}-${kind}.ps1`);
+    await fs.writeFile(ps1File, command, "utf8");
+    // В .cmd двойная кавычка внутри кавычек экранируется удвоением.
+    const escapedPs1 = ps1File.replace(/"/g, '""');
+    await fs.writeFile(
+      file,
+      `@echo off\r\npowershell.exe -NoProfile -ExecutionPolicy Bypass -File "${escapedPs1}" %*\r\n`,
+      "utf8",
+    );
+  } else {
+    await fs.writeFile(file, `@echo off\r\nchcp 65001 >nul\r\n${command}\r\n`, "utf8");
+  }
   return file;
 }
 
