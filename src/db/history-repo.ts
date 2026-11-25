@@ -356,13 +356,15 @@ export function recordRun(
   return id;
 }
 
-/** История запусков (новые сверху). Без taskName — по всем задачам. */
-export function getHistory(
+/**
+ * QA-HIST-PAGE: общий фильтр для getHistory/countHistoryFiltered, чтобы
+ * `count` и страница всегда считались по одному и тому же набору строк.
+ * `running` здесь означает пустое множество — как и в getHistory раньше.
+ */
+function buildHistoryFilter(
   taskName?: string | null,
-  limit = 200,
   status?: string | null,
-): StoredHistoryRecord[] {
-  const safeLimit = Math.max(1, Math.min(100000, Math.floor(limit) || 1));
+): { where: string; params: (string | number)[]; empty: boolean } {
   const clauses: string[] = [];
   // QA-A2-T3: параметры привязки — только string/number (domain type вместо any[]).
   const params: (string | number)[] = [];
@@ -375,7 +377,7 @@ export function getHistory(
     // loadHistory() отдаёт незавершённые записи (running) как error — сохраняем
     // это поведение и при фильтрации на уровне SQLite.
     if (normalizedStatus === "running") {
-      return [];
+      return { where: "", params, empty: true };
     }
     if (normalizedStatus === "error") {
       clauses.push("lower(status) IN ('error', 'running')");
@@ -385,12 +387,39 @@ export function getHistory(
     }
   }
   const where = clauses.length > 0 ? ` WHERE ${clauses.join(" AND ")}` : "";
-  params.push(safeLimit);
+  return { where, params, empty: false };
+}
+
+/** Полное число записей под тем же фильтром — для hasMore/truncated. */
+export function countHistoryFiltered(
+  taskName?: string | null,
+  status?: string | null,
+): number {
+  const filter = buildHistoryFilter(taskName, status);
+  if (filter.empty) return 0;
+  const row = getDb()
+    .prepare(`SELECT COUNT(*) AS count FROM history${filter.where}`)
+    .get(...filter.params) as unknown as { count: unknown } | undefined;
+  return Number(row?.count) || 0;
+}
+
+/** История запусков (новые сверху). Без taskName — по всем задачам. */
+export function getHistory(
+  taskName?: string | null,
+  limit = 200,
+  status?: string | null,
+  offset = 0,
+): StoredHistoryRecord[] {
+  const safeLimit = Math.max(1, Math.min(100000, Math.floor(limit) || 1));
+  const safeOffset = Math.max(0, Math.floor(offset) || 0);
+  const filter = buildHistoryFilter(taskName, status);
+  if (filter.empty) return [];
+  const params = [...filter.params, safeLimit, safeOffset];
   const rows = getDb()
     .prepare(
-      `SELECT * FROM history${where}
+      `SELECT * FROM history${filter.where}
        ORDER BY started_at DESC, id DESC
-       LIMIT ?`,
+       LIMIT ? OFFSET ?`,
     )
     // QA-A2-T3: граница node:sqlite — all() возвращает any[], сужаем к HistoryRow[].
     .all(...params) as unknown as HistoryRow[];

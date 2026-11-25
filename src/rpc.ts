@@ -410,6 +410,8 @@ const GetHistoryInput = {
   properties: {
     /** Сколько последних записей вернуть (по умолчанию 20, максимум 200). */
     limit: { type: "number" },
+    /** QA-HIST-PAGE: пропустить N самых свежих записей (пагинация). */
+    offset: { type: "number" },
     /** Фильтр по имени задачи (регистр не важен). */
     taskName: { type: "string" },
     /** Фильтр по статусу: success | error | partial | running | timeout. */
@@ -425,6 +427,11 @@ const GetHistoryOutput = {
       type: "array",
       items: HistoryRecord,
     },
+    /** QA-HIST-PAGE: полное число записей под фильтром (без учёта лимита). */
+    total: { type: "number" },
+    offset: { type: "number" },
+    hasMore: { type: "boolean" },
+    truncated: { type: "boolean" },
   },
   required: ["records"],
 } as const;

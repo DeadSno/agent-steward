@@ -87,8 +87,9 @@ export async function loadHistory(
   taskName?: string | null,
   limit = 200,
   status?: string | null,
+  offset = 0,
 ): Promise<HistoryRecord[]> {
-  return getHistory(taskName, limit, status).map((record) => ({
+  return getHistory(taskName, limit, status, offset).map((record) => ({
     taskName: record.taskName,
     // QA-F.3: "running" — отдельное состояние дашборда, а не ошибка.
     // Пока status="error" с пустым finishedAt/durationMs=0, дашборд мигал

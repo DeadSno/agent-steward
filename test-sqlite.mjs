@@ -161,6 +161,23 @@ assert(runHistory.length === 3, "recordRun добавил запись в ист
 assert(runHistory[0].nextTask === "Nightly Build", "nextTask сохраняется");
 assert(runHistory[0].tokens === 200 && runHistory[0].costUsd === 0.02, "токены и стоимость сохраняются");
 
+// QA-HIST-PAGE: count и offset считаются по одному фильтру, hasMore derives
+// из полного числа записей, а не из длины усечённой страницы.
+assert(
+  historyRepo.countHistoryFiltered("daily report") === runHistory.length,
+  "QA-HIST-PAGE: countHistoryFiltered возвращает полное число записей под фильтром"
+);
+assert(
+  historyRepo.countHistoryFiltered("daily report", "success") === 2 &&
+    historyRepo.countHistoryFiltered("daily report", "running") === 0,
+  "QA-HIST-PAGE: countHistoryFiltered уважает фильтр статуса"
+);
+const historyPage2 = historyRepo.getHistory("daily report", 2, undefined, 2);
+assert(
+  historyPage2.length === 1 && historyPage2[0].startedAt === runHistory[2].startedAt,
+  "QA-HIST-PAGE: offset пропускает первые N записей и не дублирует страницы"
+);
+
 const reportMetrics = metricsRepo.getMetrics("Daily Report");
 assert(reportMetrics.total === 3, "метрики: 3 запуска Daily Report");
 assert(reportMetrics.success === 2 && reportMetrics.error === 1, "метрики: success/error учтены");

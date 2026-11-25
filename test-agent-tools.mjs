@@ -898,6 +898,28 @@ check(
   );
 }
 
+// QA-HIST-PAGE: get_history отдаёт пагинацию и полный count, а не тихий кап 200.
+{
+  const historySpec = defaultSpecs.find((spec) => spec.name === "get_history");
+  check(
+    "QA-HIST-PAGE: core-схема get_history принимает offset",
+    "offset" in (historySpec?.input?.shape ?? {})
+  );
+  check(
+    "QA-HIST-PAGE: get_history возвращает total/hasMore/truncated и offset",
+    /const hasMore\s*=\s*offset \+ output\.length < total/.test(dist) &&
+      /truncated:\s*hasMore/.test(dist) &&
+      /total,[\s\S]{0,80}offset,[\s\S]{0,40}hasMore,[\s\S]{0,40}truncated/.test(dist)
+  );
+  const rpcSource = fs.readFileSync(new URL("./dist/rpc.js", import.meta.url), "utf8");
+  check(
+    "QA-HIST-PAGE: RPC-контракт get_history описывает поля пагинации",
+    /offset:\s*\{ type: "number" \}/.test(rpcSource) &&
+      /hasMore:\s*\{ type: "boolean" \}/.test(rpcSource) &&
+      /truncated:\s*\{ type: "boolean" \}/.test(rpcSource)
+  );
+}
+
 // PL-54: промпт с двойными кавычками доходит до opencode через cmd.exe
 // без обрезки. Реальный вызов runOpencode с подменённым opencode.cmd в PATH:
 // shim форвардит %* в node-скрипт, который печатает полученный argv как JSON.
