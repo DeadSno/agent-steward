@@ -1859,7 +1859,7 @@ try {
     "PL-140: причина гейта извлекается из хвоста вывода (lastHookStdout/lastHookStderr)",
     psWrapperScript.includes(
       "foreach ($gateStream in @($script:lastHookStdout, $script:lastHookStderr))"
-    ) && psWrapperScript.includes("$gateOutputLines | Select-Object -Last 1")
+    ) && psWrapperScript.includes("$diagnosticLines | Select-Object -Last 1")
   );
   check(
     "PL-140: причина гейта форматируется в errorMessage и Write-Log, а не только «Код возврата N»",
@@ -1871,6 +1871,13 @@ try {
         'Write-Log "[agent-steward] ОШИБКА: Quality Gate провален. Код возврата: $gateCode"'
       )
   );
+check(
+  "QA-GATE-REASON: npm notice/warn отфильтровываются, причина — первая error/FAIL",
+  psWrapperScript.includes("$gateOutputLines | Where-Object { $_ -notmatch '^\\s*npm (?:notice|warn)\\b' }") &&
+    psWrapperScript.includes("$errorLines = @($diagnosticLines | Where-Object") &&
+    psWrapperScript.includes("$gateReasonLines = @($errorLines | Select-Object -First 1)") &&
+    psWrapperScript.includes("$gateTailLines = @($errorLines | Select-Object -First 3)")
+);
 } catch (err) {
   console.log("[diag] PL-140 section THREW:", err instanceof Error ? err.stack : String(err));
   check("PL-140: секция не выбросила исключение", false, "section threw");
@@ -1880,7 +1887,7 @@ try {
 try {
   check(
     "QA-D316-6: причина гейта берёт хвост из 10 строк с лимитом 2000",
-    psWrapperScript.includes("$gateTailLines = @($gateOutputLines | Select-Object -Last 10)") &&
+    psWrapperScript.includes("$gateTailLines = @($diagnosticLines | Select-Object -Last 10)") &&
       psWrapperScript.includes("Get-SanitizedReason -ReasonLines $gateTailLines -MaxLength 2000") &&
       psWrapperScript.includes("param([string[]]$ReasonLines, [int]$MaxLength = 200)")
   );

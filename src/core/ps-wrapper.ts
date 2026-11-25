@@ -1771,11 +1771,21 @@ try {
                         $gateOutputLines += @($gateStream -split "\r?\n" | Where-Object { $_ -and $_.Trim() })
                     }
                 }
-                $gateReasonLines = @($gateOutputLines | Select-Object -Last 1)
+                # QA-GATE-REASON: npm notice/warn — это шум установки, а не причина
+                # провала. Сначала берём первую строку с error/FAIL, иначе — хвост.
+                $diagnosticLines = @($gateOutputLines | Where-Object { $_ -notmatch '^\\s*npm (?:notice|warn)\\b' })
+                $errorLines = @($diagnosticLines | Where-Object { $_ -match '(?i)(?:\\berror\\b|\\bFAIL\\b)' })
+                $gateReasonLines = @($errorLines | Select-Object -First 1)
+                if ($gateReasonLines.Count -eq 0) {
+                    $gateReasonLines = @($diagnosticLines | Select-Object -Last 1)
+                }
                 $gateReason = Get-SanitizedReason -ReasonLines $gateReasonLines
                 # QA-D316-6: причина — хвост из ~10 непустых строк stdout+stderr,
                 # санитизированный общим хелпером и ограниченный 2000 символов.
-                $gateTailLines = @($gateOutputLines | Select-Object -Last 10)
+                $gateTailLines = @($diagnosticLines | Select-Object -Last 10)
+                if ($errorLines.Count -gt 0) {
+                    $gateTailLines = @($errorLines | Select-Object -First 3)
+                }
                 if ($gateTailLines.Count -gt 1) {
                     $gateReason = Get-SanitizedReason -ReasonLines $gateTailLines -MaxLength 2000
                 }
