@@ -12,6 +12,11 @@
  * сгенерированную политику, а не попытки вызова инструментов.
  */
 import { isAbsolute, resolve } from "node:path";
+import {
+  detectCompetingWriteClaims,
+  type WriteClaimConflict,
+  type WriteClaimInput,
+} from "./worktree.js";
 
 /** Действия OpenCode v2, которые понимает permissions. */
 export const PERMISSION_ACTIONS = [
@@ -504,6 +509,7 @@ export const WRITE_SCOPE_REASONS = [
   "outside-allowed",
   "traversal",
   "invalid-path",
+  "conflicting-claims",
 ] as const;
 export type WriteScopeReason = (typeof WRITE_SCOPE_REASONS)[number];
 
@@ -532,6 +538,8 @@ export interface WriteScopeDecision {
   detail: string;
   /** true, только если выход вне scope разрешён явным opt-in. */
   outsideAllowed: boolean;
+  /** DEEP-2.2: conflicting-claims несёт обе стороны конфликта. */
+  conflict?: WriteClaimConflict | null;
 }
 
 /** Вход проверки write-scope. */
@@ -542,6 +550,8 @@ export interface WriteScopeCheckInput {
   policy?: unknown;
   /** Базовый каталог задачи/worktree (по умолчанию process.cwd()). */
   baseDir?: string;
+  /** DEEP-2.2: заявки параллельных запусков; конфликт → deny до проверки пути. */
+  claims?: readonly WriteClaimInput[];
 }
 
 function normalizeWriteScopeRoot(value: unknown, baseDir: string): string {
@@ -612,9 +622,11 @@ function isWithinWriteScope(candidate: string, root: string): boolean {
 }
 
 /**
- * SC-1.2: denial-by-default guard для edit/write. Сначала отклоняем «..» в
- * исходном пути, затем резолвим absolutный путь и проверяем вхождение в scope.
- * Выход вне scope проходит только при явном allowOutside/extraRoots.
+ * SC-1.2 + DEEP-2.2: denial-by-default guard для edit/write. Сначала проверяем
+ * конкурирующие write-заявки (при конфликте deny не зависит от allowOutside),
+ * затем отклоняем «..» в исходном пути, резолвим абсолютный путь и проверяем
+ * вхождение в scope. Выход вне scope проходит только при явном
+ * allowOutside/extraRoots.
  */
 export function checkWriteScope(input: WriteScopeCheckInput): WriteScopeDecision {
   const baseDir = resolve(input.baseDir ?? process.cwd());
@@ -626,7 +638,20 @@ export function checkWriteScope(input: WriteScopeCheckInput): WriteScopeDecision
     resolvedPath: string | null,
     detail: string,
     outsideAllowed = false,
-  ): WriteScopeDecision => ({ allowed, reason, resolvedPath, scopeRoot, detail, outsideAllowed });
+    conflict: WriteClaimConflict | null = null,
+  ): WriteScopeDecision => ({ allowed, reason, resolvedPath, scopeRoot, detail, outsideAllowed, conflict });
+
+  const conflict = detectCompetingWriteClaims(input.claims ?? []);
+  if (conflict) {
+    return decision(
+      false,
+      "conflicting-claims",
+      null,
+      `${conflict.detail}; запись запрещена по умолчанию`,
+      false,
+      conflict,
+    );
+  }
 
   if (typeof input.target !== "string" || !input.target.trim() || input.target.includes("\0")) {
     return decision(false, "invalid-path", null, "путь записи пуст или невалиден");

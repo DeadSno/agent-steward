@@ -16,6 +16,7 @@ import {
   checkWriteScope,
   type WriteScopeDecision,
 } from "./permissions.js";
+import type { WriteClaimInput } from "./worktree.js";
 
 /**
  * Журнал аудита мутаций (Спринт 26).
@@ -424,6 +425,8 @@ export const WRITE_SCOPE_DENIED_ACTION = "write_scope.denied";
 export const WRITE_SCOPE_ALLOWED_OUTSIDE_ACTION = "write_scope.allowed_outside";
 /** Обычное попадание в scope тоже фиксируется: журнал хранит каждое решение. */
 export const WRITE_SCOPE_ALLOWED_ACTION = "write_scope.allowed";
+/** DEEP-2.2: конфликт двух write-заявок — отдельное событие с обеими сторонами. */
+export const WRITE_SCOPE_CONFLICT_ACTION = "write_scope.conflict";
 
 export interface WriteScopeAuditInput {
   /** Уже принятое решение guard; если нет — вычисляется из target/policy/baseDir. */
@@ -431,6 +434,8 @@ export interface WriteScopeAuditInput {
   target?: unknown;
   policy?: unknown;
   baseDir?: string;
+  /** DEEP-2.2: заявки параллельных запусков; конфликт → отдельное событие аудита. */
+  claims?: readonly WriteClaimInput[];
   task?: string | null;
   actor?: AuditActor;
   source?: string | null;
@@ -443,13 +448,15 @@ export interface WriteScopeAuditResult extends WriteScopeDecision {
 
 /** Выбирает действие аудита по решению guard. */
 export function writeScopeAuditAction(decision: WriteScopeDecision): string {
+  if (decision.reason === "conflicting-claims") return WRITE_SCOPE_CONFLICT_ACTION;
   if (!decision.allowed) return WRITE_SCOPE_DENIED_ACTION;
   return decision.outsideAllowed ? WRITE_SCOPE_ALLOWED_OUTSIDE_ACTION : WRITE_SCOPE_ALLOWED_ACTION;
 }
 
 /**
- * SC-1.2: аудит КАЖДОГО решения write-scope. Детали проходят через
+ * SC-1.2 + DEEP-2.2: аудит КАЖДОГО решения write-scope. Детали проходят через
  * redactAuditDetails: путь может содержать токены/пароли в строке запроса.
+ * При конфликте заявок в журнал попадают идентификаторы ОБЕИХ сторон.
  */
 export function recordWriteScopeDecision(input: WriteScopeAuditInput): WriteScopeAuditResult {
   const decision =
@@ -458,22 +465,34 @@ export function recordWriteScopeDecision(input: WriteScopeAuditInput): WriteScop
       target: input.target,
       policy: input.policy,
       baseDir: input.baseDir,
+      claims: input.claims,
     });
   const action = writeScopeAuditAction(decision);
+  const conflict = decision.conflict ?? null;
+  const details: Record<string, unknown> = {
+    path: decision.resolvedPath ?? (typeof input.target === "string" ? input.target : null),
+    scopeRoot: decision.scopeRoot,
+    allowed: decision.allowed,
+    reason: decision.reason,
+    detail: decision.detail,
+    outsideAllowed: decision.outsideAllowed,
+  };
+  if (conflict) {
+    details.conflict = {
+      worktree: conflict.worktree,
+      reason: conflict.reason,
+      first: { ...conflict.first },
+      second: { ...conflict.second },
+    };
+    details.claimIds = [conflict.first.id, conflict.second.id];
+  }
   const auditId = recordAudit({
     action,
     targetType: "task",
     target: input.task ?? null,
     actor: input.actor ?? "system",
     source: input.source ?? "write-scope",
-    details: redactAuditDetails({
-      path: decision.resolvedPath ?? (typeof input.target === "string" ? input.target : null),
-      scopeRoot: decision.scopeRoot,
-      allowed: decision.allowed,
-      reason: decision.reason,
-      detail: decision.detail,
-      outsideAllowed: decision.outsideAllowed,
-    }),
+    details: redactAuditDetails(details),
   });
   return { ...decision, action, auditId };
 }

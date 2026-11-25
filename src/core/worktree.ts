@@ -712,3 +712,117 @@ export async function cleanupStaleWorktrees(
 
   return result;
 }
+
+/* ─── DEEP-2.1: identity write-заявок между параллельными worktree ─────────── */
+
+/** Идентификатор write-заявки: кто и в каком worktree собирается писать. */
+export interface WriteClaimInput {
+  /** Рабочий каталог/worktree заявки (относительный резолвится через cwd). */
+  worktree?: unknown;
+  /** Идентификатор сессии OpenCode (например, `ses_...`). */
+  session?: unknown;
+  /** Идентификатор самой заявки/запуска. */
+  id?: unknown;
+}
+
+/** Нормализованная write-заявка: все поля — строки, путь каноничен. */
+export interface WriteClaim {
+  worktree: string;
+  session: string;
+  id: string;
+}
+
+export type WriteClaimConflictReason = "different-session" | "different-id";
+
+/** Две разные заявки, претендующие на один и тот же worktree. */
+export interface WriteClaimConflict {
+  /** Канонический ключ спорного worktree. */
+  worktree: string;
+  reason: WriteClaimConflictReason;
+  /** Первая заявка в детерминированном порядке сортировки. */
+  first: WriteClaim;
+  /** Вторая заявка в детерминированном порядке сортировки. */
+  second: WriteClaim;
+  detail: string;
+}
+
+function compareText(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+function normalizeClaimWorktree(value: unknown): string | null {
+  if (typeof value !== "string" || !value.trim() || value.includes("\0")) return null;
+  let key = path.resolve(value.trim());
+  if (process.platform === "win32") key = key.toLowerCase();
+  key = key.replace(/\/+$/, "");
+  return key || (process.platform === "win32" ? "c:/" : "/");
+}
+
+function normalizeClaimText(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+/** Приводит заявку к нормализованному виду; невалидный worktree → null. */
+export function normalizeWriteClaim(input: WriteClaimInput): WriteClaim | null {
+  if (input == null || typeof input !== "object" || Array.isArray(input)) return null;
+  const worktree = normalizeClaimWorktree(input.worktree);
+  if (!worktree) return null;
+  return {
+    worktree,
+    session: normalizeClaimText(input.session),
+    id: normalizeClaimText(input.id),
+  };
+}
+
+/** Стабильный ключ заявки — используется для дедупликации и сортировки. */
+export function writeClaimKey(claim: WriteClaim): string {
+  return JSON.stringify([claim.worktree, claim.session, claim.id]);
+}
+
+function claimLabel(claim: WriteClaim): string {
+  const session = claim.session || "anonymous";
+  const id = claim.id || "no-id";
+  return `${session}@${claim.worktree}#${id}`;
+}
+
+/**
+ * DEEP-2.1: детерминированное обнаружение конкурирующих write-заявок.
+ *
+ * Конкуренция — две РАЗНЫЕ заявки (по session/id) на один нормализованный
+ * worktree. Повтор той же заявки идемпотентен и конфликтом не считается.
+ * Заявки сортируются по каноническому ключу, поэтому результат не зависит от
+ * порядка передачи: первая пара в первом по алфавиту спорном worktree всегда
+ * одна и та же. Функция чистая — вход не меняется, исключения не бросает.
+ */
+export function detectCompetingWriteClaims(
+  claims: readonly WriteClaimInput[],
+): WriteClaimConflict | null {
+  const byWorktree = new Map<string, WriteClaim[]>();
+  for (const raw of claims) {
+    const claim = normalizeWriteClaim(raw);
+    if (!claim) continue;
+    const group = byWorktree.get(claim.worktree) ?? [];
+    const key = writeClaimKey(claim);
+    if (!group.some((item) => writeClaimKey(item) === key)) group.push(claim);
+    byWorktree.set(claim.worktree, group);
+  }
+  const worktrees = [...byWorktree.keys()].sort(compareText);
+  for (const worktree of worktrees) {
+    const group = [...(byWorktree.get(worktree) ?? [])].sort((a, b) =>
+      compareText(writeClaimKey(a), writeClaimKey(b)),
+    );
+    if (group.length < 2) continue;
+    const first = group[0];
+    const second = group[1];
+    const reason: WriteClaimConflictReason =
+      first.session !== second.session ? "different-session" : "different-id";
+    return {
+      worktree,
+      reason,
+      first,
+      second,
+      detail: `Конкурирующие write-заявки на worktree ${worktree}: ${claimLabel(first)} и ${claimLabel(second)}`,
+    };
+  }
+  return null;
+}

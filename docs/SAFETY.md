@@ -147,14 +147,25 @@ Edit/write-действия допускаются только внутри **w
 - **Аудит каждого решения.** `src/core/audit.ts` (`recordWriteScopeDecision`,
   `runWriteScopeGuarded`) пишет в `audit_log` действия `write_scope.denied`
   (отказ, обход `..`, невалидный путь), `write_scope.allowed_outside` (явный
-  выход) и `write_scope.allowed` (обычное попадание в scope). Детали проходят
-  через `redactAuditDetails`, поэтому секреты в путях и параметрах не попадают
+  выход), `write_scope.allowed` (обычное попадание в scope) и
+  `write_scope.conflict` (конкурирующие заявки). Детали проходят через
+  `redactAuditDetails`, поэтому секреты в путях и параметрах не попадают
   в журнал. При отказе действие не выполняется (`status: "denied"`).
+- **Параллельные worktree (DEEP-2).** Write-заявка — это тройка
+  `worktree/session/id`. `detectCompetingWriteClaims` в `src/core/worktree.ts`
+  нормализует путь worktree, дедуплицирует заявки и детерминированно выбирает
+  первую пару разных заявок на один worktree; порядок передачи на результат не
+  влияет. `checkWriteScope` проверяет конфликт **до** анализа пути и возвращает
+  `reason: conflicting-claims` с обеими заявками. Конфликт — deny по умолчанию:
+  `allowOutside`/`extraRoots` его не снимают. Повтор той же заявки
+  идемпотентен. Событие `write_scope.conflict` содержит `conflict.first`,
+  `conflict.second`, `conflict.worktree`, `conflict.reason` и `claimIds` — по
+  идентификатору каждой стороны.
 - Gate-файлы и gate-команда остаются вне write-scope задачи (§9): guard не
   заменяет изоляцию процесса, но делает попытку записи наружу видимой.
 
 Регрессии: `test-permissions-policy.mjs` (deny по умолчанию, явный allow,
-отклонение `..`, событие аудита).
+отклонение `..`, событие аудита, конфликт заявок и его аудит).
 
 ## 13. Инварианты (проверяются тестами)
 
@@ -173,3 +184,5 @@ Edit/write-действия допускаются только внутри **w
 9. **Ad-hoc миссия проходит ту же политику, бюджет и gate, что и registered.**
 10. **Ad-hoc миссия не создаёт записей в планировщике ОС.**
 11. **Запись вне write-scope запрещена по умолчанию; каждый выход — в аудите.**
+12. **Конкурирующие write-заявки на один worktree запрещены по умолчанию;
+    обе стороны конфликта попадают в `write_scope.conflict`.**

@@ -21,6 +21,11 @@ import {
   checkWriteScope,
   WRITE_SCOPE_REASONS,
 } from "./dist/core/permissions.js";
+import {
+  detectCompetingWriteClaims,
+  normalizeWriteClaim,
+  writeClaimKey,
+} from "./dist/core/worktree.js";
 
 let passed = 0;
 function check(name, cond) {
@@ -320,7 +325,8 @@ const insidePath = path.join(scopeRoot, "src", "a.ts");
 
 check(
   "SC-1.2: причины решения зафиксированы",
-  WRITE_SCOPE_REASONS.join(",") === "within-scope,outside-denied,outside-allowed,traversal,invalid-path",
+  WRITE_SCOPE_REASONS.join(",") ===
+    "within-scope,outside-denied,outside-allowed,traversal,invalid-path,conflicting-claims",
 );
 const insideDecision = checkWriteScope({ target: insidePath, baseDir: scopeRoot });
 check(
@@ -381,6 +387,79 @@ check(
   normalizeWriteScopePolicy(null, scopeRoot).allowedRoot === scopeRoot &&
     normalizeWriteScopePolicy(null, scopeRoot).allowOutside === false &&
     normalizeWriteScopePolicy(null, scopeRoot).configured === false,
+);
+
+// ── DEEP-2.1/2.2: identity write-заявок и детерминированный конфликт ─────────
+const claimA = { worktree: scopeRoot, session: "ses_deep2aaa", id: "run-a" };
+const claimB = { worktree: scopeRoot, session: "ses_deep2bbb", id: "run-b" };
+const normalizedClaimA = normalizeWriteClaim(claimA);
+const conflictAB = detectCompetingWriteClaims([claimA, claimB]);
+const conflictBA = detectCompetingWriteClaims([claimB, claimA]);
+check(
+  "DEEP-2.1: нормализация заявки даёт канонический путь worktree",
+  normalizedClaimA !== null &&
+    normalizedClaimA.worktree ===
+      (process.platform === "win32" ? path.resolve(scopeRoot).toLowerCase() : path.resolve(scopeRoot)) &&
+    normalizedClaimA.session === "ses_deep2aaa" &&
+    normalizedClaimA.id === "run-a",
+);
+check(
+  "DEEP-2.1: ключ заявки стабилен и учитывает worktree/session/id",
+  writeClaimKey(normalizeWriteClaim(claimA)) === writeClaimKey(normalizeWriteClaim(claimA)) &&
+    writeClaimKey(normalizeWriteClaim(claimA)) !== writeClaimKey(normalizeWriteClaim(claimB)),
+);
+check(
+  "DEEP-2.1: две разные сессии в одном worktree — конфликт",
+  conflictAB !== null &&
+    conflictAB.reason === "different-session" &&
+    conflictAB.worktree === normalizedClaimA?.worktree &&
+    [conflictAB.first.id, conflictAB.second.id].join(",") === "run-a,run-b",
+);
+check(
+  "DEEP-2.1: результат не зависит от порядка заявок",
+  assert.deepStrictEqual(conflictAB, conflictBA) === undefined,
+);
+check(
+  "DEEP-2.1: повтор той же заявки идемпотентен",
+  detectCompetingWriteClaims([claimA, { ...claimA }, { ...claimA, worktree: `${scopeRoot}/` }]) ===
+    null,
+);
+check(
+  "DEEP-2.1: разные worktree не конфликтуют, невалидные заявки игнорируются",
+  detectCompetingWriteClaims([claimA, { ...claimB, worktree: path.join(tempRoot, "other-wt") }]) ===
+    null && detectCompetingWriteClaims([{ worktree: "" }, claimA]) === null,
+);
+const conflictDecision = checkWriteScope({
+  target: insidePath,
+  baseDir: scopeRoot,
+  claims: [claimA, claimB],
+});
+check(
+  "DEEP-2.2: конфликт заявок deny даже для пути внутри scope",
+  conflictDecision.allowed === false &&
+    conflictDecision.reason === "conflicting-claims" &&
+    conflictDecision.outsideAllowed === false &&
+    conflictDecision.conflict?.first.id === "run-a" &&
+    conflictDecision.conflict?.second.id === "run-b" &&
+    typeof conflictDecision.detail === "string" &&
+    conflictDecision.detail.includes("run-a") &&
+    conflictDecision.detail.includes("run-b"),
+);
+const explicitConflictDecision = checkWriteScope({
+  target: insidePath,
+  baseDir: scopeRoot,
+  policy: { allowOutside: true },
+  claims: [claimA, claimB],
+});
+check(
+  "DEEP-2.2: конфликт не обходится явным allowOutside",
+  explicitConflictDecision.allowed === false &&
+    explicitConflictDecision.reason === "conflicting-claims",
+);
+check(
+  "DEEP-2.2: дубль заявки не блокирует обычную запись в scope",
+  checkWriteScope({ target: insidePath, baseDir: scopeRoot, claims: [claimA, { ...claimA }] })
+    .allowed === true,
 );
 check(
   "SC-1.2: относительный корень резолвится через baseDir при компиляции и resolve",
@@ -462,6 +541,47 @@ check(
 check(
   "SC-1.2: разрешённый выход зафиксирован отдельным событием",
   audit.readAuditLog({ action: audit.WRITE_SCOPE_ALLOWED_OUTSIDE_ACTION }).total === 1,
+);
+
+// DEEP-2.2: конфликт заявок — отдельное событие с идентификаторами обеих сторон.
+const conflictAttempt = audit.recordWriteScopeDecision({
+  decision: conflictDecision,
+  task: "deep2-dev",
+  actor: "test",
+});
+check(
+  "DEEP-2.2: конфликт пишется в аудит как write_scope.conflict",
+  conflictAttempt.action === audit.WRITE_SCOPE_CONFLICT_ACTION &&
+    typeof conflictAttempt.auditId === "number" &&
+    conflictAttempt.auditId > 0,
+);
+const conflictLog = audit.readAuditLog({ action: audit.WRITE_SCOPE_CONFLICT_ACTION, limit: 10 });
+const conflictRecord = conflictLog.records.find(
+  (record) => record.details?.reason === "conflicting-claims",
+);
+check(
+  "DEEP-2.2: событие аудита содержит идентификаторы обеих заявок",
+  conflictLog.total >= 1 &&
+    conflictRecord?.details?.conflict?.first?.id === "run-a" &&
+    conflictRecord?.details?.conflict?.second?.id === "run-b" &&
+    conflictRecord?.details?.conflict?.first?.session === "ses_deep2aaa" &&
+    conflictRecord?.details?.conflict?.second?.session === "ses_deep2bbb" &&
+    conflictRecord?.details?.claimIds?.join(",") === "run-a,run-b",
+);
+let conflictWrites = 0;
+const conflictRun = await audit.runWriteScopeGuarded(
+  { target: insidePath, baseDir: scopeRoot, claims: [claimA, claimB], task: "deep2-dev", actor: "test" },
+  () => {
+    conflictWrites++;
+    return "written";
+  },
+);
+check(
+  "DEEP-2.2: execute-path не выполняет запись при конфликте заявок",
+  conflictRun.ok === false &&
+    conflictRun.status === "denied" &&
+    conflictRun.action === audit.WRITE_SCOPE_CONFLICT_ACTION &&
+    conflictWrites === 0,
 );
 const secretDecision = {
   ...outsideDecision,

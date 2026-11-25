@@ -49,16 +49,12 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 | §11.1–§11.4 — ad-hoc, local-first, гейт без irreversible, net-экономия | ✅ ROU-*, ARCH-4.*, E-*, EV-1.2 | Владелец, горизонт 28 дней и пороги зафиксированы в EXECUTION-LOOP §9 |
 | §11.5–§11.7 — переиспользование примера, паритет, eval не деградировал | ✅ EV-1.1/EV-1.3 + AC-1.4/EV-2.2 | Версионированный набор из ledger и CI-gate с откатом работают |
 | §12 — capped explore, staged LoRA | ✅ capped explore-бюджет и bandit (EV-2.3), LP-1.1/1.2/1.3 | Критерии датасета, офлайн-eval и shadow/canary с откатом зафиксированы; полный трафик не включался |
-| §12 — cost of verification, права вне write-scope | ✅ SC-1.1 + DEEP-1: кэш проверок, per-check receipts и пересчёт net-экономии с инвариантом в `report.savings`/`honestEconomy`; SC-1.2: write-scope guard deny-by-default с явным opt-in и аудитом | — |
+| §12 — cost of verification, права вне write-scope | ✅ SC-1.1 + DEEP-1: кэш проверок, per-check receipts и пересчёт net-экономии с инвариантом в `report.savings`/`honestEconomy`; SC-1.2 + DEEP-2: write-scope guard deny-by-default с явным opt-in, детерминированным обнаружением конкурирующих write-заявок (worktree/session/id) и аудитом `write_scope.conflict` с обеими сторонами | — |
 
 ## Деталь 3.21 — Усиление в глубину (не расширение)
 `src/core/savings.ts`, `src/core/permissions.ts`, `src/core/worktree.ts`, `src/core/audit.ts`, `src/core/self-analysis.ts`, `src/version.ts`, `src/gui.tsx`, `TEST-PLAN.md`, `test-budget.mjs`, `test-permissions-policy.mjs`, `test-self-analysis.mjs`, `test-gui-bundle.mjs`, `test-agent-tools.mjs`, `docs/SAFETY.md`, `docs/EXECUTION-LOOP.md`
 
-Обоснование: модули стратегии (CONCEPT §11–§13, ROADMAP-STRATEGY) в основном закрыты, но несколько контуров доверия остаются непроверяемыми извне. Это не новые возможности, а углубление существующих: измеримость, аудируемость и воспроизводимость приёмки. Разбивка уточнена 25.11.2026: каждая подзадача даёт один проверяемый артефакт и закрывается своим тестом; SC-1.1/SC-1.2 уже заведены в Детали 3.20 и здесь не дублируются. DEEP-1 закрыт и перенесён в CHANGELOG. Порядок: сначала дешёвая диагностика установки (DEEP-3), затем изоляция (DEEP-2), затем дорогая приёмка (DEEP-4).
-
-**Задача DEEP-2 — Write-scope между параллельными worktree** · P2 · ⬜ (продолжение SC-1.2)
-- [ ] DEEP-2.1 Ввести identity write-заявки (worktree/session/id) и детерминированное обнаружение конкурирующих заявок в `src/core/worktree.ts`; регрессия в `test-permissions-policy.mjs`.
-- [ ] DEEP-2.2 При конфликте — deny по умолчанию и событие в `src/core/audit.ts` с идентификаторами обеих заявок; регрессия в `test-permissions-policy.mjs`, обновить `docs/SAFETY.md`.
+Обоснование: модули стратегии (CONCEPT §11–§13, ROADMAP-STRATEGY) в основном закрыты, но несколько контуров доверия остаются непроверяемыми извне. Это не новые возможности, а углубление существующих: измеримость, аудируемость и воспроизводимость приёмки. Разбивка уточнена 25.11.2026: каждая подзадача даёт один проверяемый артефакт и закрывается своим тестом; SC-1.1/SC-1.2 уже заведены в Детали 3.20 и здесь не дублируются. DEEP-1 и DEEP-2 закрыты и перенесены в CHANGELOG. Порядок: сначала дешёвая диагностика установки (DEEP-3), затем дорогая приёмка (DEEP-4).
 
 **Задача DEEP-3 — Версия установки видна до запуска задачи** · P2 · ⬜ (продолжение само-диагностики 1b18f55)
 - [ ] DEEP-3.1 Поднимать `plugin.reason === "identity-mismatch"` / `plugin.staleInstallation` как предупреждение в `self_analysis`; регрессия в `test-self-analysis.mjs`.
