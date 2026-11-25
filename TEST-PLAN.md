@@ -1,6 +1,6 @@
 # План тестирования плагина `agent-steward` (plugin id `opencode-windows-scheduler`)
 
-**Версия плагина:** 0.0.7 · **Платформа прогона:** Windows 11 · **Дата:** 24.11.2026  
+**Версия плагина:** 0.0.7 · **Платформа прогона:** Windows 11 · **Дата:** 25.11.2026  
 **Объект:** весь плагин — ядро, MCP-инструменты, GUI OpenCode, веб-дашборд, TUI, БД, интеграции, локальный ассистент триажа, самодиагностика, DLQ, durable-запуски, pipeline-as-code.  
 **Цель:** доказать три свойства для каждой детали:
 
@@ -48,12 +48,12 @@ npm test               # 136 файлов test-*.mjs (129 npm-скриптов),
 node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с сид-данными
 ```
 
-- Текущая схема БД: `SCHEMA_VERSION = 14` (таблицы обратной связи `feedback_outbox`/`feedback_spam`; историческая миграция 10 → 11 описана в S15.1.2).
+- Текущая схема БД: `SCHEMA_VERSION = 14` (таблицы обратной связи `feedback_outbox`/`feedback_spam`; миграция с legacy-БД 10 → 14 описана в S15.1.2).
 - GUI: OpenCode → боковая панель «Планировщик Windows». После пересборки панель перезагрузить.
 - MCP: 34 инструмента доступны агенту после подключения плагина (проверено через мост Code Mode: `list_tasks`, `get_dashboard_info`).
 - Дашборд: `http://127.0.0.1:3782/` (порт может отличаться, смотреть `get_dashboard_info`).
 - Логи прогона: вывод `npm test` (при необходимости перенаправить в `test-run.log`); артефакты GUI — `gui-experimental.cjs` (создаётся `npm run build:gui`).
-- Актуальная ветка плана: `dev` (34 инструмента, 128 npm-скриптов). Legacy-чек-аут `steward-work` содержит 30 инструментов и 113 npm-скриптов — его счётчики здесь не используются.
+- Актуальная ветка плана: `dev` (34 инструмента, 129 npm-скриптов). Legacy-чек-аут `steward-work` содержит 30 инструментов и 113 npm-скриптов — его счётчики здесь не используются.
 
 ### 0.3.1 Счётчики (TP-6.2, автогенерация)
 
@@ -94,7 +94,7 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 | D01 | Ядро расписаний и ОС-бэкенды | `src/core/schedule-v2.ts`, `cron-to-schtasks.ts`, `one-shot.ts`, `core/scheduler/*` | `schedule_task`, `update_task`, `dry_run` | GUI-форма, дашборд | `test-schedule-v2`, `test-one-shot`, `test-window-v3`, `test-cron-to-schtasks`, `test-mac-launchctl`, `test-mac-cron`, `test-at-fallback` |
 | D02 | Жизненный цикл задач (CRUD) | `src/db/tasks-repo.ts`, `src/index.ts` | `schedule_task`, `schedule_advanced`, `list_tasks`, `update_task`, `update_advanced`, `delete_task`, `pause_task`, `resume_task` | GUI-таблица + форма | `test-agent-tools`, `test-task-status`, `test-task-name-limit`, `test-task-name-collision` |
 | D03 | Исполнение, блокировки, сессии | `src/core/ps-wrapper.ts`, `lock.ts`, `session.ts`, `record-history.ts` | `run_task_now`, `get_task_logs`, `get_history`, `dry_run` | GUI «Запустить/Логи/История», дашборд | `test-crash-recovery`, `test-session-continuity`, `test-ps-watchdog`, `test-prompt-argv`, `test-execution-pipeline`, `test-mission-run`, `test-run-now`, `test-pause-one-shot`, `test-stale-lock`, `test-lock-format` |
-| D04 | MCP-слой и скилл для агента | `src/index.ts`, `src/skill.ts`, `skills/` | все 32 инструмента (включая `report_bug`) | — (служебная деталь) | `test-agent-tools`, `test-skill`, `test-env` |
+| D04 | MCP-слой и скилл для агента | `src/index.ts`, `src/skill.ts`, `skills/` | 34 инструмента (Приложение B); через мост Code Mode — 9 (`report_bug` не найден, QA-D316-14) | — (служебная деталь) | `test-agent-tools`, `test-skill`, `test-env` |
 | D05 | DAG и цепочки задач | `src/core/dry-run.ts`, `src/index.ts` | `dry_run`, `schedule_task.dependsOn`, `nextTaskOn*` | GUI-форма, дашборд-граф | `test-dag`, `test-dag-latest-history`, `test-dry-run`, `test-dashboard-dag`, `test-retry-counter` |
 | D06 | Matrix (fan-out по workspace) | `src/core/matrix.ts` | `matrix_control`, `schedule_task.matrix` | GUI-форма, дашборд | `test-matrix`, `test-matrix-lifecycle`, `test-matrix-sync` |
 | D07 | Триггеры: cron/file/git/MCP/webhook | `src/core/file-watcher.ts`, `git-trigger.ts`, `glob.ts`, `src/server.ts` | `schedule_task`, `update_task`, `emit_event` | GUI-форма, `POST /api/hooks/:name` | `test-git-trigger`, `test-glob`, `test-integrations`, `test-watch-paths` |
@@ -553,7 +553,7 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 | ID | Подзадача | Шаги | Ожидаемый результат |
 |---|---|---|---|
 | S15.1.1 | 🧪 Чистая БД | удалить файл, старт | Схема создана, версия миграций записана |
-| S15.1.2 | 🧪 Миграция | БД предыдущей версии (10 → 11), `SCHEMA_VERSION = 11` | Данные сохранены, добавлены функциональные индексы `idx_history_task_lower`/`idx_history_status_lower`; миграция аддитивна и идемпотентна |
+| S15.1.2 | 🧪 Миграция | БД предыдущей версии (10 → 14), `SCHEMA_VERSION = 14` | Данные сохранены, добавлены функциональные индексы `idx_history_task_lower`/`idx_history_status_lower`; миграция аддитивна и идемпотентна (`PRAGMA user_version` выставляется в 14) |
 | S15.1.3 | 🧪 WAL | параллельные чтение/запись | Нет `database is locked` |
 | S15.1.4 | 🧪 Краш-рекавери | убить процесс во время запуска | Запись помечена `error/interrupted`, lock снят |
 | S15.1.5 | 🧪 Повторный старт | после краша | Плагин стартует, история читается |
@@ -690,7 +690,7 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 | D01 Расписания | `schedule_task`, `update_task`, `dry_run` | ✅ форма | ✅ nextRun | — | `create_task`, `update_task`, `dry_run` |
 | D02 CRUD | `schedule_task/list/update/delete`, `pause/resume` | ✅ | ✅ run/delete | ⌨️ run/pause/resume | `get_tasks`, `create_task`, `delete_task`, `pause_task`, `resume_task` |
 | D03 Исполнение | `run_task_now`, `get_task_logs`, `get_history` | ✅ | ✅ run | ⌨️ log | `run_task`, `get_task_logs`, `get_history` |
-| D04 MCP-слой | все 30 (включая `report_bug`) | — | — | — | — |
+| D04 MCP-слой | 34 (Приложение B); в Code Mode — 9, `report_bug` недоступен (QA-D316-14) | — | — | — | — |
 | D05 DAG | `dry_run` + поля | ✅ | ✅ граф | — | `dry_run`, `dry_run_all` |
 | D06 Matrix | `matrix_control` | ✅ | ✅ бейдж/отмена | — | `get_matrix_results`, `cancel_matrix`, `cleanup_matrix_orphans`, `expand_matrix_preview` |
 | D07 Триггеры | `schedule_task`, `emit_event` | ✅ | ✅ hook | — | `emit_event`, `POST /api/hooks/:name` |
@@ -970,16 +970,16 @@ node scripts/demo-dashboard.mjs --port 3782   # демо-дашборд с си�
 
 | Поле | Значение |
 |---|---|
-| Дата | |
-| Версия / коммит | |
-| ОС / OpenCode | |
-| Кто выполнял | |
-| Детали пройдены | `D__ – D__` |
-| Упавшие подзадачи | |
-| Найденные дефекты (ID + ссылка на §7) | |
-| Узкие места, требующие доработки (§7.2) | |
-| Предложенные улучшения (§7.3) | |
-| Итог | ✅ принято / ⚠️ принято с ограничениями / ❌ отклонено |
+| Дата | 25.11.2026 |
+| Версия / коммит | 0.0.7 · ветка `dev` · `c17d733` (после PR-проверки плагина) |
+| ОС / OpenCode | Windows 11 · Node ≥22.22 · OpenCode Code Mode (мост MCP) · планировщик ОС доступен (`osAvailable=true`) |
+| Кто выполнял | агент OpenCode (проверка оба режима: ОС-задача и `automation.create` вне ОС); человек — параллельная проверка работоспособности плагина |
+| Детали пройдены | `D01, D02, D03, D07, D16, D17` точечно; полный прогон `D01 – D18` не выполнен (проверены структура плана, счётчики и доступ инструментов) |
+| Упавшие подзадачи | `dry_run` с неизвестным именем (QA-D316-9); `mcp-event` в core-профиле (QA-D316-12); `get_history` у успешных задач (QA-D316-13); `delete_task`/`schedule_advanced` в каталоге Code Mode (QA-D316-14); `workingDirectory` теряется при сохранении (QA-D316-15) |
+| Найденные дефекты (ID + ссылка на §7) | QA-D316-8 … QA-D316-15 — открытые находки в `ROADMAP.md` (раздел «Проверка работоспособности плагина 24.11.2026») |
+| Узкие места, требующие доработки (§7.2) | X-4 (гонка lock-файла, 🔄); QA-D316-10 (watchdog прерывает финализацию); QA-D316-11 (afterScript коммитит только часть правок) |
+| Предложенные улучшения (§7.3) | QA-D316-12 … QA-D316-15 (доступность инструментов и согласованность настроек), плюс актуализация счётчиков и даты плана |
+| Итог | ⚠️ принято с ограничениями: структура плана и доступ инструментов проверены, найденные дефекты заведены в ROADMAP, полный E2E-прогон D01–D18 — отдельный этап |
 
 ---
 

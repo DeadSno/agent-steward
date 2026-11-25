@@ -28,6 +28,7 @@ const section = (text, title, next) => {
 };
 
 const coverage = section(plan, "## 5. Матрица покрытия автотестами", "## 6.");
+const summary = section(plan, "## 1. Сводная карта деталей", "## 2.");
 const matrix = section(plan, "## 4. Матрица доступа", "## 5.");
 const appendixA = section(plan, "## Приложение A.", "## Приложение B.");
 const appendixB = section(plan, "## Приложение B.", "## Приложение C.");
@@ -65,7 +66,7 @@ check(`§5: все ${testFiles.length} файлов test-*.mjs упомянут�
   testFiles.every((f) => mentioned.includes(f)));
 check(`§5: все ${mentioned.length} упомянутых файлов существуют`,
   mentioned.every((f) => testFiles.includes(f)));
-check("шапка: дата 24.11.2026", plan.includes("24.11.2026"));
+check("шапка: дата 25.11.2026", plan.includes("25.11.2026"));
 check(`шапка: счётчик файлов = ${testFiles.length}`, plan.includes(`${testFiles.length} файлов`));
 check(`шапка: счётчик npm-скриптов = ${npmTestScripts.length}`,
   plan.includes(`${npmTestScripts.length} npm-скриптов`));
@@ -75,8 +76,9 @@ check("S16.1.4: счётчики согласованы с шапкой",
 check("TP-6.2: маркеры генератора счётчиков на месте",
   plan.includes("<!-- counters:start -->") && plan.includes("<!-- counters:end -->"));
 check(`SCHEMA_VERSION в плане = ${schemaVersion} (код)`, plan.includes(`SCHEMA_VERSION = ${schemaVersion}`));
-check("D15/S15.1.2: миграция 10 → 11",
-  /SCHEMA_VERSION\s*=\s*11/.test(plan) && /10\s*[→\-]+\s*11/.test(d15) && d15.includes("S15.1.2"));
+check("D15/S15.1.2: миграция 10 → 14 (актуальная схема)",
+  /SCHEMA_VERSION\s*=\s*14/.test(plan) && /SCHEMA_VERSION\s*=\s*14/.test(d15) &&
+    /10\s*[→\-]+\s*14/.test(d15) && d15.includes("S15.1.2"));
 check("Приложение B: 34 MCP-инструмента", mcpCount === 34);
 check("Приложение A: 61 RPC-методов", rpcCount === 61);
 check("§7.1 переименован в «Исправленные баги (реестр)»",
@@ -87,6 +89,10 @@ check("добавлена деталь D17 (обратная связь / report
 check("добавлена деталь D18 (pipeline-as-code)", /### D18\./.test(plan));
 check("§4: строки D17 и D18 в матрице доступа", matrix.includes("| D17") && matrix.includes("| D18"));
 check("D17: self_analysis не потерян", d17.includes("self_analysis"));
+check("D04: 34 инструмента в сводке и матрице доступа (не 30/32)",
+  summary.split("\n").some((line) => /^\|\s*D04\s*\|/.test(line) && line.includes("34 инструмента")) &&
+  matrix.split("\n").some((line) => /^\|\s*D04 MCP-слой\s*\|/.test(line) && line.includes("34")) &&
+  !/D04[^\n]*(все 30|все 32)/.test(plan));
 check("ROADMAP: все TP-3/4/5/6 подзадачи закрыты", !/^- \[ \] TP-[3-6]\./m.test(detail14));
 check("артефакты TP-6 созданы",
   testFiles.includes("test-test-plan.mjs") &&
