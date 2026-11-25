@@ -52,6 +52,34 @@ export interface VerificationCacheStats {
   evicted: number;
   /** Итоговая стоимость уникальных проверок, USD. */
   costUsd: number;
+  /** DEEP-1.1: аудируемые чеки в порядке предъявления проверок. */
+  receipts: VerificationReceipt[];
+  /** Параметры, с которыми получены чеки: нужны recompute без догадок. */
+  costPerCheckUsd: number;
+  maxEntries: number;
+}
+
+/** Решение, принятое по одной проверке кэша. */
+export type VerificationDecision = "hit" | "miss" | "evicted";
+
+/**
+ * Аудируемый чек одной проверки (DEEP-1.1).
+ *
+ * По чекам можно восстановить агрегаты кэша и честную net-экономию, не веря
+ * возвращённому отчёту: ключ фиксирует вход, decision — решение, costUsd —
+ * списанную стоимость, evictedKey — вытесненную запись.
+ */
+export interface VerificationReceipt {
+  /** Порядковый номер предъявленной проверки (с нуля). */
+  index: number;
+  /** Стабильный ключ проверки (SHA-256 канонического входа). */
+  key: string;
+  /** hit — повтор, miss — новая запись, evicted — новая запись с вытеснением. */
+  decision: VerificationDecision;
+  /** Списанная стоимость шага, USD (0 для hit). */
+  costUsd: number;
+  /** Ключ вытесненной oldest-first записи — только для decision="evicted". */
+  evictedKey?: string;
 }
 
 /**
@@ -91,35 +119,129 @@ export function computeVerificationBudget(
 ): VerificationCacheStats {
   const costPerCheck = positiveNumber(options.costPerCheckUsd) || VERIFICATION_COST_PER_CHECK_USD;
   const maxEntries = Math.max(1, Math.floor(options.maxEntries ?? VERIFICATION_CACHE_MAX_ENTRIES));
+  const list = checks ?? [];
   const seen = new Map<string, true>();
+  const receipts: VerificationReceipt[] = [];
   let hits = 0;
   let misses = 0;
   let evicted = 0;
   let costUsd = 0;
-  for (const check of checks ?? []) {
-    const key = verificationCheckKey(check);
+  for (let index = 0; index < list.length; index += 1) {
+    const key = verificationCheckKey(list[index]);
     if (seen.has(key)) {
       hits += 1;
+      receipts.push({ index, key, decision: "hit", costUsd: 0 });
       continue;
     }
+    let evictedKey: string | undefined;
     if (seen.size >= maxEntries) {
-      const oldest = seen.keys().next().value;
-      if (oldest !== undefined) {
-        seen.delete(oldest);
+      evictedKey = seen.keys().next().value;
+      if (evictedKey !== undefined) {
+        seen.delete(evictedKey);
         evicted += 1;
       }
     }
     seen.set(key, true);
     misses += 1;
     costUsd += costPerCheck;
+    receipts.push(
+      evictedKey !== undefined
+        ? { index, key, decision: "evicted", costUsd: costPerCheck, evictedKey }
+        : { index, key, decision: "miss", costUsd: costPerCheck },
+    );
   }
   return {
-    checks: checks.length,
+    checks: list.length,
     unique: seen.size,
     hits,
     misses,
     evicted,
     costUsd: roundUsd(costUsd),
+    receipts,
+    costPerCheckUsd: costPerCheck,
+    maxEntries,
+  };
+}
+
+/**
+ * DEEP-1.2: восстанавливает агрегаты кэша из чеков, не читая исходные проверки.
+ *
+ * Порядок чеков — часть доказательства: при decision miss/evicted oldest-first
+ * вытеснение воспроизводится по тому же правилу, что и в computeVerificationBudget.
+ * evictedKey из чека сверяется с реально вытесненным ключом; расхождение меняет
+ * счётчик evicted и ломает инвариант — подмена чека не пройдёт незамеченной.
+ */
+export function recomputeVerificationBudget(
+  receipts: readonly VerificationReceipt[],
+  options: { costPerCheckUsd?: number; maxEntries?: number } = {},
+): VerificationCacheStats {
+  const costPerCheck = positiveNumber(options.costPerCheckUsd)
+    || positiveNumber(receipts[0]?.costUsd)
+    || VERIFICATION_COST_PER_CHECK_USD;
+  const maxEntries = Math.max(1, Math.floor(options.maxEntries ?? VERIFICATION_CACHE_MAX_ENTRIES));
+  const seen = new Map<string, true>();
+  const restored: VerificationReceipt[] = [];
+  let hits = 0;
+  let misses = 0;
+  let evicted = 0;
+  let costUsd = 0;
+
+  receipts.forEach((receipt, index) => {
+    const key = receipt?.key ?? "";
+    if (receipt?.decision === "hit") {
+      hits += 1;
+      restored.push({ index, key, decision: "hit", costUsd: 0 });
+      return;
+    }
+    let evictedKey: string | undefined;
+    if (seen.size >= maxEntries) {
+      evictedKey = seen.keys().next().value;
+      if (evictedKey !== undefined) {
+        seen.delete(evictedKey);
+        if (receipt?.evictedKey === evictedKey) evicted += 1;
+      }
+    }
+    seen.set(key, true);
+    misses += 1;
+    costUsd += positiveNumber(receipt?.costUsd) || costPerCheck;
+    restored.push(
+      evictedKey !== undefined
+        ? { index, key, decision: "evicted", costUsd: positiveNumber(receipt?.costUsd) || costPerCheck, evictedKey }
+        : { index, key, decision: "miss", costUsd: positiveNumber(receipt?.costUsd) || costPerCheck },
+    );
+  });
+
+  return {
+    checks: receipts.length,
+    unique: seen.size,
+    hits,
+    misses,
+    evicted,
+    costUsd: roundUsd(costUsd),
+    receipts: restored,
+    costPerCheckUsd: costPerCheck,
+    maxEntries,
+  };
+}
+
+/**
+ * DEEP-1.2: пересчёт Economy-полей отчёта по чекам.
+ *
+ * Вход — сами чеки и два скаляра из отчёта (savedUsd/totalCostUsd), которые
+ * чеки не дублируют. Возвращаемый объект должен быть глубоко равен
+ * соответствующим полям `report.savings`: это и есть аудируемый инвариант.
+ */
+export function recomputeSavingsFromReceipts(
+  receipts: readonly VerificationReceipt[],
+  base: Pick<SavingsReport, "savedUsd" | "totalCostUsd">,
+  options: { costPerCheckUsd?: number; maxEntries?: number } = {},
+): Pick<SavingsReport, "verificationCostUsd" | "verificationCache" | "netEconomyUsd"> {
+  const verificationCache = recomputeVerificationBudget(receipts, options);
+  const verificationCostUsd = verificationCache.costUsd;
+  return {
+    verificationCostUsd,
+    verificationCache,
+    netEconomyUsd: roundUsd(base.savedUsd - base.totalCostUsd - verificationCostUsd),
   };
 }
 

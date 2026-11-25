@@ -102,8 +102,18 @@ prices, so the dashboard keeps working.
 | `actualCostUsd` | recorded cost of the same runs (usually 0) |
 | `totalCostUsd` | recorded cost of all runs in the window |
 | `verificationCostUsd` | cost of unique gate/eval checks in the window |
-| `verificationCache` | `{ checks, unique, hits, misses, evicted, costUsd }` |
+| `verificationCache` | `{ checks, unique, hits, misses, evicted, costUsd, receipts, costPerCheckUsd, maxEntries }` |
 | `netEconomyUsd` | `savedUsd - totalCostUsd - verificationCostUsd` |
+
+### Auditable receipts (DEEP-1)
+
+Every check produces a `VerificationReceipt` in `verificationCache.receipts`:
+`index` (order of submission), `key` (SHA-256 of canonical gate/prompt/inputs),
+`decision` (`hit`, `miss` or `evicted`), `costUsd` (0 for a hit) and
+`evictedKey` for an eviction. Both `verificationCache` and `netEconomyUsd`
+are reproducible from these receipts via `recomputeSavingsFromReceipts()`;
+`test-budget.mjs` asserts `recompute(receipts) === report.savings` on a fixed
+fixture and that a tampered receipt breaks the invariant.
 | `referenceCostPer1kTokensUsd` | reference price |
 | `methodologyUrl` | link to this page |
 | `byTask` | breakdown `{ taskName, runs, tokens, savedUsd }` |

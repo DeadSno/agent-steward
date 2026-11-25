@@ -36,6 +36,9 @@ import {
 import {
   VERIFICATION_COST_PER_CHECK_USD,
   computeVerificationBudget,
+  computeSavings,
+  recomputeVerificationBudget,
+  recomputeSavingsFromReceipts,
   verificationCheckKey,
 } from "./dist/core/savings.js";
 
@@ -417,6 +420,91 @@ check(
   indexSource.split("verificationChecks,").length - 1 >= 2 &&
     indexSource.includes("function verificationChecksForWindow")
 );
+
+// 11c. DEEP-1.1: аудируемые чеки каждой проверки.
+const receiptBudget = computeVerificationBudget([verifyInput, verifySame, verifyDifferent], {
+  costPerCheckUsd: 0.01,
+  maxEntries: 2,
+});
+check(
+  "DEEP-1.1: чек эмитируется для каждой проверки с индексом и стабильным ключом",
+  receiptBudget.receipts.length === 3 &&
+    receiptBudget.receipts.every((receipt, index) =>
+      receipt.index === index && /^[0-9a-f]{64}$/.test(receipt.key)) &&
+    receiptBudget.receipts[0].key === verificationCheckKey(verifyInput) &&
+    receiptBudget.receipts[1].key === receiptBudget.receipts[0].key
+);
+check(
+  "DEEP-1.1: решение hit/miss и списанная стоимость фиксируются в чеке",
+  receiptBudget.receipts[0].decision === "miss" &&
+    receiptBudget.receipts[0].costUsd === 0.01 &&
+    receiptBudget.receipts[1].decision === "hit" &&
+    receiptBudget.receipts[1].costUsd === 0 &&
+    receiptBudget.receipts[2].decision === "miss"
+);
+check(
+  "DEEP-1.1: параметры пересчёта сохранены в агрегате",
+  receiptBudget.costPerCheckUsd === 0.01 && receiptBudget.maxEntries === 2
+);
+
+// 11d. DEEP-1.2: пересчёт агрегатов и net-экономии из чеков (golden-тест).
+const deepCheck = (prompt) => ({ gate: "qualityGate", prompt, inputs: { file: "deep.ts" } });
+const checkA = deepCheck("A");
+const checkASame = deepCheck("A");
+const checkB = deepCheck("B");
+const checkC = deepCheck("C");
+const deepOptions = { verificationCostPerCheckUsd: 0.01, verificationCacheMaxEntries: 2, referenceCostPer1kTokensUsd: 0.01 };
+const deepChecks = [checkA, checkASame, checkB, checkC, checkB];
+const deepReport = computeSavings(
+  [
+    day("2026-06-17T01:00:00Z", { taskName: "deep", tokens: 100000, costUsd: 0 }),
+    day("2026-06-17T02:00:00Z", { taskName: "deep", tokens: 10000, costUsd: 0.5 }),
+  ],
+  { ...deepOptions, verificationChecks: deepChecks },
+);
+const deepCache = deepReport.verificationCache;
+check(
+  "DEEP-1.2: golden — 5 проверок, 2 hit, 3 miss, 1 evicted, unique=2, cost=0.03",
+  deepCache.checks === 5 &&
+    deepCache.hits === 2 &&
+    deepCache.misses === 3 &&
+    deepCache.evicted === 1 &&
+    deepCache.unique === 2 &&
+    deepCache.costUsd === 0.03
+);
+check(
+  "DEEP-1.2: чек вытеснения содержит ключ вытесненной записи",
+  deepCache.receipts[3].decision === "evicted" &&
+    deepCache.receipts[3].evictedKey === verificationCheckKey(checkA) &&
+    deepCache.receipts[4].decision === "hit"
+);
+check(
+  "DEEP-1.2: savedUsd=1, totalCostUsd=0.5, netEconomyUsd=0.47",
+  deepReport.savedUsd === 1 &&
+    deepReport.totalCostUsd === 0.5 &&
+    deepReport.netEconomyUsd === 0.47
+);
+const recomputeOptions = { costPerCheckUsd: 0.01, maxEntries: 2 };
+assert.deepStrictEqual(
+  recomputeVerificationBudget(deepCache.receipts, recomputeOptions),
+  deepCache,
+);
+assert.deepStrictEqual(
+  recomputeSavingsFromReceipts(deepCache.receipts, deepReport, recomputeOptions),
+  {
+    verificationCostUsd: deepReport.verificationCostUsd,
+    verificationCache: deepCache,
+    netEconomyUsd: deepReport.netEconomyUsd,
+  },
+);
+check("DEEP-1.2: инвариант recompute(receipts) === report.savings выполняется", true);
+const tamperedReceipts = deepCache.receipts.map((receipt) => ({ ...receipt }));
+tamperedReceipts[1].key = verificationCheckKey(deepCheck("tampered"));
+assert.notDeepStrictEqual(
+  recomputeVerificationBudget(tamperedReceipts, recomputeOptions),
+  deepCache,
+);
+check("DEEP-1.2: подмена чека ломает инвариант (аудируемость)", true);
 
 // 12. E-2.2: гейт персонального токен-бюджета задачи (остановка при превышении).
 const gateNow = new Date("2026-06-17T12:00:00Z"); // среда

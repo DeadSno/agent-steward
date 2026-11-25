@@ -27,7 +27,19 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 
 ## QA-находки (проверка работоспособности плагина 24.11.2026)
 
-Все находки QA-D316-21…37 и все последующие QA-находки 25.11.2026 закрыты, удалены отсюда и перенесены в [CHANGELOG.md](./CHANGELOG.md). Открытых QA-находок на 25.11.2026 нет; ниже — только открытые находки, внесённые по факту воспроизведения.
+Все находки QA-D316-21…37 и все последующие QA-находки 25.11.2026 закрыты, удалены отсюда и перенесены в [CHANGELOG.md](./CHANGELOG.md). Ниже — только открытые находки, внесённые по факту воспроизведения 25.11.2026.
+
+**QA-LAUNCH-1 — Сломанный путь загрузки плагина в глобальном конфиге** · P1 · ⬜
+- [ ] `~/.config/opencode/opencode.jsonc:9` грузит плагин по `file:///C:/analytics/Системный аналитик теория/Системный анализ стажировка/qa-2411` — папки `qa-2411` не существует (есть `qa-2411-dev`). Инструменты плагина в Code Mode недоступны. Ранее путь уже правился (`opencode-windows-scheduler` → `qa-2411`, CHANGELOG:9/22) — регрессия. Починить путь и добавить fail-open preflight с предупреждением о stale-установке.
+
+**QA-SUB-1 — Суб-агент упирается в лимит тарифа** · P2 · ⬜
+- [ ] Суб-агент `explore` (`opencode/mimo-v2.6-flash-free`) завершился `Free usage limit reached`; лимит 1 суб-агента исчерпан (уже фиксировалось в CHANGELOG:17). Нужны явный local-agent fallback на Ollama (`hf.co/Qwen/Qwen3-4B-GGUF:Q4_K_M`, доступна на 127.0.0.1:11434; `qwen2.5:3b` при pull падает) и прозрачный statuses в ответе, чтобы задача не срывалась тихо.
+
+**QA-BRIDGE-1 — Code Mode bridge открывает 8 из 34 инструментов** · P2 · ⬜
+- [ ] Плагин регистрирует 34 инструмента, но в Code Mode catalog доступны только 8 (`src/index.ts:5284`, `CODE_MODE_BRIDGE_NOTE`). Проверить, какие инструменты теряются, и либо расширить мост, либо зафиксировать политику и причину в документации. Параллельно проверить плагин в вариантах с привязкой к ОС и без неё (HTTP/RPC `src/server.ts`: `/api/tasks`, `/api/history`, `/api/analytics`, `/api/health`, порт 3782) и результаты занести в CHANGELOG.
+
+**QA-BASELINE-1 — Два набора в `test:parallel` падают на устаревших бейзлайнах** · P2 · ⬜
+- [ ] Воспроизведение 25.11.2026: `npm run test:parallel` — 128/130, exit 1. `test-run-now.mjs` — 18/20: `QA-D316-20: early-return once снимает счётчик PL-106` и `единая функция снятия счётчика PL-106`. `test-tool-specs.mjs` — 46/52: снапшоты `get_history`/`schedule_task`/`schedule_advanced`/`update_task`/`update_advanced` не совпадают с текущими name+description+JSON-схемами, плюс `QA-PORT-4: core-профиль не тянет admin-инструменты` ожидает 10 инструментов core, а реестр отдаёт 11 (уже зафиксировано в CHANGELOG как 11). Падения не связаны с DEEP-1 (правки только в `savings.ts`, `test-budget.mjs`, доках): нужно обновить бейзлайны/снимки и исправить снятие счётчика PL-106 отдельной задачей, не смешивая с экономией верификации.
 
 
 ## Деталь 3.20 — Матрица покрытия стратегии и незакрытые контуры
@@ -43,16 +55,12 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 | §11.1–§11.4 — ad-hoc, local-first, гейт без irreversible, net-экономия | ✅ ROU-*, ARCH-4.*, E-*, EV-1.2 | Владелец, горизонт 28 дней и пороги зафиксированы в EXECUTION-LOOP §9 |
 | §11.5–§11.7 — переиспользование примера, паритет, eval не деградировал | ✅ EV-1.1/EV-1.3 + AC-1.4/EV-2.2 | Версионированный набор из ledger и CI-gate с откатом работают |
 | §12 — capped explore, staged LoRA | ✅ capped explore-бюджет и bandit (EV-2.3), LP-1.1/1.2/1.3 | Критерии датасета, офлайн-eval и shadow/canary с откатом зафиксированы; полный трафик не включался |
-| §12 — cost of verification, права вне write-scope | ✅ SC-1.1: кэш проверок и честная net-экономия в `report.savings`/`honestEconomy`; SC-1.2: write-scope guard deny-by-default с явным opt-in и аудитом | — |
+| §12 — cost of verification, права вне write-scope | ✅ SC-1.1 + DEEP-1: кэш проверок, per-check receipts и пересчёт net-экономии с инвариантом в `report.savings`/`honestEconomy`; SC-1.2: write-scope guard deny-by-default с явным opt-in и аудитом | — |
 
 ## Деталь 3.21 — Усиление в глубину (не расширение)
 `src/core/savings.ts`, `src/core/permissions.ts`, `src/core/worktree.ts`, `src/core/audit.ts`, `src/core/self-analysis.ts`, `src/version.ts`, `src/gui.tsx`, `TEST-PLAN.md`, `test-budget.mjs`, `test-permissions-policy.mjs`, `test-self-analysis.mjs`, `test-gui-bundle.mjs`, `test-agent-tools.mjs`, `docs/SAFETY.md`, `docs/EXECUTION-LOOP.md`
 
-Обоснование: модули стратегии (CONCEPT §11–§13, ROADMAP-STRATEGY) в основном закрыты, но несколько контуров доверия остаются непроверяемыми извне. Это не новые возможности, а углубление существующих: измеримость, аудируемость и воспроизводимость приёмки. Разбивка уточнена 25.11.2026: каждая подзадача даёт один проверяемый артефакт и закрывается своим тестом; SC-1.1/SC-1.2 уже заведены в Детали 3.20 и здесь не дублируются. Порядок: сначала дешёвая диагностика установки (DEEP-3), затем измеримость и изоляция (DEEP-1/2), затем дорогая приёмка (DEEP-4).
-
-**Задача DEEP-1 — Аудируемая экономия верификации** · P2 · ⬜ (продолжение SC-1.1)
-- [ ] DEEP-1.1 Эмитировать per-check receipt в `computeVerificationBudget`: стабильный ключ проверки, стоимость, решение hit/miss/evicted; юнит-тест в `test-budget.mjs`. Агрегаты `verificationCache` и `netEconomyUsd` уже существуют и заново не добавляются.
-- [ ] DEEP-1.2 Пересчитывать `verificationCache` и `netEconomyUsd` из receipts и проверять инвариант `recompute(receipts) === report.savings` golden-тестом в `test-budget.mjs`; обновить `docs/EXECUTION-LOOP.md` §9.
+Обоснование: модули стратегии (CONCEPT §11–§13, ROADMAP-STRATEGY) в основном закрыты, но несколько контуров доверия остаются непроверяемыми извне. Это не новые возможности, а углубление существующих: измеримость, аудируемость и воспроизводимость приёмки. Разбивка уточнена 25.11.2026: каждая подзадача даёт один проверяемый артефакт и закрывается своим тестом; SC-1.1/SC-1.2 уже заведены в Детали 3.20 и здесь не дублируются. DEEP-1 закрыт и перенесён в CHANGELOG. Порядок: сначала дешёвая диагностика установки (DEEP-3), затем изоляция (DEEP-2), затем дорогая приёмка (DEEP-4).
 
 **Задача DEEP-2 — Write-scope между параллельными worktree** · P2 · ⬜ (продолжение SC-1.2)
 - [ ] DEEP-2.1 Ввести identity write-заявки (worktree/session/id) и детерминированное обнаружение конкурирующих заявок в `src/core/worktree.ts`; регрессия в `test-permissions-policy.mjs`.

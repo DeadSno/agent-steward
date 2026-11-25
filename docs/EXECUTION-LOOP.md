@@ -234,7 +234,12 @@ Worktree не защищает от сети/API/БД. Поэтому:
 2. Шаги смаршрутированы local-first с учётом reliability.
 3. Гейт объективно верифицировал; провал экалировался/откатился без тихих отказов;
    irreversible не произошёл до pass.
-4. Ledger показал честную net-экономию и escalation rate.
+4. Ledger показал честную net-экономию и escalation rate. DEEP-1: каждая
+   проверка gate/eval оставляет `VerificationReceipt` (индекс, стабильный
+   ключ, решение hit/miss/evicted, списанная стоимость); `verificationCache`
+   и `netEconomyUsd` пересчитываются из чеков через
+   `recomputeSavingsFromReceipts`, инвариант `recompute(receipts) === report.savings`
+   проверяется golden-тестом в `test-budget.mjs`. Подмена чека ломает инвариант.
 5. Карта обновилась, пример сохранён и переиспользован. EV-2.1: пример несёт
    `learningLoop`/`fromRunId`, а `verifyExampleReuse` сверяет ключи примеров с
    ключами, реально переданными исполнителю второго прогона — запись в карту
