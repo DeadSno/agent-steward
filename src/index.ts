@@ -22,7 +22,6 @@ import path from "node:path";
 import { safeStringify } from "./text.js";
 import { HARNESS_VALUES, resolveInvoker, type HarnessName } from "./invokers/agent-invoker.js";
 import { applyModelRecommendation } from "./core/dry-run.js";
-import { LockManager } from "./core/lock.js";
 import {
   LOCK_DIR,
   LOG_DIR,
@@ -32,7 +31,7 @@ import {
   sanitizeName,
   validateTaskName,
 } from "./types.js";
-import { parseCron, buildScheduleGate, isValidIanaTimeZone, validateLaunchWindow, prevRun, nextRun as cronNextRun, normalizeActiveDays, activeWindowState, nextWindowOpenDelayMs, assessCronWindowFeasibility, windowFeasibilityReasonText } from "./core/schedule-v2.js";
+import { parseCron, buildScheduleGate, isValidIanaTimeZone, validateLaunchWindow, nextRun as cronNextRun, normalizeActiveDays, activeWindowState, nextWindowOpenDelayMs, assessCronWindowFeasibility, windowFeasibilityReasonText } from "./core/schedule-v2.js";
 import {
   buildLaunchdOneShotCleanup,
   normalizeOneShotRunAt,
@@ -45,7 +44,7 @@ import {
   writeSessionStateFile,
 } from "./core/session.js";
 import { ensureWrapper, withFileWriteRetry, writePromptFile, writeWrapperCmd, lockFilePath, requestImmediateRun, gateAllowPathsFromScope } from "./core/ps-wrapper.js";
-import { getSchedulerBackend, LinuxScheduler } from "./core/scheduler/index.js";
+import { getSchedulerBackend } from "./core/scheduler/index.js";
 import { SCHEDULER_SKILL_ID, loadSchedulerSkill } from "./skill.js";
 import { getTaskLogs, resolveTaskLogPath } from "./core/scheduler/logs.js";
 import {
@@ -124,7 +123,7 @@ import {
   buildOpencodeConfig,
   resolvePermissions,
 } from "./core/permissions.js";
-import { runHistoryRetention, maybeRunHistoryRetention } from "./core/retention.js";
+import { runHistoryRetention } from "./core/retention.js";
 import { buildAnalytics, buildDailyBuckets } from "./core/analytics.js";
 import {
   buildBudgetReport,
@@ -164,7 +163,6 @@ import {
 } from "./notifications.js";
 import {
   FEEDBACK_LIMITS,
-  flushOutbox,
   redactText,
   reportFeedback,
 } from "./core/feedback.js";
@@ -183,11 +181,7 @@ import {
   parseImportJson,
   normalizePriority,
 } from "./task-transfer.js";
-import type {
-  FileWatchManager} from "./core/file-watcher.js";
-import {
-  FILE_TRIGGER_SELF_WRITE_SUPPRESS_MS,
-} from "./core/file-watcher.js";
+import type { FileWatchManager } from "./core/file-watcher.js";
 import type { GitTriggerManager } from "./core/git-trigger.js";
 import type {
   McpEventTrigger,
@@ -215,10 +209,9 @@ import {
   sanitizeProfileName,
   setActiveProfile,
 } from "./profiles.js";
-import { closeDb, initDb } from "./db/index.js";
+import { closeDb } from "./db/index.js";
 import { backupDatabase, restoreDatabase } from "./db/backup.js";
-import { migrateJsonToDb } from "./db/migrate.js";
-import { checkJsonBackups, recoverInterruptedRuns } from "./db/recovery.js";
+import { recoverInterruptedRuns } from "./db/recovery.js";
 import { getTask, listMatrixClones, listTasks as listTaskDefinitions, saveTask } from "./db/tasks-repo.js";
 import {
   addWorkspace,

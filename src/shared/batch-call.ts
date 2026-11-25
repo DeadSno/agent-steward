@@ -28,7 +28,13 @@ function textOf(result: unknown): unknown {
     const content = (result as { content?: unknown }).content;
     if (typeof content === "string") return content;
     if (Array.isArray(content)) {
-      return content.map((part: any) => (typeof part?.text === "string" ? part.text : part));
+      return content.map((part: unknown) => {
+        if (part && typeof part === "object" && "text" in part) {
+          const text = (part as { text?: unknown }).text;
+          return typeof text === "string" ? text : part;
+        }
+        return part;
+      });
     }
   }
   return result ?? null;
@@ -56,15 +62,16 @@ export async function executeBatchCalls(
   const byName = new Map(specs.map((spec) => [spec.name, spec]));
   const results: BatchCallResult[] = [];
   for (let index = 0; index < calls.length; index += 1) {
-    const call = calls[index];
-    const name = typeof call?.name === "string" ? call.name : String(call?.name ?? "");
+    const call = calls[index] as BatchCallRequest | undefined;
+    const rawName: unknown = call?.name;
+    const name = typeof rawName === "string" ? rawName : "";
     const spec = byName.get(name);
     if (!spec) {
       results.push({ index, name, ok: false, error: `batch_call: неизвестный инструмент «${name}»` });
       continue;
     }
     try {
-      const parsed = (spec.input).parse(call.args ?? {});
+      const parsed: unknown = (spec.input).parse(call?.args ?? {});
       const raw = await (spec.execute as (args: unknown) => unknown)(parsed);
       results.push({ index, name, ok: true, result: textOf(raw) });
     } catch (err) {

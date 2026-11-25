@@ -393,7 +393,7 @@ export function readStructuredLogs(
       if (status && safeStringify(parsed.status ?? "").toLowerCase() !== status) continue;
       if (event && String(parsed.event).toLowerCase() !== event) continue;
       // D13/IM-12: старые записи без runId не попадают в выборку запуска.
-      if (runId && String(parsed.runId ?? "") !== runId) continue;
+      if (runId && safeStringify(parsed.runId ?? "") !== runId) continue;
       if (since && String(parsed.ts) < since) continue;
       if (until && String(parsed.ts) > until) continue;
       records.push(parsed as unknown as StructuredLogRecord);

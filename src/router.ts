@@ -12,17 +12,13 @@
  */
 
 import {
-  listStaticRouteRules,
   normalizeTaskType,
   routeStaticStep,
-  STATIC_ROUTE_RULES,
   type RouterTransport,
-  type StaticRouteRule,
 } from "./core/router/rules.js";
 import {
   applyLearningOutcome,
   decideLearningRoute,
-  emptyLearningRecord,
   normalizeThresholds,
   type CapabilityLearningDecision,
   type CapabilityLearningOutcome,
