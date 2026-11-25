@@ -4100,6 +4100,23 @@ try {
     psWrapperScript.includes("PL-134: агент не отвечает") &&
       psWrapperScript.includes("$script:idleReason")
   );
+  // P1-SC1: после PL-134 обёртка обязана остановить уцелевших потомков и
+  // дождаться их выхода до финализации истории и quality gate.
+  const stopAt = psWrapperSrc.indexOf("function Stop-RemainingChildProcesses");
+  const callAt = psWrapperSrc.indexOf("Stop-RemainingChildProcesses", stopAt + 1);
+  const waitAt = psWrapperSrc.indexOf("Wait-FinalizationSettle -Dir $Workdir", callAt);
+  check(
+    "P1-SC1: уцелевшие потомки добиваются до финализации истории и гейта",
+    stopAt > 0 && callAt > stopAt && waitAt > callAt &&
+      psWrapperSrc.includes("AGENT_STEWARD_IDLE_KILL_WAIT_SEC") &&
+      psWrapperSrc.includes("taskkill.exe /F /T /PID $targetId"),
+    `stop@${stopAt}, call@${callAt}, wait@${waitAt}`
+  );
+  check(
+    "P1-SC1: добивание потомков присутствует в сгенерированной PowerShell-обёртке",
+    psWrapperScript.includes("Stop-RemainingChildProcesses") &&
+      psWrapperScript.includes("AGENT_STEWARD_IDLE_KILL_WAIT_SEC")
+  );
 } catch (err) {
   console.log("[diag] PL-138/PL-134 section THREW:", err instanceof Error ? err.stack : String(err));
   check("PL-138/PL-134: секция не выбросила исключение", false, "section threw");

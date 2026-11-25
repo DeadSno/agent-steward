@@ -889,6 +889,51 @@ function Invoke-OpenCodeOnce {
         Write-Log "[agent-steward] QA-D316-11: артефакты менялись все $max с — полноту манифеста проверит afterScript."
     }
 
+    # P1-SC1: сторож простоя снимает снимок потомков один раз. Дочерний агент,
+    # который пережил taskkill (или породил новый процесс уже после снимка),
+    # продолжал писать файлы ПОСЛЕ финализации истории обёрткой. Перед
+    # финализацией повторно перечисляем дерево процессов, добиваем его и ждём
+    # выхода. Окно ожидания настраивается AGENT_STEWARD_IDLE_KILL_WAIT_SEC.
+    function Stop-RemainingChildProcesses {
+        $waitSec = 5
+        try {
+            if ($env:AGENT_STEWARD_IDLE_KILL_WAIT_SEC -match '^\\d+$') {
+                $waitSec = [Math]::Min(60, [int]$env:AGENT_STEWARD_IDLE_KILL_WAIT_SEC)
+            }
+        } catch {}
+        $oldPref = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            for ($i = 0; $i -lt $waitSec; $i++) {
+                $all = @()
+                try { $all = @(Get-CimInstance Win32_Process -Property ProcessId, ParentProcessId -ErrorAction Stop) } catch { return }
+                $targets = New-Object System.Collections.Generic.List[int]
+                $queue = New-Object System.Collections.Generic.Queue[int]
+                $queue.Enqueue([int]$PID)
+                $guard = 0
+                while ($queue.Count -gt 0 -and $guard -lt 2000) {
+                    $guard++
+                    $current = $queue.Dequeue()
+                    foreach ($p in $all) {
+                        $childId = [int]$p.ProcessId
+                        if ([int]$p.ParentProcessId -eq $current -and $childId -ne [int]$PID -and -not $targets.Contains($childId)) {
+                            $targets.Add($childId)
+                            $queue.Enqueue($childId)
+                        }
+                    }
+                }
+                if ($targets.Count -eq 0) {
+                    Write-Log "[agent-steward] P1-SC1: процесс-потомок остановлен до финализации истории."
+                    return
+                }
+                foreach ($targetId in @($targets)) {
+                    try { & taskkill.exe /F /T /PID $targetId 2>$null | Out-Null } catch {}
+                }
+                Start-Sleep -Seconds 1
+            }
+        } finally { $ErrorActionPreference = $oldPref }
+    }
+
     # простоем. При grace=0 поведение и накладные расходы прежние (git не вызывается).
     if ($env:AGENT_STEWARD_COMPLETION_WATCH -ne "0") {
         $idlePoll = 5
@@ -1043,6 +1088,10 @@ function Invoke-OpenCodeOnce {
             if ($script:idleReason) {
                 Write-Log "[agent-steward] PL-134: причина завершения по простою: $script:idleReason"
             }
+            # P1-SC1: добиваем уцелевших потомков и ждём их выхода ДО финализации
+            # истории и quality gate — иначе агент продолжает менять файлы уже
+            # после закрытия прогона.
+            Stop-RemainingChildProcesses
             # QA-D316-11: дожидаемся последних правок агента до гейта/afterScript.
             Wait-FinalizationSettle -Dir $Workdir
         }
