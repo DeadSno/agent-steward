@@ -39,8 +39,6 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 
 - QA-D316-14: инструмент `delete_task` зарегистрирован в `src/index.ts` и `src/tool-specs.ts`, но отсутствует в каталоге инструментов Code Mode: поиск и прямой вызов дают «Unknown tool 'delete_task'», поэтому удалить задачу из агента нельзя (пришлось править `scheduler.db` и Планировщик Windows вручную) — P2. Действие: включить `delete_task` в Code Mode-каталог (как `list_tasks`/`update_task`) или документировать поддерживаемый путь удаления в описании `schedule_task`. Обнаружено 25.11.2026.
 
-- QA-D316-15: `schedule_task` возвращает в ответе `task.workingDirectory` = каталог проекта, но в `scheduler.db` definition задачи поле `workingDirectory` не сохраняется; `dry_run` после этого показывает `cwd=""` и предупреждение о неявном каталоге — P2. Действие: либо сохранять неявный `workingDirectory` в definition, либо не показывать его в ответе `schedule_task`, чтобы ответ и `dry_run` не расходились. Воспроизведено 25.11.2026 на тестовой задаче `TP-AUDIT-OS-PROBE-20261125` (после проверки задача удалена). Обнаружено 25.11.2026.
-
 ---
 
 # 4. Правила работы (канбан)

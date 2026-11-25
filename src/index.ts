@@ -2041,8 +2041,10 @@ const scheduleTaskExecute = wrapExecute<ScheduleArgs>(async (args) => {
   await refreshTriggers();
 
   const workspace = workspaceId ? getWorkspace(workspaceId) : undefined;
-  const effectiveWorkdir =
-    workspace?.path || workingDirectory?.trim() || projectDirectory || process.cwd();
+  // QA-D316-15: в ответе показываем только явно заданный cwd (или workspace).
+  // Неявный каталог проекта не попадает в definition и в dry_run (cwd=""),
+  // поэтому и здесь его не показываем — иначе ответ расходится с БД.
+  const reportedWorkdir = workspace?.path || workingDirectory?.trim() || null;
   // Спринт 27.5.2: отдаём ближайший запуск сразу, не дожидаясь обновления
   // списка задач планировщика ОС (schtasks иногда отдаёт nextRunTime с задержкой).
   const nextRun = computeTaskNextRun({
@@ -2092,7 +2094,7 @@ const scheduleTaskExecute = wrapExecute<ScheduleArgs>(async (args) => {
         notBefore: notBefore?.trim() || null,
         notAfter: notAfter?.trim() || null,
         mcpEvent: mcpEvent ?? null,
-        workingDirectory: effectiveWorkdir,
+        workingDirectory: reportedWorkdir,
         workspaceId: workspace?.id ?? null,
         workspaceName: workspace?.name ?? null,
         matrix: matrix ?? null,
