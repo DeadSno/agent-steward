@@ -58,9 +58,13 @@ const { loadTemplates, saveTemplate, deleteTemplate } = await import("./dist/tem
 const { saveTask, getTask } = await import("./dist/db/tasks-repo.js");
 
 const results = [];
-function check(name, cond) {
+function check(name, cond, detail) {
   results.push({ name, ok: !!cond });
   console.log(`${cond ? "OK  " : "FAIL"} ${name}`);
+  // QA-CI-DEEP3: без деталей падение Windows-only гейта невоспроизводимо локально.
+  if (!cond && detail !== undefined) {
+    console.log(`     detail: ${typeof detail === "string" ? detail : JSON.stringify(detail)}`);
+  }
 }
 
 /** Возвращает true, если схема отвергла входные данные. */
@@ -1363,7 +1367,13 @@ check(
         scheduled.installationWarning?.reason === "identity-mismatch" &&
         scheduled.installationWarning.workspaceVersion === "0.0.0-stale" &&
         Array.isArray(scheduled.warnings) &&
-        scheduled.warnings.some((w) => String(w).includes("restart OpenCode"))
+        scheduled.warnings.some((w) => String(w).includes("restart OpenCode")),
+      JSON.stringify({
+        success: scheduled.success,
+        error: scheduled.error,
+        installationWarning: scheduled.installationWarning,
+        warnings: scheduled.warnings,
+      })
     );
     const started = JSON.parse((await handlers.run_task_now({
       name: "__deep3_missing_task__",
