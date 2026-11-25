@@ -225,6 +225,30 @@ const helper = path.join(process.cwd(), "dist", "core", "guard-run.js");
     run(["--cwd", repo, "--guards-b64", b64({ command: "echo x" }), "--nope"]).status === 1,
   );
   check("CLI: main экспортирован", typeof guardMain === "function");
+
+  // QA-D316-16: helper должен запускаться и через junction на dist/ (W-1).
+  const link = path.join(tempRoot, "dist-link");
+  let linked = false;
+  try {
+    fs.symlinkSync(path.join(process.cwd(), "dist"), link, process.platform === "win32" ? "junction" : "dir");
+    linked = true;
+  } catch {
+    // Нет прав на симлинки — проверка пропускается, а не падает.
+  }
+  if (linked) {
+    try {
+      const linkedHelper = path.join(link, "core", "guard-run.js");
+      const throughLink = spawnSync(process.execPath, [linkedHelper], { encoding: "utf8", windowsHide: true });
+      check("QA-D316-16: CLI через junction dist/ выполняет main (код 1 без аргументов)", throughLink.status === 1);
+      check("QA-D316-16: CLI через junction печатает справку в stderr", throughLink.stderr.includes("guard-run.js"));
+    } finally {
+      if (process.platform === "win32") {
+        spawnSync("cmd", ["/c", "rmdir", link], { windowsHide: true });
+      } else {
+        fs.unlinkSync(link);
+      }
+    }
+  }
 }
 
 // 5. Windows-обёртка.

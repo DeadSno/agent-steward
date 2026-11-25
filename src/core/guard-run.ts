@@ -13,8 +13,9 @@
  * В stdout печатается человекочитаемая причина (или JSON с --json),
  * диагностика — в stderr. Модуль ничего не завершает при импорте.
  */
+import fs from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   evaluateGuards,
   GUARD_SKIP_EXIT_CODE,
@@ -105,8 +106,24 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
   return result.passed ? 0 : GUARD_SKIP_EXIT_CODE;
 }
 
-const invokedPath = process.argv[1] ? pathToFileURL(path.resolve(process.argv[1])).href : "";
-if (import.meta.url === invokedPath) {
+/**
+ * QA-D316-16: в свежем worktree `dist/` часто junction на основной чек-аут.
+ * ESM резолвит `import.meta.url` по реальному пути цели, а `process.argv[1]`
+ * остаётся путём через junction — прямое сравнение URL тихо отключало main().
+ * Сравниваем реальные пути; при недоступном realpath сохраняем старое поведение.
+ */
+export function isCliEntryPoint(argv1: string | undefined = process.argv[1]): boolean {
+  if (!argv1) return false;
+  try {
+    const invoked = fs.realpathSync(path.resolve(argv1));
+    const self = fs.realpathSync(fileURLToPath(import.meta.url));
+    return invoked === self;
+  } catch {
+    return import.meta.url === pathToFileURL(path.resolve(argv1)).href;
+  }
+}
+
+if (isCliEntryPoint()) {
   main().then(
     (code) => {
       process.exitCode = code;
