@@ -21,6 +21,7 @@ const {
   RM_RETRY_DELAYS_MS,
   WORKTREE_ROOT_DIR,
   DEFAULT_STALE_AFTER_MS,
+  linkRuntimeDependencies,
 } = await import("./dist/core/worktree.js");
 const { parseImportJson } = await import("./dist/task-transfer.js");
 const {
@@ -138,6 +139,40 @@ let first;
       "worktree: ветка видна в git worktree list",
       git(repo, ["worktree", "list", "--porcelain"]).includes(wt.branch),
     );
+  }
+}
+
+// QA-WORKTREE-DEPS: свежий изолированный worktree наследует node_modules/dist
+// от базового чек-аута, чтобы quality gate не падал с TS2591/TS2307.
+{
+  const depsRepo = makeRepo("repo-deps");
+  fs.mkdirSync(path.join(depsRepo, "node_modules"), { recursive: true });
+  fs.mkdirSync(path.join(depsRepo, "dist"), { recursive: true });
+  fs.writeFileSync(path.join(depsRepo, "node_modules", "marker.txt"), "deps\n", "utf8");
+  fs.writeFileSync(path.join(depsRepo, "dist", "marker.txt"), "build\n", "utf8");
+  const result = await createRunWorktree({
+    repoDir: depsRepo,
+    taskName: "QA OS-bound deps",
+    rootDir: path.join(tempRoot, "worktrees-deps"),
+  });
+  check("QA-WORKTREE-DEPS: worktree создан", result.ok === true);
+  if (result.ok) {
+    const wt = result.worktree;
+    check(
+      "QA-WORKTREE-DEPS: обе зависимости линкованы из базового чек-аута",
+      Array.isArray(wt.linkedDependencies) &&
+        wt.linkedDependencies.includes("node_modules") &&
+        wt.linkedDependencies.includes("dist"),
+    );
+    check(
+      "QA-WORKTREE-DEPS: маркеры читаются через ссылки",
+      fs.readFileSync(path.join(wt.path, "node_modules", "marker.txt"), "utf8") === "deps\n" &&
+        fs.readFileSync(path.join(wt.path, "dist", "marker.txt"), "utf8") === "build\n",
+    );
+    const again = await linkRuntimeDependencies(depsRepo, wt.path);
+    check("QA-WORKTREE-DEPS: повторная линковка идемпотентна", again.length === 0);
+    const missing = await linkRuntimeDependencies(path.join(tempRoot, "missing-root"), wt.path);
+    check("QA-WORKTREE-DEPS: отсутствующий source — fail-open", missing.length === 0);
   }
 }
 

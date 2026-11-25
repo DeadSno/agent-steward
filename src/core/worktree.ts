@@ -47,6 +47,8 @@ export interface RunWorktree {
   createdAt: string;
   /** Корень, в котором создан worktree (для безопасной очистки). */
   rootDir: string;
+  /** QA-WORKTREE-DEPS: каталоги, линкованные из базового чек-аута. */
+  linkedDependencies?: string[];
 }
 
 export type CreateWorktreeResult =
@@ -195,6 +197,42 @@ async function addWorktree(
  * Никогда не бросает: ошибки git и файловой системы возвращаются как
  * `{ok:false, error}` — обёртка должна упасть fail-closed с понятным сообщением.
  */
+/**
+ * QA-WORKTREE-DEPS: свежий worktree не содержит `node_modules`/`dist`, поэтому
+ * дочерний агент не может собрать плагин и quality gate падает с TS2591/TS2307.
+ * Линкуем каталоги из базового чек-аута ДО возврата пути. Ошибки fail-open:
+ * worktree остаётся пригодным для запуска, просто без ускорения.
+ */
+export async function linkRuntimeDependencies(
+  sourceDir: string,
+  worktreePath: string,
+): Promise<string[]> {
+  const linked: string[] = [];
+  for (const name of ["node_modules", "dist"]) {
+    const source = path.join(sourceDir, name);
+    const target = path.join(worktreePath, name);
+    try {
+      const stat = await fs.stat(source);
+      if (!stat.isDirectory()) continue;
+    } catch {
+      continue; // базовый чек-аут без зависимостей — не нашей вины
+    }
+    try {
+      await fs.lstat(target);
+      continue; // уже есть свой каталог/ссылка — не перезаписываем
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") continue;
+    }
+    try {
+      await fs.symlink(source, target, process.platform === "win32" ? "junction" : "dir");
+      linked.push(name);
+    } catch {
+      // Fail-open: линковка — оптимизация, а не условие создания worktree.
+    }
+  }
+  return linked;
+}
+
 export async function createRunWorktree(
   options: CreateWorktreeOptions,
 ): Promise<CreateWorktreeResult> {
@@ -235,6 +273,7 @@ export async function createRunWorktree(
     };
   }
 
+  const linkedDependencies = await linkRuntimeDependencies(repoRoot, worktreePath);
   const worktree: RunWorktree = {
     path: worktreePath,
     branch,
@@ -242,6 +281,7 @@ export async function createRunWorktree(
     baseCommit: head.stdout,
     createdAt: new Date().toISOString(),
     rootDir,
+    linkedDependencies,
   };
 
   // Sidecar для будущей очистки (W-2): путь, ветка, репозиторий и время.
