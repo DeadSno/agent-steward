@@ -11,7 +11,20 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
-const { WRAPPER_SCRIPT } = await import("./dist/core/ps-wrapper.js");
+// QA-D316-4: env должны быть выставлены до импорта dist-модулей — PLUGIN_DIR
+// и WRAPPER_DIR фиксируются на этапе загрузки модуля.
+const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ws-scheduler-watchdog-"));
+process.env.APPDATA = tempRoot;
+process.env.OPENCODE_SCHEDULER_HOME = path.join(tempRoot, "opencode", "windows-scheduler");
+delete process.env.AGENT_STEWARD_CHILD_RUN;
+
+const {
+  WRAPPER_SCRIPT,
+  writeWrapperCmd,
+  writePromptFile,
+  lockFilePath,
+  ensureWrapper,
+} = await import("./dist/core/ps-wrapper.js");
 
 const results = [];
 let passed = 0;
@@ -106,7 +119,6 @@ check(
 
 // Синтаксис сгенерированного скрипта: powershell.exe должен разобрать его без ошибок.
 if (process.platform === "win32") {
-  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ws-scheduler-watchdog-"));
   const scriptFile = path.join(tempRoot, "wrapper.ps1");
   fs.writeFileSync(scriptFile, "\uFEFF" + WRAPPER_SCRIPT, "utf8");
   const powershell = path.join(
@@ -149,6 +161,72 @@ if (process.platform === "win32") {
     console.error((parse.stdout || "") + (parse.stderr || ""));
   }
   fs.rmSync(tempRoot, { recursive: true, force: true });
+}
+
+// QA-D316-4: реальный прогон — хуки с PowerShell-синтаксисом должны запускаться.
+// before использует '$m = ...', after — оператор '& { ... }'; оба ломались,
+// пока тело писалось прямо в .cmd и разбиралось cmd.exe.
+if (process.platform === "win32") {
+  const hookRoot = fs.mkdtempSync(path.join(os.tmpdir(), "qa-d316-4-hooks-"));
+  const fakeBin = path.join(hookRoot, "fakebin");
+  fs.mkdirSync(fakeBin, { recursive: true });
+  fs.writeFileSync(
+    path.join(fakeBin, "opencode.cmd"),
+    "@echo off\r\nexit /b 0\r\n",
+    "utf8",
+  );
+  const savedPath = process.env.PATH;
+  process.env.PATH = fakeBin + path.delimiter + process.env.PATH;
+  try {
+    await ensureWrapper();
+    const taskName = "QA-D316-4 PS Hooks";
+    const sanitized = "qa-d316-4-ps-hooks";
+    const promptFile = await writePromptFile(taskName, "Скажи hello");
+    const logFile = path.join(hookRoot, "logs", `${sanitized}.log`);
+    fs.mkdirSync(path.dirname(logFile), { recursive: true });
+    const beforeMarker = path.join(hookRoot, "before.txt");
+    const afterMarker = path.join(hookRoot, "after.txt");
+    const beforeScript = `$m = '${beforeMarker}'; 'before-ps' | Set-Content -LiteralPath $m`;
+    const afterScript = `& { 'after-ps' | Set-Content -LiteralPath '${afterMarker}' }`;
+    const wrapperPath = await writeWrapperCmd(
+      sanitized,
+      taskName,
+      promptFile,
+      60,
+      lockFilePath(taskName),
+      hookRoot,
+      logFile,
+      undefined,
+      undefined,
+      undefined,
+      beforeScript,
+      afterScript,
+    );
+    const run = spawnSync("cmd.exe", ["/c", wrapperPath], {
+      encoding: "utf8",
+      env: { ...process.env },
+      timeout: 120_000,
+      windowsHide: true,
+    });
+    check(
+      "QA-D316-4: before-хук с PS-синтаксисом создал маркер",
+      fs.existsSync(beforeMarker),
+      `status=${run.status}`
+    );
+    check(
+      "QA-D316-4: after-хук с оператором & создал маркер",
+      fs.existsSync(afterMarker),
+      `status=${run.status}`
+    );
+    check(
+      "QA-D316-4: обёртка с PS-хуками завершилась exit 0",
+      run.status === 0,
+      `status=${run.status}; stderr=${(run.stderr || "").slice(-300)}`
+    );
+  } finally {
+    process.env.PATH = savedPath;
+    fs.rmSync(hookRoot, { recursive: true, force: true });
+  }
 }
 
 console.log(`\n${passed}/${results.length} проверок сторожа пройдено.`);

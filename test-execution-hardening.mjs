@@ -343,6 +343,73 @@ function readLog(file) {
   );
 }
 
+// --- QA-D316-4: PowerShell-тело хуков → .ps1 + тонкий .cmd-шим; cmd-тело без изменений ---
+{
+  const hooksDir = path.join(pluginDir, "wrappers", "hooks");
+  const psBeforeMarker = path.join(tempRoot, "qa-d316-4-before.txt");
+  const psGateMarker = path.join(tempRoot, "qa-d316-4-gate.txt");
+  const psBefore = `$m = '${psBeforeMarker}'; 'before-ps' | Set-Content -LiteralPath $m`;
+  const psGate = `$r = 0; 'gate-ps' | Set-Content -LiteralPath '${psGateMarker}'; exit $r`;
+  const spec = {
+    name: "Exec Hardening PS Hook",
+    sanitized: "exec-hardening-ps-hook",
+    timeoutSeconds: 60,
+    beforeScript: psBefore,
+    qualityGate: psGate,
+  };
+  const { wrapperPath } = await prepareTask(spec);
+  const beforeCmd = path.join(hooksDir, `run-${spec.sanitized}-before.cmd`);
+  const beforePs1 = path.join(hooksDir, `run-${spec.sanitized}-before.ps1`);
+  const gateCmd = path.join(hooksDir, `run-${spec.sanitized}-gate.cmd`);
+  const gatePs1 = path.join(hooksDir, `run-${spec.sanitized}-gate.ps1`);
+  check(
+    "QA-D316-4: обёртка с PS-хуком создана",
+    Boolean(wrapperPath) && fs.existsSync(wrapperPath)
+  );
+  check("QA-D316-4: PS-тело before → .ps1 создан", fs.existsSync(beforePs1));
+  check(
+    "QA-D316-4: .ps1 содержит исходное тело before-хука",
+    fs.existsSync(beforePs1) &&
+      fs.readFileSync(beforePs1, "utf8") === psBefore
+  );
+  check(
+    "QA-D316-4: before .cmd — тонкий шим с powershell.exe -File",
+    fs.existsSync(beforeCmd) &&
+      fs.readFileSync(beforeCmd, "utf8") ===
+        `@echo off\r\npowershell.exe -NoProfile -ExecutionPolicy Bypass -File "${beforePs1}" %*\r\n`
+  );
+  check("QA-D316-4: PS-тело gate → .ps1 создан", fs.existsSync(gatePs1));
+  check(
+    "QA-D316-4: .ps1 содержит исходное тело gate-хука",
+    fs.existsSync(gatePs1) && fs.readFileSync(gatePs1, "utf8") === psGate
+  );
+  check(
+    "QA-D316-4: gate .cmd — тонкий шим с powershell.exe -File",
+    fs.existsSync(gateCmd) &&
+      fs.readFileSync(gateCmd, "utf8") ===
+        `@echo off\r\npowershell.exe -NoProfile -ExecutionPolicy Bypass -File "${gatePs1}" %*\r\n`
+  );
+
+  // Чисто cmd-команда остаётся в прежнем формате (обратная совместимость).
+  const cmdMarker = path.join(tempRoot, "qa-d316-4-cmd.txt");
+  const cmdSpec = {
+    name: "Exec Hardening Cmd Hook",
+    sanitized: "exec-hardening-cmd-hook",
+    timeoutSeconds: 60,
+    beforeScript: `echo cmd-ok>"${cmdMarker}"`,
+  };
+  await prepareTask(cmdSpec);
+  const cmdHook = path.join(hooksDir, `run-${cmdSpec.sanitized}-before.cmd`);
+  const cmdPs1 = path.join(hooksDir, `run-${cmdSpec.sanitized}-before.ps1`);
+  check(
+    "QA-D316-4: cmd-тело сохраняет старый формат .cmd",
+    fs.existsSync(cmdHook) &&
+      fs.readFileSync(cmdHook, "utf8") ===
+        `@echo off\r\nchcp 65001 >nul\r\n${cmdSpec.beforeScript}\r\n`
+  );
+  check("QA-D316-4: cmd-тело не создаёт .ps1", !fs.existsSync(cmdPs1));
+}
+
 // --- QA-PORT-6: квота дочернего агента при exit 0 и при exit 1 ---
 {
   const okSpec = {
