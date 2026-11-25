@@ -120,7 +120,12 @@ check("QA-PORT-9: npm не упаковывает junction dist/ (новая п�
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "steward-pack-junction-"));
   const link = path.join(tmp, "dist");
   try {
-    fs.copyFileSync(path.join(root, "package.json"), path.join(tmp, "package.json"));
+    // QA-D316-36: npm pack на Node 22 всё равно запускает `prepare` даже с
+    // --ignore-scripts=true и npm_config_ignore_scripts=true. Убираем scripts
+    // из временного package.json — так prepare не существует физически.
+    const packManifest = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
+    delete packManifest.scripts;
+    fs.writeFileSync(path.join(tmp, "package.json"), JSON.stringify(packManifest, null, 2));
     fs.symlinkSync(path.join(root, "dist"), link, "junction");
     const packed = spawnSync("npm pack --dry-run --json --ignore-scripts=true", {
       cwd: tmp,
