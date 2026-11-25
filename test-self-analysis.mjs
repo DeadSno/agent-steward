@@ -15,6 +15,12 @@ import {
   computeAcceptanceMetrics,
   evaluateAcceptanceGate,
   maskAcceptanceSecrets,
+  LORA_DATASET_VERSION,
+  LORA_FORMAT,
+  LORA_ONLINE_LEARNING,
+  LORA_CRITERIA,
+  buildLoraDataset,
+  validateLoraDataset,
 } from "./dist/core/self-analysis.js";
 import { buildAnalytics } from "./dist/core/analytics.js";
 import { t } from "./dist/i18n.js";
@@ -561,6 +567,49 @@ console.log("\n=== EV-1: приёмка §11 ===");
       "[MASKED] [MASKED]",
   );
   check("EV-1.1: null остаётся null", maskAcceptanceSecrets(null) === null);
+}
+
+// --- LP-1.1: критерии датасета staged LoRA -----------------------------------
+
+{
+  const rows = [];
+  for (let i = 0; i < 24; i++) {
+    const first = makeGateRow({
+      gateHash: `lora-gate-${i}`,
+      taskType: i === 0 ? "task-sk-abcdefgh1234" : `task-${i}`,
+      evidencePath: i === 0 ? "reports/e?token=sk-abcdefgh1234" : `reports/e-${i}.json`,
+      executor: i === 0 ? "Bearer abcdefgh1234" : "local",
+    });
+    rows.push(first, { ...first, outcomeKey: `${first.outcomeKey}-dup` });
+  }
+  const flake = makeGateRow({ gateHash: "lora-flake" });
+  rows.push(flake, { ...flake, outcomeKey: `${flake.outcomeKey}-fail`, verdict: "fail" });
+  rows.push(makeGateRow({ gateHash: null, verdict: "pass" }));
+
+  const dataset = buildLoraDataset(rows, { now: acceptanceNow });
+  const validation = validateLoraDataset(dataset);
+
+  check("LP-1.1: формат и версия датасета", dataset.format === LORA_FORMAT && dataset.version === LORA_DATASET_VERSION);
+  check("LP-1.1: источник только ledger", dataset.source === "gate_outcomes.ledger");
+  check("LP-1.1: онлайн-обучение запрещено в формате", dataset.onlineLearning === LORA_ONLINE_LEARNING && dataset.criteria.onlineLearning === false);
+  check("LP-1.1: criteria фиксируют пороги", LORA_CRITERIA.minCases === 20 && LORA_CRITERIA.minStableShare === 0.8 && LORA_CRITERIA.minSamples === 2);
+  check("LP-1.1: стабильные кейсы отобраны", dataset.cases.length === 24);
+  check("LP-1.1: flake и subjective исключены", dataset.cases.every((item) => ["stable_pass", "stable_fail"].includes(item.label)) && dataset.excluded >= 1);
+  check("LP-1.1: доля стабильных >= 0.8", dataset.stableShare >= 0.8);
+  check("LP-1.1: секреты маскируются повторно", dataset.cases.every((item) => ![item.taskType, item.gateType, item.executor ?? "", item.routeSource ?? "", item.evidencePath ?? ""].some((value) => /sk-[A-Za-z0-9_-]{8,}|Bearer\s+\w{8,}/.test(value))));
+  check("LP-1.1: валидация датасета проходит", validation.ok && validation.checks.every((item) => item.ok));
+
+  const mutate = (patch) => validateLoraDataset({ ...dataset, ...patch });
+  const failed = (result, id) => result.checks.some((item) => item.id === id && !item.ok);
+
+  check("LP-1.1: неверная версия ломает валидацию", failed(mutate({ version: "0.9" }), "dataset_version"));
+  check("LP-1.1: чужой источник ломает валидацию", failed(mutate({ source: "manual" }), "source_ledger"));
+  check("LP-1.1: малый объём ломает валидацию", failed(mutate({ cases: dataset.cases.slice(0, 5) }), "volume"));
+  check("LP-1.1: низкая доля стабильных ломает валидацию", failed(mutate({ stableShare: 0.5 }), "stable_share"));
+  check("LP-1.1: дубликат caseId ломает валидацию", failed(mutate({ cases: [...dataset.cases, dataset.cases[0]] }), "dedup"));
+  check("LP-1.1: не маскированный секрет ломает валидацию", failed(mutate({ cases: [{ ...dataset.cases[0], evidencePath: "reports/e?token=sk-abcdefgh1234" }, ...dataset.cases.slice(1)] }), "secrets_masked"));
+  check("LP-1.1: онлайн-режим ломает валидацию", failed(mutate({ onlineLearning: "allowed" }), "online_learning_forbidden"));
+  check("LP-1.1: пустой датасет не проходит валидацию", !validateLoraDataset(buildLoraDataset([], { now: acceptanceNow })).ok);
 }
 
 // --- Итоги -------------------------------------------------------------------

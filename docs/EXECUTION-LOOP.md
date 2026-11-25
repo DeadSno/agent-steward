@@ -278,6 +278,28 @@ Worktree не защищает от сети/API/БД. Поэтому:
   `npm run build`, `node scripts/acceptance-gate.mjs --check`; артефакт
   `reports/acceptance-gate.json` загружается в CI при любом исходе.
 
+### LP-1.1 — критерии датасета staged LoRA
+
+Датасет для офлайн-дообучения адаптера — версионированный срез того же ledger
+`gate_outcomes`, что и приёмка §11. Формат `agent-steward.lora-dataset` v1.0;
+`buildLoraDataset()` строит его из objective-строк с `gateHash`, строго по критериям:
+
+| Критерий | Значение | Проверка |
+|---|---|---|
+| Источник | только `gate_outcomes.ledger` | `validateLoraDataset` → `source_ledger` |
+| Объём | не менее 20 кейсов | `volume` |
+| Стабильность | не менее 2 повторов, доля большинства ≥ `0.8`; метки `stable_pass`/`stable_fail` | `stable_share` ≥ `0.8`, кейсы `unstable` отбрасываются |
+| Дедупликация | по `caseId` (SHA-256 ключа группировки) | `dedup` — все `caseId` уникальны |
+| Секреты | маскируются повторно во всех текстовых полях | `secrets_masked` |
+| Версия | `LORA_DATASET_VERSION = "1.0"` | `dataset_version` |
+| Онлайн-обучение | **запрещено** (`onlineLearning: "forbidden"`, `criteria.onlineLearning: false`) | `online_learning_forbidden` |
+
+Ни один вызов `buildLoraDataset()` не принимает флаг онлайн-обучения и не
+обращается к сети: данные приходят только из ledger. Дообучение адаптера
+допускается только офлайн и только после зелёного `validateLoraDataset()`.
+Регрессии лежат в `test-self-analysis.mjs` (проверка критериев и мутации,
+ломающие каждую проверку).
+
 Тесты: E2E всего среза + chaos (`kill -9` посреди миссии) + атака на гейт +
 попытка irreversible до pass + недоступность планировщика ОС.
 

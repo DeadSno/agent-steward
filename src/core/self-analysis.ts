@@ -1259,6 +1259,152 @@ export function evaluateAcceptanceGate(
   };
 }
 
+// --- LP-1.1: критерии датасета staged LoRA (только офлайн) --------------------
+
+/** Версия формата датасета: менять при любом изменении критериев. */
+export const LORA_DATASET_VERSION = "1.0";
+export const LORA_FORMAT = "agent-steward.lora-dataset";
+export const LORA_ONLINE_LEARNING = "forbidden";
+
+/**
+ * Критерии датасета для staged LoRA. Источник — только ledger objective-гейтов;
+ * онлайн-обучение запрещено на уровне формата.
+ */
+export const LORA_CRITERIA = {
+  source: "gate_outcomes.ledger",
+  minCases: 20,
+  minSamples: 2,
+  stabilityRatio: 0.8,
+  minStableShare: 0.8,
+  dedupBy: "caseId",
+  secretMasking: true,
+  onlineLearning: false,
+  version: LORA_DATASET_VERSION,
+} as const;
+
+/** Датасет для офлайн-дообучения адаптера. */
+export interface LoraDataset {
+  kind: "lora-dataset";
+  format: typeof LORA_FORMAT;
+  version: string;
+  source: "gate_outcomes.ledger";
+  criteria: typeof LORA_CRITERIA;
+  onlineLearning: typeof LORA_ONLINE_LEARNING;
+  generatedAt: string;
+  cases: AcceptanceCase[];
+  excluded: number;
+  rowsConsidered: number;
+  /** Доля стабильных кейсов среди всех objective-кейсов. */
+  stableShare: number;
+}
+
+/** Результат проверки датасета перед офлайн-дообучением. */
+export interface LoraValidation {
+  ok: boolean;
+  checks: { id: string; ok: boolean; detail: string }[];
+}
+
+export interface LoraDatasetOptions {
+  now?: Date;
+  minCases?: number;
+  minStableShare?: number;
+  maxCases?: number;
+}
+
+function maskOptionalAcceptanceField(value: string | null | undefined): string | null {
+  return maskAcceptanceSecrets(value);
+}
+
+/**
+ * Собирает версионированный датасет для staged LoRA из строк ledger.
+ * Нестабильные кейсы отбрасываются, дубликаты дедуплицируются по `caseId`,
+ * секреты маскируются повторно (даже если пришли из уже обработанного отчёта).
+ */
+export function buildLoraDataset(
+  rows: readonly AcceptanceGateRow[],
+  options: LoraDatasetOptions = {},
+): LoraDataset {
+  const base = buildAcceptanceDataset(rows, {
+    now: options.now,
+    minSamples: LORA_CRITERIA.minSamples,
+    stabilityRatio: LORA_CRITERIA.stabilityRatio,
+    maxCases: Math.max(1, Math.floor(options.maxCases ?? 500)),
+  });
+  const seen = new Set<string>();
+  const cases: AcceptanceCase[] = [];
+  for (const item of base.cases) {
+    if (item.label !== "stable_pass" && item.label !== "stable_fail") continue;
+    if (seen.has(item.caseId)) continue;
+    seen.add(item.caseId);
+    cases.push({
+      ...item,
+      taskType: maskOptionalAcceptanceField(item.taskType) ?? "",
+      gateType: maskOptionalAcceptanceField(item.gateType) ?? "",
+      executor: maskOptionalAcceptanceField(item.executor),
+      routeSource: maskOptionalAcceptanceField(item.routeSource),
+      evidencePath: maskAcceptanceSecrets(item.evidencePath),
+    });
+  }
+  return {
+    kind: "lora-dataset",
+    format: LORA_FORMAT,
+    version: LORA_DATASET_VERSION,
+    source: "gate_outcomes.ledger",
+    criteria: LORA_CRITERIA,
+    onlineLearning: LORA_ONLINE_LEARNING,
+    generatedAt: base.generatedAt,
+    cases,
+    excluded: base.excluded,
+    rowsConsidered: base.rowsConsidered,
+    stableShare: base.cases.length > 0 ? roundAcceptance(cases.length / base.cases.length) : 0,
+  };
+}
+
+/** Проверяет датасет по критериям LP-1.1 до любого дообучения. */
+export function validateLoraDataset(dataset: LoraDataset): LoraValidation {
+  const checks: LoraValidation["checks"] = [];
+  const add = (id: string, ok: boolean, detail: string): void => {
+    checks.push({ id, ok, detail });
+  };
+  add(
+    "dataset_version",
+    dataset.version === LORA_DATASET_VERSION && dataset.criteria.version === LORA_DATASET_VERSION,
+    `version=${dataset.version}, criteria=${dataset.criteria.version}`,
+  );
+  add(
+    "source_ledger",
+    dataset.source === "gate_outcomes.ledger" && dataset.criteria.source === "gate_outcomes.ledger",
+    `source=${dataset.source}`,
+  );
+  add(
+    "volume",
+    dataset.cases.length >= dataset.criteria.minCases,
+    `cases=${dataset.cases.length}, min=${dataset.criteria.minCases}`,
+  );
+  add(
+    "stable_share",
+    dataset.stableShare >= dataset.criteria.minStableShare,
+    `stableShare=${dataset.stableShare}, min=${dataset.criteria.minStableShare}`,
+  );
+  add(
+    "dedup",
+    new Set(dataset.cases.map((item) => item.caseId)).size === dataset.cases.length,
+    `unique=${new Set(dataset.cases.map((item) => item.caseId)).size}, cases=${dataset.cases.length}`,
+  );
+  const hasSecrets = dataset.cases.some((item) =>
+    [item.taskType, item.gateType, item.executor ?? "", item.routeSource ?? "", item.evidencePath ?? ""].some(
+      (value) => maskAcceptanceSecrets(value) !== value,
+    ),
+  );
+  add("secrets_masked", !hasSecrets, hasSecrets ? "обнаружены не маскированные секреты" : "секреты маскированы");
+  add(
+    "online_learning_forbidden",
+    dataset.onlineLearning === LORA_ONLINE_LEARNING && dataset.criteria.onlineLearning === false,
+    `mode=${dataset.onlineLearning}, flag=${dataset.criteria.onlineLearning}`,
+  );
+  return { ok: checks.every((check) => check.ok), checks };
+}
+
 function generateSummary(
   health: HealthScore,
   anomalies: Anomaly[],
