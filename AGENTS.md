@@ -20,7 +20,7 @@
 - `npm run build` — tsc с declaration-файлами; обязателен после правки TypeScript.
 - `npm run lint` — eslint по `src/`.
 - `npm run build:gui` — пересобрать GUI-бандл перед релизом.
-- `npm test` — полный прогон (130 сюита из 139 файлов `test-*.mjs`, тесты идут против `dist/`); `npm run test:parallel` — быстрее; точечно — `npm run test:<name>`.
+- `npm test` — полный прогон (131 сюита из 140 файлов `test-*.mjs`, тесты идут против `dist/`); `npm run test:parallel` — быстрее; точечно — `npm run test:<name>`.
 - `npm run test:en`, `npm run test:zh` — локали; `npm run test:i18n` — паритет ключей ru/en/zh.
 - `node test-docs.mjs` — мета-гейт: сверка счётчиков tools/RPC, версии схемы, ключей конфига и доков; `node test-workflows.mjs` — структура CI-воркфлоу.
 - `npm run test:chaos` — nightly-проверки crash/kill-9; `npm pack --dry-run`, `node test-package-exports.mjs` — целостность тарбола и `exports`.

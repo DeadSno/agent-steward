@@ -120,6 +120,32 @@ export {
   type NativeSchedulerSettings,
   type SchedulerMode,
 } from "./core/native-scheduler.js";
+// AD-1.2: версионируемый внешний контракт Этапа 3 (pipeline YAML + SQLite
+// ledger + MCP/API-вход через общий execution loop), без нового движка.
+export {
+  EXTERNAL_CONTRACT_FORMAT,
+  EXTERNAL_CONTRACT_VERSION,
+  EXTERNAL_CONTRACT_METHODOLOGY_URL,
+  EXTERNAL_CONTRACT_PIPELINE_FORMAT,
+  EXTERNAL_CONTRACT_LEDGER_FILE,
+  EXTERNAL_CONTRACT_LEDGER_TABLES,
+  EXTERNAL_CONTRACT_ENTRIES,
+  EXTERNAL_CONTRACT_PRESERVED,
+  EXTERNAL_CONTRACT_GATES,
+  buildExternalContractPlan,
+  describeExternalContract,
+  externalContractCanonical,
+  externalContractDescriptor,
+  externalContractHash,
+  externalContractId,
+  externalRequestToContext,
+  resolveExternalEntry,
+  type ExternalContractChannel,
+  type ExternalContractDescriptor,
+  type ExternalContractEntry,
+  type ExternalContractPlan,
+  type ExternalRunRequest,
+} from "./core/external-contract.js";
 export {
   TOOL_NAMES,
   buildToolSpecs,

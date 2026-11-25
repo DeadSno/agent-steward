@@ -39,19 +39,16 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 |---|---|---|
 | §13.1 — Этап 1: dual V1/V2, единая поверхность | ✅ `setup`/`server`, 34 инструмента ↔ 61 RPC, CI на 3 ОС | — |
 | §13.2 — Этап 2: Agent Executor Interface | ✅ AC-1.1…AC-1.5 (RunContext, StepExecutor, dry-run, паритет входов); EX-1.1 — runner через схему/CLI/RPC, fail-open на local; EX-1.2 — роли worker→reviewer и post-mortem/retry внутри execution loop; EX-1.3 — транспорт-независимость миссии на двух исполнителях доказана | — |
-| §13.3 — Этап 3: MCP/API и совместимость с любым агентом | ✅ `./core`, `./mcp`, рецепты, verified-chat (S-1…S-6) | Внешний контракт не версионирован; режим `nativeScheduler` → AD-1 |
+| §13.3 — Этап 3: MCP/API и совместимость с любым агентом | ✅ `./core`, `./mcp`, рецепты, verified-chat (S-1…S-6); AD-1 — адаптивность хоста и внешний контракт `agent-steward.external-contract@1.0` | — |
 | §11.1–§11.4 — ad-hoc, local-first, гейт без irreversible, net-экономия | ✅ ROU-*, ARCH-4.*, E-*, EV-1.2 | Владелец, горизонт 28 дней и пороги зафиксированы в EXECUTION-LOOP §9 |
 | §11.5–§11.7 — переиспользование примера, паритет, eval не деградировал | ✅ EV-1.1/EV-1.3 + AC-1.4/EV-2.2 | Версионированный набор из ledger и CI-gate с откатом работают |
 | §12 — capped explore, staged LoRA | ✅ capped explore-бюджет и bandit (EV-2.3), LP-1.1/1.2/1.3 | Критерии датасета, офлайн-eval и shadow/canary с откатом зафиксированы; полный трафик не включался |
 | §12 — cost of verification, права вне write-scope | ✅ SC-1.1: кэш проверок и честная net-экономия в `report.savings`/`honestEconomy`; SC-1.2: write-scope guard deny-by-default с явным opt-in и аудитом | — |
 
-**Задача AD-1 — Адаптивность хоста и внешний контракт Этапа 3** · P2 · 🔄
-- [ ] AD-1.2 Зафиксировать версионируемый внешний контракт (pipeline YAML + SQLite ledger, MCP/API-вход через тот же execution loop) и golden-контрактные тесты без нового движка.
-
 ## Деталь 3.21 — Усиление в глубину (не расширение)
 `src/core/savings.ts`, `src/core/permissions.ts`, `src/core/worktree.ts`, `src/core/audit.ts`, `src/core/self-analysis.ts`, `src/version.ts`, `src/gui.tsx`, `TEST-PLAN.md`, `test-budget.mjs`, `test-permissions-policy.mjs`, `test-self-analysis.mjs`, `test-gui-bundle.mjs`, `test-agent-tools.mjs`, `docs/SAFETY.md`, `docs/EXECUTION-LOOP.md`
 
-Обоснование: модули стратегии (CONCEPT §11–§13, ROADMAP-STRATEGY) в основном закрыты, но несколько контуров доверия остаются непроверяемыми извне. Это не новые возможности, а углубление существующих: измеримость, аудируемость и воспроизводимость приёмки. Разбивка уточнена 25.11.2026: каждая подзадача даёт один проверяемый артефакт и закрывается своим тестом; AD-1.2 и SC-1.1/SC-1.2 уже заведены в Детали 3.20 и здесь не дублируются. Порядок: сначала дешёвая диагностика установки (DEEP-3), затем измеримость и изоляция (DEEP-1/2), затем дорогая приёмка (DEEP-4).
+Обоснование: модули стратегии (CONCEPT §11–§13, ROADMAP-STRATEGY) в основном закрыты, но несколько контуров доверия остаются непроверяемыми извне. Это не новые возможности, а углубление существующих: измеримость, аудируемость и воспроизводимость приёмки. Разбивка уточнена 25.11.2026: каждая подзадача даёт один проверяемый артефакт и закрывается своим тестом; SC-1.1/SC-1.2 уже заведены в Детали 3.20 и здесь не дублируются. Порядок: сначала дешёвая диагностика установки (DEEP-3), затем измеримость и изоляция (DEEP-1/2), затем дорогая приёмка (DEEP-4).
 
 **Задача DEEP-1 — Аудируемая экономия верификации** · P2 · ⬜ (продолжение SC-1.1)
 - [ ] DEEP-1.1 Эмитировать per-check receipt в `computeVerificationBudget`: стабильный ключ проверки, стоимость, решение hit/miss/evicted; юнит-тест в `test-budget.mjs`. Агрегаты `verificationCache` и `netEconomyUsd` уже существуют и заново не добавляются.

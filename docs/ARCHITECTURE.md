@@ -237,6 +237,14 @@ applied through `PRAGMA user_version` on open. Step 11 adds functional indexes
   execution loop; ledger, DLQ, budgets and approval are never reimplemented in
   the host. See `docs/NATIVE-SCHEDULER.md` and `test-native-scheduler.mjs`.
 
+- AD-1.2: the external surface is versioned as
+  `agent-steward.external-contract@1.0` (pipeline YAML v1 + SQLite `scheduler.db`
+  schema 14). MCP, API, pipeline and native-scheduler entries all resolve to the
+  same `RunContext -> buildExecutionPlan -> executeExecutionPlan` path; no second
+  engine is introduced. A golden fixture pins the descriptor hash
+  (`1e05a35afdc1feff`) and `test-external-contract.mjs` checks plan parity for
+  every entry. See `docs/EXTERNAL-CONTRACT.md`.
+
 - Startup recovery (`recoverInterrupted*`) marks unfinished rows as `error` without
   a liveness check, so a plugin restart during a live run may finalize it early.
   v8 added `owner_pid` / `owner_host` / `owner_started_at` and

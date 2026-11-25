@@ -1,0 +1,31 @@
+{
+  "id": "agent-steward.external-contract@1.0",
+  "hash": "1e05a35afdc1feff",
+  "canonical": "{\"format\":\"agent-steward.external-contract\",\"version\":\"1.0\",\"pipeline\":{\"format\":\"opencode.pipeline.yaml\",\"version\":1},\"ledger\":{\"database\":\"scheduler.db\",\"schemaVersion\":14,\"tables\":[\"tasks\",\"history\",\"runs\",\"run_steps\",\"run_dlq\",\"gate_outcomes\",\"audit_log\",\"settings\"]},\"entries\":[{\"channel\":\"mcp\",\"name\":\"run_task_now\",\"trigger\":\"manual\",\"loop\":\"RunContext -> buildExecutionPlan -> executeExecutionPlan\"},{\"channel\":\"mcp\",\"name\":\"emit_event\",\"trigger\":\"mcp-event\",\"loop\":\"RunContext -> buildExecutionPlan -> executeExecutionPlan\"},{\"channel\":\"mcp\",\"name\":\"dry_run\",\"trigger\":\"manual\",\"loop\":\"RunContext -> buildExecutionPlan -> executeExecutionPlan\"},{\"channel\":\"api\",\"name\":\"create_task\",\"trigger\":\"cron\",\"loop\":\"RunContext -> buildExecutionPlan -> executeExecutionPlan\"},{\"channel\":\"api\",\"name\":\"run_mission\",\"trigger\":\"manual\",\"loop\":\"RunContext -> buildExecutionPlan -> executeExecutionPlan\"},{\"channel\":\"pipeline\",\"name\":\"pipeline_apply\",\"trigger\":\"cron\",\"loop\":\"RunContext -> buildExecutionPlan -> executeExecutionPlan\"},{\"channel\":\"scheduler\",\"name\":\"nativeScheduler\",\"trigger\":\"mcp-event\",\"loop\":\"RunContext -> buildExecutionPlan -> executeExecutionPlan\"}],\"preserved\":[\"ledger\",\"dlq\",\"budgets\",\"approval\",\"quality-gate\",\"local-first\"],\"executionLoop\":{\"context\":\"RunContext\",\"plan\":\"buildExecutionPlan\",\"execute\":\"executeExecutionPlan\",\"gates\":[\"risk-class\",\"compiled-policy\",\"quality-gate\",\"commit-attribution\",\"budget\",\"approval\"]}}",
+  "descriptor": {
+    "format": "agent-steward.external-contract",
+    "version": "1.0",
+    "pipeline": { "format": "opencode.pipeline.yaml", "version": 1 },
+    "ledger": {
+      "database": "scheduler.db",
+      "schemaVersion": 14,
+      "tables": ["tasks", "history", "runs", "run_steps", "run_dlq", "gate_outcomes", "audit_log", "settings"]
+    },
+    "entries": [
+      { "channel": "mcp", "name": "run_task_now", "trigger": "manual", "loop": "RunContext -> buildExecutionPlan -> executeExecutionPlan" },
+      { "channel": "mcp", "name": "emit_event", "trigger": "mcp-event", "loop": "RunContext -> buildExecutionPlan -> executeExecutionPlan" },
+      { "channel": "mcp", "name": "dry_run", "trigger": "manual", "loop": "RunContext -> buildExecutionPlan -> executeExecutionPlan" },
+      { "channel": "api", "name": "create_task", "trigger": "cron", "loop": "RunContext -> buildExecutionPlan -> executeExecutionPlan" },
+      { "channel": "api", "name": "run_mission", "trigger": "manual", "loop": "RunContext -> buildExecutionPlan -> executeExecutionPlan" },
+      { "channel": "pipeline", "name": "pipeline_apply", "trigger": "cron", "loop": "RunContext -> buildExecutionPlan -> executeExecutionPlan" },
+      { "channel": "scheduler", "name": "nativeScheduler", "trigger": "mcp-event", "loop": "RunContext -> buildExecutionPlan -> executeExecutionPlan" }
+    ],
+    "preserved": ["ledger", "dlq", "budgets", "approval", "quality-gate", "local-first"],
+    "executionLoop": {
+      "context": "RunContext",
+      "plan": "buildExecutionPlan",
+      "execute": "executeExecutionPlan",
+      "gates": ["risk-class", "compiled-policy", "quality-gate", "commit-attribution", "budget", "approval"]
+    }
+  }
+}
