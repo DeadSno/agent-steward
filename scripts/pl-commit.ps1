@@ -72,6 +72,55 @@ function Wait-ManifestSettle {
   Log "WARN QA-D316-11: manifest kept changing for ${MaxSeconds}s, committing current diff: $Message"
 }
 
+# P1-B: the non-FF repair runs `reset --hard`, which would destroy uncommitted
+# changes the task does not own (files outside -Files). Foreign tracked
+# modifications are moved into a path-limited stash BEFORE the reset and
+# restored after the replay. The stash sha is remembered, so a failed restore
+# keeps the data recoverable with `git stash apply <sha>`.
+$script:foreignStashSha = $null
+
+function Save-ForeignChanges {
+  param([string[]]$Paths)
+  if (-not $Paths -or $Paths.Count -eq 0) { return $true }
+  $old = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try {
+    $before = (& git rev-parse -q --verify refs/stash 2>$null)
+    $null = & git stash push -m 'pl-commit foreign (P1-B)' -- @Paths 2>&1
+    $code = $LASTEXITCODE
+    $after = (& git rev-parse -q --verify refs/stash 2>$null)
+  } finally { $ErrorActionPreference = $old }
+  if ($code -ne 0) { return $false }
+  $sha = ([string]$after).Trim()
+  if (-not $sha -or $sha -eq ([string]$before).Trim()) { return $true }
+  $script:foreignStashSha = $sha
+  Log "P1-B: foreign changes stashed before repair ($sha): $($Paths -join '; ')"
+  return $true
+}
+
+function Restore-ForeignChanges {
+  if (-not $script:foreignStashSha) { return }
+  $sha = $script:foreignStashSha
+  $old = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try {
+    $null = & git stash apply $sha 2>&1
+    $code = $LASTEXITCODE
+    if ($code -eq 0) {
+      $list = @(& git stash list --format='%H' 2>$null)
+      for ($i = 0; $i -lt $list.Count; $i++) {
+        if (([string]$list[$i]).Trim() -eq $sha) { $null = & git stash drop "stash@{$i}" 2>$null; break }
+      }
+    }
+  } finally { $ErrorActionPreference = $old }
+  if ($code -eq 0) {
+    $script:foreignStashSha = $null
+    Log "P1-B: foreign changes restored after repair"
+  } else {
+    Log "WARN P1-B: foreign changes NOT auto-restored; recover with: git stash apply $sha"
+  }
+}
+
 # git writes progress/errors to stderr; PowerShell 7 with ErrorActionPreference=Stop
 # turns that into a terminating ErrorRecord even when push succeeds. Capture the
 # real exit code instead (QA-A2/PL-7.1 lesson).
@@ -294,9 +343,20 @@ try {
       Log "push: remote already contains HEAD (concurrent push): $Message"
     }
     else {
+      # P1-B: capture foreign uncommitted changes BEFORE the destructive reset.
+      $oldRepair = $ErrorActionPreference
+      $ErrorActionPreference = 'Continue'
+      try { $repairRaw = @(& git diff --name-only HEAD 2>$null) } finally { $ErrorActionPreference = $oldRepair }
+      $foreignNow = @($repairRaw | ForEach-Object { ([string]$_).Trim() -replace '\\', '/' } |
+        Where-Object { $_ -and -not $manifest.ContainsKey($_) } | Sort-Object -Unique)
+      if ($foreignNow.Count -gt 0 -and -not (Save-ForeignChanges $foreignNow)) {
+        Log "FAIL P1-B: foreign changes present but stash failed; repair aborted to protect them: $($foreignNow -join '; '): $Message"
+        exit 1
+      }
       # Reset the current branch (NOT a detached checkout) to the fresh remote
       # tip, then replay exactly one commit: our own pathspec-limited commit.
       if ((Invoke-Git 'reset-remote' @('reset', '--hard', 'origin/dev')) -ne 0) {
+        Restore-ForeignChanges
         Log "FAIL reset --hard origin/dev: $Message"
         exit 1
       }
@@ -315,13 +375,16 @@ try {
           $null = Invoke-Git 'cherry-pick-abort' @('cherry-pick', '--abort')
         }
         $null = Invoke-Git 'reset-clean' @('reset', '--hard', 'HEAD')
+        Restore-ForeignChanges
         Log "PL-132: cherry-pick --abort; conflict replaying $local onto origin/dev; tree clean, no push: $Message"
         exit 2
       }
       if ((Invoke-Git 'push-picked' @('push', 'origin', 'HEAD:dev')) -ne 0) {
+        Restore-ForeignChanges
         Log "FAIL push after cherry-pick: $Message"
         exit 1
       }
+      Restore-ForeignChanges
       $pushed = $true
       Log "OK (cherry-picked onto origin/dev): $Message"
     }
@@ -333,6 +396,7 @@ try {
   Log "OK: $Message"
 }
 catch {
+  Restore-ForeignChanges
   Log "ERROR: $($_.Exception.Message)"
   exit 1
 }

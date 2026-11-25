@@ -2366,6 +2366,26 @@ try {
       !/file:\/\//.test(nonFf) &&
       !/[A-Za-z]:\\/.test(nonFf)
   );
+  // P1-B: repair must stash foreign changes BEFORE reset --hard and restore
+  // them on every exit path of the repair branch.
+  const saveCall = helper.indexOf("Save-ForeignChanges $foreignNow");
+  const resetHard = helper.indexOf("@('reset', '--hard', 'origin/dev')");
+  const restoreAfterPick = helper.indexOf("Restore-ForeignChanges", helper.indexOf(pickCall));
+  check(
+    "P1-B: чужой diff сохраняется ДО reset --hard и восстанавливается после cherry-pick",
+    saveCall > 0 &&
+      resetHard > saveCall &&
+      restoreAfterPick > resetHard &&
+      helper.includes("git stash push") &&
+      helper.includes("git stash apply") &&
+      helper.includes("repair aborted to protect them"),
+    `save@${saveCall}, reset@${resetHard}, restore@${restoreAfterPick}`
+  );
+  check(
+    "P1-B: Restore-ForeignChanges вызывается на всех выходах repair-ветки",
+    (helper.match(/Restore-ForeignChanges/g) || []).length >= 6,
+    String((helper.match(/Restore-ForeignChanges/g) || []).length)
+  );
   check(
     "PL-41/PL-58: pathspec-коммит только своих файлов и проверка маркера сохранены",
     helper.includes("@('commit', '-m', $Message, '--')") &&
