@@ -18,6 +18,7 @@ process.env.OPENCODE_SCHEDULER_HOME = path.join(
 );
 
 const settingsModule = await import("./dist/settings.js");
+const { getPluginDir } = await import("./dist/types.js");
 const { evaluateTriageRules } = await import("./dist/core/triage-rules.js");
 
 let passed = 0;
@@ -35,6 +36,23 @@ function check(name, condition, details = "") {
 
 const settingsFile = path.join(process.env.OPENCODE_SCHEDULER_HOME, "settings.json");
 fs.mkdirSync(path.dirname(settingsFile), { recursive: true });
+
+// QA-PLUGIN-DIR: путь каталога/настроек пересчитывается после изменения env,
+// даже если модули были импортированы статически до подмены.
+{
+  const originalHome = process.env.OPENCODE_SCHEDULER_HOME;
+  const alternateHome = path.join(tempRoot, "opencode", "alternate-home");
+  process.env.OPENCODE_SCHEDULER_HOME = alternateHome;
+  check(
+    "QA-PLUGIN-DIR: getPluginDir() следует за OPENCODE_SCHEDULER_HOME после импорта",
+    getPluginDir() === alternateHome
+  );
+  check(
+    "QA-PLUGIN-DIR: getSettingsFilePath() не использует кэш момента импорта",
+    settingsModule.getSettingsFilePath() === path.join(alternateHome, "settings.json")
+  );
+  process.env.OPENCODE_SCHEDULER_HOME = originalHome;
+}
 
 // 1. Дефолты триажа
 const defaults = settingsModule.defaultNotifications();

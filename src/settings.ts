@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { PLUGIN_DIR } from "./types.js";
+import { getPluginDir } from "./types.js";
 import { DEFAULT_LOCALE, DEFAULT_LOCALE_MODE, normalizeLocale, normalizeLocaleMode, SUPPORTED_LOCALES, messageIn, t, type Locale, type LocaleMode } from "./i18n.js";
 import {
   DEFAULT_PERMISSION_POLICY,
@@ -453,7 +453,16 @@ export function telegramCommandsEnabled(
   return settings?.notifications?.telegram?.enabled === true;
 }
 
-export const SETTINGS_FILE = path.join(PLUGIN_DIR, "settings.json");
+/**
+ * Путь settings.json вычисляется на каждый доступ: env/профиль могут быть
+ * заданы после импорта модуля (например, в тестах с изолированным каталогом).
+ * Статический `SETTINGS_FILE` оставлен для обратной совместимости.
+ */
+export function getSettingsFilePath(): string {
+  return path.join(getPluginDir(), "settings.json");
+}
+
+export const SETTINGS_FILE = getSettingsFilePath();
 export const DEFAULT_MAX_CONCURRENT = 1;
 export const DEFAULT_WINTER_MODE = false;
 export const DEFAULT_RETENTION_DAYS = 30;
@@ -1452,7 +1461,7 @@ export async function loadSettings(): Promise<SchedulerSettings> {
   const fallbackBudgets = defaultBudgetSettings();
   const fallbackFeedback = defaultFeedbackSettings();
   try {
-    const raw = await fs.readFile(SETTINGS_FILE, "utf8");
+    const raw = await fs.readFile(getSettingsFilePath(), "utf8");
     const parsed = JSON.parse(raw) as Partial<SchedulerSettings> | null;
     return {
       maxConcurrent: normalizeMaxConcurrent(
@@ -1577,7 +1586,8 @@ export async function saveSettings(
     triage.shadow = settleShadowOnSave(triage.shadow);
   }
 
-  await fs.mkdir(PLUGIN_DIR, { recursive: true });
-  await fs.writeFile(SETTINGS_FILE, JSON.stringify(next, null, 2), "utf8");
+  const settingsPath = getSettingsFilePath();
+  await fs.mkdir(path.dirname(settingsPath), { recursive: true });
+  await fs.writeFile(settingsPath, JSON.stringify(next, null, 2), "utf8");
   return next;
 }

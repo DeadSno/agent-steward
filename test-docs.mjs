@@ -912,6 +912,8 @@ for (const scanDir of [root, docs, path.join(root, ".agents"), path.join(root, "
   if (!fs.existsSync(scanDir)) continue;
   for (const entry of fs.readdirSync(scanDir, { recursive: true, withFileTypes: true })) {
     if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
+    // DOCS-008: временные файлы (_tmp_*, .tmp*) не являются частью проекта.
+    if (/^(_tmp_|\.tmp)/i.test(entry.name)) continue;
     const full = path.join(entry.parentPath ?? entry.path, entry.name);
     const rel = path.relative(root, full).replace(/\\/g, "/");
     if (rel === "CHANGELOG.md" || rel.startsWith("node_modules/") || rel.startsWith("dist/") || rel.startsWith("legacy/")) continue;
@@ -924,7 +926,9 @@ for (const file of markdownFiles) {
   for (const match of text.matchAll(/\[[^\]]*\]\(([^)]+)\)/g)) {
     const raw = match[1].trim().split(/\s+/)[0];
     if (!raw || /^(https?:|mailto:|#)/.test(raw)) continue;
-    const target = raw.split("#")[0];
+    // Исторические ссылки вида `src/core/execution.ts:478` — это путь + номер
+    // строки, а не отдельный файл; `:line` не должен ломать проверку ссылок.
+    const target = raw.split("#")[0].replace(/:\d+(?::\d+)?$/, "");
     if (!target) continue;
     const resolved = path.isAbsolute(target)
       ? path.join(root, target)
@@ -937,6 +941,11 @@ for (const file of markdownFiles) {
 check(
   `DOCS-008: локальные Markdown-ссылки существуют (${markdownFiles.length} файлов)`,
   markdownFiles.length > 0 && brokenDocLinks.length === 0
+);
+check(
+  "DOCS-008: регрессия — временные _tmp_*.md и :line-ссылки не ломают гейт",
+  fs.readFileSync(path.join(root, "test-docs.mjs"), "utf8").includes("(_tmp_|\\.tmp)") &&
+    fs.readFileSync(path.join(root, "test-docs.mjs"), "utf8").includes("replace(/:\\d+(?::\\d+)?$/, \"\")")
 );
 
 // QA-DIST: предпроверка согласованности dist обязательна для параллельных прогонов.

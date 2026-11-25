@@ -39,11 +39,12 @@ export const LEGACY_TASK_PREFIX = `OpenCode\\${LEGACY_TASK_FOLDER_NAME}`;
  * migrateLegacyBaseDir) — без «как раньше, без миграции».
  * Спринт 21: директория зависит от активного профиля (см. src/profiles.ts).
  */
-function resolvePluginDir(): string {
+export function getPluginDir(): string {
   return getProfileDir(getProfileName());
 }
 
-export const PLUGIN_DIR = resolvePluginDir();
+/** Compatibility alias for modules that import the cached value at load time. */
+export const PLUGIN_DIR = getPluginDir();
 
 export const LOCK_DIR = path.join(PLUGIN_DIR, "locks");
 export const LOG_DIR = path.join(PLUGIN_DIR, "logs");
