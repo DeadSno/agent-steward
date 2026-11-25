@@ -35,6 +35,9 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 **QA-SUB-1 — Суб-агент упирается в лимит тарифа** · P2 · ⬜
 - [ ] Суб-агент `explore` (`opencode/mimo-v2.6-flash-free`) завершился `Free usage limit reached`; лимит 1 суб-агента исчерпан (уже фиксировалось в CHANGELOG:17). Нужны явный local-agent fallback на Ollama (`hf.co/Qwen/Qwen3-4B-GGUF:Q4_K_M`, доступна на 127.0.0.1:11434; `qwen2.5:3b` при pull падает) и прозрачный statuses в ответе, чтобы задача не срывалась тихо.
 
+**QA-TIMEOUT-FLAKE-1 — Нестабильная проверка таймаута под параллельной нагрузкой** · P2 · ⬜
+- [ ] `test-execution-hardening.mjs:487` — проверка `таймаут: задача убита раньше 15 с` один раз упала при `elapsedMs=63876` (ожидалось `<15000`) в прогоне `npm test` и при первом повторном запуске набора; два следующих запуска (одиночный и `npm test`) прошли 418/418 и exit 0. Задача: разобраться, что растягивает убитие дерева процессов (`FAKE_MODE=sleep`, `FAKE_SLEEP=25`, `timeoutSeconds=2`) под нагрузкой, и либо стабилизировать ожидание/тайминг проверки, либо зафиксировать, что это артефакт перегруженного раннера.
+
 
 ## Деталь 3.20 — Матрица покрытия стратегии и незакрытые контуры
 `docs/CONCEPT.md` §11/§12/§13, `ROADMAP-STRATEGY.md`, `docs/ARCHITECTURE.md` Known limitations, `docs/EXECUTION-LOOP.md` §7–§9, `src/core/execution.ts`, `src/core/self-analysis.ts`, `src/db/capability-repo.ts`, `test-budget.mjs`, `test-permissions-policy.mjs`
