@@ -48,7 +48,7 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 
 - triggerType=mcp-event с mcpEvent={server:'manual',event:'...'} в профиле default отвергается ошибкой «Для MCP-event-триггеров ... используйте schedule_advanced (профиль admin)», хотя mcp-event указан в описании triggerType schedule_task — P2. Действие: явно документировать недоступность mcp-event в core-профиле или включить поля в базовую схему. Обнаружено 25.11.2026.
 
-- get_history успешной задачи содержит error=PL-81:" quality gate "passed при status=success — P2. Действие: не писать сообщение гейта в error успешного запуска. Обнаружено 25.11.2026.
+- get_history успешной задачи содержит error="PL-81: quality gate passed" при status=success — P2. Действие: не писать сообщение гейта в error успешного запуска. Обнаружено 25.11.2026.
 
 ---
 
