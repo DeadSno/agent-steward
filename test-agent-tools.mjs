@@ -1254,6 +1254,27 @@ check(
   );
 }
 
+// PL-106: guard изоляции должен быть per-checkout, а не глобальным для процесса.
+{
+  const source = fs.readFileSync(new URL("./dist/index.js", import.meta.url), "utf8");
+  check(
+    "QA-PL106: счётчик PL-106 ключуется каталогом чек-аута",
+    source.includes("activeNonIsolatedByCheckout = new Map()") &&
+      source.includes("checkoutKeyFor(definition)") &&
+      !source.includes("activeNonIsolatedRuns")
+  );
+  check(
+    "QA-PL106: снятие счётчика использует ключ чек-аута на всех выходах",
+    source.includes("releaseNonIsolatedRun(isolation.isolated ? null : checkoutKey)") &&
+      source.includes("staleDefinition?.worktree ? null : checkoutKeyFor(staleDefinition)")
+  );
+  const runNow = fs.readFileSync(new URL("./dist/core/scheduler/run-now.js", import.meta.url), "utf8");
+  check(
+    "QA-PL106: сообщение об ошибке честно указывает на чек-аут",
+    runNow.includes("в этом чек-ауте") && !runNow.includes("на процесс плагина")
+  );
+}
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\nAgent tools: ${results.length - failed.length}/${results.length} проверок пройдено.`);
 process.exit(failed.length > 0 ? 1 : 0);

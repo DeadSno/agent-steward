@@ -8595,8 +8595,19 @@ export class PluginShutdownError extends Error {
   }
 }
 
-/** PL-106: счётчик активных запусков без изоляции в этом процессе плагина. */
-let activeNonIsolatedRuns = 0;
+/**
+ * PL-106: счётчик активных запусков без изоляции, ключ — каталог чек-аута.
+ * Раньше счётчик был глобальным для процесса, поэтому Parallel-проверка в
+ * другом чек-ауте блокировала run_task_now здесь, хотя сообщение обещало
+ * guard «в этом чек-ауте». Ключ нормализуется через path.resolve — один и тот
+ * же каталог под разными путями даёт один ключ.
+ */
+const activeNonIsolatedByCheckout = new Map<string, number>();
+
+function checkoutKeyFor(definition?: { workingDirectory?: string }): string {
+  const dir = definition?.workingDirectory ?? process.cwd();
+  return path.resolve(dir).toLowerCase();
+}
 
 /**
  * QA-D316-20: единственная точка снятия счётчика PL-106. Раньше счётчик
@@ -8604,8 +8615,11 @@ let activeNonIsolatedRuns = 0;
  * для `once` без задания ОС (и ошибка «задача не найдена») оставляли его
  * поднятым — следующий run_task_now получал PL-106.
  */
-function releaseNonIsolatedRun(isolated: boolean): void {
-  if (!isolated) activeNonIsolatedRuns = Math.max(0, activeNonIsolatedRuns - 1);
+function releaseNonIsolatedRun(checkoutKey: string | null): void {
+  if (!checkoutKey) return;
+  const next = (activeNonIsolatedByCheckout.get(checkoutKey) ?? 0) - 1;
+  if (next <= 0) activeNonIsolatedByCheckout.delete(checkoutKey);
+  else activeNonIsolatedByCheckout.set(checkoutKey, next);
 }
 
 /**
@@ -8625,6 +8639,7 @@ async function reapStaleRuns(): Promise<number> {
     Number.isFinite(configuredSec) && configuredSec > 0 ? configuredSec : 180;
   const hostname = os.hostname();
   let reaped = 0;
+  const definitions = await loadTaskDefinitions();
 
   for (const rec of listRunningRecords()) {
     let mtimeMs: number;
@@ -8659,7 +8674,12 @@ async function reapStaleRuns(): Promise<number> {
     const durationMs = Date.now() - Date.parse(rec.startedAt);
     if (finishRun(rec.id, "error", durationMs, reason, null, 0, 0, undefined, "skipped", "skipped")) {
       console.error(`[agent-steward] ${reason} Задача: ${rec.taskName}, run #${rec.id}.`);
-      releaseNonIsolatedRun(false);
+      const staleDefinition = definitions.find(
+        (def) => def.name.toLowerCase() === rec.taskName.toLowerCase(),
+      );
+      releaseNonIsolatedRun(
+        staleDefinition?.worktree ? null : checkoutKeyFor(staleDefinition),
+      );
       reaped += 1;
     }
   }
@@ -8703,15 +8723,21 @@ async function runTaskEntry(
     // приходят сюда одинаково. Вторая неизолированная задача в том же
     // чек-ауте перезаписывают правки и ломает qualityGate, поэтому отказываем
     // сразу, а не после 585 секунд взаимных перезаписей.
+    const checkoutKey = checkoutKeyFor(definition);
     const isolation = planRuntimeIsolation({
-      activeNonIsolated: activeNonIsolatedRuns,
+      activeNonIsolated: activeNonIsolatedByCheckout.get(checkoutKey) ?? 0,
       worktree: definition?.worktree,
       taskName: trimmed,
     });
     if (!isolation.allowed) {
       throw new Error(isolation.reason ?? "PL-106: параллельный запуск без worktree запрещён.");
     }
-    if (!isolation.isolated) activeNonIsolatedRuns++;
+    if (!isolation.isolated) {
+      activeNonIsolatedByCheckout.set(
+        checkoutKey,
+        (activeNonIsolatedByCheckout.get(checkoutKey) ?? 0) + 1,
+      );
+    }
 
     // QA-D316-20: счётчик снимается на ЛЮБОМ исходе, включая early-return
     // для once без задания ОС и ошибку «задача не найдена». Иначе следующий
@@ -8767,7 +8793,7 @@ async function runTaskEntry(
         throw err;
       }
     } finally {
-      releaseNonIsolatedRun(isolation.isolated);
+      releaseNonIsolatedRun(isolation.isolated ? null : checkoutKey);
     }
   })();
 

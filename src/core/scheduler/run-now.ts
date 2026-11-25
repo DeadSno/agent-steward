@@ -223,7 +223,7 @@ export interface RuntimeIsolationPlan {
  * и loss правок). Creation-time план учитывает только maxConcurrent и не
  * защищает от ручных запусков и кэтч-апа, поэтому проверка повторяется в
  * точке запуска. Задача с worktree: true изолирована и может идти вместе
- * с другими; остальные — только по одной на процесс плагина.
+ * с другими; остальные — только по одной на чек-аут (каталог задачи).
  */
 export function planRuntimeIsolation(input: {
   activeNonIsolated: number;
