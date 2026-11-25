@@ -1501,6 +1501,23 @@ try {
     JSON.stringify(proseWithRealPath),
   );
 
+  // QA-SCOPE-NUM: маркеры нумерованного списка ("1.", "2.") — это не пути;
+  // воспроизведение SC-1: "PL-79/PL-82: SCOPE ... несуществующие пути: 1".
+  const numberedScopePrompt =
+    "Сделай задачу.\nSCOPE (трогать только эти файлы/доки):\n1. src/x.ts\n2. docs/y.md";
+  const numberedScope = extractScopePaths(numberedScopePrompt);
+  check(
+    "QA-SCOPE-NUM: маркеры нумерованного списка не распознаются как пути",
+    JSON.stringify(numberedScope) === JSON.stringify([]),
+    JSON.stringify(numberedScope),
+  );
+  const numberedPreflight = preflightScope(numberedScopePrompt, process.cwd());
+  check(
+    "QA-SCOPE-NUM: pre-flight не падает на маркерах нумерованного списка",
+    numberedPreflight.ok === true && numberedPreflight.missing.length === 0,
+    JSON.stringify(numberedPreflight),
+  );
+
   // PL-119: create-intent — SCOPE-пути создаваемых файлов не считаются missing.
   // Берём заведомо несуществующие маркеры, чтобы проверка не зависела от диска.
   const createIntentPaths = [
