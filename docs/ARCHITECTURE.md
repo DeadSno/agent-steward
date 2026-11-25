@@ -263,7 +263,11 @@ applied through `PRAGMA user_version` on open. Step 11 adds functional indexes
   `ExecutePlanOptions.agentPolicies.retry.maxAttempts > 1`; the default is one
   attempt, so existing runs stay deterministic. Secrets, quota and unknown
   causes are never retried. Advanced primitives in `agents-advanced.ts` are
-  still pure helpers and do not change the loop.
+  still pure helpers and do not change the loop. EX-1.3 proves transport
+  independence: `test-execution-pipeline.mjs` runs the same immutable plan and
+  mission through two `StepExecutor`s with different descriptors (direct
+  `opencode` and `mission-wrapper`) and asserts byte-identical step results and
+  per-step traces; only `runId` and transport identity differ.
 - `checkBudgetGate` / `checkRunBudgetGate` are called at tool/RPC/manual entry
   points and on the registered OS-scheduler path via the wrapper's `--budget-gate`
   check (B-1.1, PL-125); an over-limit run is recorded as `skipped` with a reason.

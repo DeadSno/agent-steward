@@ -54,6 +54,8 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 - Счётчики `list_tasks()` и история расходятся: задача `gui` имеет 130 прогонов / 46 ошибок в истории, но отсутствует среди 181 definition; при этом 61 definition существует без единого прогона. Воспроизведено 25.11.2026. — P3. Действие: либо сохранять definition для всех задач с историей и помечать их `archived`, либо явно документировать, что история содержит удалённые задачи, и дать фильтр по ним. Обнаружено 25.11.2026.
 - Агентские инструменты `schedule_task`/`update_task` молча игнорируют `nextTaskOnSuccess`: ядро-схема `src/index.ts:651` поддерживает поле, но при передаче ключа инструменты вернули успех, а `list_tasks()` показала `nextTaskOnSuccess: null` у всех трёх маркеров EX-1.x; цепочка задач не создаётся. Воспроизведено 25.11.2026. — P2. Действие: пробросить поле в agent-facing схему (как в ядре) или явно отклонять неизвестные ключи вместо тихого игнорирования; добавить регрессию в `test-agent-tools.mjs`. Обнаружено 25.11.2026.
 
+- Общий `dist/` между worktree через junction ломает тесты при параллельных сборках: в `tp-audit-dev` каталог `dist` указывал на `.steward-dev/dist`; после сборки из более старого worktree свежий `dist/core/execution.js` импортировал `consumeExploreUsage` из устаревшего `dist/db/capability-repo.js`, и `node test-execution-hardening.mjs` упал на этапе загрузки модуля (`does not provide an export named 'consumeExploreUsage'`), хотя `npm run build` в своей worktree проходил. Воспроизведено 25.11.2026 при EX-1.2. — P2. Действие: дать каждому worktree собственный `dist` (копия вместо junction) либо перед тестами сверять ревизию всех dist-модулей; добавить smoke-проверку импорта `dist/core/execution.js` перед проходом сюит. Обнаружено 25.11.2026.
+
 
 ## Деталь 3.20 — Матрица покрытия стратегии и незакрытые контуры
 `docs/CONCEPT.md` §11/§12/§13, `ROADMAP-STRATEGY.md`, `docs/ARCHITECTURE.md` Known limitations, `docs/EXECUTION-LOOP.md` §7–§9, `src/core/execution.ts`, `src/core/self-analysis.ts`, `src/db/capability-repo.ts`, `test-budget.mjs`, `test-permissions-policy.mjs`
@@ -63,15 +65,12 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 | Утверждение CONCEPT / стратегии | Покрытие | Остаток |
 |---|---|---|
 | §13.1 — Этап 1: dual V1/V2, единая поверхность | ✅ `setup`/`server`, 34 инструмента ↔ 61 RPC, CI на 3 ОС | — |
-| §13.2 — Этап 2: Agent Executor Interface | ✅ AC-1.1…AC-1.5 (RunContext, StepExecutor, dry-run, паритет входов); EX-1.1 — runner через схему/CLI/RPC, fail-open на local; EX-1.2 — роли worker→reviewer и post-mortem/retry внутри execution loop | Доказательство транспорт-независимости одной миссии на двух исполнителях → EX-1.3 |
+| §13.2 — Этап 2: Agent Executor Interface | ✅ AC-1.1…AC-1.5 (RunContext, StepExecutor, dry-run, паритет входов); EX-1.1 — runner через схему/CLI/RPC, fail-open на local; EX-1.2 — роли worker→reviewer и post-mortem/retry внутри execution loop; EX-1.3 — транспорт-независимость миссии на двух исполнителях доказана | — |
 | §13.3 — Этап 3: MCP/API и совместимость с любым агентом | ✅ `./core`, `./mcp`, рецепты, verified-chat (S-1…S-6) | Внешний контракт не версионирован; режим `nativeScheduler` → AD-1 |
 | §11.1–§11.4 — ad-hoc, local-first, гейт без irreversible, net-экономия | ✅ ROU-*, ARCH-4.*, E-*, EV-1.2 | Владелец, горизонт 28 дней и пороги зафиксированы в EXECUTION-LOOP §9 |
 | §11.5–§11.7 — переиспользование примера, паритет, eval не деградировал | ✅ EV-1.1/EV-1.3 + AC-1.4/EV-2.2 | Версионированный набор из ledger и CI-gate с откатом работают |
 | §12 — capped explore, staged LoRA | ✅ capped explore-бюджет и bandit (EV-2.3), LP-1.1/1.2/1.3 | Критерии датасета, офлайн-eval и shadow/canary с откатом зафиксированы; полный трафик не включался |
 | §12 — cost of verification, права вне write-scope | 🔄 бюджеты и аудит есть | Нет кэша проверок и guard для write-scope → SC-1 |
-
-**Задача EX-1 — Пользовательский контур Этапа 2** · P2 · ⬜
-- [ ] EX-1.3 Доказать транспорт-независимость одной и той же миссии на двух исполнителях и обновить `docs/ARCHITECTURE.md` Known limitations.
 
 **Задача SC-1 — Незакрытые риски §12** · P2 · ⬜
 - [ ] SC-1.1 Учесть cost of verification в net-экономии и кэшировать повторные проверки с тем же входом (`test-budget.mjs`, ANALYTICS), чтобы экономические метрики не завышали выгоду.

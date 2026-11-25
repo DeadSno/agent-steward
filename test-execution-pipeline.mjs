@@ -1339,6 +1339,100 @@ check(
   ),
 );
 
+// --- EX-1.3: транспорт-независимость одной и той же миссии ------------------
+try {
+  const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const context = ac1.createAdHocRunContext(`EX-1.3 transport proof ${suffix}`, {
+    taskName: `ex13-${suffix}`,
+    taskType: "mission",
+    riskClass: "R0",
+  });
+  const plan = await ac1.buildExecutionPlan(context);
+  plan.steps.push({ ...plan.steps[0], stepName: `${plan.steps[0].stepName}-review` });
+  const planBefore = JSON.stringify(plan);
+
+  const traceA = [];
+  const traceB = [];
+  const signature = (input) =>
+    JSON.stringify({
+      prompt: input.prompt,
+      cwd: input.cwd,
+      step: input.step.stepName,
+      taskType: input.step.taskType,
+      target: input.step.route.target,
+      role: input.agentRole ?? null,
+      attempt: input.attempt ?? null,
+    });
+
+  // Два разных транспорта: прямой OpenCode-исполнитель и обёртка с другим
+  // сериализуемым дескриптором. Ядро получает один и тот же план.
+  const transportA = ac1.createOpenCodeExecutor((input) => {
+    traceA.push(signature({ ...input, prompt: input.prompt, cwd: input.cwd }));
+    return signature({
+      ...input,
+      plan: { context: { prompt: input.prompt, cwd: input.cwd } },
+    });
+  }, "ex13-direct");
+  const transportB = {
+    id: "ex13-wrapper",
+    descriptor: {
+      kind: "mission-wrapper",
+      wrapperPath: path.join(tempRoot, "ex13-wrapper.cmd"),
+      cwd: tempRoot,
+      timeoutSeconds: 30,
+    },
+    supports: () => true,
+    execute: async (input) => {
+      traceB.push(
+        signature({
+          ...input,
+          prompt: input.plan.context.prompt,
+          cwd: input.plan.context.cwd,
+        }),
+      );
+      return {
+        output: signature({
+          ...input,
+          prompt: input.plan.context.prompt,
+          cwd: input.plan.context.cwd,
+        }),
+      };
+    },
+  };
+
+  const runA = await ac1.executeExecutionPlan(plan, { executors: [transportA] });
+  const runB = await ac1.executeExecutionPlan(plan, { executors: [transportB] });
+  check(
+    "EX-1.3: два исполнителя с разными дескрипторами",
+    ac1.durableExecutorDescriptor([transportA])?.kind === "opencode" &&
+      ac1.durableExecutorDescriptor([transportB])?.kind === "mission-wrapper" &&
+      transportA.id !== transportB.id,
+  );
+  check(
+    "EX-1.3: одна миссия даёт одинаковый результат на двух транспортах",
+    runA.status === "passed" &&
+      runB.status === "passed" &&
+      JSON.stringify(runA.steps) === JSON.stringify(runB.steps),
+    JSON.stringify({ a: runA.steps, b: runB.steps }),
+  );
+  check(
+    "EX-1.3: трассировки шагов побайтово совпадают",
+    traceA.length === plan.steps.length &&
+      JSON.stringify(traceA) === JSON.stringify(traceB),
+    JSON.stringify({ a: traceA, b: traceB }),
+  );
+  check(
+    "EX-1.3: план не мутируется ни одним исполнителем",
+    JSON.stringify(plan) === planBefore,
+  );
+} catch (err) {
+  check(
+    "EX-1.3: секция не выбросила исключение",
+    false,
+    err instanceof Error ? err.stack : String(err),
+  );
+}
+
 closeDb();
 try {
   fs.rmSync(tempRoot, { recursive: true, force: true });
