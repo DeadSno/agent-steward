@@ -786,6 +786,17 @@ and `emit_event`, `schedule_advanced`, `get_analytics` or `get_metrics` may be
 unknown. This is stale in-process state, not a missing capability in the fresh
 build; verify with `list_tasks`/`get_dashboard_info` after restarting.
 
+**Installation warning before a run (DEEP-3).** When `getPluginDiagnostics()` reports
+`plugin.reason: "identity-mismatch"` or `plugin.staleInstallation`, the warning is
+surfaced before the next task starts: `self_analysis` returns an `installationWarning`
+field plus a high-priority recommendation, `schedule_task`/`run_task_now` include the
+same warning in `warnings` and `installationWarning` of their response, and the GUI
+panel shows it under the backend indicator. The warning is derived from existing
+diagnostics in a shared pure helper (`src/shared/installation-warning.ts`), the
+`get_platform` RPC payload is extended without adding a new RPC method, and a failed
+diagnostics lookup never blocks scheduling (fail-open). Verifying the fix still
+requires restarting OpenCode so the current checkout is loaded.
+
 ### Code Mode catalog and OS binding (QA-BRIDGE-1)
 
 The 34 tools above are the plugin's own registry. The host's Code Mode catalog is a

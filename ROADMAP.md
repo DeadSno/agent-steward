@@ -32,16 +32,10 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 **QA-TIMEOUT-FLAKE-1 — Нестабильная проверка таймаута под параллельной нагрузкой** · P2 · ⬜
 - [ ] `test-execution-hardening.mjs:487` — проверка `таймаут: задача убита раньше 15 с` один раз упала при `elapsedMs=63876` (ожидалось `<15000`) в прогоне `npm test` и при первом повторном запуске набора; два следующих запуска (одиночный и `npm test`) прошли 418/418 и exit 0. Задача: разобраться, что растягивает убитие дерева процессов (`FAKE_MODE=sleep`, `FAKE_SLEEP=25`, `timeoutSeconds=2`) под нагрузкой, и либо стабилизировать ожидание/тайминг проверки, либо зафиксировать, что это артефакт перегруженного раннера.
 
-
 ## Деталь 3.21 — Усиление в глубину (не расширение)
-`src/core/savings.ts`, `src/core/permissions.ts`, `src/core/worktree.ts`, `src/core/audit.ts`, `src/core/self-analysis.ts`, `src/version.ts`, `src/gui.tsx`, `TEST-PLAN.md`, `test-budget.mjs`, `test-permissions-policy.mjs`, `test-self-analysis.mjs`, `test-gui-bundle.mjs`, `test-agent-tools.mjs`, `docs/SAFETY.md`, `docs/EXECUTION-LOOP.md`
+`src/core/savings.ts`, `src/core/permissions.ts`, `src/core/worktree.ts`, `src/core/audit.ts`, `src/core/self-analysis.ts`, `src/shared/installation-warning.ts`, `src/version.ts`, `src/index.ts`, `src/rpc.ts`, `src/gui.tsx`, `TEST-PLAN.md`, `test-budget.mjs`, `test-permissions-policy.mjs`, `test-self-analysis.mjs`, `test-gui-bundle.mjs`, `test-agent-tools.mjs`, `docs/SAFETY.md`, `docs/EXECUTION-LOOP.md`
 
-Обоснование: модули стратегии (CONCEPT §11–§13, ROADMAP-STRATEGY) в основном закрыты, но несколько контуров доверия остаются непроверяемыми извне. Это не новые возможности, а углубление существующих: измеримость, аудируемость и воспроизводимость приёмки. Разбивка уточнена 25.11.2026: каждая подзадача даёт один проверяемый артефакт и закрывается своим тестом; SC-1.1/SC-1.2 и вся матрица Детали 3.20 закрыты и перенесены в CHANGELOG, здесь не дублируются. DEEP-1 и DEEP-2 закрыты и перенесены в CHANGELOG. Порядок: сначала дешёвая диагностика установки (DEEP-3), затем дорогая приёмка (DEEP-4).
-
-**Задача DEEP-3 — Версия установки видна до запуска задачи** · P2 · ⬜ (продолжение само-диагностики 1b18f55)
-- [ ] DEEP-3.1 Поднимать `plugin.reason === "identity-mismatch"` / `plugin.staleInstallation` как предупреждение в `self_analysis`; регрессия в `test-self-analysis.mjs`.
-- [ ] DEEP-3.2 Отображать то же предупреждение в GUI до запуска задачи; регрессия в `test-gui-bundle.mjs`.
-- [ ] DEEP-3.3 Добавить fail-open preflight в `schedule_task`/`run_task_now`: предупреждение о stale-установке попадает в ответ до старта исполнения; регрессия в `test-agent-tools.mjs`.
+Обоснование: модули стратегии (CONCEPT §11–§13, ROADMAP-STRATEGY) в основном закрыты, но несколько контуров доверия остаются непроверяемыми извне. Это не новые возможности, а углубление существующих: измеримость, аудируемость и воспроизводимость приёмки. Разбивка уточнена 25.11.2026: каждая подзадача даёт один проверяемый артефакт и закрывается своим тестом; SC-1.1/SC-1.2 и вся матрица Детали 3.20 закрыты и перенесены в CHANGELOG, здесь не дублируются. DEEP-1, DEEP-2 и DEEP-3 закрыты и перенесены в CHANGELOG. Порядок: дорогая приёмка (DEEP-4).
 
 **Задача DEEP-4 — Полная приёмка D01–D18 как воспроизводимая матрица** · P1 · ⬜
 - [ ] DEEP-4.1 Свести три критерия («работает / доступ агента / доступ пользователя») к объективным артефактам для каждой D01–D18 и убрать criteria-хвост D17; `TEST-PLAN.md`, `test-docs.mjs`.

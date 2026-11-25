@@ -19,6 +19,7 @@ import {
   type VerificationCacheStats,
   type VerificationCheck,
 } from "./savings.js";
+import type { InstallationWarning } from "../shared/installation-warning.js";
 
 // ==================== Типы ====================
 
@@ -154,6 +155,8 @@ export interface SelfAnalysisReport {
   };
   /** PL-98: автопроверка tamper-evident цепочки gate_outcomes. */
   gateLedger?: GateLedgerVerification;
+  /** DEEP-3: предупреждение о рассинхроне загруженной копии и чек-аута. */
+  installationWarning: InstallationWarning | null;
 }
 
 /** Опции для генерации отчёта самоанализа. */
@@ -166,6 +169,8 @@ export interface SelfAnalysisOptions {
   topLimit?: number;
   /** Известные задачи. */
   tasks?: { name: string; matrixParentId?: string | null }[];
+  /** DEEP-3: предупреждение из само-диагностики установки. */
+  installationWarning?: InstallationWarning | null;
 }
 
 // ==================== EV-1: воспроизводимая приёмка §11 ====================
@@ -888,6 +893,25 @@ export function generateSelfAnalysisReport(
 
   // Recommendations
   const recommendations = generateRecommendations(analyticsReport, anomalies, trends);
+  // DEEP-3: рассинхрон установки — это не метрика истории, а состояние хоста,
+  // поэтому предупреждение поднимается в отчёт и в рекомендации высокого приоритета.
+  const installationWarning = options.installationWarning ?? null;
+  if (installationWarning) {
+    recommendations.unshift({
+      priority: 9,
+      category: "monitoring",
+      title: installationWarning.message,
+      description:
+        `Loaded ${installationWarning.loadedVersion}, workspace has ` +
+        `${installationWarning.workspaceVersion ?? "unknown"}; results may come from the stale copy.`,
+      expectedImpact: "Warnings become visible before the next task is started.",
+      effort: "low",
+      steps: [
+        "Restart OpenCode so the plugin is loaded from the current checkout.",
+        "Verify with get_dashboard_info that plugin.reason is ok.",
+      ],
+    });
+  }
 
   // Summary
   const summary = generateSummary(health, anomalies, trends, recommendations);
@@ -900,6 +924,7 @@ export function generateSelfAnalysisReport(
     trends,
     recommendations,
     summary,
+    installationWarning,
     sources: {
       historyRecords: records.length,
       recordsInWindow: analyticsReport.sources.recordsInWindow,

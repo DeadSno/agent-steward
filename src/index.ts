@@ -22,6 +22,8 @@ import path from "node:path";
 import { safeStringify } from "./text.js";
 // QA-P1: само-диагностика загруженной копии плагина (версия/путь/рассинхрон).
 import { getPluginDiagnostics } from "./version.js";
+// DEEP-3: общее fail-open предупреждение о рассинхrone установки.
+import { buildInstallationWarning } from "./shared/installation-warning.js";
 import { HARNESS_VALUES, resolveInvoker, type HarnessName } from "./invokers/agent-invoker.js";
 import {
   RUNNER_KINDS,
@@ -1947,6 +1949,9 @@ const scheduleTaskExecute = wrapExecute<ScheduleArgs>(async (args) => {
   // QA-P2.1: RPC-путь не проходит Zod — проверяем диапазоны явно.
   const rangeError = validateTaskInputRanges(args);
   if (rangeError) throw new Error(rangeError);
+  // DEEP-3.3: fail-open preflight — диагностика не блокирует создание задачи,
+  // но предупреждение попадает в ответ до старта исполнения.
+  const installationWarning = buildInstallationWarning(getPluginDiagnostics());
   const {
     name,
     schedule,
@@ -2114,7 +2119,12 @@ const scheduleTaskExecute = wrapExecute<ScheduleArgs>(async (args) => {
       runWhenLoggedOff: runWhenLoggedOff === true,
       message: t("tool.task.created", { name }),
       // B-2.1: предупреждение о неявной модели попадает в результат инструмента.
-      warnings: modelChoice.warning ? [modelChoice.warning] : [],
+      warnings: [
+        ...(modelChoice.warning ? [modelChoice.warning] : []),
+        ...(installationWarning ? [installationWarning.message] : []),
+      ],
+      // DEEP-3.3: машиночитаемое предупреждение дублируется отдельным полем.
+      ...(installationWarning ? { installationWarning } : {}),
       model: effectiveModel ?? null,
       autoSelected: modelChoice.autoSelected,
       task: {
@@ -2561,6 +2571,10 @@ const deleteTaskExecute = wrapExecute<DeleteArgs>(async (args) => {
 const runTaskNowExecute = wrapExecute<RunNowArgs>(async (args) => {
   const { name } = args;
 
+  // DEEP-3.3: preflight до runTaskEntry — предупреждение не задерживает запуск,
+  // но гарантированно присутствует в ответе даже при skipped/ошибке.
+  const installationWarning = buildInstallationWarning(getPluginDiagnostics());
+
   // PL-8.1: тот же дрейф HEAD, что и в dry_run, показываем при ручном старте.
   const definition = getTask(name);
   const warning =
@@ -2581,6 +2595,8 @@ const runTaskNowExecute = wrapExecute<RunNowArgs>(async (args) => {
       content: JSON.stringify({
         success: false,
         error: err instanceof Error ? err.message : String(err),
+        // DEEP-3.3: preflight-предупреждение сохраняется и на ошибке старта.
+        ...(installationWarning ? { installationWarning } : {}),
       }),
     };
   }
@@ -2594,6 +2610,7 @@ const runTaskNowExecute = wrapExecute<RunNowArgs>(async (args) => {
         message: skipReason || `Задача "${name}" не запущена.`,
         reason: skipReason || "Запуск пропущен.",
         ...(warning ? { warning } : {}),
+        ...(installationWarning ? { installationWarning } : {}),
       }),
     };
   }
@@ -2605,6 +2622,7 @@ const runTaskNowExecute = wrapExecute<RunNowArgs>(async (args) => {
         ? t("tool.task.alreadyRunning", { name })
         : t("tool.task.started", { name }),
       ...(warning ? { warning } : {}),
+      ...(installationWarning ? { installationWarning } : {}),
     }),
   };
 });
@@ -4084,6 +4102,8 @@ const selfAnalysisExecute = wrapExecute<SelfAnalysisArgs>(async (args) => {
   const report = generateSelfAnalysisReport(records, {
     days: windowDays,
     topLimit: Math.max(1, Math.floor(Number(args.topLimit) || 10)),
+    // DEEP-3.1: рассинхрон установки виден в self_analysis до запуска задач.
+    installationWarning: buildInstallationWarning(getPluginDiagnostics()),
     tasks: definitions.filter((d) => !d.name.startsWith("__")).map((definition) => ({
       name: definition.name,
       matrixParentId: definition.matrixParentId,
@@ -4098,6 +4118,8 @@ const selfAnalysisExecute = wrapExecute<SelfAnalysisArgs>(async (args) => {
     health: report.health,
     summary: report.summary,
     sources: report.sources,
+    // DEEP-3.1: то же предупреждение, что и в GUI и в preflight записи.
+    installationWarning: report.installationWarning,
     // PL-98: свежая проверка цепочки — отчёт всегда показывает текущее состояние.
     gateLedger: verifyGateLedgerIntegrity("self-analysis:tool"),
     // EV-1.2: семь критериев §11 и фикс-набор из ledger.
@@ -6483,7 +6505,15 @@ const v2Plugin = Plugin.define({
         return { port: getDashboardPort() };
       },
       get_platform: async () => {
-        return { platform: scheduler.platform, title: scheduler.title };
+        // DEEP-3.2: GUI получает ту же диагностику, что и агенты через
+        // get_dashboard_info, без нового RPC-метода (счётчик остаётся 61).
+        const plugin = getPluginDiagnostics();
+        return {
+          platform: scheduler.platform,
+          title: scheduler.title,
+          plugin,
+          installationWarning: buildInstallationWarning(plugin),
+        };
       },
       dry_run: async (input: unknown) => {
         const { taskName } = input as { taskName: string };

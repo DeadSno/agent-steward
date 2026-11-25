@@ -493,6 +493,10 @@ const GetPlatformOutput = {
     platform: { type: "string" },
     /** Название планировщика для заголовка GUI. */
     title: { type: "string" },
+    /** DEEP-3.2: само-диагностика загруженной копии (как в get_dashboard_info). */
+    plugin: { type: ["object", "null"] },
+    /** DEEP-3.2: структурированное предупреждение о рассинхроне установки. */
+    installationWarning: { type: ["object", "null"] },
   },
   required: ["platform", "title"],
 } as const;

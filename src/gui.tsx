@@ -724,16 +724,25 @@ export default Plugin.define({
     // D01 (IM-1): состояние бэкенда планировщика. Зелёный — RPC отвечает и ОС-бэкенд
     // доступен, красный — запрос get_platform не удался (плагин/сервер не жив).
     const [backendOnline, setBackendOnline] = createSignal(false)
+    // DEEP-3.2: предупреждение о stale-установке приходит вместе с get_platform.
+    const [installationWarning, setInstallationWarning] = createSignal<{ reason: string; message: string } | null>(null)
 
     async function loadPlatformGui() {
       try {
         const info = await rpc.get_platform({})
         if (info?.title) setSchedulerTitle(info.title)
         if (info?.platform) setSchedulerPlatform(info.platform)
+        const warning = (info as any)?.installationWarning
+        setInstallationWarning(
+          warning && typeof warning.message === "string"
+            ? { reason: String(warning.reason || "stale-installation"), message: warning.message }
+            : null,
+        )
         setBackendOnline(true)
       } catch (err: any) {
         console.error("RPC Error (get_platform):", err)
         setBackendOnline(false)
+        // Fail-open: отсутствие RPC не должно скрывать уже показанное предупреждение.
       }
     }
 
@@ -3319,6 +3328,15 @@ export default Plugin.define({
                     {backendOnline() ? gt("gui.backendStatusOnline") : gt("gui.backendStatusOffline")}
                   </span>
                 </div>
+                {installationWarning() && (
+                  <div
+                    data-installation-warning={installationWarning()!.reason}
+                    data-testid="installation-warning"
+                    style="margin-top:8px;padding:8px 10px;border-radius:8px;border:1px solid #ff9f0a;background:rgba(255,159,10,0.12);color:#ffb340;font-size:12px;line-height:1.4"
+                  >
+                    ⚠ {installationWarning()!.message}
+                  </div>
+                )}
                 <div style="margin-top:5px;font-size:11px;font-weight:600;letter-spacing:1.2px;text-transform:uppercase;color:#8e8e93">
                   Local AI CI/CD Orchestrator
                 </div>

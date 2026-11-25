@@ -39,6 +39,7 @@ import {
 } from "./dist/core/self-analysis.js";
 import { buildAnalytics } from "./dist/core/analytics.js";
 import { t } from "./dist/i18n.js";
+import { buildInstallationWarning } from "./dist/shared/installation-warning.js";
 
 const results = [];
 let passed = 0;
@@ -766,6 +767,57 @@ console.log("\n=== EV-1: приёмка §11 ===");
   check("LP-1.3: откат сохраняет причину и команду возврата", rollback.reason === "деградация метрик" && rollback.command.includes("git checkout HEAD"));
   check("LP-1.3: откат привязан к адаптеру", rollback.adapterId === candidate.adapterId);
   check("LP-1.3: откат из тени тоже обнуляет трафик", rollbackLoraAdapter(shadow, "останов", { now: acceptanceNow }).trafficShare === 0);
+}
+
+// --- DEEP-3.1: предупреждение о рассинхроне установки -------------------------
+
+{
+  const diagnostics = {
+    version: "0.0.7",
+    modulePath: "C:\\plugins\\agent-steward\\dist\\version.js",
+    workspaceVersion: "0.0.8",
+    workspaceRoot: "C:\\work\\checkout",
+    staleInstallation: true,
+    reason: "identity-mismatch",
+  };
+  const warning = buildInstallationWarning(diagnostics);
+  check("DEEP-3.1: identity-mismatch даёт предупреждение", warning?.reason === "identity-mismatch");
+  check(
+    "DEEP-3.1: предупреждение несёт обе версии и пути",
+    warning?.loadedVersion === "0.0.7" &&
+      warning?.workspaceVersion === "0.0.8" &&
+      warning?.loadedFrom === diagnostics.modulePath &&
+      warning?.workspaceRoot === diagnostics.workspaceRoot,
+  );
+  check(
+    "DEEP-3.1: сообщение объясняет действие",
+    typeof warning?.message === "string" && warning.message.includes("restart OpenCode"),
+  );
+  check(
+    "DEEP-3.1: stale без identity даёт stale-installation",
+    buildInstallationWarning({ ...diagnostics, reason: "ok" })?.reason === "stale-installation",
+  );
+  check(
+    "DEEP-3.1: ok/no-workspace-manifest/отсутствие диагностики — без предупреждения",
+    buildInstallationWarning({ ...diagnostics, staleInstallation: false, reason: "ok" }) === null &&
+      buildInstallationWarning({ ...diagnostics, staleInstallation: false, reason: "no-workspace-manifest" }) === null &&
+      buildInstallationWarning(null) === null,
+  );
+
+  const withWarning = generateSelfAnalysisReport([], { installationWarning: warning });
+  check("DEEP-3.1: отчёт несёт предупреждение", withWarning.installationWarning === warning);
+  check(
+    "DEEP-3.1: предупреждение поднято в рекомендации высокого приоритета",
+    withWarning.recommendations.some(
+      (item) => item.priority === 9 && item.category === "monitoring" && item.title === warning.message,
+    ),
+  );
+  const clean = generateSelfAnalysisReport([]);
+  check("DEEP-3.1: без рассинхрона поле null", clean.installationWarning === null);
+  check(
+    "DEEP-3.1: без рассинхрона нет лишней рекомендации",
+    !clean.recommendations.some((item) => item.title === warning.message),
+  );
 }
 
 // --- Итоги -------------------------------------------------------------------

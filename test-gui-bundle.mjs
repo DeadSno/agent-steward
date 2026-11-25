@@ -111,6 +111,32 @@ if (fs.existsSync(debugDistPath)) {
   console.log("SKIP debug module not built (run: npm run build)");
 }
 
+// DEEP-3.2: предупреждение о stale-установке должно быть заведено в GUI
+// статически — даже если бандл ещё не собран.
+{
+  const guiSrc = fs.readFileSync(path.join(root, "src", "gui.tsx"), "utf8");
+  const rpcSrc = fs.readFileSync(path.join(root, "src", "rpc.ts"), "utf8");
+  const indexSrc = fs.readFileSync(path.join(root, "src", "index.ts"), "utf8");
+  check(
+    "DEEP-3.2: GUI читает installationWarning из get_platform",
+    guiSrc.includes("rpc.get_platform({})") && guiSrc.includes("installationWarning()"),
+  );
+  check(
+    "DEEP-3.2: GUI показывает предупреждение до запуска задачи",
+    guiSrc.includes("data-installation-warning") && guiSrc.includes("installationWarning()!.message"),
+  );
+  check(
+    "DEEP-3.2: fail-open — ошибка RPC не очищает предупреждение",
+    guiSrc.includes("Fail-open: отсутствие RPC не должно скрывать уже показанное предупреждение."),
+  );
+  check(
+    "DEEP-3.2: RPC get_platform отдаёт диагностику без нового метода",
+    rpcSrc.includes("installationWarning: { type: [\"object\", \"null\"] }") &&
+      indexSrc.includes("get_platform: async () =>") &&
+      indexSrc.includes("installationWarning: buildInstallationWarning(plugin)"),
+  );
+}
+
 if (!bundlePath) {
   console.log("SKIP gui bundle not built (run: npm run build:gui)");
   console.log("\n0 passed, 0 failed");

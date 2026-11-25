@@ -1343,6 +1343,26 @@ check(
         staleDiag.workspaceVersion === "0.0.0-stale" &&
         staleDiag.version !== staleDiag.workspaceVersion
     );
+    // DEEP-3.3: fail-open preflight — предупреждение есть в ответе, но
+    // создание задачи и попытка запуска не блокируются.
+    const scheduled = JSON.parse((await handlers.schedule_task({
+      name: "DEEP3-Preflight", schedule: "0 9 * * *", prompt: "verify stale preflight",
+    })).content);
+    check(
+      "DEEP-3.3: schedule_task отдаёт installationWarning до старта",
+      scheduled.success === true &&
+        scheduled.installationWarning?.reason === "identity-mismatch" &&
+        scheduled.installationWarning.workspaceVersion === "0.0.0-stale" &&
+        Array.isArray(scheduled.warnings) &&
+        scheduled.warnings.some((w) => String(w).includes("restart OpenCode"))
+    );
+    const started = JSON.parse((await handlers.run_task_now({
+      name: "__deep3_missing_task__",
+    })).content);
+    check(
+      "DEEP-3.3: run_task_now сохраняет предупреждение даже при ошибке старта",
+      started.success === false && started.installationWarning?.reason === "identity-mismatch"
+    );
   } finally {
     process.chdir(originalCwd);
     fs.rmSync(staleRoot, { recursive: true, force: true });
