@@ -27,7 +27,6 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 
 ## QA-находки (проверка работоспособности плагина 24.11.2026)
 
-- QA-D316-25: `test-profiles.mjs` падает на dev tip (`PROFILES_EXIT=1`, 76/80): `manage_*`-описания 3781 символ/4057 токен против лимитов 2859/3809, admin 15990 против 15000, core-описания изменились побайтово — P1. Действие: в `src/index.ts` укоротить `manage_*`/admin-описания до лимитов B-3.1 и восстановить стабильные core-описания; проверка `node test-profiles.mjs`. Обнаружено 25.11.2026.
 
 - QA-D316-26: обёртка `run-task.ps1` при задаче без явного `model` вызывает `opencode run --auto`, который выбирает модель с исчерпанной free-квотой и завершается exit 1 ('Free usage limit reached'), но qualityGate (build + test-docs) проходит на неизменённом дереве, поэтому PL-81 помечает задачу `success`, а afterScript пишет `SKIP (nothing to commit)` — P1. Действие: не считать задачу success при `exitCode` агента != 0 даже при qualityGate=pass; требовать явную модель. Воспроизведено: задача 'QA-D316-21 flaky cleanup OS' через `schtasks /run` в 10:38, `get_history` status=success, git status без изменений, `pl-commit.log` SKIP. Обнаружено 25.11.2026.
 

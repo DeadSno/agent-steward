@@ -5591,15 +5591,12 @@ export function createToolSpecs(
       execute: handlers.emit_event,
     },
   ];
-  // QA-D316-19: честное пояснение про лимит каталога Code Mode добавляется
-  // ко всем описаниям централизованно, чтобы не править 34 объявления.
-  const annotated = specs.map((spec) => ({
-    ...spec,
-    description: spec.description + CODE_MODE_BRIDGE_NOTE,
-  }));
+  // QA-D316-25: пояснение про лимит каталога Code Mode живой документации
+  // (docs/COMPATIBILITY.md), НЕ в описаниях инструментов: аннотация ко всем
+  // 34 описаниям ломала B-3.1 лимиты manage_*/admin и coreDigest.
   // T-1/T-3: фильтрация по профилю и запрет инструментов в дочернем прогоне
   // применяются общим построителем из src/tool-specs.ts.
-  return buildToolSpecs(runtime, env, annotated);
+  return buildToolSpecs(runtime, env, specs);
 }
 
 /**
