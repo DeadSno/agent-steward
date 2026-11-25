@@ -38,7 +38,7 @@ jobs:
         run: npm ci
 
       - name: Restore incremental build cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: node_modules/.cache
           key: ${{ runner.os }}-node${{ matrix.node }}-build-${{ hashFiles('tsconfig.json', 'vite.config.ts', 'package-lock.json') }}-${{ github.sha }}
