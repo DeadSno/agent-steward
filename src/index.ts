@@ -1138,7 +1138,8 @@ export const updateTaskSchema = z.object({
 /**
  * T-2: «толстые» поля живут в full-схемах `schedule_advanced`/`update_advanced`.
  * Дешёвый профиль получает те же checking-правила, но без matrix/DAG/retry/
- * notification/триггерных блоков — экономия ~4.5k токенов на запрос.
+ * триггерных блоков — экономия ~4.5k токенов на запрос. Цепочки
+ * nextTaskOnSuccess/nextTaskOnError — плоские строки, поэтому доступны в core.
  */
 const ADVANCED_SCHEMA_KEYS = [
   "matrix",
@@ -1146,8 +1147,6 @@ const ADVANCED_SCHEMA_KEYS = [
   "dependsOn",
   "retryCount",
   "retryDelay",
-  "nextTaskOnSuccess",
-  "nextTaskOnError",
   // QA-PORT-4: mcpEvent нужен в core — иначе event-driven задачи нельзя создать.
   "watchGlobs",
   "watchIgnore",
@@ -1196,6 +1195,8 @@ const CORE_FIELD_DESCRIPTIONS: Record<string, string> = {
   mcpEvent: "MCP-event trigger {event|eventName, server?, filter?}; fire it with emit_event.",
   watchPath: "Path to watch for triggerType=file.",
   gitBranch: "Branch to watch for triggerType=git.",
+  nextTaskOnSuccess: "Task name to chain after success (flat string); empty string clears it.",
+  nextTaskOnError: "Task name to chain after failure (flat string); empty string clears it.",
 };
 
 function slimTaskSchema<T extends z.ZodRawShape>(schema: z.ZodObject<T>): z.ZodTypeAny {

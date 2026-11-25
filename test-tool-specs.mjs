@@ -47,12 +47,12 @@ const EXPECTED_HASHES = {
   "restore_db": "831883a897c117984f283a976654f320a4a6724171fc2016b7077344351f058a",
   "run_task_now": "adcfc004fce2d39ca95953df502b8f9587c475af4a377e7d7213b7ff83347e8a",
   "schedule_advanced": "a3f0f250efdbd3a6390f318b19fa4b85fcc4286cb7c1bec293a239eefa25f04b",
-  "schedule_task": "e054072d5661ae5900a1317ad334e4ac1f5bd8e35fd6f5962cb723c783309378",
+  "schedule_task": "aa0585815012695d1cd7c013d9333a697d5fee55579841472c3be75917a4a7b3",
   "self_analysis": "1455ca31e66913748fbf3803567919e1a0c0781b46ddaa25015d11e6d27973ab",
   "send_notification": "c212dcbf36e38363577dc1afc60a32a3b780e18bdc55c93aed609b9f38033b1d",
   "transfer_tasks": "d6392ba65a6124d7e7213fa8b64f0732a92f080f5526067ed424a66e878b0662",
   "update_advanced": "844abfea03bdfa50cece13a2b8211ba3251a613c19f4b35d843511f6e933d374",
-  "update_task": "92557e2d5bbc2c4fe2b98f6ad615bcbe441f08330af9485a79c07e07ea4c0e05",
+  "update_task": "63258645de384d6b8daa8b8bc8b43bcc65d988b37dacb43346dc9054d2b11b60",
 };
 
 const EXPECTED_RPC_METHODS = ["add_workspace","backup_db","cancel_matrix","cleanup_history","cleanup_matrix_orphans","compare_triage","create_profile","create_task","decide_approval","delete_profile","delete_secret","delete_task","delete_template","delete_workspace","discard_dlq","dry_run","dry_run_all","emit_event","expand_matrix_preview","export_tasks","get_analytics","get_audit","get_dashboard_port","get_history","get_matrix_results","get_metrics","get_platform","get_profiles","get_settings","get_shadow_report","get_task_logs","get_tasks","get_templates","get_workspaces","import_tasks","list_approvals","list_dlq","list_durable_runs","list_secrets","pause_durable_run","pause_task","pipeline_apply","pipeline_export","pipeline_validate","reset_shadow_report","restore_db","resume_durable_run","resume_task","retry_dlq","run_mission","run_task","save_secret","save_settings","save_template","self_analysis","send_digest","set_profile","test_local_ai","test_notification","update_task","update_workspace"];
@@ -220,6 +220,19 @@ check("QA-PORT-4: coreScheduleTaskSchema сохраняет mcpEvent", () => {
     mcpEvent: { server: "codebase-memory", event: "qa-port-4-probe" },
   });
   assert.deepEqual(parsed.mcpEvent, { server: "codebase-memory", event: "qa-port-4-probe" });
+});
+check("QA-D316-2: coreScheduleTaskSchema.shape содержит обе цепочки", () => {
+  assert.ok("nextTaskOnSuccess" in coreScheduleTaskSchema.shape, "нет nextTaskOnSuccess");
+  assert.ok("nextTaskOnError" in coreScheduleTaskSchema.shape, "нет nextTaskOnError");
+  const parsed = coreScheduleTaskSchema.parse({
+    name: "qa-d316-2-probe",
+    schedule: "0 4 * * *",
+    prompt: "probe",
+    nextTaskOnSuccess: "on-success",
+    nextTaskOnError: "on-error",
+  });
+  assert.equal(parsed.nextTaskOnSuccess, "on-success");
+  assert.equal(parsed.nextTaskOnError, "on-error");
 });
 
 check("P-1.2: список RPC-методов совпадает со снимком (61 метод)", () => {

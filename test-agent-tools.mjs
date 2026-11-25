@@ -52,6 +52,7 @@ const { executeBatchCalls, BATCH_CALL_LIMIT } = await import(
 );
 const { LOG_DIR, sanitizeName } = await import("./dist/types.js");
 const { loadTemplates, saveTemplate, deleteTemplate } = await import("./dist/templates.js");
+const { saveTask, getTask } = await import("./dist/db/tasks-repo.js");
 
 const results = [];
 function check(name, cond) {
@@ -799,18 +800,21 @@ check(
 }
 
 // QA-PORT-4: event-driven задачи доступны в core-профиле. Короткое поле
-// mcpEvent и инструмент emit_event переведены в core; цепочки
-// nextTaskOnSuccess остаются admin-only (бывший PL-129).
+// mcpEvent и инструмент emit_event переведены в core. QA-D316-2: цепочки
+// nextTaskOnSuccess/nextTaskOnError — тоже плоские строки, поэтому больше
+// не требуют admin-профиля (бывший PL-129).
 {
   const coreShape = coreScheduleTaskSchema.shape;
   const fullShape = scheduleTaskSchema.shape;
   check(
-    "QA-PORT-4: coreScheduleTaskSchema.shape содержит mcpEvent, но не nextTaskOnSuccess",
-    "mcpEvent" in coreShape && !("nextTaskOnSuccess" in coreShape)
+    "QA-PORT-4/QA-D316-2: coreScheduleTaskSchema.shape содержит mcpEvent и обе цепочки",
+    "mcpEvent" in coreShape &&
+      "nextTaskOnSuccess" in coreShape &&
+      "nextTaskOnError" in coreShape
   );
   check(
-    "QA-PORT-4: полная scheduleTaskSchema содержит mcpEvent и nextTaskOnSuccess",
-    "mcpEvent" in fullShape && "nextTaskOnSuccess" in fullShape
+    "QA-D316-2: полная scheduleTaskSchema содержит обе цепочки",
+    "nextTaskOnSuccess" in fullShape && "nextTaskOnError" in fullShape
   );
   const localeHints = ["en", "ru", "zh", "tr"].map((locale) => {
     const catalog = JSON.parse(
@@ -819,7 +823,7 @@ check(
     return catalog["tool.error.mcpEventRequired"] ?? "";
   });
   check(
-    "QA-PORT-4: все 4 локали объясняют mcpEvent/emit_event в core и admin-only цепочки",
+    "QA-PORT-4: все 4 локали упоминают mcpEvent/emit_event, admin-профиль и nextTaskOnSuccess",
     localeHints.every(
       (hint) =>
         hint.includes("mcpEvent") &&
@@ -828,6 +832,37 @@ check(
         hint.includes("AGENT_STEWARD_TOOL_PROFILE=all") &&
         hint.includes("nextTaskOnSuccess")
     )
+  );
+}
+
+// QA-D316-2: цепочки, принятые core-профилем, доходят до definition и view.
+// Задачу в ОС не регистрируем (schtasks не трогаем): проверяем форму,
+// сохранённое определение и маппинг в list_tasks по исходнику dist/index.js.
+{
+  const parsed = coreScheduleTaskSchema.parse({
+    name: "qa-d316-2-chain-probe",
+    schedule: "0 4 * * *",
+    prompt: "probe",
+    nextTaskOnSuccess: "qa-d316-2-on-success",
+    nextTaskOnError: "qa-d316-2-on-error",
+  });
+  check(
+    "QA-D316-2: core-схема сохраняет оба поля в разобранных данных",
+    parsed.nextTaskOnSuccess === "qa-d316-2-on-success" &&
+      parsed.nextTaskOnError === "qa-d316-2-on-error"
+  );
+  saveTask(parsed);
+  const stored = getTask("qa-d316-2-chain-probe");
+  check(
+    "QA-D316-2: definition хранит обе цепочки после saveTask/getTask",
+    stored?.nextTaskOnSuccess === "qa-d316-2-on-success" &&
+      stored?.nextTaskOnError === "qa-d316-2-on-error"
+  );
+  const listViewSource = fs.readFileSync(new URL("./dist/index.js", import.meta.url), "utf8");
+  check(
+    "QA-D316-2: list_tasks маппит обе цепочки из definition",
+    /nextTaskOnSuccess:\s*def\?\.nextTaskOnSuccess\s*\?\?\s*null/.test(listViewSource) &&
+      /nextTaskOnError:\s*def\?\.nextTaskOnError\s*\?\?\s*null/.test(listViewSource)
   );
 }
 
