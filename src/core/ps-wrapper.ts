@@ -669,13 +669,15 @@ function Get-RecordVerdict {
             NormalizedExitCode = $AgentExitCode
         }
     }
-    # QA-D316-5: агент снят completion/idle-сторожем на финализации, артефакты
-    # уже записаны, но quality gate ещё не запускался — это частичный успех.
+    # QA-D316-5 / QA-D316-10: агент снят completion/idle-сторожем на
+    # финализации, артефакты уже записаны — это частичный успех независимо
+    # от гейта. PL-134 мог прервать агента ПОСЛЕ пройденного гейта, который
+    # проверял не все ожидаемые правки (например, не удалил строку ROADMAP).
     # Артефакты остаются на диске, прогон не помечается жёсткой ошибкой.
-    if ($IdleCompleted -and $WorkCompleted -and -not $GatePassed) {
+    if ($IdleCompleted -and $WorkCompleted) {
         return [pscustomobject]@{
             Status = "partial"
-            Reason = "PL-134: артефакты сохранены, quality gate не запускался"
+            Reason = "PL-134: артефакты сохранены, финализация прервана сторожем простоя"
             NormalizedExitCode = 0
         }
     }
@@ -1736,6 +1738,19 @@ try {
         }
     }
 
+    # QA-D316-10: idle-сторож прервал финализацию. Гейт, который успел пройти
+    # до этого, подтверждает только проверенные им файлы (например, CHANGELOG
+    # и маркер), но не полноту правок: строка ROADMAP могла остаться на месте,
+    # а коммит после гейта не состоялся. Такой гейт недоверен — обнуляем его,
+    # чтобы вердикт был partial, а не success.
+    if ($script:childIdleCompleted -and $script:agentArtifactPresent -and $gatePassed -eq $true) {
+        Write-Log "[agent-steward] QA-D316-10: PL-134 прервал финализацию после пройденного гейта — результат partial, полнота правок не подтверждена."
+        $gatePassed = $false
+        if (-not $script:errorMessage) {
+            $script:errorMessage = "PL-134: финализация прервана сторожем простоя"
+        }
+    }
+
     # PL-81: разделяем "ошибку агента" и "ошибку верификации". Если гейт прошёл,
     # ненулевой код возврата агента не делает задачу error: причина кода
     # фиксируется в истории, а post-flight (коммит) выполняется в полном объёме.
@@ -2556,8 +2571,9 @@ export interface WrapperRecordVerdict {
  * использует тот же порядок правил через Get-RecordVerdict; эта чистая функция
  * позволяет тестировать вердикт детерминированно, без запуска powershell.exe.
  *
- * Порядок приоритетов: quota (PL-114) > gate=pass + watchdog (PL-128) >
- * gate=pass (PL-81) > таймаут без гейта > ошибка.
+ * Порядок приоритетов: quota (PL-114) > idle без артефактов (PL-160) >
+ * idle с артефактами (QA-D316-10, даже при gate=pass) > gate=pass + watchdog
+ * (PL-128) > gate=pass (PL-81) > таймаут без гейта > ошибка.
  */
 export function resolveWrapperRecordVerdict(
   input: WrapperRecordVerdictInput,
@@ -2587,13 +2603,15 @@ export function resolveWrapperRecordVerdict(
       normalizedExitCode: input.agentExitCode ?? input.exitCode,
     };
   }
-  // QA-D316-5: idle-сторож снял агента на финализации, когда артефакты уже
-  // записаны, а quality gate ещё не запускался. Это частичный успех: артефакты
-  // сохраняются, а не объявляются ошибкой (полностью пустой прогон — PL-160 выше).
-  if (input.idleCompleted === true && input.workCompleted === true && !input.gatePassed) {
+  // QA-D316-5 / QA-D316-10: idle-сторож снял агента на финализации, когда
+  // артефакты уже записаны. Это частичный успех независимо от гейта: PL-134
+  // мог прервать агента ПОСЛЕ того, как гейт прошёл (проверял только CHANGELOG
+  // и маркер), но до удаления строки из ROADMAP. Полностью пустой прогон —
+  // PL-160 выше.
+  if (input.idleCompleted === true && input.workCompleted === true) {
     return {
       status: "partial",
-      reason: "PL-134: артефакты сохранены, quality gate не запускался",
+      reason: "PL-134: артефакты сохранены, финализация прервана сторожем простоя",
       normalizedExitCode: 0,
     };
   }

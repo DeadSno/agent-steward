@@ -284,7 +284,7 @@ const verdictCases = [
       v.normalizedExitCode === 0,
   },
   {
-    name: "idle + артефакты + gate=pass → success (PL-81 не сломан)",
+    name: "idle + артефакты + gate=pass → partial (QA-D316-10)",
     input: {
       timedOut: false,
       exitCode: 0,
@@ -293,7 +293,10 @@ const verdictCases = [
       idleCompleted: true,
       workCompleted: true,
     },
-    expect: (v) => v.status === "success" && v.normalizedExitCode === 0,
+    expect: (v) =>
+      v.status === "partial" &&
+      v.reason.startsWith("PL-134:") &&
+      v.normalizedExitCode === 0,
   },
 ];
 for (const item of verdictCases) {
@@ -370,8 +373,16 @@ check(
   "QA-D316-5: PowerShell-вердикт возвращает partial с причиной PL-134",
   WRAPPER_SCRIPT.includes('Status = "partial"') &&
     WRAPPER_SCRIPT.includes(
-      "PL-134: артефакты сохранены, quality gate не запускался"
+      "PL-134: артефакты сохранены, финализация прервана сторожем простоя"
     )
+);
+check(
+  "QA-D316-10: пройденный гейт при PL-134 объявляется недоверенным",
+  WRAPPER_SCRIPT.includes(
+    "$script:childIdleCompleted -and $script:agentArtifactPresent -and $gatePassed -eq $true"
+  ) &&
+    WRAPPER_SCRIPT.includes("$gatePassed = $false") &&
+    WRAPPER_SCRIPT.includes("QA-D316-10: PL-134 прервал финализацию")
 );
 
 console.log(`\n${passed}/${results.length} проверок сторожа пройдено.`);

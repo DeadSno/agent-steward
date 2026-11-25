@@ -2128,8 +2128,10 @@ try {
     workCompleted: true,
   });
   check(
-    "PL-160: idle с артефактами остаётся success (PL-81)",
-    pl160WithWork.status === "success" && pl160WithWork.normalizedExitCode === 0,
+    "QA-D316-10: idle с артефактами и gate=pass — partial, а не success",
+    pl160WithWork.status === "partial" &&
+      pl160WithWork.reason.startsWith("PL-134:") &&
+      pl160WithWork.normalizedExitCode === 0,
     JSON.stringify(pl160WithWork)
   );
   const pl160CleanExit = resolveWrapperRecordVerdict({
