@@ -905,6 +905,40 @@ check(
     /30-tool registry|57 methods|71 модулей/.test("ARCHITECTURE: 30-tool registry, 57 methods; diagram: 71 модулей")
 );
 
+// DOCS-008: регрессия на 240 битых локальных ссылок в диаграммах — ссылки
+// писались как из корня (`src/...`), хотя файлы лежат в `docs/`.
+const markdownFiles = [];
+for (const scanDir of [root, docs, path.join(root, ".agents"), path.join(root, "skills")]) {
+  if (!fs.existsSync(scanDir)) continue;
+  for (const entry of fs.readdirSync(scanDir, { recursive: true, withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
+    const full = path.join(entry.parentPath ?? entry.path, entry.name);
+    const rel = path.relative(root, full).replace(/\\/g, "/");
+    if (rel === "CHANGELOG.md" || rel.startsWith("node_modules/") || rel.startsWith("dist/") || rel.startsWith("legacy/")) continue;
+    markdownFiles.push(full);
+  }
+}
+const brokenDocLinks = [];
+for (const file of markdownFiles) {
+  const text = fs.readFileSync(file, "utf8");
+  for (const match of text.matchAll(/\[[^\]]*\]\(([^)]+)\)/g)) {
+    const raw = match[1].trim().split(/\s+/)[0];
+    if (!raw || /^(https?:|mailto:|#)/.test(raw)) continue;
+    const target = raw.split("#")[0];
+    if (!target) continue;
+    const resolved = path.isAbsolute(target)
+      ? path.join(root, target)
+      : path.resolve(path.dirname(file), target);
+    if (!fs.existsSync(resolved)) {
+      brokenDocLinks.push(`${path.relative(root, file)}: ${raw}`);
+    }
+  }
+}
+check(
+  `DOCS-008: локальные Markdown-ссылки существуют (${markdownFiles.length} файлов)`,
+  markdownFiles.length > 0 && brokenDocLinks.length === 0
+);
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\nDocs: ${results.length - failed.length}/${results.length} проверок пройдено.`);
 process.exit(failed.length > 0 ? 1 : 0);

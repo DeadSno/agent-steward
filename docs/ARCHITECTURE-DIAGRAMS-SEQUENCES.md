@@ -9,7 +9,7 @@
 
 ### 4.1a Запуск зарегистрированной задачи (cron/once/file/event)
 
-Источник: зарегистрированная задача (`registered`). Реальный путь: обёртка планировщика ([ps-wrapper.ts](src/core/ps-wrapper.ts) / [wrappers/bash.ts](src/core/wrappers/bash.ts)) → `opencode run` → рекордер ([record-history.ts](src/core/record-history.ts)). Рекордер использует из [execution.ts](src/core/execution.ts) только контекст-хелперы (`createRegisteredRunContext`, `validateRunContext`, `triggerKindFor`) и `writeGateOutcome`; **`buildExecutionPlan`/`routeStep`/approval/эскалация на этом пути не вызываются** — это осознанная граница (ARCH-1.1).
+Источник: зарегистрированная задача (`registered`). Реальный путь: обёртка планировщика ([ps-wrapper.ts](../src/core/ps-wrapper.ts) / [wrappers/bash.ts](../src/core/wrappers/bash.ts)) → `opencode run` → рекордер ([record-history.ts](../src/core/record-history.ts)). Рекордер использует из [execution.ts](../src/core/execution.ts) только контекст-хелперы (`createRegisteredRunContext`, `validateRunContext`, `triggerKindFor`) и `writeGateOutcome`; **`buildExecutionPlan`/`routeStep`/approval/эскалация на этом пути не вызываются** — это осознанная граница (ARCH-1.1).
 
 ```mermaid
 sequenceDiagram
@@ -52,7 +52,7 @@ sequenceDiagram
 
 ### 4.1b Ad-hoc миссия (execution plan)
 
-Источник: `run_mission`/execution plan в [index.ts](src/index.ts) → [execution.ts](src/core/execution.ts) (`buildExecutionPlan`, `executeExecutionPlan`, `runMission`). Именно здесь живут маршрутизация, одобрения и эскалация.
+Источник: `run_mission`/execution plan в [index.ts](../src/index.ts) → [execution.ts](../src/core/execution.ts) (`buildExecutionPlan`, `executeExecutionPlan`, `runMission`). Именно здесь живут маршрутизация, одобрения и эскалация.
 
 ```mermaid
 sequenceDiagram
@@ -124,7 +124,7 @@ sequenceDiagram
 
 ### 4.2 Matrix fan-out
 
-Источник: [matrix.ts](src/core/matrix.ts) (`expandMatrixTask`, `runMatrix`, `resolveMatrixConcurrency`, `advanceMatrixAfterClone`, `finalizeMatrixIfComplete`), конфиг матрицы — `schedule_task({ matrix: {...} })`.
+Источник: [matrix.ts](../src/core/matrix.ts) (`expandMatrixTask`, `runMatrix`, `resolveMatrixConcurrency`, `advanceMatrixAfterClone`, `finalizeMatrixIfComplete`), конфиг матрицы — `schedule_task({ matrix: {...} })`.
 
 ```mermaid
 sequenceDiagram
@@ -173,7 +173,7 @@ sequenceDiagram
 
 ### 4.3 Resume после краша
 
-Источник: [run-panel-api.ts](src/core/run-panel-api.ts) (`resumeDurableRunExecution`), [execution.ts](src/core/execution.ts) (`durableExecutorDescriptor`, `writeGateOutcome`), [run-resume.ts](src/db/run-resume.ts) (`resumeRun`), [run-journal.ts](src/db/run-journal.ts) (`recoverInterruptedSteps`), [run-dlq.ts](src/db/run-dlq.ts). **PL-92 закрыт:** `resumeRun` подключён к RPC/GUI через фасад, который восстанавливает исполнителя из `metadata.durableExecution`.
+Источник: [run-panel-api.ts](../src/core/run-panel-api.ts) (`resumeDurableRunExecution`), [execution.ts](../src/core/execution.ts) (`durableExecutorDescriptor`, `writeGateOutcome`), [run-resume.ts](../src/db/run-resume.ts) (`resumeRun`), [run-journal.ts](../src/db/run-journal.ts) (`recoverInterruptedSteps`), [run-dlq.ts](../src/db/run-dlq.ts). **PL-92 закрыт:** `resumeRun` подключён к RPC/GUI через фасад, который восстанавливает исполнителя из `metadata.durableExecution`.
 
 ```mermaid
 sequenceDiagram

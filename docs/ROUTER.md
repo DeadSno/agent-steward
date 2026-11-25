@@ -19,8 +19,8 @@ const restored = createCapabilityRouter({}, snapshot); // обучение пр�
 
 | Слой | Что делает | Где |
 | --- | --- | --- |
-| 1. Статические правила | Known task type → транспорт + исполнитель, без данных и без модели | [`src/core/router/rules.ts`](src/core/router/rules.ts) |
-| 2. Обучение | `first_pass_rate`, затухающий success rate, пороги local/cloud/review | [`src/core/router/capability-math.ts`](src/core/router/capability-math.ts) |
+| 1. Статические правила | Known task type → транспорт + исполнитель, без данных и без модели | [`src/core/router/rules.ts`](../src/core/router/rules.ts) |
+| 2. Обучение | `first_pass_rate`, затухающий success rate, пороги local/cloud/review | [`src/core/router/capability-math.ts`](../src/core/router/capability-math.ts) |
 | 3. Модель | Разбивает миссию на шаги с типами; маршрут уже выбран слоями 1/2 | `src/core/router/planner.ts` |
 
 Статические правила выигрывают по умолчанию (`reason: "static-rule"`,
@@ -47,7 +47,7 @@ const restored = createCapabilityRouter({}, snapshot); // обучение пр�
 | между порогами | — | нестабильно, `review` |
 
 Все константы и формулы экспортируются; SQLite-карта
-[`src/db/capability-repo.ts`](src/db/capability-repo.ts) использует **те же**
+[`src/db/capability-repo.ts`](../src/db/capability-repo.ts) использует **те же**
 функции из `capability-math`, поэтому офлайн-роутер и durable-карта не
 расходятся. Разница лишь в хранении: сабпат держит состояние в памяти и
 передаёт его снимком, карта пишет в таблицу `capability_map`.
