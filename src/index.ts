@@ -8419,6 +8419,16 @@ export class PluginShutdownError extends Error {
 let activeNonIsolatedRuns = 0;
 
 /**
+ * QA-D316-20: единственная точка снятия счётчика PL-106. Раньше счётчик
+ * снимался только в `finally` вокруг `scheduler.runTask`, поэтому early-return
+ * для `once` без задания ОС (и ошибка «задача не найдена») оставляли его
+ * поднятым — следующий run_task_now получал PL-106.
+ */
+function releaseNonIsolatedRun(isolated: boolean): void {
+  if (!isolated) activeNonIsolatedRuns = Math.max(0, activeNonIsolatedRuns - 1);
+}
+
+/**
  * PL-138: подметает осиротевшие running-записи перед новым запуском.
  *
  * Принудительное завершение дочернего opencode оставляет живую обёртку и
@@ -8469,7 +8479,7 @@ async function reapStaleRuns(): Promise<number> {
     const durationMs = Date.now() - Date.parse(rec.startedAt);
     if (finishRun(rec.id, "error", durationMs, reason, null, 0, 0, undefined, "skipped", "skipped")) {
       console.error(`[agent-steward] ${reason} Задача: ${rec.taskName}, run #${rec.id}.`);
-      activeNonIsolatedRuns = Math.max(0, activeNonIsolatedRuns - 1);
+      releaseNonIsolatedRun(false);
       reaped += 1;
     }
   }
@@ -8523,56 +8533,61 @@ async function runTaskEntry(
     }
     if (!isolation.isolated) activeNonIsolatedRuns++;
 
-    // QA-P3.6: если задачи нет ни в определениях, ни в планировщике ОС,
-    // не дёргаем schtasks /run — он возвращает сырую ошибку ОС. Возвращаем
-    // структурированное «задача не найдена», как и остальные инструменты.
-    // Legacy-задачи, живущие только в ОС (без definition), остаются запускаемыми.
-    if (!definition) {
-      const osTasks = await scheduler.listTasks().catch(() => []);
-      const osExists = osTasks.some(
-        (task) => (task.taskName ?? "").toLowerCase() === trimmed.toLowerCase(),
-      );
-      if (!osExists) {
-        throw new Error(t("tool.error.taskNotFound", { name: trimmed }));
-      }
-    } else if (definition.triggerType === "once") {
-      // QA-D316-7: после срабатывания once обёртка удаляет задание из
-      // планировщика ОС, но definition остаётся в БД. Повторный /run падал
-      // сырой ошибкой «Не удается найти указанный файл». Сообщаем внятно
-      // и помечаем запуск как пропущенный (success:false в run_task_now).
-      const osState = await readOsTasksWithRetry(true);
-      if (osState.osAvailable) {
-        const osExists = osState.tasks.some(
+    // QA-D316-20: счётчик снимается на ЛЮБОМ исходе, включая early-return
+    // для once без задания ОС и ошибку «задача не найдена». Иначе следующий
+    // run_task_now без worktree получает PL-106 после пропущенного запуска.
+    try {
+      // QA-P3.6: если задачи нет ни в определениях, ни в планировщике ОС,
+      // не дёргаем schtasks /run — он возвращает сырую ошибку ОС. Возвращаем
+      // структурированное «задача не найдена», как и остальные инструменты.
+      // Legacy-задачи, живущие только в ОС (без definition), остаются запускаемыми.
+      if (!definition) {
+        const osTasks = await scheduler.listTasks().catch(() => []);
+        const osExists = osTasks.some(
           (task) => (task.taskName ?? "").toLowerCase() === trimmed.toLowerCase(),
         );
         if (!osExists) {
-          return {
-            alreadyRunning: false,
-            skipped: true,
-            reason:
-              `QA-D316-7: задание планировщика "${trimmed}" отсутствует ` +
-              "(возможно, once уже сработало). Пересоздайте задачу через schedule_task/update_task.",
-          };
+          throw new Error(t("tool.error.taskNotFound", { name: trimmed }));
+        }
+      } else if (definition.triggerType === "once") {
+        // QA-D316-7: после срабатывания once обёртка удаляет задание из
+        // планировщика ОС, но definition остаётся в БД. Повторный /run падал
+        // сырой ошибкой «Не удается найти указанный файл». Сообщаем внятно
+        // и помечаем запуск как пропущенный (success:false в run_task_now).
+        const osState = await readOsTasksWithRetry(true);
+        if (osState.osAvailable) {
+          const osExists = osState.tasks.some(
+            (task) => (task.taskName ?? "").toLowerCase() === trimmed.toLowerCase(),
+          );
+          if (!osExists) {
+            return {
+              alreadyRunning: false,
+              skipped: true,
+              reason:
+                `QA-D316-7: задание планировщика "${trimmed}" отсутствует ` +
+                "(возможно, once уже сработало). Пересоздайте задачу через schedule_task/update_task.",
+            };
+          }
         }
       }
-    }
 
-    // Любой запуск через этот вход — «сейчас», а не «по расписанию»:
-    // run_task_now, RPC GUI, файловый триггер, MCP-событие и catch-up.
-    // Маркер снимает проверку cron/окна внутри обёртки (poll-режим), иначе
-    // запуск молча отменялся бы schedule-gate с кодом 3.
-    const forceFile = await requestImmediateRun(name);
-    try {
-      return await scheduler.runTask(name);
-    } catch (err) {
-      // Планировщик не принял запуск — маркер не нужен, иначе он мог бы
-      // «разрешить» следующий плановый тик в обход расписания.
-      await fs.unlink(forceFile).catch(() => {
-        /* не критично */
-      });
-      throw err;
+      // Любой запуск через этот вход — «сейчас», а не «по расписанию»:
+      // run_task_now, RPC GUI, файловый триггер, MCP-событие и catch-up.
+      // Маркер снимает проверку cron/окна внутри обёртки (poll-режим), иначе
+      // запуск молча отменялся бы schedule-gate с кодом 3.
+      const forceFile = await requestImmediateRun(name);
+      try {
+        return await scheduler.runTask(name);
+      } catch (err) {
+        // Планировщик не принял запуск — маркер не нужен, иначе он мог бы
+        // «разрешить» следующий плановый тик в обход расписания.
+        await fs.unlink(forceFile).catch(() => {
+          /* не критично */
+        });
+        throw err;
+      }
     } finally {
-      if (!isolation.isolated) activeNonIsolatedRuns = Math.max(0, activeNonIsolatedRuns - 1);
+      releaseNonIsolatedRun(isolation.isolated);
     }
   })();
 

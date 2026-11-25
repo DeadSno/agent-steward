@@ -119,6 +119,27 @@ check(
     indexSrc.includes("QA-D316-7: задание планировщика"),
 );
 
+// QA-D316-20: early-return для once без задания ОС находился ДО try/finally,
+// поэтому счётчик PL-106 оставался поднятым и следующий run_task_now
+// без worktree отклонялся. Проверяем порядок: инкремент → try → skip → снятие.
+const incAt = indexSrc.indexOf("if (!isolation.isolated) activeNonIsolatedRuns++;");
+const guardTryAt = indexSrc.indexOf("try {", incAt);
+const skipAt = indexSrc.indexOf("skipped: true", incAt);
+const releaseAt = indexSrc.indexOf("releaseNonIsolatedRun(isolation.isolated);", incAt);
+check(
+  "QA-D316-20: early-return once снимает счётчик PL-106",
+  incAt > 0 &&
+    guardTryAt > incAt &&
+    guardTryAt < skipAt &&
+    releaseAt > skipAt &&
+    !/^\s*(return|throw)\b/m.test(indexSrc.slice(incAt, guardTryAt)),
+);
+check(
+  "QA-D316-20: единая функция снятия счётчика PL-106",
+  indexSrc.includes("function releaseNonIsolatedRun(isolated: boolean): void") &&
+    (indexSrc.match(/releaseNonIsolatedRun\(/g) || []).length >= 3,
+);
+
 console.log(`\n${passed}/${passed + failed} OK`);
 if (failed > 0) {
   console.error(`Провалено: ${failed}`);
