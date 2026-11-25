@@ -17,6 +17,8 @@ const {
   removeRunWorktree,
   cleanupStaleWorktrees,
   isTransientGitError,
+  removeDirectoryWithRetry,
+  RM_RETRY_DELAYS_MS,
   WORKTREE_ROOT_DIR,
   DEFAULT_STALE_AFTER_MS,
 } = await import("./dist/core/worktree.js");
@@ -501,6 +503,79 @@ let disposable;
     check("cleanup: ветка удалена", git(repo, ["branch", "--list", wt.branch]).trim() === "");
     check("cleanup: повторный вызов идемпотентен", (await removeRunWorktree({ path: wt.path, rootDir: worktreeRoot })).ok === true);
   }
+}
+
+// 11b. QA-D316-24: пустой остаток event-driven прогона — нет registration и sidecar.
+{
+  const created = await createRunWorktree({
+    repoDir: repo,
+    taskName: "qa-probe-event-code",
+    rootDir: worktreeRoot,
+  });
+  check("QA-D316-24: worktree для остатка создан", created.ok === true);
+  if (created.ok) {
+    const target = created.worktree.path;
+    // Снимаем git-регистрацию, но оставляем пустой каталог без sidecar —
+    // именно так выглядит остаток после event-driven запуска.
+    git(repo, ["worktree", "remove", "--force", target]);
+    fs.mkdirSync(target, { recursive: true });
+    fs.rmSync(`${target}.json`, { force: true });
+    check(
+      "QA-D316-24: каталог есть, registration и sidecar отсутствуют",
+      fs.existsSync(target) && !fs.existsSync(`${target}.json`) &&
+        !registeredWorktreePaths(repo).some((registered) => samePath(registered, target)),
+    );
+    const removed = await removeRunWorktree({ path: target, repoRoot: repo, rootDir: worktreeRoot });
+    check("QA-D316-24: пустой остаток удалён, ok=true", removed.ok === true && !fs.existsSync(target));
+    const repeated = await removeRunWorktree({ path: target, repoRoot: repo, rootDir: worktreeRoot });
+    check("QA-D316-24: повторный вызов идемпотентен, ok=true", repeated.ok === true);
+  }
+}
+
+// 11c. QA-D316-24: retry при EPERM/EBUSY на Windows.
+{
+  const probe = path.join(tempRoot, "qa-d316-24-rm-retry");
+  fs.mkdirSync(probe, { recursive: true });
+  let attempts = 0;
+  const retries = [];
+  await removeDirectoryWithRetry(probe, {
+    remove: (dir) => {
+      attempts += 1;
+      if (attempts === 1) throw Object.assign(new Error("EPERM"), { code: "EPERM" });
+      fs.rmSync(dir, { recursive: true, force: true });
+    },
+    onRetry: (info) => retries.push(info),
+  });
+  check(
+    "QA-D316-24 retry: EPERM на первой попытке, успех на второй",
+    attempts === 2 && !fs.existsSync(probe),
+  );
+  check(
+    "QA-D316-24 retry: первая задержка 100 мс при 100/200/400",
+    retries.length === 1 && retries[0].delay === 100 &&
+      RM_RETRY_DELAYS_MS.join(",") === "100,200,400",
+  );
+
+  let busyAttempts = 0;
+  const busyDelays = [];
+  let busyError = null;
+  try {
+    await removeDirectoryWithRetry(probe, {
+      remove: () => {
+        busyAttempts += 1;
+        throw Object.assign(new Error("EBUSY"), { code: "EBUSY" });
+      },
+      onRetry: (info) => busyDelays.push(info.delay),
+    });
+  } catch (err) {
+    busyError = err;
+  }
+  check(
+    "QA-D316-24 retry: постоянный EBUSY → 4 попытки и ошибка наружу",
+    busyAttempts === 4 && busyError?.code === "EBUSY" &&
+      busyDelays.join(",") === "100,200,400",
+  );
+  fs.rmSync(probe, { recursive: true, force: true });
 }
 
 // 12. W-2.2: защита от удаления чужих каталогов и веток.

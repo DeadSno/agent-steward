@@ -345,6 +345,58 @@ async function removeSidecar(worktreePath: string): Promise<void> {
   }
 }
 
+/** QA-D316-24: задержки между повторами удаления каталога на Windows. */
+export const RM_RETRY_DELAYS_MS = [100, 200, 400];
+
+/**
+ * QA-D316-24: на Windows антивирус/ещё не отпущенный дескриптор удерживает
+ * каталог сотни миллисекунд после выхода git. EPERM/EBUSY ретраим 4 попытками
+ * с задержками 100/200/400 мс; остальные ошибки (и EPERM/EBUSY после
+ * исчерпания попыток) пробрасываются сразу. `remove` параметризован для
+ * детерминированной регрессии в test-worktree.mjs.
+ */
+export async function removeDirectoryWithRetry(
+  target: string,
+  options: {
+    remove?: (target: string) => void | Promise<void>;
+    delays?: number[];
+    onRetry?: (info: { attempt: number; delay: number; error: unknown }) => void;
+  } = {},
+): Promise<void> {
+  const {
+    remove = (dir) => fs.rm(dir, { recursive: true, force: true }),
+    delays = RM_RETRY_DELAYS_MS,
+    onRetry = () => undefined,
+  } = options;
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await remove(target);
+      return;
+    } catch (err: unknown) {
+      const code = (err as NodeJS.ErrnoException)?.code;
+      if (code !== "EPERM" && code !== "EBUSY") throw err;
+      if (attempt >= delays.length) throw err;
+      const wait = delays[attempt];
+      onRetry({ attempt: attempt + 1, delay: wait, error: err });
+      await delay(wait);
+    }
+  }
+}
+
+/** Имя созданного плагином worktree всегда заканчивается `-<stamp>-<hex6>`. */
+function isGeneratedWorktreePath(target: string): boolean {
+  return /-\d{8}T\d{6}-[0-9a-f]{6}$/.test(path.basename(target));
+}
+
+/** Без регистрации и sidecar удаляем только пустой каталог. */
+async function isEmptyDirectory(target: string): Promise<boolean> {
+  try {
+    return (await fs.readdir(target)).length === 0;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Удаляет созданный плагином worktree и его ветку.
  *
@@ -376,6 +428,19 @@ export async function removeRunWorktree(
     const knownRepo = options.repoRoot?.trim() || sidecar?.repoRoot;
     if (knownRepo) await git(knownRepo, ["worktree", "prune", "--expire=now"]);
     await removeSidecar(target);
+    // QA-D316-24: после prune и sidecar убираем и саму директорию. Для уже
+    // отсутствующего пути fs.rm(force) — no-op, поэтому повторный вызов
+    // остаётся идемпотентным (ok:true).
+    try {
+      await removeDirectoryWithRetry(target);
+    } catch (err: unknown) {
+      return {
+        ok: false,
+        error: `Не удалось удалить остаточную директорию «${target}»: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      };
+    }
     return { ok: true };
   }
 
@@ -404,10 +469,19 @@ export async function removeRunWorktree(
   }
 
   if (!registered && !sidecar) {
-    return {
-      ok: false,
-      error: "Worktree не зарегистрирован в git и не имеет sidecar — удаление отменено.",
-    };
+    // QA-D316-24: у event-driven запуска cleanup мог застать каталог уже без
+    // git-регистрации и без sidecar, но с пустой директорией на диске.
+    // Удаляем такой остаток только если он похож на worktree плагина (имя
+    // вида `<segment>-<stamp>-<hex6>` либо явная ветка `agent-steward/`) и
+    // пуст: чужие каталоги внутри rootDir по-прежнему не трогаем.
+    const ownedByPlugin =
+      Boolean(branch?.startsWith(BRANCH_PREFIX)) || isGeneratedWorktreePath(target);
+    if (!ownedByPlugin || !(await isEmptyDirectory(target))) {
+      return {
+        ok: false,
+        error: "Worktree не зарегистрирован в git и не имеет sidecar — удаление отменено.",
+      };
+    }
   }
 
   if (registered) {
@@ -416,7 +490,7 @@ export async function removeRunWorktree(
       // Осиротевший каталог (например, git потерял запись) убираем вручную и
       // чистим служебные ссылки. Это безопасно: путь проверен выше.
       try {
-        await fs.rm(target, { recursive: true, force: true });
+        await removeDirectoryWithRetry(target);
       } catch (err: unknown) {
         return {
           ok: false,
@@ -428,7 +502,7 @@ export async function removeRunWorktree(
     }
   } else {
     try {
-      await fs.rm(target, { recursive: true, force: true });
+      await removeDirectoryWithRetry(target);
     } catch (err: unknown) {
       return {
         ok: false,
