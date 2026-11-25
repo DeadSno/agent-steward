@@ -727,6 +727,18 @@ check(
   skillFilesWithAllThree >= 1
 );
 
+// QA-D316-22 / P-4.2: копия SKILL.md обязана быть побайтово идентична
+// исходнику. Рассинхрон ловился только в test-dsh-adapter.mjs (P-4.2)
+// после сборки, поэтому фиксируем его мета-гейтом до полного прогона.
+const skillSourcePath = path.join(root, "skills/scheduled-job-best-practices/SKILL.md");
+const skillCopyPath = path.join(root, ".agents/skills/agent-steward/SKILL.md");
+check(
+  "QA-D316-22 / P-4.2: копия SKILL.md в .agents/skills/agent-steward побайтово идентична исходнику",
+  fs.existsSync(skillSourcePath) &&
+    fs.existsSync(skillCopyPath) &&
+    fs.readFileSync(skillSourcePath).equals(fs.readFileSync(skillCopyPath))
+);
+
 // ROADMAP: закрытые подзадачи удаляются отсюда, остаются только открытые.
 // QA-A2.5/A2.6 закрыты по факту (QV-7) и больше не должны встречаться в роадмапе.
 const roadmapText = fs.readFileSync(path.join(root, "ROADMAP.md"), "utf8");

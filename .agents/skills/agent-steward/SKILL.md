@@ -36,7 +36,7 @@ dependencies, matrix summary and last run.
 | --- | --- |
 | Every morning / hour / week | `schedule_task` with cron (durable OS schedule) |
 | When a file changes | `triggerType: "file"` + `watchPath` |
-| When an MCP server reports an event | `schedule_advanced` (admin profile) with `triggerType: "mcp-event"` + `mcpEvent` — not in core `schedule_task` |
+| When an MCP server reports an event | `schedule_task` with `triggerType: "mcp-event"` + `mcpEvent` (core profile), then `emit_event` to fire subscribers; `schedule_advanced` (admin) is only needed for `nextTaskOnSuccess` chains |
 | Same work in N repositories | `matrix.workspaceIds` |
 | A then B then C | `dependsOn` or `nextTaskOnSuccess` — never both for one transition |
 | Try again on failure | `retryCount` + `retryDelay` |
@@ -104,6 +104,12 @@ snapshot (PL-25).
 1. `dry_run` (whole pipeline or one task) — order, dependencies, estimated time.
 2. `schedule_task`, then one `run_task_now` and inspect `get_history` / `get_task_logs`.
 3. Only then call it ready; state the cron in plain language.
+
+MCP transports additionally expose `batch_call`: several tool calls can be
+sent in one message (the exact limit is declared in the tool schema). Each
+call is parsed with its own schema and its result/error is isolated, so one
+bad name never aborts the rest. Use it for bulk diagnostics, not for
+mutations that depend on each other.
 
 Diagnosis: filter `get_history` by task/status; tail the wrapper log to separate
 model failure, gate failure, timeout and lock-skip. Structured journal stores
