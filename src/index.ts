@@ -152,6 +152,7 @@ import {
   generateSelfAnalysisReport,
 } from "./core/self-analysis.js";
 import { listAllGateOutcomes } from "./db/runs-repo.js";
+import type { VerificationCheck } from "./core/savings.js";
 import {
   countHistoryFiltered,
   finishRun,
@@ -4003,11 +4004,35 @@ function buildAcceptanceSnapshot(
   }
 }
 
+/**
+ * SC-1.1: проверки (objective-гейты) из ledger за то же окно, что и аналитика.
+ * Ошибка чтения ledger не ломает отчёт — возвращаем пустой список (cost = 0).
+ */
+function verificationChecksForWindow(windowDays: number): VerificationCheck[] {
+  try {
+    const from = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000).toISOString();
+    return listAllGateOutcomes()
+      .filter((row) => row.createdAt >= from && Boolean(row.gateHash))
+      .map((row) => ({
+        gate: String(row.gateHash ?? ""),
+        prompt: String(row.promptHash ?? ""),
+        inputs: {
+          taskType: String(row.taskType ?? ""),
+          executor: String(row.executor ?? ""),
+        },
+      }));
+  } catch {
+    return [];
+  }
+}
+
 /** get_analytics — аналитика запусков и стоимости за период. */
 const getAnalyticsExecute = wrapExecute<AnalyticsArgs>(async (args) => {
   const windowDays = Math.min(365, Math.max(1, Math.floor(Number(args.days) || 14)));
   const records = getHistoryForAnalytics(windowDays);
   const definitions = await loadTaskDefinitions();
+  // SC-1.1: ANALYTICS отдаёт честную экономию — с вычетом стоимости проверок.
+  const verificationChecks = verificationChecksForWindow(windowDays);
   const report = buildAnalytics(records, {
     days: windowDays,
     topLimit: Math.max(1, Math.floor(Number(args.topLimit) || 10)),
@@ -4016,6 +4041,7 @@ const getAnalyticsExecute = wrapExecute<AnalyticsArgs>(async (args) => {
       matrixParentId: definition.matrixParentId,
       tokenBudget: definition.tokenBudget,
     })),
+    verificationChecks,
   });
   // Экономика v2 (E-1.1): учёт расхода за день/неделю рядом с аналитикой.
   const settings = await loadSettings();
@@ -6273,6 +6299,8 @@ const v2Plugin = Plugin.define({
           );
           const records = getHistoryForAnalytics(windowDays);
           const definitions = await loadTaskDefinitions();
+          // SC-1.1: RPC отдаёт ту же честную экономию, что и агент-инструмент.
+          const verificationChecks = verificationChecksForWindow(windowDays);
           const report = buildAnalytics(records, {
             days: windowDays,
             topLimit: Math.max(1, Math.floor(Number(topLimit) || 10)),
@@ -6281,6 +6309,7 @@ const v2Plugin = Plugin.define({
               matrixParentId: definition.matrixParentId,
               tokenBudget: definition.tokenBudget,
             })),
+            verificationChecks,
           });
           // Экономика v2 (E-1.1): тот же учёт, что и в агент-инструменте.
           const settings = await loadSettings();
@@ -7673,18 +7702,23 @@ export async function schedulerCreateTask(
   // PowerShell- и bash-обёртки получили одинаковый OPENCODE_CONFIG_CONTENT.
   const globalPolicy =
     (await loadSettings()).permissions?.defaultPolicy ?? DEFAULT_PERMISSION_POLICY;
-  const effectivePermissions = resolvePermissions({
+  // SC-1.2: write-scope по умолчанию — рабочая директория задачи/worktree.
+  // Guard живёт в execute-пути (как egress): в OPENCODE_CONFIG_CONTENT попадают
+  // только поля схемы OpenCode, поэтому сюда передаём его отдельно.
+  const taskBaseDir = workingDirectory?.trim() || process.cwd();
+  const taskWriteScope = workingDirectory?.trim()
+    ? { allowedRoot: workingDirectory.trim() }
+    : undefined;
+  const permissionInput = {
     policy: globalPolicy,
     legacyShell: legacyShell === true,
     allowedTools: normalizedAllowedTools,
     deniedTools: normalizedDeniedTools,
-  });
-  const permissionsConfig = buildOpencodeConfig({
-    policy: globalPolicy,
-    legacyShell: legacyShell === true,
-    allowedTools: normalizedAllowedTools,
-    deniedTools: normalizedDeniedTools,
-  });
+    writeScope: taskWriteScope,
+    baseDir: taskBaseDir,
+  };
+  const effectivePermissions = resolvePermissions(permissionInput);
+  const permissionsConfig = buildOpencodeConfig(permissionInput);
   const policyMeta = {
     policy: effectivePermissions.policy,
     legacyShell: effectivePermissions.legacyShell,

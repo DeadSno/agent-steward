@@ -127,7 +127,36 @@ Task Scheduler, launchd или crontab не создаются. Один workspa
 активная миссия: параллельный запуск в том же каталоге отклоняется. `dryRun`
 показывает план и маршрут, не создавая run.
 
-## 12. Инварианты (проверяются тестами)
+## 12. Write-scope guard (SC-1.2)
+
+Edit/write-действия допускаются только внутри **write-scope** задачи — по
+умолчанию это рабочий каталог задачи/worktree (`process.cwd()` либо явный
+`baseDir`). Guard в `src/core/permissions.ts` (`checkWriteScope`) резолвит путь
+до проверки и отклоняет любые родительские сегменты `..`: `path.resolve` мог бы
+склеить их обратно в допустимый путь и скрыть попытку выхода.
+
+- **Deny по умолчанию.** Абсолютный путь вне `allowedRoot` и вне явных
+  `extraRoots` запрещён (`reason: outside-denied`), даже если политика
+  `hybrid`/`legacy` разрешает инструмент `edit`.
+- **Явный opt-in.** Выход разрешается только если в scoped-конфиге задано
+  `allowOutside: true` (`reason: outside-allowed`) либо корень добавлен в
+  `extraRoots`. Политика нормализуется один раз и попадает в
+  `compilePermissionPolicy` и `resolvePermissions`; в
+  `OPENCODE_CONFIG_CONTENT` она **не** пишется (там только `$schema` и
+  `permissions` по QW-4), потому что `writeScope` — не ключ конфига OpenCode.
+- **Аудит каждого решения.** `src/core/audit.ts` (`recordWriteScopeDecision`,
+  `runWriteScopeGuarded`) пишет в `audit_log` действия `write_scope.denied`
+  (отказ, обход `..`, невалидный путь), `write_scope.allowed_outside` (явный
+  выход) и `write_scope.allowed` (обычное попадание в scope). Детали проходят
+  через `redactAuditDetails`, поэтому секреты в путях и параметрах не попадают
+  в журнал. При отказе действие не выполняется (`status: "denied"`).
+- Gate-файлы и gate-команда остаются вне write-scope задачи (§9): guard не
+  заменяет изоляцию процесса, но делает попытку записи наружу видимой.
+
+Регрессии: `test-permissions-policy.mjs` (deny по умолчанию, явный allow,
+отклонение `..`, событие аудита).
+
+## 13. Инварианты (проверяются тестами)
 
 1. Миссия без gate-спеки не принимается.
 2. Миссия без safety-контракта получает safe-default (R1, worktree, бюджет).
@@ -143,3 +172,4 @@ Task Scheduler, launchd или crontab не создаются. Один workspa
 8. Каждый вердикт, эскалация и применение эффектов попадают в аудит.
 9. **Ad-hoc миссия проходит ту же политику, бюджет и gate, что и registered.**
 10. **Ad-hoc миссия не создаёт записей в планировщике ОС.**
+11. **Запись вне write-scope запрещена по умолчанию; каждый выход — в аудите.**

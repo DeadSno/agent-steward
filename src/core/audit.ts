@@ -13,6 +13,8 @@ import {
   type PermissionPolicy,
   type RiskClass,
   normalizeRiskClass,
+  checkWriteScope,
+  type WriteScopeDecision,
 } from "./permissions.js";
 
 /**
@@ -414,6 +416,80 @@ export function summarizeEgressRun(attempts: readonly EgressAttemptResult[]): Eg
     reason: degraded ? reasons.join("; ") : "no-policy-or-all-allowed",
     report,
   };
+}
+
+/* ─── SC-1.2: аудит и execute-path guard выхода за write-scope ─────────────── */
+
+export const WRITE_SCOPE_DENIED_ACTION = "write_scope.denied";
+export const WRITE_SCOPE_ALLOWED_OUTSIDE_ACTION = "write_scope.allowed_outside";
+/** Обычное попадание в scope тоже фиксируется: журнал хранит каждое решение. */
+export const WRITE_SCOPE_ALLOWED_ACTION = "write_scope.allowed";
+
+export interface WriteScopeAuditInput {
+  /** Уже принятое решение guard; если нет — вычисляется из target/policy/baseDir. */
+  decision?: WriteScopeDecision;
+  target?: unknown;
+  policy?: unknown;
+  baseDir?: string;
+  task?: string | null;
+  actor?: AuditActor;
+  source?: string | null;
+}
+
+export interface WriteScopeAuditResult extends WriteScopeDecision {
+  action: string;
+  auditId: number | null;
+}
+
+/** Выбирает действие аудита по решению guard. */
+export function writeScopeAuditAction(decision: WriteScopeDecision): string {
+  if (!decision.allowed) return WRITE_SCOPE_DENIED_ACTION;
+  return decision.outsideAllowed ? WRITE_SCOPE_ALLOWED_OUTSIDE_ACTION : WRITE_SCOPE_ALLOWED_ACTION;
+}
+
+/**
+ * SC-1.2: аудит КАЖДОГО решения write-scope. Детали проходят через
+ * redactAuditDetails: путь может содержать токены/пароли в строке запроса.
+ */
+export function recordWriteScopeDecision(input: WriteScopeAuditInput): WriteScopeAuditResult {
+  const decision =
+    input.decision ??
+    checkWriteScope({
+      target: input.target,
+      policy: input.policy,
+      baseDir: input.baseDir,
+    });
+  const action = writeScopeAuditAction(decision);
+  const auditId = recordAudit({
+    action,
+    targetType: "task",
+    target: input.task ?? null,
+    actor: input.actor ?? "system",
+    source: input.source ?? "write-scope",
+    details: redactAuditDetails({
+      path: decision.resolvedPath ?? (typeof input.target === "string" ? input.target : null),
+      scopeRoot: decision.scopeRoot,
+      allowed: decision.allowed,
+      reason: decision.reason,
+      detail: decision.detail,
+      outsideAllowed: decision.outsideAllowed,
+    }),
+  });
+  return { ...decision, action, auditId };
+}
+
+/** Execute-path guard с аудитом: действие не вызывается при deny. */
+export async function runWriteScopeGuarded<T>(
+  input: WriteScopeAuditInput,
+  action: (path: string) => T | Promise<T>,
+): Promise<WriteScopeAuditResult & { ok: boolean; status: "ok" | "denied"; value?: T }> {
+  const attempt = recordWriteScopeDecision(input);
+  if (!attempt.allowed) {
+    return { ...attempt, ok: false, status: "denied" };
+  }
+  const path = attempt.resolvedPath ?? (typeof input.target === "string" ? input.target : "");
+  const value = await action(path);
+  return { ...attempt, ok: true, status: "ok", value };
 }
 
 /**

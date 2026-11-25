@@ -40,6 +40,10 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 - Счётчики `list_tasks()` и история расходятся: задача `gui` имеет 130 прогонов / 46 ошибок в истории, но отсутствует среди 181 definition; при этом 61 definition существует без единого прогона. Воспроизведено 25.11.2026. — P3. Действие: либо сохранять definition для всех задач с историей и помечать их `archived`, либо явно документировать, что история содержит удалённые задачи, и дать фильтр по ним. Обнаружено 25.11.2026.
 - Общий `dist/` между worktree через junction ломает тесты при параллельных сборках: в `tp-audit-dev` каталог `dist` указывал на `.steward-dev/dist`; после сборки из более старого worktree свежий `dist/core/execution.js` импортировал `consumeExploreUsage` из устаревшего `dist/db/capability-repo.js`, и `node test-execution-hardening.mjs` упал на этапе загрузки модуля (`does not provide an export named 'consumeExploreUsage'`), хотя `npm run build` в своей worktree проходил. Воспроизведено 25.11.2026 при EX-1.2. — P2. Действие: дать каждому worktree собственный `dist` (копия вместо junction) либо перед тестами сверять ревизию всех dist-модулей; добавить smoke-проверку импорта `dist/core/execution.js` перед проходом сюит. Обнаружено 25.11.2026.
 
+- Парсер `schedule_task` принимает маркеры нумерованного списка за SCOPE-пути: промпт с строкой `SCOPE (трогать только эти файлы/доки):` и списком `1. ...`, `2. ...` отклонён сообщением `PL-79/PL-82: SCOPE задачи содержит несуществующие пути: 1`, хотя реальных путей в промпте не было; с явной строкой `SCOPE: <существующие пути>` та же задача создаётся (`dry_run` проходит). Воспроизведено 25.11.2026 при SC-1. — P2. Действие: разбирать SCOPE только из явной строки `SCOPE:`/`FILES:` и игнорировать маркеры `N.` нумерованных списков; добавить регрессию в `test-execution-hardening.mjs`. Обнаружено 25.11.2026.
+
+- Дочерний агент продолжает менять файлы после `PL-134`/`PL-124` и завершения обёртки: задача `SC-1 Unclosed risks 12` была снята сторожем простоя в 15:18:56, обёртка финализировала историю в 15:19:05 (quality gate «пройден»), а файлы `src/core/savings.ts`, `analytics.ts`, `permissions.ts`, `audit.ts`, `ROADMAP.md`, `CHANGELOG.md` продолжали меняться до 15:26:20 уже без активного прогона в истории. Воспроизведено 25.11.2026 по `logs/sc-1-unclosed-risks-12.log` и `git status`. — P1. Действие: при PL-134 завершать весь процесс-потомок и дожидаться его выхода до финализации history и quality gate; при появлении артефактов после финализации отзывать success и требовать явный повтор. Обнаружено 25.11.2026.
+
 
 ## Деталь 3.20 — Матрица покрытия стратегии и незакрытые контуры
 `docs/CONCEPT.md` §11/§12/§13, `ROADMAP-STRATEGY.md`, `docs/ARCHITECTURE.md` Known limitations, `docs/EXECUTION-LOOP.md` §7–§9, `src/core/execution.ts`, `src/core/self-analysis.ts`, `src/db/capability-repo.ts`, `test-budget.mjs`, `test-permissions-policy.mjs`
@@ -54,11 +58,7 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 | §11.1–§11.4 — ad-hoc, local-first, гейт без irreversible, net-экономия | ✅ ROU-*, ARCH-4.*, E-*, EV-1.2 | Владелец, горизонт 28 дней и пороги зафиксированы в EXECUTION-LOOP §9 |
 | §11.5–§11.7 — переиспользование примера, паритет, eval не деградировал | ✅ EV-1.1/EV-1.3 + AC-1.4/EV-2.2 | Версионированный набор из ledger и CI-gate с откатом работают |
 | §12 — capped explore, staged LoRA | ✅ capped explore-бюджет и bandit (EV-2.3), LP-1.1/1.2/1.3 | Критерии датасета, офлайн-eval и shadow/canary с откатом зафиксированы; полный трафик не включался |
-| §12 — cost of verification, права вне write-scope | 🔄 бюджеты и аудит есть | Нет кэша проверок и guard для write-scope → SC-1 |
-
-**Задача SC-1 — Незакрытые риски §12** · P2 · ⬜
-- [ ] SC-1.1 Учесть cost of verification в net-экономии и кэшировать повторные проверки с тем же входом (`test-budget.mjs`, ANALYTICS), чтобы экономические метрики не завышали выгоду.
-- [ ] SC-1.2 Добавить guard и аудит выхода прав за write-scope: deny по умолчанию, явное разрешение, событие в журнал; обновить `docs/SAFETY.md` и `test-permissions-policy.mjs`.
+| §12 — cost of verification, права вне write-scope | ✅ SC-1.1: кэш проверок и честная net-экономия в `report.savings`/`honestEconomy`; SC-1.2: write-scope guard deny-by-default с явным opt-in и аудитом | — |
 
 **Задача AD-1 — Адаптивность хоста и внешний контракт Этапа 3** · P2 · ⬜
 - [ ] AD-1.1 Подготовить режим `nativeScheduler` как ответ на триггер из раздела «Риски и триггеры пересмотра»: сохранить ledger, DLQ, бюджет и approval, fallback на текущую polling-обвязку.

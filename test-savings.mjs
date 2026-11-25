@@ -6,7 +6,10 @@
 import {
   CLOUD_REFERENCE_COST_PER_1K_TOKENS_USD,
   SAVINGS_METHODOLOGY_URL,
+  VERIFICATION_COST_PER_CHECK_USD,
   computeSavings,
+  computeVerificationBudget,
+  verificationCheckKey,
 } from "./dist/core/savings.js";
 import {
   buildAnalytics,
@@ -162,6 +165,78 @@ check(
 check(
   "E-5.1: детерминизм разбивки",
   JSON.stringify(splitLocalCloud(records)) === JSON.stringify(splitLocalCloud(records))
+);
+
+// --- 7. SC-1.1: cost of verification и кэш повторных проверок ---------------
+const checkA = { gate: "gate-A", prompt: "prompt-1", inputs: { a: 1, b: 2 } };
+const checkASame = { gate: "gate-A", prompt: "prompt-1", inputs: { b: 2, a: 1 } };
+const checkB = { gate: "gate-A", prompt: "prompt-1", inputs: { a: 2, b: 2 } };
+check(
+  "SC-1.1: ключ проверки стабилен и не зависит от порядка ключей inputs",
+  verificationCheckKey(checkA) === verificationCheckKey(checkASame) &&
+    verificationCheckKey(checkA) !== verificationCheckKey(checkB)
+);
+const budget = computeVerificationBudget([checkA, checkASame, checkB]);
+check(
+  "SC-1.1: идентичный вход считается один раз, другой — отдельно",
+  budget.checks === 3 &&
+    budget.hits === 1 &&
+    budget.misses === 2 &&
+    budget.unique === 2 &&
+    budget.evicted === 0 &&
+    budget.costUsd === 2 * VERIFICATION_COST_PER_CHECK_USD
+);
+const cappedInputs = [
+  { gate: "g1", prompt: "p", inputs: 1 },
+  { gate: "g2", prompt: "p", inputs: 1 },
+  { gate: "g1", prompt: "p", inputs: 1 }, // hit до вытеснения
+  { gate: "g3", prompt: "p", inputs: 1 }, // вытесняет oldest (g1)
+];
+const capped = computeVerificationBudget(cappedInputs, {
+  maxEntries: 2,
+  costPerCheckUsd: 0.01,
+});
+check(
+  "SC-1.1: кэш ограничен (oldest-first) и детерминирован",
+  capped.evicted === 1 &&
+    capped.misses === 3 &&
+    capped.hits === 1 &&
+    capped.unique === 2 &&
+    capped.costUsd === 0.03 &&
+    JSON.stringify(capped) ===
+      JSON.stringify(
+        computeVerificationBudget(cappedInputs, { maxEntries: 2, costPerCheckUsd: 0.01 })
+      )
+);
+const savingsWithChecks = computeSavings(records, {
+  verificationChecks: [checkA, checkASame, checkB],
+});
+const honestNet =
+  Math.round(
+    (savingsWithChecks.savedUsd -
+      savingsWithChecks.totalCostUsd -
+      savingsWithChecks.verificationCostUsd) *
+      10_000
+  ) / 10_000;
+const netWithoutChecks =
+  Math.round((savings.savedUsd - savings.totalCostUsd) * 10_000) / 10_000;
+check(
+  "SC-1.1: net-экономия = savedUsd - totalCostUsd - verificationCostUsd",
+  savingsWithChecks.verificationCostUsd === budget.costUsd &&
+    Math.round((netWithoutChecks - honestNet) * 10_000) / 10_000 === budget.costUsd &&
+    savingsWithChecks.netEconomyUsd === honestNet
+);
+const reportWithChecks = buildAnalytics(records, {
+  days: 14,
+  now,
+  topLimit: 10,
+  verificationChecks: [checkA, checkASame, checkB],
+});
+check(
+  "SC-1.1: ANALYTICS отдаёт verificationCostUsd и данные кэша",
+  reportWithChecks.savings.verificationCostUsd === budget.costUsd &&
+    reportWithChecks.savings.verificationCache.hits === 1 &&
+    reportWithChecks.savings.verificationCache.unique === 2
 );
 
 console.log(`\n${passed}/${results.length} проверок счётчика экономии пройдены.`);

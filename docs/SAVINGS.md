@@ -23,6 +23,20 @@ The counterfactual is built from run history (`history` in SQLite).
 
 4. The total is summed across every run in the window and broken down by task
    (top 10 by savings).
+5. Objective gate/eval checks are a real cost. Each check is keyed by a stable
+   SHA-256 hash of `gate + prompt + inputs`; identical inputs are charged once,
+   different inputs are charged separately. The cache is bounded (256 entries,
+   oldest-first eviction), so memory cannot grow without limit. The default
+   estimate is **$0.002 per unique check** (`VERIFICATION_COST_PER_CHECK_USD`).
+
+   ```
+   netEconomyUsd = savedUsd - totalCostUsd - verificationCostUsd
+   ```
+
+   The old counter reported `savedUsd - totalCostUsd`, which overstated the
+   benefit by ignoring verification. `netEconomyUsd` is now the honest figure:
+   repeated checks with identical input are not double-charged, so caching
+   improves the result instead of hiding a cost.
 
 The default reference price is **$0.01 per 1k tokens** (a mix of input and output
 from a mid-tier cloud provider), the constant
@@ -38,6 +52,10 @@ there is nothing to compare.
   all;
 - runs where the cost was not recorded by mistake rather than because it was zero —
   such records inflate the estimate.
+
+Verification cost **is** accounted for (step 5), including the cache of repeated
+checks; only its per-check price is an estimate. `honestEconomy` in
+`self_analysis` uses the same `netEconomyUsd` formula as `report.savings`.
 
 So the counter answers "how much would this cost in the cloud at the reference
 price", not "how much money came back to the account".
@@ -83,8 +101,13 @@ prices, so the dashboard keeps working.
 | `tokens` | tokens in those runs |
 | `actualCostUsd` | recorded cost of the same runs (usually 0) |
 | `totalCostUsd` | recorded cost of all runs in the window |
+| `verificationCostUsd` | cost of unique gate/eval checks in the window |
+| `verificationCache` | `{ checks, unique, hits, misses, evicted, costUsd }` |
+| `netEconomyUsd` | `savedUsd - totalCostUsd - verificationCostUsd` |
 | `referenceCostPer1kTokensUsd` | reference price |
 | `methodologyUrl` | link to this page |
 | `byTask` | breakdown `{ taskName, runs, tokens, savedUsd }` |
 
-The methodology is verified against fixed data: `test-savings.mjs`, 14 checks.
+The methodology is verified against fixed data in `test-savings.mjs` (including
+the verification cache and net-economy regressions) and `test-budget.mjs`
+(ANALYTICS exposure and MCP/RPC wiring).

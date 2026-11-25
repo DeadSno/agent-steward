@@ -1,5 +1,8 @@
 import assert from "node:assert";
 import { readFileSync } from "node:fs";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import {
   resolvePermissions,
   buildOpencodeConfig,
@@ -14,6 +17,9 @@ import {
   extractEgressHost,
   checkEgress,
   runEgressGuarded,
+  normalizeWriteScopePolicy,
+  checkWriteScope,
+  WRITE_SCOPE_REASONS,
 } from "./dist/core/permissions.js";
 
 let passed = 0;
@@ -303,6 +309,197 @@ const noPolicyRun = await runEgressGuarded(null, "https://evil.example/x", actio
 check(
   "egress: execute-path без политики сохраняет старое поведение",
   noPolicyRun.ok === true && noPolicyRun.status === "ok" && calls === 2,
+);
+
+// ── SC-1.2: write-scope guard (deny по умолчанию) и его аудит ────────────────
+const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ws-sc1-write-scope-"));
+const scopeRoot = path.join(tempRoot, "worktree");
+fs.mkdirSync(path.join(scopeRoot, "src"), { recursive: true });
+const outsidePath = path.join(tempRoot, "outside", "secret.txt");
+const insidePath = path.join(scopeRoot, "src", "a.ts");
+
+check(
+  "SC-1.2: причины решения зафиксированы",
+  WRITE_SCOPE_REASONS.join(",") === "within-scope,outside-denied,outside-allowed,traversal,invalid-path",
+);
+const insideDecision = checkWriteScope({ target: insidePath, baseDir: scopeRoot });
+check(
+  "SC-1.2: путь внутри worktree разрешён",
+  insideDecision.allowed === true &&
+    insideDecision.reason === "within-scope" &&
+    insideDecision.resolvedPath === insidePath,
+);
+const outsideDecision = checkWriteScope({ target: outsidePath, baseDir: scopeRoot });
+check(
+  "SC-1.2: путь вне write-scope запрещён по умолчанию",
+  outsideDecision.allowed === false &&
+    outsideDecision.reason === "outside-denied" &&
+    outsideDecision.outsideAllowed === false &&
+    typeof outsideDecision.detail === "string" && outsideDecision.detail.length > 0,
+);
+const explicitDecision = checkWriteScope({
+  target: outsidePath,
+  baseDir: scopeRoot,
+  policy: { allowOutside: true },
+});
+check(
+  "SC-1.2: явный opt-in разрешает запись вне scope",
+  explicitDecision.allowed === true &&
+    explicitDecision.reason === "outside-allowed" &&
+    explicitDecision.outsideAllowed === true,
+);
+const extraDecision = checkWriteScope({
+  target: outsidePath,
+  baseDir: scopeRoot,
+  policy: { extraRoots: [path.dirname(outsidePath)] },
+});
+check(
+  "SC-1.2: дополнительный явно разрешённый корень считается внутри scope",
+  extraDecision.allowed === true && extraDecision.reason === "within-scope",
+);
+const traversalRaw = checkWriteScope({ target: "../outside/secret.txt", baseDir: scopeRoot });
+check(
+  "SC-1.2: path traversal с родительским сегментом маскируется сразу",
+  traversalRaw.allowed === false &&
+    traversalRaw.reason === "traversal" &&
+    traversalRaw.resolvedPath === null,
+);
+// path.join нормализует '..' в абсолютный путь — guard всё равно видит его вне scope.
+const normalizedOutside = path.join(scopeRoot, "..", "outside", "secret.txt");
+const traversalNormalized = checkWriteScope({ target: normalizedOutside, baseDir: scopeRoot });
+check(
+  "SC-1.2: нормализованный обход '..' теперь просто путь вне scope — тоже deny",
+  traversalNormalized.allowed === false &&
+    traversalNormalized.reason === "outside-denied",
+);
+check(
+  "SC-1.2: пустой путь — invalid-path",
+  checkWriteScope({ target: "", baseDir: scopeRoot }).reason === "invalid-path",
+);
+check(
+  "SC-1.2: дефолтная политика — deny с корнем baseDir",
+  normalizeWriteScopePolicy(null, scopeRoot).allowedRoot === scopeRoot &&
+    normalizeWriteScopePolicy(null, scopeRoot).allowOutside === false &&
+    normalizeWriteScopePolicy(null, scopeRoot).configured === false,
+);
+check(
+  "SC-1.2: относительный корень резолвится через baseDir при компиляции и resolve",
+  compilePermissionPolicy({ writeScope: "src", baseDir: scopeRoot }).writeScope.allowedRoot ===
+    path.join(scopeRoot, "src") &&
+    resolvePermissions({ writeScope: { scope: "src" }, baseDir: scopeRoot }).writeScope.allowedRoot ===
+      path.join(scopeRoot, "src"),
+);
+const compiledScope = compilePermissionPolicy({
+  riskClass: "R2",
+  writeScope: { allowedRoot: scopeRoot, allowOutside: false },
+});
+check(
+  "SC-1.2: компилятор переносит write-scope в execute-политику",
+  compiledScope.writeScope.allowedRoot === scopeRoot &&
+    compiledScope.writeScope.allowOutside === false &&
+    compiledScope.writeScope.configured === true,
+);
+const effectiveScope = resolvePermissions({
+  policy: "hybrid",
+  writeScope: { allowedRoot: scopeRoot, allowOutside: true },
+});
+check(
+  "SC-1.2: resolvePermissions отдаёт нормализованный write-scope",
+  effectiveScope.writeScope.allowOutside === true &&
+    effectiveScope.writeScope.allowedRoot === scopeRoot,
+);
+const scopedConfig = JSON.parse(
+  buildOpencodeConfig({
+    policy: "hybrid",
+    writeScope: { allowedRoot: scopeRoot, allowOutside: true },
+  }),
+);
+check(
+  "QW-4: write-scope не попадает в OPENCODE_CONFIG_CONTENT",
+  scopedConfig.writeScope === undefined &&
+    scopedConfig.egress === undefined &&
+    Object.keys(scopedConfig).every((key) => key === "$schema" || key === "permissions"),
+);
+
+// Аудит решений: temp-БД подключается после env, как в test-audit.mjs.
+process.env.APPDATA = tempRoot;
+process.env.OPENCODE_SCHEDULER_HOME = path.join(tempRoot, "opencode", "windows-scheduler");
+const audit = await import("./dist/core/audit.js");
+const dbModule = await import("./dist/db/index.js");
+dbModule.getDb();
+audit.resetAuditCleanupThrottle();
+audit.clearAuditLog();
+
+const deniedAttempt = audit.recordWriteScopeDecision({
+  decision: outsideDecision,
+  task: "sc1-dev",
+  actor: "test",
+});
+check(
+  "SC-1.2: отказ пишется в аудит как write_scope.denied",
+  deniedAttempt.action === audit.WRITE_SCOPE_DENIED_ACTION &&
+    typeof deniedAttempt.auditId === "number" &&
+    deniedAttempt.auditId > 0,
+);
+const outsideAttempt = audit.recordWriteScopeDecision({
+  decision: explicitDecision,
+  task: "sc1-dev",
+  actor: "test",
+});
+check(
+  "SC-1.2: явный выход пишется в аудит как write_scope.allowed_outside",
+  outsideAttempt.action === audit.WRITE_SCOPE_ALLOWED_OUTSIDE_ACTION &&
+    typeof outsideAttempt.auditId === "number",
+);
+const deniedLog = audit.readAuditLog({ action: audit.WRITE_SCOPE_DENIED_ACTION });
+check(
+  "SC-1.2: событие аудита содержит причину и путь",
+  deniedLog.total === 1 &&
+    deniedLog.records[0].details.reason === "outside-denied" &&
+    deniedLog.records[0].details.path === outsidePath &&
+    deniedLog.records[0].details.scopeRoot === scopeRoot,
+);
+check(
+  "SC-1.2: разрешённый выход зафиксирован отдельным событием",
+  audit.readAuditLog({ action: audit.WRITE_SCOPE_ALLOWED_OUTSIDE_ACTION }).total === 1,
+);
+const secretDecision = {
+  ...outsideDecision,
+  detail: "apiToken=LEAKME123 вне scope",
+  resolvedPath: path.join(tempRoot, "apiToken=LEAKME123", "x.txt"),
+};
+audit.recordWriteScopeDecision({ decision: secretDecision, task: "sc1-dev", actor: "test" });
+const secretLog = audit.readAuditLog({ action: audit.WRITE_SCOPE_DENIED_ACTION, limit: 5 });
+check(
+  "SC-1.2:redactAuditDetails вычищает секреты из деталей аудита",
+  !JSON.stringify(secretLog.records).includes("LEAKME123") &&
+    JSON.stringify(secretLog.records).includes("apiToken=***"),
+);
+
+let writeCalls = 0;
+const deniedRun = await audit.runWriteScopeGuarded(
+  { target: outsidePath, baseDir: scopeRoot, task: "sc1-dev", actor: "test" },
+  () => {
+    writeCalls++;
+    return "written";
+  },
+);
+check(
+  "SC-1.2: execute-path не выполняет запись при deny",
+  deniedRun.ok === false &&
+    deniedRun.status === "denied" &&
+    writeCalls === 0,
+);
+const allowedRun = await audit.runWriteScopeGuarded(
+  { target: insidePath, baseDir: scopeRoot, task: "sc1-dev", actor: "test" },
+  (resolved) => {
+    writeCalls++;
+    return resolved;
+  },
+);
+check(
+  "SC-1.2: execute-path выполняет запись внутри scope",
+  allowedRun.ok === true && allowedRun.status === "ok" && writeCalls === 1 && allowedRun.value === insidePath,
 );
 
 console.log(`\nPermissions policy: все ${passed} проверок пройдены.`);

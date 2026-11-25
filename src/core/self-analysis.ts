@@ -13,7 +13,12 @@ import { t } from "../i18n.js";
 import { createHash } from "node:crypto";
 import type { GateLedgerVerification } from "./audit.js";
 import type { GateOutcomeContent, GateOutcomeRecord } from "../db/runs-repo.js";
-import { computeSavings, type SavingsRecord } from "./savings.js";
+import {
+  computeSavings,
+  type SavingsRecord,
+  type VerificationCacheStats,
+  type VerificationCheck,
+} from "./savings.js";
 
 // ==================== Типы ====================
 
@@ -272,8 +277,17 @@ export interface AcceptanceMetrics {
     localFirstRouting: { localShare: number; local: number; total: number };
     /** §11.3: объективный гейт, эскалация/откат без тихого провала. */
     objectiveGate: { objectiveShare: number; objective: number; escalations: number; infraFails: number };
-    /** §11.4: честная net-экономия и escalation rate. */
-    honestEconomy: { netEconomyUsd: number; savedUsd: number; paidCostUsd: number; escalationRate: number };
+    /** §11.4: честная net-экономия и escalation rate (SC-1.1: минус проверки). */
+    honestEconomy: {
+      netEconomyUsd: number;
+      savedUsd: number;
+      paidCostUsd: number;
+      escalationRate: number;
+      /** Стоимость уникальных проверок (gate/eval), USD. */
+      verificationCostUsd: number;
+      /** Кэш повторных проверок с тем же входом. */
+      verificationCache: VerificationCacheStats;
+    };
     /** §11.5: пример из learning-loop реально переиспользован (по routeSource). */
     learningLoopReuse: { reused: number; reuseRate: number };
     /** §11.6: паритет ad-hoc/registered по маршруту и вердикту. */
@@ -1048,6 +1062,21 @@ function isReuse(row: AcceptanceGateRow): boolean {
   );
 }
 
+/**
+ * SC-1.1: objective-гейты — это и есть проверки, стоимость которых вычитается
+ * из net-экономии. Ключ кэша = gate + prompt + inputs; повтор платится один раз.
+ */
+function verificationChecksFromRows(rows: readonly AcceptanceGateRow[]): VerificationCheck[] {
+  return rows.filter(isObjectiveGateOutcome).map((row) => ({
+    gate: row.gateHash ?? "",
+    prompt: row.promptHash ?? "",
+    inputs: {
+      taskType: row.taskType ?? "",
+      executor: row.executor ?? "",
+    },
+  }));
+}
+
 /** Вычисляет метрики семи критериев §11 из ledger и истории запусков. */
 export function computeAcceptanceMetrics(input: AcceptanceMetricsInput): AcceptanceMetrics {
   const days = Math.min(365, Math.max(1, Math.floor(input.days ?? ACCEPTANCE_HORIZON_DAYS)));
@@ -1092,8 +1121,15 @@ export function computeAcceptanceMetrics(input: AcceptanceMetricsInput): Accepta
   const adhoc = rows.filter((row) => row.triggerKind === "adhoc");
   const reuse = rows.filter(isReuse).length;
 
-  const savings = computeSavings([...(input.history ?? [])], { topLimit: 1 });
-  const netEconomyUsd = roundAcceptance(savings.savedUsd - savings.totalCostUsd);
+  // SC-1.1: честная net = экономия - записанные расходы - стоимость проверок.
+  const verificationChecks = verificationChecksFromRows(rows);
+  const savings = computeSavings([...(input.history ?? [])], {
+    topLimit: 1,
+    verificationChecks,
+  });
+  const netEconomyUsd = roundAcceptance(
+    savings.savedUsd - savings.totalCostUsd - savings.verificationCostUsd,
+  );
 
   // §11.6: одинаковый gate+prompt в ad-hoc и registered должен дать вердикт.
   const parityGroups = new Map<string, { adhoc: string | null; registered: string | null }>();
@@ -1156,6 +1192,8 @@ export function computeAcceptanceMetrics(input: AcceptanceMetricsInput): Accepta
         savedUsd: roundAcceptance(savings.savedUsd),
         paidCostUsd: roundAcceptance(savings.totalCostUsd),
         escalationRate: acceptanceRate(escalations, rows.length),
+        verificationCostUsd: roundAcceptance(savings.verificationCostUsd),
+        verificationCache: savings.verificationCache,
       },
       learningLoopReuse: {
         reused: reuse,

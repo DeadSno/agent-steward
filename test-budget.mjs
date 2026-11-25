@@ -33,6 +33,11 @@ import {
   buildGrafanaDashboard,
   splitLocalCloud,
 } from "./dist/core/analytics.js";
+import {
+  VERIFICATION_COST_PER_CHECK_USD,
+  computeVerificationBudget,
+  verificationCheckKey,
+} from "./dist/core/savings.js";
 
 let passed = 0;
 let failed = 0;
@@ -377,6 +382,41 @@ const noBudgetRow = analytics.tasks.find((row) => row.taskName === "no-budget");
 check("analytics: tokenBudgetExceeded выставляется при превышении лимита запуска", overRow?.tokenBudgetExceeded === true && overRow?.tokenBudget === 1000);
 check("analytics: tokenBudgetExceeded=false, если лимит не превышен (даже при сумме > лимита)", underRow?.tokenBudgetExceeded === false);
 check("analytics: без лимита tokenBudgetExceeded=false", noBudgetRow?.tokenBudgetExceeded === false);
+
+// 11b. SC-1.1: стоимость проверок в ANALYTICS и кэш повторных входов.
+const verifyInput = { gate: "qualityGate", prompt: "prompt-A", inputs: { file: "a.ts" } };
+const verifySame = { gate: "qualityGate", prompt: "prompt-A", inputs: { file: "a.ts" } };
+const verifyDifferent = { gate: "qualityGate", prompt: "prompt-A", inputs: { file: "b.ts" } };
+check(
+  "SC-1.1: ключ проверки = SHA-256(gate+prompt+inputs), детерминирован",
+  verificationCheckKey(verifyInput) === verificationCheckKey(verifySame) &&
+    verificationCheckKey(verifyInput) !== verificationCheckKey(verifyDifferent) &&
+    /^[0-9a-f]{64}$/.test(verificationCheckKey(verifyInput))
+);
+const verifyBudget = computeVerificationBudget([verifyInput, verifySame, verifyDifferent]);
+check(
+  "SC-1.1: одинаковые проверки платятся один раз, разные — отдельно",
+  verifyBudget.checks === 3 &&
+    verifyBudget.hits === 1 &&
+    verifyBudget.misses === 2 &&
+    verifyBudget.costUsd === 2 * VERIFICATION_COST_PER_CHECK_USD
+);
+const analyticsWithVerification = buildAnalytics(
+  [day("2026-06-17T01:00:00Z", { costUsd: 1 })],
+  { now: analyticsNow, verificationChecks: [verifyInput, verifySame, verifyDifferent] },
+);
+check(
+  "SC-1.1: ANALYTICS отдаёт verificationCostUsd и статистику кэша",
+  analyticsWithVerification.savings.verificationCostUsd === verifyBudget.costUsd &&
+    analyticsWithVerification.savings.verificationCache.hits === 1 &&
+    analyticsWithVerification.savings.verificationCache.unique === 2
+);
+const indexSource = fs.readFileSync("./src/index.ts", "utf8");
+check(
+  "SC-1.1: ANALYTICS (MCP + RPC) передаёт проверки в buildAnalytics",
+  indexSource.split("verificationChecks,").length - 1 >= 2 &&
+    indexSource.includes("function verificationChecksForWindow")
+);
 
 // 12. E-2.2: гейт персонального токен-бюджета задачи (остановка при превышении).
 const gateNow = new Date("2026-06-17T12:00:00Z"); // среда

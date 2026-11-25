@@ -8,6 +8,7 @@ import {
   computeSavings,
   type SavingsRecord,
   type SavingsReport,
+  type VerificationCheck,
 } from "./savings.js";
 import { safeStringify } from "../text.js";
 
@@ -185,6 +186,8 @@ export interface BuildAnalyticsOptions {
   topLimit?: number;
   /** Известные задачи — нужны для группировки матриц. */
   tasks?: AnalyticsTaskRef[];
+  /** SC-1.1: проверки, стоимость которых вычитается из net-экономии. */
+  verificationChecks?: readonly VerificationCheck[];
 }
 
 function toNumber(value: unknown): number {
@@ -442,7 +445,10 @@ export function buildAnalytics(
     errors: [...byError.values()]
       .sort((a, b) => b.count - a.count || a.message.localeCompare(b.message))
       .slice(0, topLimit),
-    savings: computeSavings(windowRecords, { topLimit }),
+    savings: computeSavings(windowRecords, {
+      topLimit,
+      verificationChecks: options.verificationChecks,
+    }),
     sources: {
       historyRecords: records.length,
       recordsInWindow,

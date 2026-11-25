@@ -11,6 +11,7 @@
  * процесс обёртки не имеет доступа к SQLite, поэтому аудит фиксирует
  * сгенерированную политику, а не попытки вызова инструментов.
  */
+import { isAbsolute, resolve } from "node:path";
 
 /** Действия OpenCode v2, которые понимает permissions. */
 export const PERMISSION_ACTIONS = [
@@ -188,6 +189,10 @@ export interface CompilePermissionInput {
   deniedTools?: readonly string[] | null;
   /** ARCH-6.1: whitelist хостов/API в scoped-конфиге; отсутствие = fail-open. */
   egress?: unknown;
+  /** SC-1.2: write-scope задачи; отсутствие = запись только в baseDir. */
+  writeScope?: unknown;
+  /** SC-1.2: базовый каталог задачи/worktree для относительных путей scope. */
+  baseDir?: string;
 }
 
 /** Результат компиляции: то, что уходит в RunContext и обёртку. */
@@ -195,6 +200,8 @@ export interface CompiledPermissionPolicy extends RiskBaseline {
   riskClass: RiskClass;
   /** ARCH-6.1: нормализованная egress-политика или null (старое поведение). */
   egress: EgressPolicy | null;
+  /** SC-1.2: нормализованный write-scope (deny по умолчанию). */
+  writeScope: WriteScopePolicy;
 }
 
 /**
@@ -228,6 +235,7 @@ export function compilePermissionPolicy(
     deniedTools,
     limits: { ...baseline.limits },
     egress: normalizeEgressPolicy(input.egress),
+    writeScope: normalizeWriteScopePolicy(input.writeScope, input.baseDir),
   };
 }
 
@@ -487,6 +495,170 @@ export async function runEgressGuarded<T>(
   return runWithEgressDecision(checkEgress(policy, destination), destination, action);
 }
 
+/* ─── SC-1.2: write-scope guard (deny по умолчанию) ─────────────────────────── */
+
+/** Причина решения write-scope — пишется в аудит и отчёт. */
+export const WRITE_SCOPE_REASONS = [
+  "within-scope",
+  "outside-denied",
+  "outside-allowed",
+  "traversal",
+  "invalid-path",
+] as const;
+export type WriteScopeReason = (typeof WRITE_SCOPE_REASONS)[number];
+
+/**
+ * Write-scope политики. По умолчанию запись разрешена только внутри
+ * рабочей директории задачи/worktree; выход требует явного opt-in.
+ */
+export interface WriteScopePolicy {
+  /** Корень scope (абсолютный после нормализации). */
+  allowedRoot: string;
+  /** Явное разрешение записи вне scope; по умолчанию false (deny). */
+  allowOutside: boolean;
+  /** Дополнительные явно разрешённые корни. */
+  extraRoots: string[];
+  /** true, если политика была задана явно (не дефолт). */
+  configured: boolean;
+}
+
+/** Решение по одному пути записи. */
+export interface WriteScopeDecision {
+  allowed: boolean;
+  reason: WriteScopeReason;
+  /** Разрешённый (нормализованный) путь или null для невалидного входа. */
+  resolvedPath: string | null;
+  scopeRoot: string;
+  detail: string;
+  /** true, только если выход вне scope разрешён явным opt-in. */
+  outsideAllowed: boolean;
+}
+
+/** Вход проверки write-scope. */
+export interface WriteScopeCheckInput {
+  /** Целевой путь (относительный или абсолютный). */
+  target: unknown;
+  /** Политика из scoped-конфига; отсутствие = deny вне базового каталога. */
+  policy?: unknown;
+  /** Базовый каталог задачи/worktree (по умолчанию process.cwd()). */
+  baseDir?: string;
+}
+
+function normalizeWriteScopeRoot(value: unknown, baseDir: string): string {
+  if (typeof value === "string" && value.trim()) {
+    const raw = value.trim();
+    return isAbsolute(raw) ? resolve(raw) : resolve(baseDir, raw);
+  }
+  return resolve(baseDir);
+}
+
+function normalizeWriteScopeList(value: unknown, baseDir: string): string[] {
+  const raw = Array.isArray(value)
+    ? value
+    : typeof value === "string" && value.trim()
+      ? value.split(/[;,]/)
+      : [];
+  return Array.from(
+    new Set(
+      raw
+        .map((item) => normalizeWriteScopeRoot(item, baseDir))
+        .filter((item) => item.length > 0),
+    ),
+  );
+}
+
+/** Приводит scoped-конфиг write-scope к нормализованной политике. */
+export function normalizeWriteScopePolicy(
+  value: unknown,
+  baseDir: string = process.cwd(),
+): WriteScopePolicy {
+  const root = resolve(baseDir);
+  const fallback: WriteScopePolicy = {
+    allowedRoot: root,
+    allowOutside: false,
+    extraRoots: [],
+    configured: false,
+  };
+  if (value == null) return fallback;
+  if (typeof value === "string" && value.trim()) {
+    return { ...fallback, allowedRoot: normalizeWriteScopeRoot(value, root), configured: true };
+  }
+  if (typeof value === "boolean") {
+    return { ...fallback, allowOutside: value, configured: true };
+  }
+  if (typeof value !== "object" || Array.isArray(value)) return fallback;
+  const obj = value as Record<string, unknown>;
+  const rootValue = obj.allowedRoot ?? obj.root ?? obj.scope ?? obj.cwd;
+  const extraValue = obj.extraRoots ?? obj.allowedRoots ?? obj.alsoAllow;
+  const outsideValue = obj.allowOutside ?? obj.allowOutsideWriteScope ?? obj.outsideAllowed;
+  return {
+    allowedRoot: normalizeWriteScopeRoot(rootValue, root),
+    allowOutside: outsideValue === true || outsideValue === "true",
+    extraRoots: normalizeWriteScopeList(extraValue, root),
+    configured: true,
+  };
+}
+
+function writeScopeKey(value: string): string {
+  const native = process.platform === "win32" ? value.replace(/\\/g, "/").toLowerCase() : value;
+  const trimmed = native.replace(/\/+$/, "");
+  return trimmed || (process.platform === "win32" ? "c:/" : "/");
+}
+
+function isWithinWriteScope(candidate: string, root: string): boolean {
+  const key = writeScopeKey(candidate);
+  const base = writeScopeKey(root);
+  return key === base || key.startsWith(`${base}/`);
+}
+
+/**
+ * SC-1.2: denial-by-default guard для edit/write. Сначала отклоняем «..» в
+ * исходном пути, затем резолвим absolutный путь и проверяем вхождение в scope.
+ * Выход вне scope проходит только при явном allowOutside/extraRoots.
+ */
+export function checkWriteScope(input: WriteScopeCheckInput): WriteScopeDecision {
+  const baseDir = resolve(input.baseDir ?? process.cwd());
+  const policy = normalizeWriteScopePolicy(input.policy, baseDir);
+  const scopeRoot = policy.allowedRoot;
+  const decision = (
+    allowed: boolean,
+    reason: WriteScopeReason,
+    resolvedPath: string | null,
+    detail: string,
+    outsideAllowed = false,
+  ): WriteScopeDecision => ({ allowed, reason, resolvedPath, scopeRoot, detail, outsideAllowed });
+
+  if (typeof input.target !== "string" || !input.target.trim() || input.target.includes("\0")) {
+    return decision(false, "invalid-path", null, "путь записи пуст или невалиден");
+  }
+  const raw = input.target.trim();
+  // Явно запрещаем родительские сегменты ещё до резолва: path.resolve «склеил»
+  // бы их обратно в допустимый путь и спрятал бы попытку выхода.
+  if (raw.split(/[\\/]/).some((part) => part === "..")) {
+    return decision(false, "traversal", null, "путь записи содержит родительский сегмент '..'");
+  }
+  const resolved = isAbsolute(raw) ? resolve(raw) : resolve(baseDir, raw);
+  const roots = [scopeRoot, ...policy.extraRoots];
+  if (roots.some((root) => isWithinWriteScope(resolved, root))) {
+    return decision(true, "within-scope", resolved, "путь записи внутри write-scope");
+  }
+  if (policy.allowOutside) {
+    return decision(
+      true,
+      "outside-allowed",
+      resolved,
+      "запись вне write-scope разрешена явным opt-in",
+      true,
+    );
+  }
+  return decision(
+    false,
+    "outside-denied",
+    resolved,
+    `путь записи вне write-scope (${scopeRoot}) и не разрешён явно`,
+  );
+}
+
 /** Базовые политики: какие действия разрешены без учёта списков задачи. */
 const POLICY_BASE: Record<PermissionPolicy, readonly PermissionAction[]> = {
   // Гибрид: агенту можно менять файлы, но не выполнять команды и не задавать
@@ -510,6 +682,10 @@ export interface PermissionInput {
   deniedTools?: readonly string[] | null;
   /** ARCH-6.1: egress-политика scoped-конфига; отсутствие = fail-open. */
   egress?: unknown;
+  /** SC-1.2: write-scope задачи; отсутствие = запись только в baseDir. */
+  writeScope?: unknown;
+  /** Базовый каталог задачи/worktree для нормализации write-scope. */
+  baseDir?: string;
 }
 
 export interface EffectivePermission {
@@ -529,6 +705,8 @@ export interface EffectivePermissions {
   permissions: EffectivePermission[];
   /** ARCH-6.1: whitelist хостов/API или null (политика не задана). */
   egress: EgressPolicy | null;
+  /** SC-1.2: нормализованный write-scope (deny по умолчанию). */
+  writeScope: WriteScopePolicy;
   /**
    * Действия, запрещённые именно политикой по умолчанию (а не списками
    * задачи). Используется для аудита и подсказок в логе.
@@ -629,16 +807,24 @@ export function resolvePermissions(input: PermissionInput = {}): EffectivePermis
     });
   }
 
-  return { policy, legacyShell, permissions, deniedByPolicy, egress: normalizeEgressPolicy(input.egress) };
+  return {
+    policy,
+    legacyShell,
+    permissions,
+    deniedByPolicy,
+    egress: normalizeEgressPolicy(input.egress),
+    writeScope: normalizeWriteScopePolicy(input.writeScope, input.baseDir),
+  };
 }
 
 /** Готовый OPENCODE_CONFIG_CONTENT для обёрток. */
 export function buildOpencodeConfig(input: PermissionInput = {}): string {
   const effective = resolvePermissions(input);
   // QW-4: https://opencode.ai/config.json объявляет additionalProperties: false
-  // и не знает корневого ключа egress. Строгая валидация хостом отвергла бы
-  // весь конфиг (fail-open), мягкая — проигнорировала бы ограничение.
-  // Egress живёт только в runEgressGuarded / compilePermissionPolicy и в аудите.
+  // и не знает корневых ключей egress / writeScope. Строгая валидация хостом
+  // отвергла бы весь конфиг (fail-open), мягкая — проигнорировала ограничение.
+  // Egress и write-scope живут только в compilePermissionPolicy/resolvePermissions
+  // (execute-путь) и в аудите; в OPENCODE_CONFIG_CONTENT их нет.
   const config: Record<string, unknown> = {
     $schema: "https://opencode.ai/config.json",
     permissions: effective.permissions,
