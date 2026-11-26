@@ -7,8 +7,9 @@
 > **Деталь** (подсистема/файлы) → **Задача** (что чиним/делаем) → **Подзадача** (атомарный шаг).
 > В работу берётся ровно одна подзадача: подзадача → отчёт → следующая подзадача.
 >
-> **В ROADMAP только открытые задачи.** Закрытые задачи и подзадачи удаляются отсюда
-> и фиксируются в [CHANGELOG.md](./CHANGELOG.md) — больше нигде.
+> **В активном канбане только открытые задачи.** Закрытые задачи и подзадачи уходят
+> в [CHANGELOG.md](./CHANGELOG.md), а их иерархия сохраняется в архиве ниже — чтобы
+> было видно «задача → подзадача» и по каждому ID можно было найти подробности.
 >
 > **Нумерация.** Нумерация сохранена для преемственности ссылок; следующий раздел — 4.
 
@@ -68,6 +69,46 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 `src/core/savings.ts`, `src/core/permissions.ts`, `src/core/worktree.ts`, `src/core/audit.ts`, `src/core/self-analysis.ts`, `src/shared/installation-warning.ts`, `src/version.ts`, `src/index.ts`, `src/rpc.ts`, `src/gui.tsx`, `TEST-PLAN.md`, `test-budget.mjs`, `test-permissions-policy.mjs`, `test-self-analysis.mjs`, `test-gui-bundle.mjs`, `test-agent-tools.mjs`, `docs/SAFETY.md`, `docs/EXECUTION-LOOP.md`
 
 Обоснование: модули стратегии (CONCEPT §11–§13, ROADMAP-STRATEGY) в основном закрыты, но несколько контуров доверия остаются непроверяемыми извне. Это не новые возможности, а углубление существующих: измеримость, аудируемость и воспроизводимость приёмки. Разбивка уточнена 25.11.2026: каждая подзадача даёт один проверяемый артефакт и закрывается своим тестом; SC-1.1/SC-1.2 и вся матрица Детали 3.20 закрыты и перенесены в CHANGELOG, здесь не дублируются. DEEP-1, DEEP-2, DEEP-3 и вся задача DEEP-4 (DEEP-4.1…DEEP-4.5) закрыты и перенесены в CHANGELOG; в Детали 3.21 открытых задач нет, в разделе QA-находок открытых строк нет. Находки QA-CI-261, QA-CI-B12, QA-CI-NODE26, QA-DEEP4-1, QA-FULL-01, QA-FULL-02, QA-FULL-03, QA-FULL-04, QA-FULL-05 и QA-FULL-06 закрыты и перенесены в CHANGELOG.
+
+### Архив задач и подзадач (статус подтверждён кодом/тестами, не CHANGELOG)
+
+> Активный канбан выше содержит только открытые строки. Ниже — иерархия уже выполненных работ: **задача → подзадача → объективный артефакт в коде/тесте**. «✅ по коду» означает, что файл/экспорт/поведение существует и покрыт зелёным тестом; CHANGELOG используется только как подробная хроника изменений, а не как источник статуса.
+
+| Задача | Подзадача | Артефакт в коде / проверка | Статус |
+|---|---|---|---|
+| DEEP-1 Измеримость | DEEP-1.1 receipts | `src/core/savings.ts`, `test-budget.mjs` | ✅ по коду |
+| DEEP-1 Измеримость | DEEP-1.2 верификация и версия | `test-user-version.mjs`, `docs/EXECUTION-LOOP.md` | ✅ по коду |
+| DEEP-2 Целостность | DEEP-2.1 identity | `src/core/worktree.ts`, `test-worktree.mjs` | ✅ по коду |
+| DEEP-2 Целостность | DEEP-2.2 deny / разрешения | `src/core/permissions.ts`, `src/core/audit.ts`, `test-permissions-policy.mjs`, `test-audit.mjs` | ✅ по коду |
+| DEEP-3 Доверие | DEEP-3.1 self_analysis | `test-self-analysis.mjs` | ✅ по коду |
+| DEEP-3 Доверие | DEEP-3.2 GUI | `src/gui.tsx`, `test-gui-bundle.mjs` | ✅ по коду |
+| DEEP-3 Доверие | DEEP-3.3 fail-open preflight | `test-agent-tools.mjs`, `schedule_task` / `run_task_now` | ✅ по коду |
+| DEEP-4 Приёмка D01–D18 | DEEP-4.1 матрица артефактов | `TEST-PLAN.md` §4.1, гейт в `test-docs.mjs` | ✅ по коду |
+| DEEP-4 Приёмка D01–D18 | DEEP-4.2 D01–D06 | `TEST-PLAN.md` §8.1, 29 точечных `test-*.mjs` | ✅ по коду |
+| DEEP-4 Приёмка D01–D18 | DEEP-4.3 D07–D12 | `TEST-PLAN.md` §8.1, 24 точечных `test-*.mjs` | ✅ по коду |
+| DEEP-4 Приёмка D01–D18 | DEEP-4.4 D13–D18 | `TEST-PLAN.md` §8.1, 22 теста + `test:parallel` + локали | ✅ по коду |
+| DEEP-4 Приёмка D01–D18 | DEEP-4.5 итог 18/18 | `TEST-PLAN.md` §8, гейт в `test-docs.mjs` | ✅ по коду |
+| QA-CI-261 `/tr` >261 | укорочение команды | `src/core/ps-wrapper.ts` `buildWindowsHiddenTaskCommand`, `test-execution-hardening.mjs` | ✅ по коду |
+| QA-CI-B12 heartbeat | стабилизация lease-теста | `test-run-journal.mjs` | ✅ по коду |
+| QA-CI-NODE26 libuv | дренаж хендлов | `test-notifications-summary.mjs`, гейт в `test-docs.mjs` | ✅ по коду |
+| QA-FULL-02 версия MCP | единый источник версии | `src/mcp.ts` `getPluginVersion`, `test-mcp-adapter.mjs` | ✅ по коду |
+| QA-FULL-05 JSDoc | восстановление блока | `src/runtime.ts`, гейт в `test-docs.mjs` | ✅ по коду |
+| QA-FULL-03 аналитика | раздельные бакеты skipped/interrupted | `src/core/analytics.ts`, `src/db/metrics-repo.ts`, `test-metrics.mjs`, `test-sqlite.mjs` | ✅ по коду |
+| QA-FULL-01 engine | база Node 26.4 | `package.json` `engines.node`, `.github/workflows/*.yml`, `test-docs.mjs` | ✅ по коду |
+| QA-FULL-04 стратегия | синхрон с канбаном | `ROADMAP-STRATEGY.md`, гейт в `test-docs.mjs` | ✅ по коду |
+| QA-FULL-06 skipReason | пропуски PL-121 | `src/db/history-repo.ts`, `src/history.ts`, `src/index.ts`, `src/server.ts`, `docs/SAFETY.md`, `test-sqlite.mjs` | ✅ по коду |
+| ROADMAP-CLARIFY | расшифровка ID | раздел «Что означают ID…», гейт в `test-docs.mjs` | ✅ по коду |
+| P-1 Изоляция ядра | `agent-steward/core` | `src/core-entry.ts` (`createToolSpecs`, `createRuntimeCore`), `src/tool-specs.ts`, `src/runtime.ts`, `test-tool-specs.mjs`, `test-watch-paths.mjs` | ✅ по коду |
+| P-2 MCP-адаптер | `agent-steward mcp` | `src/mcp.ts`, subpath `./mcp` в `package.json`, `test-mcp-adapter.mjs` | ✅ по коду |
+| P-3 Универсальный harness | `AgentInvoker` + `harness` | `src/invokers/agent-invoker.ts`, `src/core-entry.ts`, `test-invokers.mjs` | ✅ по коду |
+| P-4 dsh-плагин | адаптер | `src/dsh.ts`, `test-dsh-adapter.mjs` | ✅ по коду |
+| P-5 serve | standalone dashboard | `src/serve.ts`, `src/cli.ts`, `test-dashboard.mjs` | ✅ по коду |
+| S-1 Open spec | pipeline describe | `src/core/pipeline-open-spec.ts`, `test-open-spec.mjs` | ✅ по коду |
+| S-2 Router | capability + flywheel | `src/router.ts`, `src/core/router/capability-math.ts`, `test-router.mjs` | ✅ по коду |
+| S-3 Scorecard | reliability | `src/core/reliability-scorecard.ts`, `test-scorecard.mjs` | ✅ по коду |
+| S-4 Recipes | gate-passed рецепты | `src/core/recipes.ts`, `test-recipes.mjs` | ✅ по коду |
+| S-5 Verified chat | ответ по gate | `src/core/verified-chat.ts`, `test-verified-chat.mjs` | ✅ по коду |
+| S-6 Scaffold | из рецептов | `src/core/scaffold.ts`, `test-scaffold.mjs` | ✅ по коду |
 
 ---
 
