@@ -90,5 +90,5 @@ Legacy: `opencode-windows-scheduler@1.5.10`.
 - ✅ Пока жив legacy: диапазон шима `>=0.0.2 <0.1.0` актуален, deprecation не снят.
 - ✅ Критические баги аудита закрыты (V009-4…V009-6); открытых known issues нет.
 - ✅ npm-релиз `v0.0.10` опубликован workflow (run `45784589913`, shasum `2021e825f0cf0dd1058e86bcb18aade367710cf9`), GitHub release создан; версии согласованы.
-- 🟡 Релиз `v0.0.11`: `mcpName` и `server.json:name` исправлены на `io.github.DeadSno/agent-steward` (OIDC-пространство имён регистрочувствительно); тег публикуется workflow.
-- 🟡 official MCP Registry: job `publish-mcp` после повтора ушёл на `Validate`/`Login OIDC`, но получил HTTP 403 из-за регистра `deadsno`; run ID и URL записи зафиксировать после тега `v0.0.11` (X-7).
+- ✅ Релиз `v0.0.11` опубликован workflow (run `45787404530`): `mcpName` и `server.json:name` исправлены на `io.github.DeadSno/agent-steward` (OIDC-пространство имён регистрочувствительно).
+- ✅ official MCP Registry: запись `io.github.DeadSno/agent-steward` v0.0.11 активна (job `publish-mcp` `139799474235`, publishedAt 09:05:18Z); проверка: `https://registry.modelcontextprotocol.io/v0.1/servers?search=agent-steward` (X-7).

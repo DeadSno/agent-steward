@@ -28,7 +28,7 @@
 | GitHub Pages | — | ⚪ | `has_pages=false`; для сайта нужно отдельно включать Pages и публиковать статику |
 | `github.com/topics/opencode-plugin` | https://github.com/topics/opencode-plugin | ⚪ | Проект есть в поиске по теме, но не на первой странице: 4 звёзды — мало для заметности |
 | awesome-selfhosted | https://github.com/awesome-selfhosted/awesome-selfhosted | ⚪ | Перед PR сверить критерии: это плагин/фреймворк, а не отдельный self-hosted сервис |
-| Официальный MCP Registry | https://registry.modelcontextprotocol.io | 🟡 | `server.json` (`io.github.DeadSno/agent-steward`, npm/stdio, v0.0.11) и `package.json:mcpName` согласованы. В 0.0.10 job `publish-mcp` получил HTTP 403: OIDC разрешает `io.github.DeadSno/*`, а в артефактах был lowercase `deadsno`. Повтор после тега `v0.0.11`; проверить запись в реестре |
+| Официальный MCP Registry | https://registry.modelcontextprotocol.io/v0.1/servers?search=agent-steward | ✅ | Запись `io.github.DeadSno/agent-steward` v0.0.11 активна (publishedAt 09:05:18Z, isLatest=true); job `publish-mcp` `139799474235` в run `45787404530` зелёный после исправления регистра `mcpName` |
 | Glama | https://glama.ai/mcp/servers | 🟡 | Добавлен `glama.json` с `maintainers: ["DeadSno"]`; индексация автоматическая, подтверждение заявки — ручной вход |
 | mcp.so / mcpservers.org / mcpmarket / cursor.directory | web forms | 🟡 | Только ручные формы с аккаунтом; Free/платные варианты и сроки проверки сверить на месте |
 | PulseMCP | https://www.pulsemcp.com/submit | ⚪ | Приём новых заявок приостановлен с сентября 2026; каталог импортирует данные из официального реестра |

@@ -150,6 +150,15 @@ Product Hunt и criteria для awesome-selfhosted. После публикац�
 3. Проверка после прогона: `npm view agent-steward@0.0.11 mcpName` и
    `curl "https://registry.modelcontextprotocol.io/v0.1/servers?search=agent-steward"`.
 
+Фактический результат 26.11.2026: run `45787404530` зелёный целиком (verify ubuntu `139797564633`,
+verify windows `139797564779`, publish npm `139798978226`, publish-mcp `139799474235` — все шаги,
+включая `Validate server.json`, `Login OIDC` и `Publish`, Success). Запись реестра
+`io.github.DeadSno/agent-steward` v0.0.11 активна, publishedAt 09:05:18Z, isLatest=true;
+`npm view agent-steward@0.0.11 mcpName` возвращает `io.github.DeadSno/agent-steward`,
+`dist-tags.latest=0.0.11`, GitHub release https://github.com/DeadSno/agent-steward/releases/tag/v0.0.11
+опубликован в 09:00:10Z. Усвоенный урок: регистр `mcpName` должен совпадать с `io.github.<GitHub login>`
+(здесь `DeadSno`), а ожидание npm-зеркала проверяет прямой URL `registry.npmjs.org`, а не `npm view`.
+
 Если OIDC-вход в job недоступен, допустим ручной fallback с тем же бинарником:
 `mcp-publisher login github --token <токен>` и `mcp-publisher publish`. Реестр канонический —
 Glama, PulseMCP и mcp.so подхватывают записи оттуда автоматически.
