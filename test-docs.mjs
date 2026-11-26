@@ -1153,6 +1153,35 @@ check(
   check("QA-FULL-01: README декларирует Node.js 26.4+", /Node\.js 26\.4\+/.test(readme));
 }
 
+// QA-FULL-04: «Ближайшие две недели» должны отражать реально открытые QA,
+// а не закрытые EV-1/EX-1/SC-1/LP-1/AD-1 и P-1/P-2.
+{
+  const strategy = fs.readFileSync(path.join(root, "ROADMAP-STRATEGY.md"), "utf8");
+  const start = strategy.indexOf("## Ближайшие две недели");
+  const end = start >= 0 ? strategy.indexOf("\n---", start) : -1;
+  const block = start >= 0 && end > start ? strategy.slice(start, end) : "";
+  const activeLegacy = (text) =>
+    /^\s*\d+\.\s*(?:P-1|P-2|EV-1|EX-1|SC-1|LP-1|AD-1)\s*[—–-]/m.test(text) ||
+    /остаётся открытым до FIX/i.test(text);
+  check(
+    "QA-FULL-04: блок пересобран под реально открытые QA",
+    ["QA-DEEP4-1", "QA-FULL-04", "QA-FULL-06"].every((id) => block.includes(id)),
+  );
+  check("QA-FULL-04: закрытые P-1/P-2 и EV-1…AD-1 не активны", !activeLegacy(block));
+  check(
+    "QA-FULL-04: негативный тест — возврат активного P-1 детектируется",
+    activeLegacy(block + "\n1. P-1 — закрыть изоляцию ядра\n"),
+  );
+  check(
+    "QA-FULL-04: будущие ID помечены как future",
+    /future, не в ближайшие две недели/i.test(block),
+  );
+  check(
+    "QA-FULL-04: синхронизация strategy ↔ ROADMAP сохранена",
+    /\[ROADMAP\.md\]\(\.\/ROADMAP\.md\)/.test(strategy),
+  );
+}
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\nDocs: ${results.length - failed.length}/${results.length} проверок пройдено.`);
 process.exit(failed.length > 0 ? 1 : 0);
