@@ -1417,6 +1417,20 @@ check(
       !/future, не в ближайшие две недели/.test(strategy) &&
       /X-4 закрыта/.test(runbook) && /X-5 остаётся открытой/.test(runbook),
   );
+
+  // V009-3: заголовки версий в CHANGELOG уникальны (реальный дубль 0.0.9 после rebase).
+  const versionHeadings = changelog.match(/^## \[\d+\.\d+\.\d+\]/gm) || [];
+  check(
+    "V009-3: CHANGELOG не содержит повторных заголовков версий",
+    versionHeadings.length > 0 &&
+      new Set(versionHeadings).size === versionHeadings.length &&
+      versionHeadings.filter((h) => h === "## [0.0.9]").length === 1,
+  );
+  const withDuplicate = [...versionHeadings, "## [0.0.9]"];
+  check(
+    "V009-3: негатив — дубль заголовка версии детектируется",
+    new Set(withDuplicate).size !== withDuplicate.length,
+  );
 }
 
 const failed = results.filter((r) => !r.ok);
