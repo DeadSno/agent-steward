@@ -180,6 +180,8 @@ Agent jobs run with `opencode run --auto`, so their tool policy must be explicit
 
 `deniedTools` always wins. A non-empty `allowedTools` is an allowlist for non-read-only actions: read, glob, grep and skill are added automatically (PL-133), so to forbid them you must list them explicitly in `deniedTools`. It can also explicitly re-enable an action denied by the policy (for example `shell`). `legacyShell: true` re-enables `shell` only under `hybrid`, for tasks migrated from older versions.
 
+Scope: the table above governs the **scheduled agent run**. The plugin's own tools (`schedule_task`, `run_task_now`, …) are not covered by `defaultPolicy` — `qualityGate`, `beforeScript` and `afterScript` run as shell commands in the wrapper whatever the policy says. A no-shell setup therefore has to restrict the plugin tools themselves through OpenCode tool permissions, not only the policy.
+
 Blocked actions are written to the audit journal as `tool.blocked` with `reason: "default-policy"` and a `hint`, and each run logs the active policy.
 
 Recommended pattern: keep `git commit`/`push`, builds and tests outside the agent, in `qualityGate` or `afterScript` (the wrapper runs them with `bash -c`), and leave the agent with `read`/`edit`. Most jobs then need no `shell` at all.
@@ -346,6 +348,9 @@ File (`file`), git (`git`) and MCP-event (`mcp-event`) triggers are watched by t
 
 **Do jobs run when nobody is logged on?**
 On Windows, only if you opt in with `runWhenLoggedOff: true`: the task is then registered as `schtasks /ru SYSTEM` and runs in session 0 without your profile, mapped drives or saved credentials. The default is interactive only — the job runs while the user is logged on. Linux crontab always runs without a login; a macOS launchd agent runs only inside a user session.
+
+**Task creation fails with “Access is denied” on Windows?**
+Some machines (hardened OEM images, a revoked “Log on as a batch job” right) refuse task registration to a non-elevated process — both `schtasks.exe` and the COM API. The plugin then retries the same command with a Windows elevation prompt: you confirm once per operation, and OpenCode itself keeps running without admin rights. The retry covers only commands that change the scheduler (`/create`, `/delete`, `/change`, `/run`, `/end`), is skipped where no prompt could be shown (services, session 0) and is switched off with `AGENT_STEWARD_NO_UAC=1` (CI, headless). Declining the prompt leaves the original error text untouched. `cmd.exe` is not involved and the prompt is readable: it shows `schtasks.exe` (“Task Scheduler Command Line”) with the full arguments of the operation, so you confirm a specific scheduler change, not an opaque script. The elevated process's text output is not captured (ShellExecute has no pipes); failures are explained from the exit code. If the dialog goes unanswered for 2 minutes the retry gives up; a non-elevated process cannot close an elevated dialog, so dismiss it manually.
 
 **Which platforms are supported?**
 Windows (Task Scheduler), macOS (launchd) and Linux (crontab). Backend differences are documented in [CROSS_PLATFORM.md](CROSS_PLATFORM.md).

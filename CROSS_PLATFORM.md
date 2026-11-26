@@ -49,8 +49,9 @@ The factory picks an implementation from `process.platform`:
 
 ## How each OS works
 
-### Windows (behaviour unchanged)
+### Windows
 - Tasks are registered in Windows Task Scheduler via `schtasks` under `\OpenCode\agent-steward\` (profiles use `\OpenCode\agent-steward-<profile>\`). The legacy `\OpenCode\windows-scheduler\` folder is still read, renamed and deleted on demand.
+- If the OS refuses the operation (`Access is denied` — hardened machines where task registration needs elevation), the same command is retried through a Windows elevation prompt (`ShellExecute` verb `runas`), so OpenCode itself does not have to run as administrator. Only scheduler-changing commands ask for it; reading never does. Disabled with `AGENT_STEWARD_NO_UAC=1` and skipped where no prompt can be shown (services, session 0).
 - Wrapper: `run-task.ps1` plus a per-task `run-<name>.cmd` in `%APPDATA%\opencode\agent-steward\wrapper`. The legacy `%APPDATA%\opencode\windows-scheduler` directory is migrated on first start.
 - Logs: `%APPDATA%\opencode\agent-steward\logs\<name>.log`.
 - cron is converted to schtasks (`convertCronToSchTasks`) — the same pattern set as before.

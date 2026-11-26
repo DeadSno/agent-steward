@@ -170,6 +170,8 @@ Agent 任务以 `opencode run --auto` 运行，因此其工具策略必须显式
 
 `deniedTools` 始终优先。非空的 `allowedTools` 是针对非只读动作的 allowlist：read、glob、grep 和 skill 会自动加入（PL-133），因此要禁止它们必须在 `deniedTools` 中显式列出。它也可以显式恢复被策略禁止的动作（例如 `shell`）。`legacyShell: true` 仅在 `hybrid` 下恢复 `shell`，用于从旧版本迁移的任务。
 
+适用范围：上表只约束计划任务中的 agent 运行。插件自身的工具（`schedule_task`、`run_task_now` 等）不受 `defaultPolicy` 限制——`qualityGate`、`beforeScript` 和 `afterScript` 无论策略如何都会在包装脚本中以 shell 命令执行。因此「无 shell」的配置还需要通过 OpenCode 工具权限限制插件工具本身。
+
 被阻止的动作会以 `tool.blocked` 写入审计日志，带 `reason: "default-policy"` 和 `hint`；每次运行还会记录当前生效的策略。
 
 推荐做法：把 `git commit`/`push`、构建和测试放在 agent 之外，通过 `qualityGate` 或 `afterScript` 执行（包装器用 `bash -c` 运行它们），让 agent 只保留 `read`/`edit`。这样大多数任务根本不需要 `shell`。
@@ -327,6 +329,9 @@ cron 和一次性任务可以。它们注册在操作系统原生调度器中，
 
 **没人登录时任务会运行吗？**
 在 Windows 上，只有显式设置 `runWhenLoggedOff: true` 才会：任务以 `schtasks /ru SYSTEM` 注册，在会话 0 中运行，没有你的配置文件、映射磁盘或已保存凭据。默认仅交互式 —— 用户登录时任务才运行。Linux crontab 始终无需登录即可运行；macOS launchd agent 仅在用户会话内运行。
+
+**Windows 上创建任务出现 “Access is denied” 怎么办？**
+部分主机（加固的 OEM 镜像、撤销了「作为批处理作业登录」权限）禁止未提升权限的进程注册任务——`schtasks.exe` 与 COM 接口均如此。此时插件会通过 Windows 权限提升提示重试同一命令：每次操作确认一次，OpenCode 本身无需以管理员身份运行。只有修改调度器的命令（`/create`、`/delete`、`/change`、`/run`、`/end`）会请求提升；在无法显示提示的环境（服务、session 0）会自动跳过，也可用 `AGENT_STEWARD_NO_UAC=1`（CI、headless）关闭。拒绝提示时保留原有错误信息。链路上没有 `cmd.exe`，且提示是可读的：其中显示 `schtasks.exe`（「Task Scheduler Command Line」）及操作的完整参数——你确认的是具体的计划程序操作，而非不透明的脚本。提升进程的文本输出不会被捕获（ShellExecute 没有管道），错误依据退出码解释。对话框 2 分钟内无人应答则重试放弃；未提升的进程无法关闭提升对话框，请手动关闭。
 
 **支持哪些平台？**
 Windows（任务计划程序）、macOS（launchd）和 Linux（crontab）。后端差异见 [CROSS_PLATFORM.md](../CROSS_PLATFORM.md)。
