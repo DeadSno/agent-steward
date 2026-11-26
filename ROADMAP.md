@@ -48,7 +48,8 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 ## Открытые задачи
 
 - **⬜ Release-чеклист (§5)** — шесть шагов до релиза 0.0.9: версия==tag и CI, CHANGELOG/шапка/SECURITY, `test-docs` зелёный, GitHub release, шим/deprecation, критические баги аудита.
-- Других открытых задач и QA-находок нет: бывшая Деталь 3.21 и все QA-строки закрыты и перенесены в CHANGELOG.
+- **⬜ V009-PLUGIN-1 — `list_tasks` показывает `DEEP3-Preflight`, а `update_task`/`dry_run` отвечают «Задача не найдена» (Code Mode, 26.11.2026) — P2. Действие: разобрать расхождение `listTasks()` и `getTask()` для cron-задачи с пустым `schedule`/`prompt`, добавить регрессию в `test-agent-tools.mjs`.**
+- Старые QA-строки, бывшая Деталь 3.21 и все закрытые задачи перенесены в CHANGELOG; единственная новая открытая находка — V009-PLUGIN-1.
 
 ---
 

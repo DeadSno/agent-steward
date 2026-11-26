@@ -62,7 +62,7 @@ body:
     id: node-version
     attributes:
       label: Версия Node.js
-      placeholder: "22.22.0 / 24.x"
+      placeholder: "26.4.0"
     validations:
       required: true
 

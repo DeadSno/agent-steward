@@ -7,7 +7,7 @@ project: agent-steward
 # Agent Steward Dev
 
 Репозиторий: плагин OpenCode для шедулинга и оркестрации (V1 ≥1.18.29 + V2). Стек:
-TypeScript strict/ESM, Node ≥22.22 (`node:sqlite`, WAL; chokidar 6), zod 4, yaml, iconv-lite;
+TypeScript strict/ESM, Node ≥26.4 (`engines.node`, `@opentui/core` 0.9.0; `node:sqlite`/WAL and chokidar 6 need 22.22+), zod 4, yaml, iconv-lite;
 `@opencode/plugin ^2.2.7` + `@opencode/schema` (V2), `@opencode-ai/plugin 1.19.5` (V1-типы);
 GUI — SolidJS + Vite; TUI — OpenTUI; SQLite `scheduler.db`, `SCHEMA_VERSION=14`;
 бэкенды ОС — `schtasks` / `crontab` / `launchd`; локали `locales/{ru,en,zh}.json`.
@@ -51,7 +51,7 @@ GUI — SolidJS + Vite; TUI — OpenTUI; SQLite `scheduler.db`, `SCHEMA_VERSION=
 - Не редактировать вручную `dist/`, `gui-experimental.cjs`, `legacy/gui-experimental.cjs`.
 - Публикация: только `git tag vX.Y.Z` → `.github/workflows/release.yml`; локально —
   `npm pack --dry-run`. `npm publish` из рабочей машины не делать.
-- CI: 3 ОС × Node 22.22/24, lint, en/zh, `compat-v1`, `compat-v2`, `shim-smoke`, `lockfile-drift`.
+- CI: 3 ОС × Node 26.4, lint, en/zh, `compat-v1`, `compat-v2`, `shim-smoke`, `lockfile-drift`.
 
 ## Важная оговорка про доки
 

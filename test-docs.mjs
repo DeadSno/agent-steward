@@ -1151,6 +1151,20 @@ check(
       (release.match(/node-version:\s*26\.4\.0/g) ?? []).length >= 3,
   );
   check("QA-FULL-01: README декларирует Node.js 26.4+", /Node\.js 26\.4\+/.test(readme));
+  const agents = read("AGENTS.md");
+  const devSkill = read(".opencode/skills/agent-steward-dev/SKILL.md");
+  const testPlan = read("TEST-PLAN.md");
+  check(
+    "QA-FULL-01: AGENTS.md, skill и TEST-PLAN декларируют Node >=26.4 без старой базы 22.22",
+    /Node ≥26\.4/.test(agents) &&
+      /Node ≥26\.4/.test(devSkill) &&
+      !/Node ≥22\.22/.test(agents + devSkill + testPlan) &&
+      !/Node ≥22\.22 ·/.test(testPlan),
+  );
+  check(
+    "QA-FULL-01: негатив — возврат Node >=22.22 в AGENTS.md детектируется",
+    /Node ≥22\.22/.test(agents.replace("Node ≥26.4", "Node ≥22.22")),
+  );
 }
 
 // QA-FULL-04: «Ближайшие две недели» должны отражать реально открытые QA,

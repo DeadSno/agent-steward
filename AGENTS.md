@@ -7,7 +7,7 @@
 
 ## Стек и ограничения
 
-- TypeScript, Node16/ESM, Node ≥22.22 (`node:sqlite`, chokidar 6); `tsc` → `dist/`, GUI → Vite.
+- TypeScript, Node16/ESM, Node ≥26.4 (`engines.node`; `@opentui/core` 0.9.0 requires 26.4+, `node:sqlite`/chokidar 6 need 22.22+); `tsc` → `dist/`, GUI → Vite.
 - V2: `Plugin.define`, точки входа `.` / `./tui` / `./gui-experimental` / `./rpc`; ключ конфига
   `plugins` (в V1 — `plugin`). Не ломать dual-export `setup`/`server`; V2-only вызовы в общем коде
   недопустимы без правки `docs/COMPATIBILITY.md` (следит `test-docs`).

@@ -66,7 +66,9 @@ check(`§5: все ${testFiles.length} файлов test-*.mjs упомянут�
   testFiles.every((f) => mentioned.includes(f)));
 check(`§5: все ${mentioned.length} упомянутых файлов существуют`,
   mentioned.every((f) => testFiles.includes(f)));
-check("шапка: дата 25.11.2026", plan.includes("25.11.2026"));
+check("шапка: дата 26.11.2026", plan.includes("26.11.2026"));
+check("шапка: негатив — возврат старой даты 25.11.2026 детектируется",
+  !plan.replaceAll("26.11.2026", "25.11.2026").includes("26.11.2026"));
 check(`шапка: счётчик файлов = ${testFiles.length}`, plan.includes(`${testFiles.length} файлов`));
 check(`шапка: счётчик npm-скриптов = ${npmTestScripts.length}`,
   plan.includes(`${npmTestScripts.length} npm-скриптов`));
@@ -154,11 +156,12 @@ const CLOSED_S2 = [
 check(`TPS-1.3: ${CLOSED_S2.length} закрытых подзадач §2 удалены из плана`,
   CLOSED_S2.every((id) => !rowFor(details, id)));
 
-// X-4 намеренно остаётся единственной открытой строкой §7.4.
+// X-4 закрыта и перенесена в CHANGELOG: §7.4 не содержит открытых строк.
 const x4Row = rowFor(s74, "X-4");
-check("TPS-1.3: X-4 — единственная открытая строка §7.4 (🔄)",
-  !!x4Row && /🔄/.test(cellsOf(x4Row)[4] ?? "") &&
-    s74.split("\n").filter((line) => /^\s*\|/.test(line) && !/^\s*\|\s*(ID|---)/.test(line)).length === 1);
+const s74OpenRows = s74.split("\n").filter((line) =>
+  /^\s*\|/.test(line) && !/^\s*\|\s*(ID|---)/.test(line));
+check("TPS-1.3: X-4 и все открытые строки удалены из §7.4",
+  !x4Row && s74OpenRows.length === 0);
 
 // Негативный тест: возврат закрытой строки F-1 в §7.4 должен ловиться guard-ом.
 const injected = `${s74}\n| F-1 | D17 | P2 | ✅ закрыто | перенесено в CHANGELOG.md |\n`;
