@@ -1417,10 +1417,13 @@ check(
   const strategy = read("ROADMAP-STRATEGY.md");
   const runbook = read("docs/RELEASE-RUNBOOK.md");
   check(
-    "V009-2: стратегия и runbook не противоречат закрытым P-4/P-5/S-1…S-6 и X-5",
+    "V009-2/RELEASE: стратегия и runbook не противоречат закрытым P-4/P-5/S-1…S-6 и X-5",
     /P-4\/P-5 и S-1…S-6 уже реализованы/.test(strategy) &&
       !/future, не в ближайшие две недели/.test(strategy) &&
-      /X-4 закрыта/.test(runbook) && /X-5 остаётся открытой/.test(runbook),
+      /X-4 закрыта/.test(runbook) &&
+      /X-5 (выполнена|считается выполненной)/.test(runbook) &&
+      !/X-5 остаётся открытой/.test(runbook) &&
+      /тег `v0\.0\.9`/.test(runbook),
   );
 
   // V009-3: заголовки версий в CHANGELOG уникальны (реальный дубль 0.0.9 после rebase).
