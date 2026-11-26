@@ -331,7 +331,7 @@ cron 和一次性任务可以。它们注册在操作系统原生调度器中，
 在 Windows 上，只有显式设置 `runWhenLoggedOff: true` 才会：任务以 `schtasks /ru SYSTEM` 注册，在会话 0 中运行，没有你的配置文件、映射磁盘或已保存凭据。默认仅交互式 —— 用户登录时任务才运行。Linux crontab 始终无需登录即可运行；macOS launchd agent 仅在用户会话内运行。
 
 **Windows 上创建任务出现 “Access is denied” 怎么办？**
-部分主机（加固的 OEM 镜像、撤销了「作为批处理作业登录」权限）禁止未提升权限的进程注册任务——`schtasks.exe` 与 COM 接口均如此。此时插件会通过 Windows 权限提升提示重试同一命令：每次操作确认一次，OpenCode 本身无需以管理员身份运行。只有修改调度器的命令（`/create`、`/delete`、`/change`、`/run`、`/end`）会请求提升；在无法显示提示的环境（服务、session 0）会自动跳过，也可用 `AGENT_STEWARD_NO_UAC=1`（CI、headless）关闭。拒绝提示时保留原有错误信息。
+部分主机（加固的 OEM 镜像、撤销了「作为批处理作业登录」权限）禁止未提升权限的进程注册任务——`schtasks.exe` 与 COM 接口均如此。此时插件会通过 Windows 权限提升提示重试同一命令：每次操作确认一次，OpenCode 本身无需以管理员身份运行。只有修改调度器的命令（`/create`、`/delete`、`/change`、`/run`、`/end`）会请求提升；在无法显示提示的环境（服务、session 0）会自动跳过，也可用 `AGENT_STEWARD_NO_UAC=1`（CI、headless）关闭。拒绝提示时保留原有错误信息。链路上没有 `cmd.exe`：提升的是 PowerShell 宿主，它以参数数组调用 `schtasks.exe`（PowerShell 5.1 无法将 `-Verb RunAs` 与输出重定向组合使用，因此提升的是宿主而非 schtasks——提示中显示的是 PowerShell）。对话框 2 分钟内无人应答则重试放弃；未提升的进程无法关闭提升对话框，请手动关闭。
 
 **支持哪些平台？**
 Windows（任务计划程序）、macOS（launchd）和 Linux（crontab）。后端差异见 [CROSS_PLATFORM.md](../CROSS_PLATFORM.md)。

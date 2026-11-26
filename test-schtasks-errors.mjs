@@ -99,46 +99,64 @@ assert.equal(
 );
 
 // 6. UAC-фолбэк: распознавание «нет прав» и решение о повышении.
+//    «Нет прав» — только код/HRESULT или анкорированный stderr: имя задачи
+//    не должно превращать любую ошибку в повод поднимать UAC-промпт.
 assert.ok(
   isAccessDeniedError(
     new SchtasksError("schtasks error: ERROR: Access is denied.", 1, "ERROR: Access is denied.")
   ),
-  "текст «Access is denied» должен считаться отсутствием прав"
+  "stderr «ERROR: Access is denied.» должен считаться отсутствием прав"
 );
 assert.ok(
-  isAccessDeniedError(new SchtasksError("schtasks error: x", -2147024891, "Отказано в доступе.")),
-  "HRESULT 0x80070005 и русский текст должны считаться отсутствием прав"
+  isAccessDeniedError(new SchtasksError("schtasks error: x", -2147024891, "")),
+  "HRESULT 0x80070005 должен считаться отсутствием прав даже без текста"
+);
+assert.ok(
+  isAccessDeniedError({ code: 5, stderr: "Отказано в доступе." }),
+  "код выхода 5 и русский stderr должны считаться отсутствием прав"
 );
 assert.ok(!isAccessDeniedError({ code: 1, message: "schtasks error: boom", stderr: "" }), "общий код 1 без текста прав — не повод повышаться");
 assert.ok(
   !isAccessDeniedError(new SchtasksError("schtasks error: x", 1, "ERROR: The task name already exists.")),
   "«уже существует» не должно выглядеть как «нет прав»"
 );
+assert.ok(
+  !isAccessDeniedError(
+    new SchtasksError(
+      'schtasks error: "schtasks.exe" /create /tn "Access is denied" /f | ERROR: The task name already exists.',
+      1,
+      "ERROR: The task name already exists."
+    )
+  ),
+  "имя задачи «Access is denied» в командной строке не должно вымогать повышение на чужой ошибке"
+);
 
-assert.ok(shouldTryElevation(["/create", "/tn", "X"], {}), "/create — изменяющая команда, повышаться можно");
-assert.ok(shouldTryElevation(["/DELETE", "/tn", "X", "/f"], {}), "флаг регистронезависим");
-assert.ok(!shouldTryElevation(["/query", "/v", "/fo", "LIST"], {}), "чтение не должно поднимать UAC-промпт");
-assert.ok(!shouldTryElevation(["/create", "/tn", "X"], { [NO_UAC_ENV]: "1" }), "AGENT_STEWARD_NO_UAC выключает фолбэк");
+const interactive = { SESSIONNAME: "Console" };
+assert.ok(shouldTryElevation(["/create", "/tn", "X"], interactive), "/create — изменяющая команда, в интерактивной сессии повышаться можно");
+assert.ok(shouldTryElevation(["/DELETE", "/tn", "X", "/f"], interactive), "флаг регистронезависим");
+assert.ok(!shouldTryElevation(["/query", "/v", "/fo", "LIST"], interactive), "чтение не должно поднимать UAC-промпт");
+assert.ok(!shouldTryElevation(["/create", "/tn", "X"], {}), "без SESSIONNAME — сервисный контекст, согласия ждать не от кого");
 assert.ok(!shouldTryElevation(["/create", "/tn", "X"], { SESSIONNAME: "Services" }), "в services/session 0 промпт показывать некому");
-assert.ok(shouldTryElevation(["/create", "/tn", "X"], { SESSIONNAME: "Console" }), "интерактивная сессия — фолбэк работает");
 assert.ok(shouldTryElevation(["/create", "/tn", "X"], { SESSIONNAME: "RDP-Tcp#0" }), "RDP-сессия тоже интерактивная");
+assert.ok(!shouldTryElevation(["/create", "/tn", "X"], { ...interactive, [NO_UAC_ENV]: "1" }), "AGENT_STEWARD_NO_UAC=1 выключает фолбэк");
+assert.ok(!shouldTryElevation(["/create", "/tn", "X"], { ...interactive, [NO_UAC_ENV]: "true" }), "истинные значения тоже выключают фолбэк");
+assert.ok(shouldTryElevation(["/create", "/tn", "X"], { ...interactive, [NO_UAC_ENV]: "0" }), "AGENT_STEWARD_NO_UAC=0 фолбэк НЕ выключает");
 
-// 7. Повышенная цепочка cmd.exe → exe (без UAC, с заглушкой вместо schtasks.exe):
-//    кавычки, перенаправление вывода и код возврата должны дожить до конца.
+// 7. Повышенная цепочка хост → exe (без UAC, с заглушкой вместо schtasks.exe):
+//    массив аргументов, перенаправление вывода и код возврата должны дожить до конца.
 if (process.platform === "win32") {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "as-uac-test-"));
   try {
     const argvScript = path.join(dir, "stub-argv.mjs");
     await fs.writeFile(
       argvScript,
-      'process.stdout.write(JSON.stringify(process.argv.slice(2)));\n' +
+      'process.stdout.write(JSON.stringify(process.argv.slice(1)));\n' +
         'if (process.argv.includes("/emit-stderr")) process.stderr.write("stub stderr");\n' +
         "process.exit(3);\n"
     );
-    const stub = path.join(dir, "stub-schtasks.cmd");
-    await fs.writeFile(stub, `@echo off\r\nnode "${argvScript}" %*\r\n`);
 
     const args = [
+      argvScript,
       "/create",
       "/tn",
       'OpenCode\\agent-steward\\Тест & | "кавычка"',
@@ -149,10 +167,11 @@ if (process.platform === "win32") {
       "/emit-stderr",
       "/f",
     ];
-    // verb=null — запуск без повышения; "open" — та же ветка ShellExecute,
-    // что и `-Verb RunAs`, но без самого UAC-промпта (ExitCode читается и там и там).
+    // Целевой exe — настоящий (node.exe), как schtasks.exe: без cmd-ассоциации,
+    // честная проверка argv-верности. verb=null — запуск без повышения; "open" —
+    // та же ветка ShellExecute, что и `-Verb RunAs`, но без самого UAC-промпта.
     for (const verb of [null, "open"]) {
-      const res = await runSchtasksElevated(args, { verb, exe: stub });
+      const res = await runSchtasksElevated(args, { verb, exe: process.execPath });
       assert.deepEqual(JSON.parse(res.stdout), args, `argv должен дойти до exe без искажений (verb=${verb})`);
       assert.equal(res.code, 3, `код возврата заглушки должен вернуться (verb=${verb})`);
       assert.ok(res.stderr.includes("stub stderr"), `stderr должен читаться из файла перенаправления (verb=${verb})`);
@@ -161,7 +180,7 @@ if (process.platform === "win32") {
     await fs.rm(dir, { recursive: true, force: true });
   }
 } else {
-  console.log("пропуск 7: повышенная цепочка cmd.exe проверяется только на Windows");
+  console.log("пропуск 7: повышенная цепочка хоста проверяется только на Windows");
 }
 
 console.log("Schtasks errors: все проверки пройдены.");

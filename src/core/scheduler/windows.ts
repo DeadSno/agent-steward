@@ -450,9 +450,18 @@ export async function runSchtasks(args: string[]): Promise<SchtasksResult> {
  * Теперь команда повторяется через ShellExecute `verb=runas`: права спрашиваются
  * у пользователя ровно на одну операцию, сам OpenCode остаётся без повышения.
  *
- * Ограничения: промпт показывает только интерактивный десктоп (в services/session 0
- * фолбэк выключен), ответа ждём `UAC_TIMEOUT_MS`, отключается он
- * `AGENT_STEWARD_NO_UAC=1` (CI, headless, сервисы).
+ * Повышенный хост — powershell.exe, который вызывает schtasks.exe массивом
+ * аргументов (`Start-Process -ArgumentList @(...)`) и пишет stdout/stderr в
+ * файлы перенаправления: `cmd.exe` в цепочке нет нигде, строка команды заранее
+ * не собирается, `%VAR%` не раскрывается (PowerShell 5.1 не позволяет совмещать
+ * `-Verb` с перенаправлением, поэтому повышенным поднимается хост, а не schtasks).
+ *
+ * Ограничения: промпт показывает только интерактивный десктоп — повышаемся лишь
+ * при явном SESSIONNAME=Console/RDP (в services/session 0 фолбэк выключен);
+ * ответа ждём `UAC_TIMEOUT_MS`, но снятый по таймауту повышенный процесс пережить
+ * не можем (повышенного ребёнка не убить из не повышенного родителя) — диалог
+ * закрыт только руками пользователя; отключается фолбэк истинным значением
+ * `AGENT_STEWARD_NO_UAC=1|true|yes|on` (CI, headless, сервисы).
  */
 
 /** Флаги schtasks, которые меняют планировщик: только для них просим повышение. */
@@ -464,14 +473,21 @@ export const NO_UAC_ENV = "AGENT_STEWARD_NO_UAC";
 /** Сколько ждать ответа на запрос повышения. */
 export const UAC_TIMEOUT_MS = 120_000;
 
-/** Признак «нет прав» в ошибке schtasks: HRESULT 0x80070005, код 5 или текст. */
+/**
+ * Признак «нет прав»: код/HRESULT или строго анкорированная строка в stderr.
+ * message не читаем: в него входит командная строка с именем задачи, и задача
+ * с именем «Access is denied» иначе вымогала бы UAC-промпт на любой ошибке.
+ */
 export function isAccessDeniedError(err: unknown): boolean {
-  const e = (err ?? {}) as { code?: number | null; message?: string; stderr?: string };
+  const e = (err ?? {}) as { code?: number | null; stderr?: string };
   const code =
     typeof e.code === "number" && Number.isFinite(e.code) ? e.code >>> 0 : null;
   if (code === 0x80070005 || code === 5) return true;
-  const text = `${e.message ?? ""} ${e.stderr ?? ""}`.toLowerCase();
-  return text.includes("access is denied") || text.includes("отказано в доступе");
+  const stderr = String(e.stderr ?? "");
+  return (
+    /^\s*(?:ERROR:\s*)?(?:Access is denied|Отказано в доступе)\.?\s*$/im.test(stderr) ||
+    /0x80070005/i.test(stderr)
+  );
 }
 
 /** Нужен ли UAC-фолбэк для этих аргументов (только изменяющие команды). */
@@ -479,11 +495,12 @@ export function shouldTryElevation(
   args: string[],
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  if ((env[NO_UAC_ENV] ?? "").trim()) return false;
+  const flag = (env[NO_UAC_ENV] ?? "").trim().toLowerCase();
+  if (flag === "1" || flag === "true" || flag === "yes" || flag === "on") return false;
   if (!ELEVATABLE_FLAGS.has((args[0] ?? "").toLowerCase())) return false;
   // Services/session 0: показать промпт некому, ждать согласия не от кого.
-  const session = (env.SESSIONNAME ?? "").trim();
-  return !session || /^(console|rdp-tcp)/i.test(session);
+  // SESSIONNAME не задан — это и есть сервисный контекст, не повышаемся.
+  return /^(console|rdp-tcp)/i.test((env.SESSIONNAME ?? "").trim());
 }
 
 /** Литерал строки для PowerShell (одинарные кавычки удваиваются). */
@@ -492,15 +509,19 @@ function psLiteral(value: string): string {
 }
 
 /**
- * Запускает schtasks через повышенный `cmd.exe` и возвращает вывод как обычно.
+ * Повышенный повтор schtasks: вывод возвращается как обычно.
  *
- * Права запрашивает ShellExecute (`-Verb RunAs`), поэтому stdout/stderr нельзя
- * унаследовать — они пишутся во временные файлы, а код возврата — в `code.txt`.
- * Кавычки собирает `quoteCmdArg` (PL-54), сама командная строка передаётся через
- * файл, а скрипт PowerShell — base64, так что метасимволы из имени задачи нигде
- * не разбираются оболочкой.
+ * Права запрашивает ShellExecute (`-Verb RunAs`), а PowerShell 5.1 не позволяет
+ * совмещать `-Verb` с перенаправлением вывода — поэтому повышенным поднимается
+ * powershell.exe-хост, и уже он запускает exe через
+ * `Start-Process -FilePath <exe> -ArgumentList @(...) -Wait` с перенаправлением
+ * stdout/stderr в файлы. `cmd.exe` в цепочке нет нигде: командная строка
+ * заранее не собирается, metacharacters и `%VAR%` оболочкой не разбираются.
+ * exe и аргументы (каждый экранирован `quoteCmdArg` под CommandLineToArgvW)
+ * передаются JSON-файлом, скрипты — base64, так что метасимволы из имени
+ * задачи нигде не попадают в разбор.
  *
- * `opts` — тестовый шов: `verb: null` прогоняет ту же цепочку cmd.exe → exe без
+ * `opts` — тестовый шов: `verb: null` прогоняет ту же цепочку хост → exe без
  * повышения, `exe` подставляет заглушку вместо schtasks.exe.
  */
 export async function runSchtasksElevated(
@@ -515,25 +536,32 @@ export async function runSchtasksElevated(
   const outFile = path.join(dir, "stdout.txt");
   const errFile = path.join(dir, "stderr.txt");
   const codeFile = path.join(dir, "code.txt");
-  const lineFile = path.join(dir, "cmdline.txt");
+  const pidFile = path.join(dir, "child.pid");
+  const specFile = path.join(dir, "spec.json");
   try {
-    const line =
-      `"${exe}" ${args.map(quoteCmdArg).join(" ")}` +
-      ` 1> "${outFile}" 2> "${errFile}"`;
-    await fs.writeFile(lineFile, line, "utf8");
+    const spec = JSON.stringify({ exe, args: args.map(quoteCmdArg) });
+    await fs.writeFile(specFile, spec, "utf8");
 
-    const verbParam = verb ? ` -Verb ${psLiteral(verb)}` : "";
-    const script =
+    // Внутренний (повышенный) скрипт: запуск exe массивом + перенаправление.
+    const inner =
       "$ErrorActionPreference = 'Stop'\n" +
-      `$line = [IO.File]::ReadAllText(${psLiteral(lineFile)}, [Text.Encoding]::UTF8)\n` +
-      "$cmd = [IO.Path]::Combine($env:SystemRoot, 'System32', 'cmd.exe')\n" +
-      `$p = Start-Process -FilePath $cmd -ArgumentList ('/S /c "' + $line + '"')${verbParam} -Wait -PassThru -WindowStyle Hidden\n` +
-      `[IO.File]::WriteAllText(${psLiteral(codeFile)}, [string]$p.ExitCode)\n`;
+      `$spec = [IO.File]::ReadAllText(${psLiteral(specFile)}, [Text.Encoding]::UTF8) | ConvertFrom-Json\n` +
+      `$p = Start-Process -FilePath $spec.exe -ArgumentList @($spec.args) -Wait -PassThru -WindowStyle Hidden -RedirectStandardOutput ${psLiteral(outFile)} -RedirectStandardError ${psLiteral(errFile)}\n` +
+      `if ($null -ne $p.Id) { [IO.File]::WriteAllText(${psLiteral(pidFile)}, [string]$p.Id) }\n` +
+      `[IO.File]::WriteAllText(${psLiteral(codeFile)}, [string]$p.ExitCode)\n` +
+      "if ($null -ne $p.ExitCode) { exit $p.ExitCode }\n";
+    // Внешний скрипт: ShellExecute внутреннего с -Verb (или без повышения — тестовый шов).
+    const verbParam = verb ? ` -Verb ${psLiteral(verb)}` : "";
+    const innerB64 = Buffer.from(inner, "utf16le").toString("base64");
+    const outer =
+      "$ErrorActionPreference = 'Stop'\n" +
+      `$p = Start-Process -FilePath powershell.exe -ArgumentList @('-NoProfile','-NonInteractive','-EncodedCommand','${innerB64}')${verbParam} -Wait -PassThru -WindowStyle Hidden\n` +
+      "if ($null -eq $p) { exit 1 }\n";
 
     try {
       await execFileAsync(
         "powershell.exe",
-        ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")],
+        ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(outer, "utf16le").toString("base64")],
         {
           windowsHide: true,
           maxBuffer: MAX_OUTPUT_BUFFER,
@@ -545,6 +573,16 @@ export async function runSchtasksElevated(
       const stderr = Buffer.isBuffer(e.stderr) ? e.stderr.toString("utf8") : (e.stderr ?? "");
       const text = `${e.message ?? ""} ${stderr}`;
       if (e.killed) {
+        // shortcut: повышенный ребёнок не убивается из не повышенного родителя
+        // (taskkill получит access denied) — попытка лучшая-возможная, висящий
+        // промпт закрывает только пользователь.
+        const pidRaw = (await fs.readFile(pidFile, "utf8").catch(() => "")).trim();
+        if (/^\d+$/.test(pidRaw)) {
+          await execFileAsync("taskkill", ["/PID", pidRaw, "/T", "/F"], {
+            windowsHide: true,
+            timeout: 5000,
+          }).catch(() => undefined);
+        }
         throw new Error(`повышение не подтверждено за ${Math.round((opts.timeoutMs ?? UAC_TIMEOUT_MS) / 1000)} с`);
       }
       if (/canceled by the user|отменена пользователем|1223|0x800704c7/i.test(text)) {
