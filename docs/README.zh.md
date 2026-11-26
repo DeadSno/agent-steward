@@ -1,6 +1,6 @@
 # agent-steward
 
-> 用于在 OpenCode V1（≥ 1.18.29）或 V2 中调度与编排 AI agent 任务的插件 —— cron、一次性运行、DAG 流水线、矩阵构建、质量门禁、SQLite 历史记录和本地 Web 仪表盘。支持 Windows、macOS 和 Linux。免费开源（MIT）。
+> 本地优先的 AI agent 任务编排框架，当前通过 OpenCode V1（≥ 1.18.29）/V2 插件提供入口 —— cron、一次性运行、DAG 流水线、矩阵构建、质量门禁、SQLite 历史记录和本地 Web 仪表盘。同一内核也可通过 MCP、CLI 和 standalone 模式使用。支持 Windows、macOS 和 Linux。免费开源（MIT）。
 
 [![CI](https://github.com/DeadSno/agent-steward/actions/workflows/ci.yml/badge.svg)](https://github.com/DeadSno/agent-steward/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/agent-steward.svg)](https://www.npmjs.com/package/agent-steward)

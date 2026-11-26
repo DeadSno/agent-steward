@@ -1286,6 +1286,40 @@ check(
   );
 }
 
+// POSITIONING-DOCS: фреймворк с OpenCode-плагином как текущим входом, не «только плагин».
+{
+  const readText = (rel) => fs.readFileSync(path.join(root, rel), "utf8");
+  const en = readText("README.md");
+  const ru = readText(path.join("docs", "README.ru.md"));
+  const zh = readText(path.join("docs", "README.zh.md"));
+  const pkg = JSON.parse(readText("package.json"));
+  const positioned = (text) =>
+    /Local-first agent orchestration framework|Локально-первый фреймворк оркестрации|本地优先的 AI agent 任务编排框架/i.test(text) &&
+    /current entry point|сейчас доступный через плагин|当前通过/i.test(text);
+  check(
+    "POSITIONING-DOCS: README.md называет продукт фреймворком с плагином-входом",
+    positioned(en) && /MCP, CLI and standalone/.test(en),
+  );
+  check(
+    "POSITIONING-DOCS: README.ru.md синхронизирован",
+    positioned(ru) && /MCP, CLI и в standalone/.test(ru) && !/\.currently/.test(ru),
+  );
+  check(
+    "POSITIONING-DOCS: README.zh.md синхронизирован",
+    /本地优先的 AI agent 任务编排框架/.test(zh) &&
+      /当前通过 OpenCode/.test(zh) &&
+      /MCP、CLI 和 standalone/.test(zh),
+  );
+  check(
+    "POSITIONING-DOCS: package.json description обновлён",
+    positioned(pkg.description ?? "") && /OpenCode V1\/V2 plugin/.test(pkg.description ?? ""),
+  );
+  check(
+    "POSITIONING-DOCS: негатив — старый текст плагина детектируется",
+    !positioned("OpenCode V1 and V2 plugin for scheduling and orchestrating AI agent jobs"),
+  );
+}
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\nDocs: ${results.length - failed.length}/${results.length} проверок пройдено.`);
 process.exit(failed.length > 0 ? 1 : 0);

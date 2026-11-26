@@ -1,6 +1,6 @@
 # agent-steward
 
-> OpenCode V1 (≥ 1.18.29) and V2 plugin for scheduling and orchestrating AI agent jobs — cron, one-shot runs, DAG pipelines, matrix builds, quality gates, SQLite history and a local web dashboard. Runs on Windows, macOS and Linux. Free and open source (MIT).
+> Local-first agent orchestration framework with an OpenCode V1 (≥ 1.18.29)/V2 plugin as its current entry point — cron, one-shot runs, DAG pipelines, matrix builds, quality gates, SQLite history and a local web dashboard. The same core is also available via MCP, CLI and standalone mode. Runs on Windows, macOS and Linux. Free and open source (MIT).
 
 [![CI](https://github.com/DeadSno/agent-steward/actions/workflows/ci.yml/badge.svg)](https://github.com/DeadSno/agent-steward/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/agent-steward.svg)](https://www.npmjs.com/package/agent-steward)

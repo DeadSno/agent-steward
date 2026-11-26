@@ -1,6 +1,6 @@
 # agent-steward
 
-> Плагин для планирования и оркестрации задач AI-агентов в OpenCode V1 (≥ 1.18.29) и V2: cron, одноразовые запуски, DAG-пайплайны, матричные сборки, Quality Gates и наблюдаемость. Бесплатно, с открытым кодом (MIT).
+> Локально-первый фреймворк оркестрации задач AI-агентов, сейчас доступный через плагин OpenCode V1 (≥ 1.18.29)/V2: cron, одноразовые запуски, DAG-пайплайны, матричные сборки, Quality Gates, SQLite-история и локальный веб-дашборд. То же ядро работает через MCP, CLI и в standalone-режиме. Бесплатно, с открытым кодом (MIT).
 
 [![CI](https://github.com/DeadSno/agent-steward/actions/workflows/ci.yml/badge.svg)](https://github.com/DeadSno/agent-steward/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/agent-steward.svg)](https://www.npmjs.com/package/agent-steward)
