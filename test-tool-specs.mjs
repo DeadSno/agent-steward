@@ -31,7 +31,7 @@ const EXPECTED_HASHES = {
   "get_analytics": "670d13b7fa742830125f7858cadd7b2b0c5b5c891d430bca5503104f7fabfeaa",
   "get_audit_log": "941d5f39efa358bf77deb3e139650b2417de344c4322cc6cf98eae45f5cfaccf",
   "get_dashboard_info": "35585e2d07b4e1a4be6e4363578356e8f4c9f122b9b932d109bc0551e0adfe0b",
-  "get_history": "f79834fe5c91d4e3f3214968bfd4dd8f64019ed1a7449386ce8ccb4760df9c1b",
+  "get_history": "04711267557237ce452eec67c4cc266a7dfe42e27b019a191bd95d1f99090dc6",
   "get_metrics": "6cc97118655743a29c01757ab200ed3dc1152eddf6e77c314c88034dff1fdd71",
   "get_task_logs": "e283a97a52a0ceb44dae5a604411787b53fc34e327656d89cb3da6902f1e207d",
   "list_tasks": "2165c5cde418227f0eb6eb6a6cf24f2bf8b19899c5f609cf1eaa30111e35424a",

@@ -35,6 +35,12 @@ export interface HistoryRecord {
   finishedAt: string;
   durationMs: number;
   error?: string | null;
+  /**
+   * QA-FULL-06: причина пропуска запуска (например, PL-121: в чек-ауте уже
+   * идёт другая задача). Выводится из `error` только для status='skipped',
+   * поэтому не требует миграции схемы БД.
+   */
+  skipReason?: string | null;
   /** Имя задачи, запущенной по цепочке после этого запуска (если была). */
   nextTask?: string | null;
   /** Сколько токенов потратил запуск (если удалось распарсить лог). */
@@ -88,8 +94,9 @@ export async function loadHistory(
   limit = 200,
   status?: string | null,
   offset = 0,
+  skipReason?: string | null,
 ): Promise<HistoryRecord[]> {
-  return getHistory(taskName, limit, status, offset).map((record) => ({
+  return getHistory(taskName, limit, status, offset, skipReason).map((record) => ({
     taskName: record.taskName,
     // QA-F.3: "running" — отдельное состояние дашборда, а не ошибка.
     // Пока status="error" с пустым finishedAt/durationMs=0, дашборд мигал
@@ -99,6 +106,10 @@ export async function loadHistory(
     finishedAt: record.finishedAt ?? "",
     durationMs: record.durationMs ?? 0,
     error: record.error ?? null,
+    // QA-FULL-06: причина пропуска — то же сообщение, но только для skipped.
+    ...(record.status === "skipped" && record.error
+      ? { skipReason: record.error }
+      : {}),
     nextTask: record.nextTask ?? null,
     ...(record.tokens !== undefined ? { tokens: record.tokens } : {}),
     ...(record.costUsd !== undefined ? { costUsd: record.costUsd } : {}),

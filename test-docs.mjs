@@ -1182,6 +1182,38 @@ check(
   );
 }
 
+// QA-FULL-06: причина пропуска PL-121 видна в истории/MCP/дашборде.
+{
+  const readSrc = (rel) => fs.readFileSync(path.join(root, rel), "utf8");
+  const history = readSrc(path.join("src", "db", "history-repo.ts"));
+  const facade = readSrc(path.join("src", "history.ts"));
+  const index = readSrc("src/index.ts");
+  const server = readSrc("src/server.ts");
+  const safety = fs.readFileSync(path.join(root, "docs", "SAFETY.md"), "utf8");
+  const hasSkipFilter = (text) => /skipReason/i.test(text);
+  check(
+    "QA-FULL-06: skipReason-фильтр есть в history-repo и facade",
+    hasSkipFilter(history) && hasSkipFilter(facade) &&
+      /status\s*===\s*["']skipped["']/.test(facade),
+  );
+  check(
+    "QA-FULL-06: get_history schema/RPC принимают skipReason",
+    hasSkipFilter(index) && /allowedHistoryKeys[\s\S]{0,240}skipReason/.test(index),
+  );
+  check(
+    "QA-FULL-06: дашборд отдаёт и показывает skipReason",
+    /skipReason/.test(server) && /history\?skipReason|searchParams\.get\(["']skipReason["']\)/.test(server),
+  );
+  check(
+    "QA-FULL-06: SAFETY.md документирует skipReason и PL-121",
+    /skipReason/.test(safety) && /PL-121/.test(safety),
+  );
+  check(
+    "QA-FULL-06: негативный тест — потеря skipReason в SAFETY.md детектируется",
+    !hasSkipFilter(safety.replace(/skipReason/g, "X")),
+  );
+}
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\nDocs: ${results.length - failed.length}/${results.length} проверок пройдено.`);
 process.exit(failed.length > 0 ? 1 : 0);

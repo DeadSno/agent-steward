@@ -1290,6 +1290,11 @@ const getHistorySchema = z
       .enum(["running", "success", "error", "timeout", "partial", "needs-resolution"])
       .optional()
       .describe("Only return runs with this status."),
+    // QA-FULL-06: фильтр по причине пропуска (PL-121) без миграции схемы БД.
+    skipReason: z
+      .string()
+      .optional()
+      .describe("Only return skipped runs whose reason contains this text (e.g. PL-121)."),
     limit: z
       .number()
       .optional()
@@ -3305,7 +3310,9 @@ const getHistoryExecute = wrapExecute<HistoryArgs>(async (args) => {
   // QA-PORT-11: адаптеры не всегда прогоняют input через Zod (MCP передаёт
   // голый shape, RPC — plain object), поэтому проверяем keys и здесь. Иначе
   // опечатка в аргументе молча игнорируется и возвращается вся история.
-  const allowedHistoryKeys = new Set(["name", "taskName", "status", "limit", "offset", "compact"]);
+  const allowedHistoryKeys = new Set([
+    "name", "taskName", "status", "skipReason", "limit", "offset", "compact",
+  ]);
   const unknownKeys = Object.keys(args ?? {}).filter((key) => !allowedHistoryKeys.has(key));
   if (unknownKeys.length > 0) {
     throw new Error(
@@ -3321,9 +3328,9 @@ const getHistoryExecute = wrapExecute<HistoryArgs>(async (args) => {
   // PL-46: зависшие записи (schtasks /End) должны закрываться не только при
   // setup, но и при наблюдении истории — иначе остаются running навсегда.
   recoverInterruptedRuns();
-  const records = await loadHistory(taskName, limit, args.status, offset);
+  const records = await loadHistory(taskName, limit, args.status, offset, args.skipReason);
   const output = args.compact ? compactHistoryRecords(records) : records;
-  const total = countHistoryFiltered(taskName, args.status);
+  const total = countHistoryFiltered(taskName, args.status, args.skipReason);
   const hasMore = offset + output.length < total;
 
   return {
@@ -6254,7 +6261,7 @@ const v2Plugin = Plugin.define({
         // limit по умолчанию 20 (максимум 200), фильтры taskName (или name) и status.
         // QA-PORT-11: RPC не проходит Zod — проверяем ключи и псевдоним name явно.
         const record = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
-        const allowed = ["name", "taskName", "status", "limit", "offset", "compact"];
+        const allowed = ["name", "taskName", "status", "skipReason", "limit", "offset", "compact"];
         const unknownKeys = Object.keys(record).filter((key) => !allowed.includes(key));
         if (unknownKeys.length > 0) {
           return {
@@ -6262,19 +6269,21 @@ const v2Plugin = Plugin.define({
             error: `get_history: неизвестные аргументы: ${unknownKeys.join(", ")}. Допустимо: ${allowed.join(", ")}.`,
           };
         }
-        const { limit, offset, taskName, name, status } = record as {
+        const { limit, offset, taskName, name, status, skipReason } = record as {
           limit?: number;
           offset?: number;
           taskName?: string;
           name?: string;
           status?: string;
+          skipReason?: string;
         };
         const filter = (taskName?.trim() || name?.trim() || undefined)?.toLowerCase();
         const statusFilter = status?.trim().toLowerCase();
+        const skipReasonFilter = skipReason?.trim();
         const max = Math.max(1, Math.min(Math.floor(limit ?? 20), 200));
         const skip = Math.max(0, Math.floor(offset ?? 0));
-        const records = await loadHistory(filter, max, statusFilter, skip);
-        const total = countHistoryFiltered(filter, statusFilter);
+        const records = await loadHistory(filter, max, statusFilter, skip, skipReasonFilter);
+        const total = countHistoryFiltered(filter, statusFilter, skipReasonFilter);
         const hasMore = skip + records.length < total;
         return { records, total, offset: skip, hasMore, truncated: hasMore };
       },

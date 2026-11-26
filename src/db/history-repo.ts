@@ -364,10 +364,18 @@ export function recordRun(
 function buildHistoryFilter(
   taskName?: string | null,
   status?: string | null,
+  skipReason?: string | null,
 ): { where: string; params: (string | number)[]; empty: boolean } {
   const clauses: string[] = [];
   // QA-A2-T3: параметры привязки — только string/number (domain type вместо any[]).
   const params: (string | number)[] = [];
+  // QA-FULL-06: причина пропуска PL-121 хранится в error записи со
+  // status='skipped'. Отдельного столбца нет — фильтруем по подстроке.
+  const skipReasonFilter = skipReason?.trim();
+  if (skipReasonFilter) {
+    clauses.push("lower(status) = 'skipped' AND lower(error) LIKE lower(?)");
+    params.push(`%${skipReasonFilter}%`);
+  }
   if (taskName) {
     clauses.push("lower(task_name) = lower(?)");
     params.push(taskName);
@@ -394,8 +402,9 @@ function buildHistoryFilter(
 export function countHistoryFiltered(
   taskName?: string | null,
   status?: string | null,
+  skipReason?: string | null,
 ): number {
-  const filter = buildHistoryFilter(taskName, status);
+  const filter = buildHistoryFilter(taskName, status, skipReason);
   if (filter.empty) return 0;
   const row = getDb()
     .prepare(`SELECT COUNT(*) AS count FROM history${filter.where}`)
@@ -409,10 +418,11 @@ export function getHistory(
   limit = 200,
   status?: string | null,
   offset = 0,
+  skipReason?: string | null,
 ): StoredHistoryRecord[] {
   const safeLimit = Math.max(1, Math.min(100000, Math.floor(limit) || 1));
   const safeOffset = Math.max(0, Math.floor(offset) || 0);
-  const filter = buildHistoryFilter(taskName, status);
+  const filter = buildHistoryFilter(taskName, status, skipReason);
   if (filter.empty) return [];
   const params = [...filter.params, safeLimit, safeOffset];
   const rows = getDb()

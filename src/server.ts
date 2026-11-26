@@ -1094,6 +1094,8 @@ async function handleRequest(
         .trim()
         .toLowerCase();
       const statusFilter = (url.searchParams.get("status") ?? "").trim().toLowerCase();
+      // QA-FULL-06: причина пропуска (PL-121) доступна в истории для дашборда.
+      const skipReasonFilter = (url.searchParams.get("skipReason") ?? "").trim().toLowerCase();
       const limitRaw = Number(url.searchParams.get("limit") ?? 200);
       const limit = Number.isFinite(limitRaw)
         ? Math.max(1, Math.min(10000, Math.floor(limitRaw)))
@@ -1110,6 +1112,11 @@ async function handleRequest(
       if (statusFilter) {
         records = records.filter(
           (record) => String(record.status).toLowerCase() === statusFilter,
+        );
+      }
+      if (skipReasonFilter) {
+        records = records.filter((record) =>
+          String(record.skipReason ?? "").toLowerCase().includes(skipReasonFilter),
         );
       }
       const total = records.length;
@@ -2273,7 +2280,13 @@ function renderPage(nonce: string): string {
           : '') +
         (r.allowedTools && r.allowedTools.length ? '<span class="hist-hook" title="allowedTools: ' + esc(r.allowedTools.join(', ')) + '">🔒 allowed=' + esc(r.allowedTools.join(',')) + '</span>' : '') +
         (r.deniedTools && r.deniedTools.length ? '<span class="hist-hook" title="deniedTools: ' + esc(r.deniedTools.join(', ')) + '">🔒 denied=' + esc(r.deniedTools.join(',')) + '</span>' : '') +
-        (r.error ? '<span class="metrics" title="' + esc(r.error) + '">⚠ ' + esc(String(r.error).slice(0, 80)) + '</span>' : '') +
+        // QA-FULL-06: PL-121 и другие пропуски показываем отдельным бейджем.
+        (r.status === 'skipped' && r.skipReason
+          ? '<span class="hist-hook" title="' + esc(r.skipReason) + '">⏭ ' + esc(String(r.skipReason).slice(0, 80)) + '</span>'
+          : '') +
+        (r.error && !(r.status === 'skipped' && r.skipReason)
+          ? '<span class="metrics" title="' + esc(r.error) + '">⚠ ' + esc(String(r.error).slice(0, 80)) + '</span>'
+          : '') +
         '</div>';
     }
     if (records.length > 10) {

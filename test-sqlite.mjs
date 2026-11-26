@@ -279,6 +279,25 @@ assert(
   "PL-24: skipped учитывается отдельно и не увеличивает error"
 );
 
+// QA-FULL-06: причина пропуска PL-121 доступна в истории без миграции схемы.
+const skipReasonText = "PL-121: в чек-ауте уже идёт другая задача — запуск пропущен";
+historyRepo.recordRun("QA-FULL-06 PL121", "skipped", new Date().toISOString(), 0, skipReasonText);
+const skipRows = await loadHistory("QA-FULL-06 PL121", 10);
+assert(
+  skipRows.length === 1 &&
+    skipRows[0].status === "skipped" &&
+    skipRows[0].skipReason === skipReasonText &&
+    skipRows[0].error === skipReasonText,
+  "QA-FULL-06: skipReason выводится из error для skipped, error сохранён для совместимости"
+);
+const skipFiltered = await loadHistory(null, 50, undefined, 0, "PL-121");
+const skipMissing = await loadHistory(null, 50, undefined, 0, "НЕ-ТАК-ПРИЧИНА");
+assert(
+  skipFiltered.length === 1 && skipFiltered[0].taskName === "QA-FULL-06 PL121" &&
+    skipMissing.length === 0,
+  "QA-FULL-06: фильтр skipReason возвращает только пропуски с подстрокой PL-121"
+);
+
 // --- 5. QA-F.3: running — отдельное состояние, не ошибка ------------------
 const qafId = historyRepo.startRun("QA-F3-Test", new Date().toISOString());
 const during = await loadHistory("QA-F3-Test", 10);

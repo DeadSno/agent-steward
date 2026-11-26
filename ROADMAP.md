@@ -27,12 +27,12 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 
 | Горизонт | Ставка | Что должно быть правдой на выходе | Вход в канбан |
 |---|---|---|---|
-| 0 · сейчас (0–2 нед) | Доверие к релизу и честная диагностика | Находки аудита 25.11.2026 закрыты или документированы; версия, метрики и стратегия без противоречий; строгая установка не ломается | QA-DEEP4-1, QA-FULL-06 (ниже) |
+| 0 · сейчас (0–2 нед) | Доверие к релизу и честная диагностика | Находки аудита 25.11.2026 закрыты или документированы; версия, метрики и стратегия без противоречий; строгая установка не ломается | QA-DEEP4-1 (ниже) |
 | 1 · 1–3 мес | P-1 изоляция ядра | `createToolSpecs`/`createRuntime`/`tool-specs.ts` отделены от OpenCode, контракт 34 specs зелёный, регрессия watch-paths исправлена | P-1 → P-2 → P-3 (жёсткий порядок) |
 | 2 · 3–6 мес | MCP-нативная оркестрация | `agent-steward mcp` и subpath `./core`, `./mcp` стабильны; capability router и reliability scorecard работают на реальной истории | S-1, S-2, S-3 после закрытия P-1/P-2 |
 | 3 · 6–12 мес | Экосистема и вторые харнессы | Рецепты/SKILL, верифицированный Telegram-чат, скаффолдинг из gate-passed примеров; P-4/P-5 — по боли пользователя | S-4, S-5, S-6, P-4, P-5 |
 
-**Входы аудита, которые меняют приоритеты:** nondeterministic-версия MCP (`serverInfo.version=0.0.7` при package 0.0.8) блокировала доверие к любому MCP-клиенту — QA-FULL-02 закрыт; смешение skipped/interrupted с error в аналитике искажало scorecard горизонта 2 — QA-FULL-03 закрыт; engine-рассинхрон снят: QA-FULL-01 закрыт, `engines.node >=26.4.0` совпадает с `@opentui/core`, smoke `--engine-strict` работает в CI.
+**Входы аудита, которые меняют приоритеты:** nondeterministic-версия MCP (`serverInfo.version=0.0.7` при package 0.0.8) блокировала доверие к любому MCP-клиенту — QA-FULL-02 закрыт; смешение skipped/interrupted с error в аналитике искажало scorecard горизонта 2 — QA-FULL-03 закрыт; engine-рассинхрон снят: QA-FULL-01 закрыт, `engines.node >=26.4.0` совпадает с `@opentui/core`, smoke `--engine-strict` работает в CI; пропуски PL-121 теперь видны в истории и дашборде — QA-FULL-06 закрыт.
 
 **Правило пересборки:** при закрытии подзадачи она уходит из ROADMAP в CHANGELOG; стратегия обновляется в тот же коммит, чтобы «Ближайшие две недели» не расходились с канбаном (QA-FULL-04 закрыт, гейт в `test-docs.mjs`). Одна подзадача за раз, слой не пропускается.
 
@@ -46,11 +46,10 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 
 QA-DEEP4-1 — загруженный экземпляр плагина из другого чек-аута не помечается stale без манифеста воркспейса: `src/version.ts` `getPluginDiagnostics()` (`workspacePkg === null` → `reason:"no-workspace-manifest"`, `staleInstallation:false`) и проверка через `get_dashboard_info` Code Mode — `modulePath=.../qa-2411-dev/dist/version.js`, `workspaceRoot=C:\Users\TshK`, `loadedFromWorkspace=false` — P2. Действие: при `loadedFromWorkspace=false` и `modulePath` вне `workspaceRoot` возвращать `installationWarning`/`staleInstallation=true` по fail-open, покрыть регрессией в `test-agent-tools.mjs` и `test-self-analysis.mjs`.
 
-⬜ QA-FULL-06 — пропуски запуска по PL-121 не видны пользователю: `src/core/scheduler/run-now.ts:386`, `src/core/ps-wrapper.ts`, `src/index.ts` пропускают запуск в том же чек-ауте, 38/200 свежих записей истории имеют `status:skipped` с «PL-121: в чек-ауте ... уже идёт другая задача», но уведомления/отдельного контура нет — P2. Действие: передавать причину пропуска в дашборд/MCP (`get_history` фильтр по `skipReason`) и документировать в docs/SAFETY.md; не менять сам fail-open-lock.
 ## Деталь 3.21 — Усиление в глубину (не расширение)
 `src/core/savings.ts`, `src/core/permissions.ts`, `src/core/worktree.ts`, `src/core/audit.ts`, `src/core/self-analysis.ts`, `src/shared/installation-warning.ts`, `src/version.ts`, `src/index.ts`, `src/rpc.ts`, `src/gui.tsx`, `TEST-PLAN.md`, `test-budget.mjs`, `test-permissions-policy.mjs`, `test-self-analysis.mjs`, `test-gui-bundle.mjs`, `test-agent-tools.mjs`, `docs/SAFETY.md`, `docs/EXECUTION-LOOP.md`
 
-Обоснование: модули стратегии (CONCEPT §11–§13, ROADMAP-STRATEGY) в основном закрыты, но несколько контуров доверия остаются непроверяемыми извне. Это не новые возможности, а углубление существующих: измеримость, аудируемость и воспроизводимость приёмки. Разбивка уточнена 25.11.2026: каждая подзадача даёт один проверяемый артефакт и закрывается своим тестом; SC-1.1/SC-1.2 и вся матрица Детали 3.20 закрыты и перенесены в CHANGELOG, здесь не дублируются. DEEP-1, DEEP-2, DEEP-3 и вся задача DEEP-4 (DEEP-4.1…DEEP-4.5) закрыты и перенесены в CHANGELOG; в Детали 3.21 открытых задач нет, в разделе QA-находок остаются QA-FULL-06 и QA-DEEP4-1. Находки QA-CI-261, QA-CI-B12, QA-FULL-01, QA-FULL-02, QA-FULL-03, QA-FULL-04 и QA-FULL-05 закрыты и перенесены в CHANGELOG.
+Обоснование: модули стратегии (CONCEPT §11–§13, ROADMAP-STRATEGY) в основном закрыты, но несколько контуров доверия остаются непроверяемыми извне. Это не новые возможности, а углубление существующих: измеримость, аудируемость и воспроизводимость приёмки. Разбивка уточнена 25.11.2026: каждая подзадача даёт один проверяемый артефакт и закрывается своим тестом; SC-1.1/SC-1.2 и вся матрица Детали 3.20 закрыты и перенесены в CHANGELOG, здесь не дублируются. DEEP-1, DEEP-2, DEEP-3 и вся задача DEEP-4 (DEEP-4.1…DEEP-4.5) закрыты и перенесены в CHANGELOG; в Детали 3.21 открытых задач нет, в разделе QA-находок остаётся QA-DEEP4-1. Находки QA-CI-261, QA-CI-B12, QA-FULL-01, QA-FULL-02, QA-FULL-03, QA-FULL-04, QA-FULL-05 и QA-FULL-06 закрыты и перенесены в CHANGELOG.
 
 ---
 

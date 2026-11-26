@@ -72,6 +72,11 @@ risk R2 → allowedTools:  [read, edit, glob, grep, webfetch, websearch, write, 
   `filesMissing`, `branch` glob, `changedPaths` в `changedSince..HEAD`); любая
   ошибка или невыполненное условие — запуск пропущен (fail-closed), видимый
   статус `skipped` — в W-4.
+- Причина пропуска (например, `PL-121: в чек-ауте уже идёт другая задача`)
+  сохраняется в истории как `skipReason` и доступна через `get_history`
+  (фильтр `skipReason`), дашборд `/api/history?skipReason=PL-121` и бейдж
+  в таблице запусков. Fail-open-lock при этом не меняется: пропуск остаётся
+  пропуском, а не ошибкой блокировки.
 - Egress только по явному allowlist; всё в аудит.
 - Destructive-команды запрещены без явного разрешения в контракте.
 
