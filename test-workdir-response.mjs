@@ -35,6 +35,11 @@ try {
       prompt: "x",
     }),
   );
+  // V009-6: при падении в CI-message видно только булево success — печатаем
+  // полный ответ, чтобы диагностика не требовала локальной репродукции локали.
+  if (implicit.success !== true) {
+    console.error("schedule_task (без cwd):", JSON.stringify(implicit));
+  }
   check("schedule_task создал задачу без явного cwd", implicit.success === true);
   check(
     "QA-D316-15: ответ не показывает неявный каталог проекта",

@@ -602,13 +602,23 @@ export class WindowsScheduler implements SchedulerBackend {
     // V009-5: /sd от PL-57 (MONTHLY) и PL-75 (catch-up) приходит в DD.MM.YYYY.
     // Для en-US/windows-latest такой формат отвергается schtasks; приводим
     // границу к ShortDatePattern системы до передачи флагов в /create.
+    // V009-6: ShortDatePattern PowerShell и формат, который фактически ждёт
+    // schtasks, могут расходиться (LOCAL ≡ SYSTEM). Поэтому сохраняем исходные
+    // границы и при отказе «неверная дата начала» ретраим /create в других
+    // поддерживаемых schtasks форматах; шаблон из Get-Culture остаётся первым.
+    const rawStartBoundaries: string[] = [];
+    let detectedDateFormat: string | undefined;
+    let detectedLocale: string | undefined;
     if (!triggerType || triggerType === "cron") {
       const [dateFormat, locale] = await Promise.all([
         getWindowsDateFormat(),
         getWindowsLocale(),
       ]);
+      detectedDateFormat = dateFormat;
+      detectedLocale = locale;
       for (let i = 0; i < scheduleFlags.length - 1; i += 1) {
         if (scheduleFlags[i] === "/sd") {
+          rawStartBoundaries.push(scheduleFlags[i + 1]);
           scheduleFlags[i + 1] = formatCronBoundaryForLocale(
             scheduleFlags[i + 1],
             dateFormat,
@@ -623,9 +633,11 @@ export class WindowsScheduler implements SchedulerBackend {
       // задачу сразу после зелёного гейта. Добавляем явную будущую /sd, если
       // конвертер её ещё не выставил (MONTHLY получает её сам, см. PL-57).
       if (options.avoidCatchUp && !scheduleFlags.includes("/sd")) {
+        const raw = cronStartBoundary(schedule);
+        rawStartBoundaries.push(raw);
         scheduleFlags.push(
           "/sd",
-          formatCronBoundaryForLocale(cronStartBoundary(schedule), dateFormat, locale),
+          formatCronBoundaryForLocale(raw, dateFormat, locale),
         );
       }
     }
@@ -651,12 +663,61 @@ export class WindowsScheduler implements SchedulerBackend {
       "/f",
     ];
 
-    let result: SchtasksResult;
-    try {
-      result = await runSchtasks(args);
-    } catch (err) {
-      if (!(err instanceof SchtasksError)) throw err;
+    // V009-6: если Get-Culture и schtasks расходятся в формате /sd, пробуем
+    // остальные форматы, не меняя остальные флаги и не создавая задачу дважды.
+    const sdFormats = [
+      ...new Set([
+        detectedDateFormat || "dd.MM.yyyy",
+        "dd.MM.yyyy",
+        "M/d/yyyy",
+        "MM/dd/yyyy",
+        "yyyy-MM-dd",
+      ]),
+    ];
+    const attempts: string[][] = [args];
+    if (rawStartBoundaries.length > 0) {
+      for (const format of sdFormats.slice(1)) {
+        const attempt = [...args];
+        let boundaryIndex = 0;
+        for (let i = 0; i < attempt.length - 1; i += 1) {
+          if (attempt[i] === "/sd" && boundaryIndex < rawStartBoundaries.length) {
+            attempt[i + 1] = formatCronBoundaryForLocale(
+              rawStartBoundaries[boundaryIndex],
+              format,
+              detectedLocale,
+            );
+            boundaryIndex += 1;
+          }
+        }
+        attempts.push(attempt);
+      }
+    }
 
+    let result: SchtasksResult | undefined;
+    let createError: SchtasksError | undefined;
+    for (let attemptIndex = 0; attemptIndex < attempts.length; attemptIndex += 1) {
+      try {
+        result = await runSchtasks(attempts[attemptIndex]);
+        createError = undefined;
+        break;
+      } catch (err) {
+        if (!(err instanceof SchtasksError)) throw err;
+        createError = err;
+        const text = `${err.stderr} ${err.message}`.toLowerCase();
+        const invalidStartBoundary =
+          text.includes("start date") ||
+          text.includes("дата начала") ||
+          text.includes("incorrect start") ||
+          text.includes("недопустимый формат даты");
+        if (invalidStartBoundary && attemptIndex < attempts.length - 1) {
+          continue;
+        }
+        break;
+      }
+    }
+
+    if (createError) {
+      const err = createError;
       const text = `${err.stderr} ${err.message}`.toLowerCase();
 
       const isRunning =
@@ -694,7 +755,7 @@ export class WindowsScheduler implements SchedulerBackend {
         err.stderr,
       );
     }
-    if (result.code === 0) {
+    if (result?.code === 0) {
       // После успешного создания в новой папке убираем возможный дубль из
       // legacy-папки (best-effort: отсутствие дубля — не ошибка).
       await this.removeLegacyDuplicate(name);

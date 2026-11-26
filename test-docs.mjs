@@ -1470,6 +1470,33 @@ check(
   );
 }
 
+// V009-6: расхождение ShortDatePattern и Expectation schtasks /sd не должно
+// ронять создание задачи; при отказе тест должен печатать ответ инструмента.
+{
+  const schedulerSrc = fs.readFileSync(
+    path.join(root, "src/core/scheduler/windows.ts"),
+    "utf8",
+  );
+  const workdirTestSrc = fs.readFileSync(
+    path.join(root, "test-workdir-response.mjs"),
+    "utf8",
+  );
+  check(
+    "V009-6: при отказе /sd ретраятся альтернативные форматы даты",
+    schedulerSrc.includes("rawStartBoundaries") &&
+      schedulerSrc.includes("invalidStartBoundary") &&
+      schedulerSrc.includes('"MM/dd/yyyy"') &&
+      schedulerSrc.includes("attempts.length"),
+  );
+  check(
+    "V009-6: тест печатает ответ schedule_task при отказе",
+    workdirTestSrc.includes("JSON.stringify(implicit)") &&
+      fs
+        .readFileSync(path.join(root, "CHANGELOG.md"), "utf8")
+        .includes("V009-6"),
+  );
+}
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\nDocs: ${results.length - failed.length}/${results.length} проверок пройдено.`);
 process.exit(failed.length > 0 ? 1 : 0);

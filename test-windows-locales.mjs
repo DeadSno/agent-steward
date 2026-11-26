@@ -125,10 +125,19 @@ const windowsSource = fs.readFileSync(
 check(
   "V009-5: /sd cron переформатируется под ShortDatePattern локали",
   /formatCronBoundaryForLocale\(\s*scheduleFlags\[i \+ 1\]/.test(windowsSource) &&
-    windowsSource.includes(
-      "formatCronBoundaryForLocale(cronStartBoundary(schedule), dateFormat, locale)",
-    ) &&
+    windowsSource.includes("formatCronBoundaryForLocale(raw, dateFormat, locale)") &&
     !windowsSource.includes('scheduleFlags.push("/sd", cronStartBoundary(schedule))'),
+);
+
+// V009-6: если ShortDatePattern PowerShell не совпал с ожиданием schtasks,
+// создание задачи ретраит /sd в альтернативных форматах вместо падения.
+check(
+  "V009-6: при отказе /sd пробуются альтернативные форматы даты",
+  windowsSource.includes("rawStartBoundaries") &&
+    windowsSource.includes('"MM/dd/yyyy"') &&
+    windowsSource.includes('"yyyy-MM-dd"') &&
+    windowsSource.includes("invalidStartBoundary") &&
+    /for \(let attemptIndex = 0; attemptIndex < attempts\.length/.test(windowsSource),
 );
 
 console.log(`\n${failures === 0 ? "P1-8.T1.4 locales: OK" : `${failures} ошибок`}.`);
