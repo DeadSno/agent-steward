@@ -1,9 +1,15 @@
 /**
-/*.
+ * Общее ядро планировщика (публичный контракт V1/V2).
  *
  * Реализация перенесена сюда из src/index.ts. Entrypoint (index.ts) остаётся
  * адаптером: он импортирует createRuntimeCore, передаёт ссылки на своё
  * состояние через RuntimeDeps и сохраняет dual-export V1/V2.
+ *
+ * Контракт: `createRuntimeCore(ctx, deps)` инициализирует локаль, SQLite,
+ * наблюдатели и таймеры, затем возвращает `SchedulerRuntime` с полем
+ * `projectDirectory` и методом `dispose()` для корректной остановки.
+ * Адаптер не должен импортировать ядро циклами: все внешние функции
+ * передаются явно через `RuntimeDeps`.
  */
 import { loadSettings } from "./settings.js";
 import { resolveLocale, setLocale } from "./i18n.js";

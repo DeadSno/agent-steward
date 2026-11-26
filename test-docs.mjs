@@ -810,6 +810,29 @@ check(
   damaged38Lines("## Деталь 3.8 — x\n\n- [ ] PL-1 - ok\nобрывок предложения\n").length === 1
 );
 
+// QA-FULL-05: заголовок src/runtime.ts должен быть валидным JSDoc и описывать
+// публичный контракт ядра, а не обрывок после переноса кода из index.ts.
+const runtimeHeader = fs
+  .readFileSync(path.join(root, "src/runtime.ts"), "utf8")
+  .split(/\r?\n/)
+  .slice(0, 14)
+  .join("\n");
+check(
+  "QA-FULL-05: src/runtime.ts начинается с корректного JSDoc-блока",
+  /^\/\*\*/.test(runtimeHeader) && /\*\//.test(runtimeHeader) && !/\/\*\./.test(runtimeHeader)
+);
+check(
+  "QA-FULL-05: JSDoc описывает createRuntimeCore / SchedulerRuntime / dispose",
+  runtimeHeader.includes("createRuntimeCore") &&
+    runtimeHeader.includes("SchedulerRuntime") &&
+    runtimeHeader.includes("dispose")
+);
+const brokenRuntimeHeader = "/**\n/*.\n * обрывок\n */\n";
+check(
+  "QA-FULL-05: регрессия — повреждённый JSDoc детектируется",
+  /\/\*\./.test(brokenRuntimeHeader) && !/^\/\*\*[\s\S]*createRuntimeCore/.test(brokenRuntimeHeader)
+);
+
 // PL-100: ID подзадач в ROADMAP должны быть уникальны даже при параллельной
 // работе нескольких агентов.
 const roadmapIds = (text) => [...text.matchAll(/^- \[ \] ([A-Z]+-\d+(?:\.\d+)?)/gm)].map((m) => m[1]);
