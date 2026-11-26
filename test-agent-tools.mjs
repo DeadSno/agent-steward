@@ -1386,6 +1386,29 @@ check(
     process.chdir(originalCwd);
     fs.rmSync(staleRoot, { recursive: true, force: true });
   }
+  // QA-DEEP4-1: загрузка чужой копии без манифеста в workspace — fail-open.
+  const outsideRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ws-outside-plugin-"));
+  try {
+    process.chdir(outsideRoot);
+    const outsideDiag = getPluginDiagnostics();
+    check(
+      "QA-DEEP4-1: плагин вне workspaceRoot без манифеста помечается stale",
+      outsideDiag.staleInstallation === true &&
+        outsideDiag.reason === "identity-mismatch" &&
+        outsideDiag.workspaceVersion === null &&
+        outsideDiag.loadedFromWorkspace === false,
+      JSON.stringify(outsideDiag)
+    );
+    const dashOutside = JSON.parse((await handlers.get_dashboard_info({})).content);
+    check(
+      "QA-DEEP4-1: get_dashboard_info отдаёт fail-open staleInstallation",
+      dashOutside.plugin?.staleInstallation === true &&
+        dashOutside.plugin?.reason === "identity-mismatch"
+    );
+  } finally {
+    process.chdir(originalCwd);
+    fs.rmSync(outsideRoot, { recursive: true, force: true });
+  }
   const ownDiag = getPluginDiagnostics();
   check(
     "QA-PLUGIN-DIAG: свой чек-аут не помечается как stale",

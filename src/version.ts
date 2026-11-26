@@ -84,6 +84,13 @@ export function getPluginDiagnostics(): PluginDiagnostics {
 
   const loadedFromWorkspace =
     isInside(packageRoot, workspaceRoot) || isInside(workspaceRoot, packageRoot);
+  // QA-DEEP4-1: fail-open. Плагин загружен из каталога вне рабочего (например,
+  // старый чек-аут), а манифеста в workspace нет — раньше это выглядело как
+  // "норма" (no-workspace-manifest) и предупреждение не показывалось вовсе.
+  // Помечаем как stale, чтобы get_dashboard_info/self-analysis честно сообщали
+  // о возможном рассинхроне установки, вместо тихого использования чужой копии.
+  const outsideWorkspace = !loadedFromWorkspace && !isInside(packageRoot, workspaceRoot);
+  const failOpenStale = outsideWorkspace && workspacePkg === null;
   const sameIdentity =
     workspacePkg !== null &&
     (workspacePkg.name === undefined ||
@@ -98,10 +105,12 @@ export function getPluginDiagnostics(): PluginDiagnostics {
     workspaceRoot,
     workspaceVersion: workspacePkg?.version ?? null,
     loadedFromWorkspace,
-    staleInstallation: workspacePkg !== null && !sameIdentity,
+    staleInstallation: (workspacePkg !== null && !sameIdentity) || failOpenStale,
     reason:
       workspacePkg === null
-        ? "no-workspace-manifest"
+        ? failOpenStale
+          ? "identity-mismatch"
+          : "no-workspace-manifest"
         : sameIdentity
           ? "ok"
           : "identity-mismatch",

@@ -803,6 +803,15 @@ console.log("\n=== EV-1: приёмка §11 ===");
       buildInstallationWarning({ ...diagnostics, staleInstallation: false, reason: "no-workspace-manifest" }) === null &&
       buildInstallationWarning(null) === null,
   );
+  check(
+    "QA-DEEP4-1: stale без манифеста workspace всё равно даёт предупреждение",
+    buildInstallationWarning({
+      ...diagnostics,
+      workspaceVersion: null,
+      staleInstallation: true,
+      reason: "identity-mismatch",
+    })?.reason === "identity-mismatch",
+  );
 
   const withWarning = generateSelfAnalysisReport([], { installationWarning: warning });
   check("DEEP-3.1: отчёт несёт предупреждение", withWarning.installationWarning === warning);
