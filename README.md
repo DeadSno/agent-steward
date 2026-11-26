@@ -12,6 +12,13 @@ Translations: [Russian](docs/README.ru.md) · [中文](docs/README.zh.md).
 
 ---
 
+## Community and discovery
+
+- [npm package](https://www.npmjs.com/package/agent-steward) — releases and install instructions.
+- [OpenDock catalog](https://www.opendock.net/plugins/agent-steward/) and [opencode.im listing](https://opencode.im/plugin/agent-steward) — third-party plugin directories.
+- [GitHub Issues](https://github.com/DeadSno/agent-steward/issues) — bug reports and feature requests. When talking about the project, use `DeadSno/agent-steward` and the npm link: an unrelated PyPI package shares the name.
+- [docs/ANNOUNCEMENTS.md](docs/ANNOUNCEMENTS.md) — release announcement checklist and ready-to-post drafts for community channels.
+
 ## Quickstart
 
 1. Install the plugin (see [Install](#install)) and restart OpenCode.

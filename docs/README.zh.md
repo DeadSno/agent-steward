@@ -309,6 +309,13 @@ npm run test:en      # same suites with the English locale
 - [SAFETY.md](SAFETY.md) —— 安全策略与诊断通道。
 - [文档站点（GitHub Pages 操作手册）](FEATURES.md#documentation-site-github-pages) —— 文档如何构建与发布。
 
+## 社区与发现
+
+- [npm 包](https://www.npmjs.com/package/agent-steward) —— 版本发布与安装说明。
+- [OpenDock 目录](https://www.opendock.net/plugins/agent-steward/) 和 [opencode.im 页面](https://opencode.im/plugin/agent-steward) —— 第三方插件目录。
+- [GitHub Issues](https://github.com/DeadSno/agent-steward/issues) —— 缺陷报告与功能请求。提及时请使用 `DeadSno/agent-steward` 和 npm 链接：PyPI 上有一个同名的无关包。
+- [docs/ANNOUNCEMENTS.md](ANNOUNCEMENTS.md) —— 发布公告清单与各社区平台的现成文案。
+
 ## FAQ
 
 **OpenCode 关闭时还能运行吗？**

@@ -299,6 +299,13 @@ npm run test:en      # те же сюиты с английской локаль
 - [SAFETY.md](SAFETY.md) — политики безопасности и каналы диагностики.
 - [Сайт документации (runbook GitHub Pages)](FEATURES.md#documentation-site-github-pages) — как собирается и публикуется документация.
 
+## Сообщество и поиск
+
+- [Пакет на npm](https://www.npmjs.com/package/agent-steward) — релизы и инструкции по установке.
+- [Каталог OpenDock](https://www.opendock.net/plugins/agent-steward/) и [страница на opencode.im](https://opencode.im/plugin/agent-steward) — сторонние каталоги плагинов.
+- [GitHub Issues](https://github.com/DeadSno/agent-steward/issues) — баг-репорты и запросы возможностей. При упоминании проекта указывайте `DeadSno/agent-steward` и ссылку на npm: в PyPI есть ничем не связанный пакет с таким же именем.
+- [docs/ANNOUNCEMENTS.md](ANNOUNCEMENTS.md) — чек-лист анонсов релиза и готовые тексты для площадок сообщества.
+
 ## FAQ
 
 **Работает ли плагин, когда OpenCode закрыт?**
