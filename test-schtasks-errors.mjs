@@ -142,19 +142,25 @@ assert.ok(!shouldTryElevation(["/create", "/tn", "X"], { ...interactive, [NO_UAC
 assert.ok(!shouldTryElevation(["/create", "/tn", "X"], { ...interactive, [NO_UAC_ENV]: "true" }), "истинные значения тоже выключают фолбэк");
 assert.ok(shouldTryElevation(["/create", "/tn", "X"], { ...interactive, [NO_UAC_ENV]: "0" }), "AGENT_STEWARD_NO_UAC=0 фолбэк НЕ выключает");
 
-// 7. Повышенная цепочка хост → exe (без UAC, с заглушкой вместо schtasks.exe):
-//    массив аргументов, перенаправление вывода и код возврата должны дожить до конца.
+// 7. Повышение самого exe (без UAC, с заглушкой вместо schtasks.exe): массив
+//    аргументов и код возврата должны дожить до конца. Вывод повышенного
+//    процесса намеренно не перехватывается — заглушка пишет argv в файл сама.
 if (process.platform === "win32") {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "as-uac-test-"));
   try {
     const argvScript = path.join(dir, "stub-argv.mjs");
     await fs.writeFile(
       argvScript,
-      'process.stdout.write(JSON.stringify(process.argv.slice(1)));\n' +
-        'if (process.argv.includes("/emit-stderr")) process.stderr.write("stub stderr");\n' +
-        "process.exit(3);\n"
+      [
+        "import fs from \"node:fs\";",
+        "const out = process.argv[process.argv.length - 1];",
+        "fs.writeFileSync(out, JSON.stringify(process.argv.slice(1, -1)));",
+        "process.exit(3);",
+        "",
+      ].join("\n")
     );
 
+    const argsFile = path.join(dir, "argv.json");
     const args = [
       argvScript,
       "/create",
@@ -164,23 +170,28 @@ if (process.platform === "win32") {
       '"C:\\Program Files\\agent-steward\\wrapper.cmd" /with space',
       "/sc",
       "ONCE",
-      "/emit-stderr",
       "/f",
+      argsFile,
     ];
     // Целевой exe — настоящий (node.exe), как schtasks.exe: без cmd-ассоциации,
     // честная проверка argv-верности. verb=null — запуск без повышения; "open" —
-    // та же ветка ShellExecute, что и `-Verb RunAs`, но без самого UAC-промпта.
+    // та же ветка ShellExecute, что и «-Verb RunAs», но без самого UAC-промпта.
     for (const verb of [null, "open"]) {
+      await fs.rm(argsFile, { force: true });
       const res = await runSchtasksElevated(args, { verb, exe: process.execPath });
-      assert.deepEqual(JSON.parse(res.stdout), args, `argv должен дойти до exe без искажений (verb=${verb})`);
       assert.equal(res.code, 3, `код возврата заглушки должен вернуться (verb=${verb})`);
-      assert.ok(res.stderr.includes("stub stderr"), `stderr должен читаться из файла перенаправления (verb=${verb})`);
+      assert.deepEqual(
+        JSON.parse(await fs.readFile(argsFile, "utf8")),
+        args.slice(0, -1),
+        `argv должен дойти до exe без искажений (verb=${verb})`
+      );
+      assert.equal(res.stdout, "", `повышенный запуск не перехватывает вывод (verb=${verb})`);
     }
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }
 } else {
-  console.log("пропуск 7: повышенная цепочка хоста проверяется только на Windows");
+  console.log("пропуск 7: повышение самого exe проверяется только на Windows");
 }
 
 console.log("Schtasks errors: все проверки пройдены.");

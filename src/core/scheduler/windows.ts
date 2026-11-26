@@ -450,11 +450,12 @@ export async function runSchtasks(args: string[]): Promise<SchtasksResult> {
  * Теперь команда повторяется через ShellExecute `verb=runas`: права спрашиваются
  * у пользователя ровно на одну операцию, сам OpenCode остаётся без повышения.
  *
- * Повышенный хост — powershell.exe, который вызывает schtasks.exe массивом
- * аргументов (`Start-Process -ArgumentList @(...)`) и пишет stdout/stderr в
- * файлы перенаправления: `cmd.exe` в цепочке нет нигде, строка команды заранее
- * не собирается, `%VAR%` не раскрывается (PowerShell 5.1 не позволяет совмещать
- * `-Verb` с перенаправлением, поэтому повышенным поднимается хост, а не schtasks).
+ * Повышается сам schtasks.exe (`Start-Process -FilePath schtasks.exe
+ * -ArgumentList @(...)`), поэтому в промпте UAC видно «Task Scheduler Command
+ * Line» с полными аргументами операции — пользователь подтверждает конкретное
+ * действие, а не произвольный скрипт. `cmd.exe` в цепочке нет нигде: командная
+ * строка заранее не собирается, metacharacters и `%VAR%` оболочкой не
+ * раскрываются; аргументы (каждый экранирован `quoteCmdArg`) лежат в JSON-файле.
  *
  * Ограничения: промпт показывает только интерактивный десктоп — повышаемся лишь
  * при явном SESSIONNAME=Console/RDP (в services/session 0 фолбэк выключен);
@@ -509,20 +510,22 @@ function psLiteral(value: string): string {
 }
 
 /**
- * Повышенный повтор schtasks: вывод возвращается как обычно.
+ * Повышенный повтор schtasks: повышается сам exe, промпт UAC читается целиком.
  *
- * Права запрашивает ShellExecute (`-Verb RunAs`), а PowerShell 5.1 не позволяет
- * совмещать `-Verb` с перенаправлением вывода — поэтому повышенным поднимается
- * powershell.exe-хост, и уже он запускает exe через
- * `Start-Process -FilePath <exe> -ArgumentList @(...) -Wait` с перенаправлением
- * stdout/stderr в файлы. `cmd.exe` в цепочке нет нигде: командная строка
- * заранее не собирается, metacharacters и `%VAR%` оболочкой не разбираются.
- * exe и аргументы (каждый экранирован `quoteCmdArg` под CommandLineToArgvW)
- * передаются JSON-файлом, скрипты — base64, так что метасимволы из имени
- * задачи нигде не попадают в разбор.
+ * `Start-Process -FilePath <exe> -ArgumentList @(...) -Verb RunAs` — в промпте
+ * видно «Task Scheduler Command Line» и все аргументы операции, пользователь
+ * подтверждает конкретный schtasks-вызов, а не произвольный скрипт-хост.
+ * `cmd.exe` в цепочке нет: командная строка заранее не собирается, exe и
+ * аргументы (каждый экранирован `quoteCmdArg` под CommandLineToArgvW) лежат в
+ * JSON-файле, который читает PowerShell.
  *
- * `opts` — тестовый шов: `verb: null` прогоняет ту же цепочку хост → exe без
- * повышения, `exe` подставляет заглушку вместо schtasks.exe.
+ * Плату за читаемость просит ShellExecute: повышенному процессу нельзя
+ * перенаправить stdout/stderr (в PS 5.1 `-Verb` не совмещается с
+ * `-RedirectStandard*`), поэтому вывод пустой, а ошибка объясняется кодом
+ * возврата через `explainSchtasksError`. Код возврата доходит полностью.
+ *
+ * `opts` — тестовый шов: `verb: null` прогоняет ту же цепочку без повышения,
+ * `exe` подставляет заглушку вместо schtasks.exe.
  */
 export async function runSchtasksElevated(
   args: string[],
@@ -533,35 +536,25 @@ export async function runSchtasksElevated(
     opts.exe ??
     path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "schtasks.exe");
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "agent-steward-uac-"));
-  const outFile = path.join(dir, "stdout.txt");
-  const errFile = path.join(dir, "stderr.txt");
   const codeFile = path.join(dir, "code.txt");
-  const pidFile = path.join(dir, "child.pid");
   const specFile = path.join(dir, "spec.json");
   try {
     const spec = JSON.stringify({ exe, args: args.map(quoteCmdArg) });
     await fs.writeFile(specFile, spec, "utf8");
 
-    // Внутренний (повышенный) скрипт: запуск exe массивом + перенаправление.
-    const inner =
+    const verbBranch = verb
+      ? `$p = Start-Process -FilePath $spec.exe -ArgumentList @($spec.args) -Verb ${psLiteral(verb)} -Wait -PassThru -WindowStyle Hidden\n`
+      : "$p = Start-Process -FilePath $spec.exe -ArgumentList @($spec.args) -Wait -PassThru -WindowStyle Hidden\n";
+    const script =
       "$ErrorActionPreference = 'Stop'\n" +
       `$spec = [IO.File]::ReadAllText(${psLiteral(specFile)}, [Text.Encoding]::UTF8) | ConvertFrom-Json\n` +
-      `$p = Start-Process -FilePath $spec.exe -ArgumentList @($spec.args) -Wait -PassThru -WindowStyle Hidden -RedirectStandardOutput ${psLiteral(outFile)} -RedirectStandardError ${psLiteral(errFile)}\n` +
-      `if ($null -ne $p.Id) { [IO.File]::WriteAllText(${psLiteral(pidFile)}, [string]$p.Id) }\n` +
-      `[IO.File]::WriteAllText(${psLiteral(codeFile)}, [string]$p.ExitCode)\n` +
-      "if ($null -ne $p.ExitCode) { exit $p.ExitCode }\n";
-    // Внешний скрипт: ShellExecute внутреннего с -Verb (или без повышения — тестовый шов).
-    const verbParam = verb ? ` -Verb ${psLiteral(verb)}` : "";
-    const innerB64 = Buffer.from(inner, "utf16le").toString("base64");
-    const outer =
-      "$ErrorActionPreference = 'Stop'\n" +
-      `$p = Start-Process -FilePath powershell.exe -ArgumentList @('-NoProfile','-NonInteractive','-EncodedCommand','${innerB64}')${verbParam} -Wait -PassThru -WindowStyle Hidden\n` +
-      "if ($null -eq $p) { exit 1 }\n";
+      verbBranch +
+      `[IO.File]::WriteAllText(${psLiteral(codeFile)}, [string]$p.ExitCode)\n`;
 
     try {
       await execFileAsync(
         "powershell.exe",
-        ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(outer, "utf16le").toString("base64")],
+        ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")],
         {
           windowsHide: true,
           maxBuffer: MAX_OUTPUT_BUFFER,
@@ -573,16 +566,9 @@ export async function runSchtasksElevated(
       const stderr = Buffer.isBuffer(e.stderr) ? e.stderr.toString("utf8") : (e.stderr ?? "");
       const text = `${e.message ?? ""} ${stderr}`;
       if (e.killed) {
-        // shortcut: повышенный ребёнок не убивается из не повышенного родителя
-        // (taskkill получит access denied) — попытка лучшая-возможная, висящий
-        // промпт закрывает только пользователь.
-        const pidRaw = (await fs.readFile(pidFile, "utf8").catch(() => "")).trim();
-        if (/^\d+$/.test(pidRaw)) {
-          await execFileAsync("taskkill", ["/PID", pidRaw, "/T", "/F"], {
-            windowsHide: true,
-            timeout: 5000,
-          }).catch(() => undefined);
-        }
+        // shortcut: ни промпт на secure desktop, ни уже согласованный повышенный
+        // schtasks из неповышенного родителя не снять — если пользователь
+        // ответит «Да» после таймаута, операция всё равно выполнится.
         throw new Error(`повышение не подтверждено за ${Math.round((opts.timeoutMs ?? UAC_TIMEOUT_MS) / 1000)} с`);
       }
       if (/canceled by the user|отменена пользователем|1223|0x800704c7/i.test(text)) {
@@ -595,16 +581,19 @@ export async function runSchtasksElevated(
     if (codeRaw === "") {
       throw new Error("повышенный запуск не вернул код возврата");
     }
-    return {
-      stdout: await decodeConsoleOutput(await fs.readFile(outFile).catch(() => Buffer.alloc(0))),
-      stderr: await decodeConsoleOutput(await fs.readFile(errFile).catch(() => Buffer.alloc(0))),
-      code: Number.parseInt(codeRaw, 10),
-    };
+    const code = Number.parseInt(codeRaw, 10);
+    // Вывод повышенного exe не перехватить (у ShellExecute нет pipe'ов) —
+    // объясняем ошибку кодом, чтобы текст ошибки остался осмысленным.
+    const explain = code === 0 ? null : explainSchtasksError(code, "");
+    const stderrOut =
+      code === 0
+        ? ""
+        : `${explain ? explain + " " : ""}(код возврата schtasks: ${code}; вывод при повышенном запуске не перехватывается)`.trim();
+    return { stdout: "", stderr: stderrOut, code };
   } finally {
     await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined);
   }
 }
-
 /** Повышение уже отклонено/не ответили — не просим заново до перезапуска процесса. */
 let elevationUnavailable = false;
 
