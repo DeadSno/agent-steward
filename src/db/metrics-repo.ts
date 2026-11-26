@@ -180,6 +180,8 @@ export interface DailyMetricsRow {
   error: number;
   partial: number;
   skipped: number;
+  /** QA-FULL-03: прерванные запуски считаются отдельно от ошибок. */
+  interrupted: number;
   tokens: number;
   costUsd: number;
   avgDurationMs: number;
@@ -213,7 +215,12 @@ export function getDailyMetrics(days = 14, now = new Date()): DailyMetricsRow[] 
          COALESCE(SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END), 0) AS success,
          COALESCE(SUM(CASE WHEN status = 'partial' THEN 1 ELSE 0 END), 0) AS partial,
          COALESCE(SUM(CASE WHEN status = 'skipped' THEN 1 ELSE 0 END), 0) AS skipped,
-         COALESCE(SUM(CASE WHEN status NOT IN ('success', 'partial', 'running', 'skipped')
+         COALESCE(SUM(CASE WHEN status = 'interrupted'
+                             OR (status NOT IN ('success', 'partial', 'running', 'skipped')
+                                 AND COALESCE(error, '') LIKE '%Прервано%')
+                            THEN 1 ELSE 0 END), 0) AS interrupted,
+         COALESCE(SUM(CASE WHEN status NOT IN ('success', 'partial', 'running', 'skipped', 'interrupted')
+                            AND COALESCE(error, '') NOT LIKE '%Прервано%'
                             THEN 1 ELSE 0 END), 0) AS error,
          COALESCE(SUM(CASE WHEN tokens > 0 THEN CAST(tokens AS INTEGER) ELSE 0 END), 0) AS tokens,
          COALESCE(SUM(CASE WHEN cost_usd > 0 THEN cost_usd ELSE 0 END), 0) AS cost_usd,
@@ -233,6 +240,7 @@ export function getDailyMetrics(days = 14, now = new Date()): DailyMetricsRow[] 
     error: Number(row.error) || 0,
     partial: Number(row.partial) || 0,
     skipped: Number(row.skipped) || 0,
+    interrupted: Number(row.interrupted) || 0,
     tokens: Number(row.tokens) || 0,
     costUsd: Number(row.cost_usd) || 0,
     avgDurationMs: Math.round(Number(row.avg_duration_ms) || 0),

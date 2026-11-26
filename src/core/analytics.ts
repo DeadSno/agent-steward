@@ -44,6 +44,10 @@ export interface DailyBucket {
   success: number;
   error: number;
   partial: number;
+  /** QA-FULL-03: осознанные пропуски (не ошибки). */
+  skipped: number;
+  /** QA-FULL-03: прерванные запуски (не ошибки). */
+  interrupted: number;
   tokens: number;
   costUsd: number;
   avgDurationMs: number;
@@ -57,6 +61,8 @@ export interface DailyAggregateInput {
   success: number;
   error: number;
   partial: number;
+  skipped?: number;
+  interrupted?: number;
   tokens?: number;
   costUsd?: number;
   avgDurationMs?: number;
@@ -92,6 +98,8 @@ export function buildDailyBuckets(
       success: row?.success ?? 0,
       error: row?.error ?? 0,
       partial: row?.partial ?? 0,
+      skipped: row?.skipped ?? 0,
+      interrupted: row?.interrupted ?? 0,
       tokens: row?.tokens ?? 0,
       costUsd: row?.costUsd ?? 0,
       avgDurationMs: row?.avgDurationMs ?? 0,
@@ -154,6 +162,9 @@ export interface AnalyticsReport {
     success: number;
     error: number;
     partial: number;
+    /** QA-FULL-03: отдельные бакеты, чтобы skipped/interrupted не считались ошибками. */
+    skipped: number;
+    interrupted: number;
     successRate: number;
     avgDurationMs: number;
     tokens: number;
@@ -220,6 +231,23 @@ function percent(part: number, total: number): number {
 }
 
 /**
+ * QA-FULL-03: прерванный запуск приходит либо явным status='interrupted',
+ * либо legacy-записью status='error' с маркером «Прервано» — так же, как
+ * getTotals() в db/metrics-repo.ts. Оба источника должны давать один результат.
+ */
+function isInterruptedStatus(status: string, error: unknown): boolean {
+  return (
+    status === "interrupted" ||
+    (status !== "success" &&
+      status !== "partial" &&
+      status !== "skipped" &&
+      /прервано/i.test(
+        typeof error === "string" ? error : error instanceof Error ? error.message : "",
+      ))
+  );
+}
+
+/**
  * Строит отчёт по истории: итоги, дневные бакеты, разбивка по задачам,
  * матрицам и моделям.
  */
@@ -242,6 +270,8 @@ export function buildAnalytics(
       success: 0,
       error: 0,
       partial: 0,
+      skipped: 0,
+      interrupted: 0,
       tokens: 0,
       costUsd: 0,
       avgDurationMs: 0,
@@ -266,6 +296,8 @@ export function buildAnalytics(
   let totalsSuccess = 0;
   let totalsError = 0;
   let totalsPartial = 0;
+  let totalsSkipped = 0;
+  let totalsInterrupted = 0;
   let totalsTokens = 0;
   let totalsCost = 0;
   let durationsSum = 0;
@@ -294,6 +326,8 @@ export function buildAnalytics(
     bucket.costUsd += cost;
     if (status === "success") bucket.success += 1;
     else if (status === "partial") bucket.partial += 1;
+    else if (status === "skipped") bucket.skipped += 1;
+    else if (isInterruptedStatus(status, record.error)) bucket.interrupted += 1;
     else bucket.error += 1;
     if (duration > 0) {
       bucket.avgDurationMs =
@@ -305,6 +339,8 @@ export function buildAnalytics(
     totalsCost += cost;
     if (status === "success") totalsSuccess += 1;
     else if (status === "partial") totalsPartial += 1;
+    else if (status === "skipped") totalsSkipped += 1;
+    else if (isInterruptedStatus(status, record.error)) totalsInterrupted += 1;
     else totalsError += 1;
     if (duration > 0) {
       durationsSum += duration;
@@ -346,7 +382,8 @@ export function buildAnalytics(
     byModel.set(model, modelRow);
 
     // Топ ошибок: группируем по тексту, чтобы дайджест показывал частые причины.
-    if (status !== "success" && status !== "partial") {
+    // QA-FULL-03: осознанные пропуски не являются ошибками и в топ не попадают.
+    if (status !== "success" && status !== "partial" && status !== "skipped") {
       // QA-P1.5: легаси-записи успешных запусков содержат "-" вместо текста
       // ошибки. Такой маркер не является сообщением и не должен попадать в топ.
       const rawError = typeof record.error === "string" ? record.error.trim() : "";
@@ -424,6 +461,8 @@ export function buildAnalytics(
       success: totalsSuccess,
       error: totalsError,
       partial: totalsPartial,
+      skipped: totalsSkipped,
+      interrupted: totalsInterrupted,
       successRate: percent(totalsSuccess, totalsTotal),
       avgDurationMs: durationsCount > 0 ? Math.round(durationsSum / durationsCount) : 0,
       tokens: totalsTokens,

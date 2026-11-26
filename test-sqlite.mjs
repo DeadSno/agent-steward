@@ -247,8 +247,10 @@ assert(
   afterRecoveryTotals.total === analyticsTotals.total &&
     afterRecoveryTotals.success === analyticsTotals.success &&
     afterRecoveryTotals.partial === analyticsTotals.partial &&
-    afterRecoveryTotals.error + afterRecoveryTotals.interrupted === analyticsTotals.error,
-  "QA-P1.1: getTotals совпадает с buildAnalytics (error + interrupted = общий bucket)"
+    afterRecoveryTotals.error === analyticsTotals.error &&
+    afterRecoveryTotals.interrupted === analyticsTotals.interrupted &&
+    afterRecoveryTotals.skipped === analyticsTotals.skipped,
+  "QA-FULL-03: getTotals совпадает с buildAnalytics по error / interrupted / skipped"
 );
 
 // PL-37: внутренние probe-задачи (__*) не попадают в агрегаты.

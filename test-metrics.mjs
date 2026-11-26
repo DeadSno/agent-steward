@@ -155,6 +155,49 @@ check("IM-7: некорректные даты строк игнорируютс
   buildDailyBuckets([{ date: "bad", total: 9, success: 9, error: 0, partial: 0 }], 2, now)
     .every((day) => day.total === 0));
 
+// QA-FULL-03: skipped/interrupted — отдельные бакеты, а не «ошибки».
+const statusRecords = [
+  { taskName: "skip", status: "skipped", startedAt: at(0), error: "PL-121: в чек-ауте уже идёт задача" },
+  { taskName: "stop", status: "interrupted", startedAt: at(0), error: "Прервано пользователем" },
+  { taskName: "legacy-stop", status: "error", startedAt: at(0), error: "Прервано по таймауту" },
+  { taskName: "fail", status: "error", startedAt: at(0), error: "boom" },
+  { taskName: "ok", status: "success", startedAt: at(0) },
+];
+const statusReport = buildAnalytics(statusRecords, { days: 1, now });
+check(
+  "QA-FULL-03: totals различает skipped / interrupted / error",
+  statusReport.totals.total === 5 &&
+    statusReport.totals.skipped === 1 &&
+    statusReport.totals.interrupted === 2 &&
+    statusReport.totals.error === 1 &&
+    statusReport.totals.success === 1
+);
+check(
+  "QA-FULL-03: дневной бакет не смешивает статусы",
+  statusReport.daily[0].skipped === 1 &&
+    statusReport.daily[0].interrupted === 2 &&
+    statusReport.daily[0].error === 1 &&
+    statusReport.daily[0].success === 1
+);
+check(
+  "QA-FULL-03: пропуски не попадают в топ ошибок",
+  !statusReport.errors.some((row) => /PL-121/.test(row.message))
+);
+check(
+  "QA-FULL-03: обратная совместимость — исходные поля totals на месте",
+  ["total", "success", "error", "partial", "successRate", "avgDurationMs", "tokens", "costUsd"]
+    .every((key) => key in statusReport.totals)
+);
+const dailyWithSkipped = buildDailyBuckets(
+  [{ date: "2026-06-15", total: 3, success: 1, error: 1, partial: 0, skipped: 1, interrupted: 2, tokens: 0 }],
+  1,
+  now,
+);
+check(
+  "QA-FULL-03: buildDailyBuckets переносит skipped/interrupted из SQL-агрегата",
+  dailyWithSkipped[0].skipped === 1 && dailyWithSkipped[0].interrupted === 2
+);
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\nAnalytics: ${results.length - failed.length}/${results.length} проверок пройдено.`);
 process.exit(failed.length > 0 ? 1 : 0);
