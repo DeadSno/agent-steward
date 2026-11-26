@@ -7,7 +7,7 @@
 X-4 закрыта и зафиксирована в `CHANGELOG.md`; X-5 выполнена 26.11.2026: тег `v0.0.9` запушен в
 `origin`, `main` переведён на релизный коммит, публикацию выполнил release workflow (см. фактический
 блок ниже), исторические пропуски тегов/релизов зафиксированы в разделе X-5; X-6 частично выполнен
-26.11.2026 (PR и метаданные GitHub), остальные каналы описаны в [ANNOUNCEMENTS.md](ANNOUNCEMENTS.md).
+26.11.2026 (PR и метаданные GitHub), остальные каналы описаны в [ANNOUNCEMENTS.md](ANNOUNCEMENTS.md); X-7 (публикация в MCP Registry) готовится вместе с релизом `v0.0.10`.
 
 ## Предварительные условия (общие для всех шагов)
 
@@ -69,14 +69,14 @@ npm view opencode-windows-scheduler@1.5.10 dependencies.agent-steward
 # теги должны соответствовать уже опубликованным версиям, а не наоборот
 git tag --list
 npm view agent-steward versions --json
-git tag -a v0.0.9 -m "agent-steward 0.0.9" <commit>
-git push origin v0.0.9
-gh release create v0.0.9 --verify-tag --generate-notes
+git tag -a v0.0.10 -m "agent-steward 0.0.10" <commit>
+git push origin v0.0.10
+gh release create v0.0.10 --verify-tag --generate-notes
 ```
 
 Проверка: для каждого существующего релиза npm есть тег `v<version>` и GitHub release с notes;
-список тегов и список версий совпадают. Откат тега: `git push origin :refs/tags/v0.0.9` и
-`git tag -d v0.0.9` (только если released commit ещё не разошёлся).
+список тегов и список версий совпадают. Откат тега: `git push origin :refs/tags/v0.0.10` и
+`git tag -d v0.0.10` (только если released commit ещё не разошёлся).
 
 Фактическое состояние на 26.11.2026 после релиза 0.0.9 (проверено по `git ls-remote`,
 npm registry, GitHub Releases API и логам workflow): тег `v0.0.9` (annotated,
@@ -91,6 +91,12 @@ CI `45772109749` зелёный; release workflow `45773919511` завершил
 унаследованных расхождений можно только после отдельного одобрения (см. «Что НЕ делать»):
 в части текущего релиза X-5 считается выполненной, история фиксируется здесь, а не в открытой
 задаче.
+
+Следующий релиз — `v0.0.10`: добавляет `package.json:mcpName = io.github.deadsno/agent-steward`
+и синхронизированный `server.json` 0.0.10; тег инициирует release workflow, который публикует npm
+и запись в официальном MCP Registry (см. X-7). Команды публикации из автоматической задачи не
+выполняются без отдельного одобрения; после одобрения достаточно `git tag -a v0.0.10 …` и
+`git push origin v0.0.10`.
 
 ## X-6 — анонсы после релиза
 
@@ -109,7 +115,7 @@ CI `45772109749` зелёный; release workflow `45773919511` завершил
    https://github.com/anomalyco/opencode/pull/65334#issuecomment-7185920463 — исправлены
    опечатка `^Ggent-steward` и версия v0.0.6; PR ждёт ревью.
 
-Осталось сделать вручную (нет учёток/прав): обновить v0.0.8 → v0.0.9 на страницах OpenDock
+Осталось сделать вручную (нет учёток/прав): обновить v0.0.8 → v0.0.10 на страницах OpenDock
 и opencode.im; отправить Show HN, посты в Reddit, DEV, Lobsters, Habr/Telegram; проверить
 Product Hunt и criteria для awesome-selfhosted. После публикации заменить статусы в
 `ANNOUNCEMENTS.md` с 🟡 на ✅ и добавить URL в CHANGELOG записью `docs(announce)`.
@@ -118,9 +124,28 @@ Product Hunt и criteria для awesome-selfhosted. После публикац�
 `gh pr view 65334 --repo anomalyco/opencode`, `gh repo view DeadSno/agent-steward --json description`.
 Ограничение: всегда указывать `DeadSno/agent-steward` и npm-ссылку — в PyPI есть тёзка.
 
+## X-7 — публикация в официальный MCP Registry
+
+Официальный реестр сверяет `server.json` с полем `mcpName` в *опубликованном* npm-пакете. В версии
+`0.0.10` оба артефакта подготовлены: `package.json:mcpName = io.github.deadsno/agent-steward`,
+`server.json` с тем же именем, npm-пакетом `agent-steward@0.0.10` и транспортом `stdio`.
+
+Порядок в выпуске 0.0.10 (только по тегу `v0.0.10`, без локального `npm publish`):
+
+1. Release workflow публикует npm-пакет с OIDC/provenance и создаёт GitHub release.
+2. Job `publish-mcp` (`needs: publish`, `permissions: id-token: write`) ждёт появления версии в
+   registry, скачивает зафиксированный `mcp-publisher v1.8.1`, выполняет `validate`,
+   `login github-oidc` и `publish`.
+3. Проверка после прогона: `npm view agent-steward@0.0.10 mcpName` и
+   `curl "https://registry.modelcontextprotocol.io/v0.1/servers?search=agent-steward"`.
+
+Если OIDC-вход в job недоступен, допустим ручной fallback с тем же бинарником:
+`mcp-publisher login github --token <токен>` и `mcp-publisher publish`. Реестр канонический —
+Glama, PulseMCP и mcp.so подхватывают записи оттуда автоматически.
+
 ## Порядок и stop-условия
 
-X-1 → X-2 → X-4 → X-5 → X-6. Между шагами — повторный прогон верификации и проверка, что `dev` не
+X-1 → X-2 → X-4 → X-5 → X-6 → X-7. Между шагами — повторный прогон верификации и проверка, что `dev` не
 разошёлся с `origin/dev`. Любой красный CI или расхождение версий останавливает последовательность;
 соответствующая подзадача остаётся открытой в `ROADMAP.md`, а причина — в отчёте запуска и CHANGELOG.
 X-6 можно выполнять после зелёных доков независимо от publish-прав, но не раньше, чем все тексты

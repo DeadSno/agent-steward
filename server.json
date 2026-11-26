@@ -6,12 +6,12 @@
     "url": "https://github.com/DeadSno/agent-steward",
     "source": "github"
   },
-  "version": "0.0.9",
+  "version": "0.0.10",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "agent-steward",
-      "version": "0.0.9",
+      "version": "0.0.10",
       "transport": {
         "type": "stdio"
       }

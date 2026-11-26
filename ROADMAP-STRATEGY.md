@@ -22,7 +22,7 @@ Scheduler, уведомления, аналитика — триггеры и о
 
 ---
 
-## Текущая точка (agent-steward 0.0.9, milestone Д7 + Durable DAG)
+## Текущая точка (agent-steward 0.0.10, milestone Д7 + Durable DAG)
 
 - Опубликован в npm, CI зелёный на Windows / macOS / Linux
 - `plugin id` не меняется: `opencode-windows-scheduler` — имена SQLite/логов и ID действий TUI без изменений; каталог данных — `agent-steward` (legacy мигрирует автоматически)
@@ -180,16 +180,16 @@ Enforced `allowedTools` / `deniedTools` вместо advisory, scoped-инъек
 
 ## Метрики успеха
 
-| Метрика | Сейчас (0.0.9) | Через 2 мес | Через 6 мес |
+| Метрика | Сейчас (0.0.10) | Через 2 мес | Через 6 мес |
 |---------|---------------|-------------|-------------|
-| npm latest | 0.0.8 (опубликован), 0.0.9 (готовится) | регулярные патчи | 0.1.x |
+| npm latest | 0.0.10 (опубликован, с `mcpName` для MCP Registry) | регулярные патчи | 0.1.x |
 | CI на 3 ОС | ✅ | ✅ | ✅ |
 | Доступно агенту: MCP-инструменты / RPC-методы | 34 / 61 (остальное GUI/CLI-only) | ≥34 / 61 | ≥34 / 61 |
 | Telegram / toast | ✅ | ✅ | ✅ |
 | Secrets / audit | ✅ | ✅ | ✅ |
 | Git-триггеры | ✅ | ✅ | ✅ |
 | Pipeline-as-code | ✅ (0.0.5) | ✅ | ✅ |
-| MCP-адаптер (`agent-steward mcp`) | ✅ реализован (`src/mcp.ts`, `test-mcp-adapter.mjs`), входит в готовящийся 0.0.9 | ✅ в релизе | ✅ |
+| MCP-адаптер (`agent-steward mcp`) | ✅ реализован (`src/mcp.ts`, `test-mcp-adapter.mjs`), опубликован в 0.0.10 вместе с `mcpName` | ✅ в релизе | ✅ |
 | Subpath exports `./core` / `./mcp` | ✅ реализованы (`src/core-entry.ts`, `test-watch-paths.mjs`) | ✅ | ✅ |
 | Docker runner | 🚧 подключён через invoker, без UI-настройки | 🚧 | ✅ |
 | Загрузки npm / мес | первые | 300+ | 1500+ |

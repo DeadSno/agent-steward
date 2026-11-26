@@ -1,6 +1,6 @@
 # Announcements — куда и как рассказывать об agent-steward
 
-Состояние на 26.11.2026, актуальная версия **0.0.9**. Документ содержит фактическую карту каналов и готовые тексты. Обозначения: ✅ выполнено, 🟡 нужно действие человека (нет учётки/доступа), ⚪ канал неприменим или соответствует не всем критериям.
+Состояние на 26.11.2026, актуальная версия **0.0.10** (первый релиз с `mcpName` и публикацией в официальный MCP Registry). Документ содержит фактическую карту каналов и готовые тексты. Обозначения: ✅ выполнено, 🟡 нужно действие человека (нет учётки/доступа), ⚪ канал неприменим или соответствует не всем критериям.
 
 > Позиционирование: `agent-steward` — не только плагин. Это локально-первый фреймворк оркестрации с **полноценным MCP-сервером** (`agent-steward mcp`, stdio, 34 инструмента + `batch_call`, ресурс и промпт), OpenCode V1/V2-плагином, CLI и standalone-режимом как равноправными точками входа. Во всех текстах это нужно говорить прямо.
 
@@ -15,7 +15,7 @@
 | README en/ru/zh | https://github.com/DeadSno/agent-steward#readme | ✅ | Добавлены разделы «MCP server» / «MCP-сервер» / «MCP 服务器» с конфигом `npx -y agent-steward mcp` и ссылкой на `docs/mcp-setup.md` |
 | Профиль GitHub | https://github.com/DeadSno/DeadSno | ✅ | README профиля обновлён: агент-оркестрация с MCP-сервером, а не «плагин для OpenCode» |
 | GitHub Wiki | https://github.com/DeadSno/agent-steward/wiki | 🟡 | Wiki включена, но git-репозиторий wiki не создан (clone/push дают 404); первую страницу нужно завести через веб-интерфейс |
-| npm | https://www.npmjs.com/package/agent-steward | ✅ | Описание пакета уже в framework-формулировке; `latest = 0.0.9` |
+| npm | https://www.npmjs.com/package/agent-steward | 🟡 | Описание пакета в framework-формулировке; релиз `0.0.10` с `mcpName` публикуется тегом `v0.0.10` через release workflow (проверить `npm view agent-steward@0.0.10 mcpName` после прогона) |
 | awesome-opencode | PR [#1063](https://github.com/awesome-opencode/awesome-opencode/pull/1063) | ✅ | Тело обновлено до v0.0.9; [комментарий-апдейт](https://github.com/awesome-opencode/awesome-opencode/pull/1063#issuecomment-7185920579) и [MCP-first уточнение](https://github.com/awesome-opencode/awesome-opencode/pull/1063#issuecomment-7186242015); ждём ревью мейнтейнеров |
 | Официальные доки OpenCode | PR [#65334](https://github.com/anomalyco/opencode/pull/65334) | ✅ | Исправлены опечатка `^Ggent-steward` и версия v0.0.6 → v0.0.9; [комментарий-апдейт](https://github.com/anomalyco/opencode/pull/65334#issuecomment-7185920463) и [MCP-first уточнение](https://github.com/anomalyco/opencode/pull/65334#issuecomment-7186239431); ждём ревью |
 | OpenDock / opencode.im | https://www.opendock.net/plugins/agent-steward/ · https://opencode.im/plugin/agent-steward | 🟡 | Страницы есть, но показывают v0.0.8; отправить запрос на обновление (шаблон ниже) |
@@ -28,7 +28,7 @@
 | GitHub Pages | — | ⚪ | `has_pages=false`; для сайта нужно отдельно включать Pages и публиковать статику |
 | `github.com/topics/opencode-plugin` | https://github.com/topics/opencode-plugin | ⚪ | Проект есть в поиске по теме, но не на первой странице: 4 звёзды — мало для заметности |
 | awesome-selfhosted | https://github.com/awesome-selfhosted/awesome-selfhosted | ⚪ | Перед PR сверить критерии: это плагин/фреймворк, а не отдельный self-hosted сервис |
-| Официальный MCP Registry | https://registry.modelcontextprotocol.io | 🟡 | Подготовлен `server.json` (`io.github.deadsno/agent-steward`, npm/stdio, v0.0.9). Публикация заблокирована: в опубликованном npm-пакете 0.0.9 нет поля `mcpName`, его нужно добавить в `package.json` и перевыпустить версию; авторизация — GitHub device flow или Actions OIDC (тег/релиз только с отдельного одобрения) |
+| Официальный MCP Registry | https://registry.modelcontextprotocol.io | 🟡 | `server.json` (`io.github.deadsno/agent-steward`, npm/stdio, v0.0.10) и `package.json:mcpName` согласованы; публикацию выполняет job `publish-mcp` в release workflow через GitHub OIDC после тега `v0.0.10`; проверить запись в реестре после прогона |
 | Glama | https://glama.ai/mcp/servers | 🟡 | Добавлен `glama.json` с `maintainers: ["DeadSno"]`; индексация автоматическая, подтверждение заявки — ручной вход |
 | mcp.so / mcpservers.org / mcpmarket / cursor.directory | web forms | 🟡 | Только ручные формы с аккаунтом; Free/платные варианты и сроки проверки сверить на месте |
 | PulseMCP | https://www.pulsemcp.com/submit | ⚪ | Приём новых заявок приостановлен с сентября 2026; каталог импортирует данные из официального реестра |
@@ -42,14 +42,14 @@
 
 В корне репозитория добавлены:
 
-- `server.json` — метаданные для [официального MCP Registry](https://registry.modelcontextprotocol.io): имя `io.github.deadsno/agent-steward`, npm-пакет `agent-steward@0.0.9`, транспорт `stdio`, ссылка на репозиторий. Проверка: `mcp-publisher validate` (CLI ставится из [релизов](https://github.com/modelcontextprotocol/registry/releases)).
+- `server.json` — метаданные для [официального MCP Registry](https://registry.modelcontextprotocol.io): имя `io.github.deadsno/agent-steward`, npm-пакет `agent-steward@0.0.10`, транспорт `stdio`, ссылка на репозиторий. Проверка: `mcp-publisher validate` (CLI ставится из [релизов](https://github.com/modelcontextprotocol/registry/releases)).
 - `glama.json` — маркер владельца для [Glama](https://glama.ai/mcp/servers): `maintainers: ["DeadSno"]`. После индексации репозитория можно подтвердить заявку и получить бейдж, который требуется для PR в `punkpeye/awesome-mcp-servers`.
 
-**Блокер официального реестра:** реестр сверяет `server.json` с полем `mcpName` в *опубликованном* npm-пакете. В `agent-steward@0.0.9` этого поля нет, поэтому публикация завершится ошибкой владельца. Порядок действий: добавить `"mcpName": "io.github.deadsno/agent-steward"` в `package.json`, выпустить следующую версию через `git tag` → release workflow (только с отдельного одобрения), обновить `version` в `server.json`, затем `mcp-publisher login github` + `mcp-publisher publish` (или Actions OIDC в отдельном workflow). Официальный реестр является каноническим: Glama, PulseMCP и mcp.so подхватывают записи оттуда автоматически.
+**Публикация в официальный реестр:** реестр сверяет `server.json` с полем `mcpName` в *опубликованном* npm-пакете. В версии `0.0.10` поле `"mcpName": "io.github.deadsno/agent-steward"` добавлено в `package.json`, `server.json` обновлён до той же версии. Публикацию npm выполняет release workflow по тегу `v0.0.10`, затем job `publish-mcp` делает `mcp-publisher validate`, `login github-oidc` и `publish`. Проверка после прогона: `npm view agent-steward@0.0.10 mcpName` и запрос к `https://registry.modelcontextprotocol.io/v0.1/servers?search=agent-steward`. Официальный реестр канонический: Glama, PulseMCP и mcp.so подхватывают записи оттуда автоматически.
 
 ## Запрос на обновление в каталогах (OpenDock / opencode.im)
 
-> Hi! The `agent-steward` listing still shows v0.0.8, while npm latest is **v0.0.9** (published 26.11.2026). The positioning has also changed: it is a local-first agent orchestration framework with a full **MCP stdio server** (`agent-steward mcp`, 34 tools), an OpenCode V1/V2 plugin, CLI and standalone as entry points — not just a plugin. Could you refresh the version/description (and add an MCP section if the catalog supports it)? Repo: https://github.com/DeadSno/agent-steward — npm: https://www.npmjs.com/package/agent-steward — MCP setup: https://github.com/DeadSno/agent-steward/blob/dev/docs/mcp-setup.md. Thanks!
+> Hi! The `agent-steward` listing still shows v0.0.8, while npm latest is **v0.0.10** (published 26.11.2026). The positioning has also changed: it is a local-first agent orchestration framework with a full **MCP stdio server** (`agent-steward mcp`, 34 tools), an OpenCode V1/V2 plugin, CLI and standalone as entry points — not just a plugin. Could you refresh the version/description (and add an MCP section if the catalog supports it)? Repo: https://github.com/DeadSno/agent-steward — npm: https://www.npmjs.com/package/agent-steward — MCP setup: https://github.com/DeadSno/agent-steward/blob/dev/docs/mcp-setup.md. Thanks!
 
 ## Hacker News — Show HN
 
@@ -131,7 +131,7 @@ Description: `An MCP stdio server (34 tools) for agent jobs on the native OS sch
 
 ## Telegram (короткий пост)
 
-> agent-steward 0.0.9 — локально-первый фреймворк оркестрации ИИ-агентов с MCP-сервером (stdio, 34 инструмента), плагином OpenCode V1/V2, CLI и standalone. Cron/разовые задачи в системном планировщике ОС (работают с закрытым редактором), DAG, матричные сборки, quality gates, история в SQLite и локальный дашборд. MIT, без телеметрии.
+> agent-steward 0.0.10 — локально-первый фреймворк оркестрации ИИ-агентов с MCP-сервером (stdio, 34 инструмента), плагином OpenCode V1/V2, CLI и standalone. Cron/разовые задачи в системном планировщике ОС (работают с закрытым редактором), DAG, матричные сборки, quality gates, история в SQLite и локальный дашборд. MIT, без телеметрии.
 > GitHub: https://github.com/DeadSno/agent-steward
 > npm: https://www.npmjs.com/package/agent-steward
 

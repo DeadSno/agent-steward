@@ -1500,6 +1500,38 @@ check(
   );
 }
 
+// MCP-REGISTRY: server.json обязан совпадать с опубликованным npm-пакетом.
+{
+  const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
+  const lock = JSON.parse(fs.readFileSync(path.join(root, "package-lock.json"), "utf8"));
+  const server = JSON.parse(fs.readFileSync(path.join(root, "server.json"), "utf8"));
+  check(
+    "MCP-REGISTRY: package.json:mcpName совпадает с server.json:name",
+    pkg.mcpName === server.name &&
+      /^io\.github\.[A-Za-z0-9-]+\//.test(String(pkg.mcpName)),
+  );
+  check(
+    "MCP-REGISTRY: версии package.json, lock и server.json согласованы",
+    pkg.version === "0.0.10" &&
+      lock.version === pkg.version &&
+      server.version === pkg.version &&
+      Array.isArray(server.packages) &&
+      server.packages.some(
+        (entry) => entry.identifier === pkg.name && entry.version === pkg.version,
+      ),
+  );
+  check(
+    "MCP-REGISTRY: server.json и glama.json включены в npm-тарбол",
+    Array.isArray(pkg.files) &&
+      pkg.files.includes("server.json") &&
+      pkg.files.includes("glama.json"),
+  );
+  check(
+    "MCP-REGISTRY: негатив — расхождение mcpName детектируется",
+    pkg.mcpName !== "io.github.deadsno/agent-steward-mismatch",
+  );
+}
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\nDocs: ${results.length - failed.length}/${results.length} проверок пройдено.`);
 process.exit(failed.length > 0 ? 1 : 0);

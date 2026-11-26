@@ -104,11 +104,13 @@ if (releaseName) {
       publishJob?.permissions?.contents === "write",
     "release: publish-job получает id-token: write и contents: write",
   );
+  const mcpJob = releaseJobs["publish-mcp"];
   check(
     Object.entries(releaseJobs).every(
-      ([id, job]) => id === "publish" || job?.permissions?.["id-token"] !== "write",
+      ([id, job]) =>
+        id === "publish" || id === "publish-mcp" || job?.permissions?.["id-token"] !== "write",
     ),
-    "release: id-token: write только у publish-job",
+    "release: id-token: write только у publish-job и publish-mcp",
   );
   check(
     jobIf(publishJob).includes("github.event_name == 'push'") &&
@@ -136,6 +138,39 @@ if (releaseName) {
     check(
       runsOf(dryRunJob).every((step) => !/\bnpm publish\b/.test(step.run)),
       "release: dry-run не вызывает npm publish (не трогает реестр)",
+    );
+  }
+  // MCP Registry: публикация только после npm publish, с OIDC и закреплённой
+  // версией mcp-publisher. Регрессии ловятся здесь, а не на реальном теге.
+  check(Boolean(mcpJob), "release: есть publish-mcp job для MCP Registry");
+  if (mcpJob) {
+    const mcpRuns = runsOf(mcpJob);
+    check(
+      mcpJob.needs === "publish",
+      "release: publish-mcp ждёт завершения publish",
+    );
+    check(
+      jobIf(mcpJob).includes("github.event_name == 'push'") &&
+        jobIf(mcpJob).includes("startsWith(github.ref, 'refs/tags/v')"),
+      "release: publish-mcp только для push по тегу v*",
+    );
+    check(
+      mcpJob?.permissions?.["id-token"] === "write" &&
+        mcpJob?.permissions?.contents === "read",
+      "release: publish-mcp получает id-token: write и contents: read",
+    );
+    check(
+      /MCP_PUBLISHER_VERSION"?:\s*"v?\d+\.\d+\.\d+/.test(
+        JSON.stringify(mcpJob.env ?? {}),
+      ) &&
+        mcpRuns.some((step) => /mcp-publisher_linux_amd64\.tar\.gz/.test(step.run)) &&
+        mcpRuns.some((step) => /login github-oidc/.test(step.run)) &&
+        mcpRuns.some((step) => /\.\/mcp-publisher publish/.test(step.run)),
+      "release: publish-mcp использует закреплённый mcp-publisher и OIDC",
+    );
+    check(
+      mcpRuns.every((step) => !/\bnpm publish\b/.test(step.run)),
+      "release: publish-mcp не вызывает npm publish",
     );
   }
   const guardStep = runsOf(releaseJobs.verify).find((step) =>
