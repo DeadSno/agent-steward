@@ -7,7 +7,7 @@
 X-4 закрыта и зафиксирована в `CHANGELOG.md`; X-5 выполнена 26.11.2026: тег `v0.0.9` запушен в
 `origin`, `main` переведён на релизный коммит, публикацию выполнил release workflow (см. фактический
 блок ниже), исторические пропуски тегов/релизов зафиксированы в разделе X-5; X-6 частично выполнен
-26.11.2026 (PR и метаданные GitHub), остальные каналы описаны в [ANNOUNCEMENTS.md](ANNOUNCEMENTS.md); X-7 (публикация в MCP Registry) готовится вместе с релизом `v0.0.10`.
+26.11.2026 (PR и метаданные GitHub), остальные каналы описаны в [ANNOUNCEMENTS.md](ANNOUNCEMENTS.md); X-7 (публикация в MCP Registry) готовится вместе с релизом `v0.0.11`.
 
 ## Предварительные условия (общие для всех шагов)
 
@@ -69,14 +69,14 @@ npm view opencode-windows-scheduler@1.5.10 dependencies.agent-steward
 # теги должны соответствовать уже опубликованным версиям, а не наоборот
 git tag --list
 npm view agent-steward versions --json
-git tag -a v0.0.10 -m "agent-steward 0.0.10" <commit>
-git push origin v0.0.10
-gh release create v0.0.10 --verify-tag --generate-notes
+git tag -a v0.0.11 -m "agent-steward 0.0.11" <commit>
+git push origin v0.0.11
+gh release create v0.0.11 --verify-tag --generate-notes
 ```
 
 Проверка: для каждого существующего релиза npm есть тег `v<version>` и GitHub release с notes;
-список тегов и список версий совпадают. Откат тега: `git push origin :refs/tags/v0.0.10` и
-`git tag -d v0.0.10` (только если released commit ещё не разошёлся).
+список тегов и список версий совпадают. Откат тега: `git push origin :refs/tags/v0.0.11` и
+`git tag -d v0.0.11` (только если released commit ещё не разошёлся).
 
 Фактическое состояние на 26.11.2026 после релиза 0.0.9 (проверено по `git ls-remote`,
 npm registry, GitHub Releases API и логам workflow): тег `v0.0.9` (annotated,
@@ -92,11 +92,16 @@ CI `45772109749` зелёный; release workflow `45773919511` завершил
 в части текущего релиза X-5 считается выполненной, история фиксируется здесь, а не в открытой
 задаче.
 
-Следующий релиз — `v0.0.10`: добавляет `package.json:mcpName = io.github.deadsno/agent-steward`
-и синхронизированный `server.json` 0.0.10; тег инициирует release workflow, который публикует npm
-и запись в официальном MCP Registry (см. X-7). Команды публикации из автоматической задачи не
-выполняются без отдельного одобрения; после одобрения достаточно `git tag -a v0.0.10 …` и
-`git push origin v0.0.10`.
+Релиз `v0.0.10` опубликован: npm publish через OIDC зелёный (run `45784589913`, shasum
+`2021e825f0cf0dd1058e86bcb18aade367710cf9`, 679 файлов, provenance `4122164477`), GitHub release
+https://github.com/DeadSno/agent-steward/releases/tag/v0.0.10 создан workflow. Job `publish-mcp`
+сначала не дождался версии в зеркале npm (`npm view` с таймаутом 5 минут), а после повтора дошёл до
+`Validate`/`Login OIDC` и получил HTTP 403: OIDC разрешает пространство `io.github.DeadSno/*`, а
+артефакты использовали `io.github.deadsno/agent-steward` в нижнем регистре. Релиз `v0.0.11`
+исправляет регист `mcpName` и `server.json:name` на `io.github.DeadSno/agent-steward` и заменяет
+ожидание `npm view` прямой проверкой `https://registry.npmjs.org/agent-steward/<version>` (60×10 с).
+Публикация npm и MCP Registry выполняется только тегом `v0.0.11` через release workflow; локальные
+publish-команды не запускаются.
 
 ## X-6 — анонсы после релиза
 
@@ -106,16 +111,19 @@ CI `45772109749` зелёный; release workflow `45773919511` завершил
 
 Выполнено 26.11.2026 (gh CLI, аккаунт `DeadSno`):
 
-1. `gh repo edit DeadSno/agent-steward --description "..."` — About переведён на формулировку
-   «framework с OpenCode-плагином как текущим входом»; 18 topics сохранены.
-2. `gh pr edit 1063 --repo awesome-opencode/awesome-opencode --body-file ...` и комментарий
-   https://github.com/awesome-opencode/awesome-opencode/pull/1063#issuecomment-7185920579 —
-   версия обновлена до 0.0.9, добавлена формулировка framework. PR ждёт ревью мейнтейнеров.
-3. `gh pr edit 65334 --repo anomalyco/opencode --body-file ...` и комментарий
-   https://github.com/anomalyco/opencode/pull/65334#issuecomment-7185920463 — исправлены
-   опечатка `^Ggent-steward` и версия v0.0.6; PR ждёт ревью.
+1. `gh repo edit DeadSno/agent-steward --description "..."` — About переведён на MCP-first
+   формулировку (framework с MCP stdio-сервером и OpenCode V1/V2-плагином как точками входа),
+   добавлены topics `mcp` / `model-context-protocol` (всего 20); включены Discussions.
+2. `gh pr edit 1063 --repo awesome-opencode/awesome-opencode --body-file ...`, комментарии
+   https://github.com/awesome-opencode/awesome-opencode/pull/1063#issuecomment-7185920579 и
+   https://github.com/awesome-opencode/awesome-opencode/pull/1063#issuecomment-7186242015 —
+   версия обновлена до 0.0.9, добавлены формулировки framework и MCP-first. PR ждёт ревью.
+3. `gh pr edit 65334 --repo anomalyco/opencode --body-file ...`, комментарии
+   https://github.com/anomalyco/opencode/pull/65334#issuecomment-7185920463 и
+   https://github.com/anomalyco/opencode/pull/65334#issuecomment-7186239431 — исправлены
+   опечатка `^Ggent-steward`, версия v0.0.6 и добавлено MCP-first уточнение; PR ждёт ревью.
 
-Осталось сделать вручную (нет учёток/прав): обновить v0.0.8 → v0.0.10 на страницах OpenDock
+Осталось сделать вручную (нет учёток/прав): обновить v0.0.8 → v0.0.11 на страницах OpenDock
 и opencode.im; отправить Show HN, посты в Reddit, DEV, Lobsters, Habr/Telegram; проверить
 Product Hunt и criteria для awesome-selfhosted. После публикации заменить статусы в
 `ANNOUNCEMENTS.md` с 🟡 на ✅ и добавить URL в CHANGELOG записью `docs(announce)`.
@@ -126,17 +134,20 @@ Product Hunt и criteria для awesome-selfhosted. После публикац�
 
 ## X-7 — публикация в официальный MCP Registry
 
-Официальный реестр сверяет `server.json` с полем `mcpName` в *опубликованном* npm-пакете. В версии
-`0.0.10` оба артефакта подготовлены: `package.json:mcpName = io.github.deadsno/agent-steward`,
-`server.json` с тем же именем, npm-пакетом `agent-steward@0.0.10` и транспортом `stdio`.
+Официальный реестр сверяет `server.json` с полем `mcpName` в *опубликованном* npm-пакете, и имя
+пространства регистрочувствительно: GitHub OIDC выдаёт права на `io.github.DeadSno/*`, поэтому
+`io.github.deadsno/*` в версии `0.0.10` привёл к HTTP 403. В версии `0.0.11` оба артефакта
+согласованы: `package.json:mcpName = io.github.DeadSno/agent-steward`, `server.json` с тем же
+именем, npm-пакетом `agent-steward@0.0.11` и транспортом `stdio`.
 
-Порядок в выпуске 0.0.10 (только по тегу `v0.0.10`, без локального `npm publish`):
+Порядок в выпуске 0.0.11 (только по тегу `v0.0.11`, без локального `npm publish`):
 
 1. Release workflow публикует npm-пакет с OIDC/provenance и создаёт GitHub release.
-2. Job `publish-mcp` (`needs: publish`, `permissions: id-token: write`) ждёт появления версии в
-   registry, скачивает зафиксированный `mcp-publisher v1.8.1`, выполняет `validate`,
-   `login github-oidc` и `publish`.
-3. Проверка после прогона: `npm view agent-steward@0.0.10 mcpName` и
+2. Job `publish-mcp` (`needs: publish`, `permissions: id-token: write`) ждёт появления версии,
+   опрашивая напрямую `https://registry.npmjs.org/agent-steward/<version>` (60 попыток × 10 с,
+   без `npm view` из-за отставания зеркала), скачивает зафиксированный `mcp-publisher v1.8.1`,
+   выполняет `validate`, `login github-oidc` и `publish`.
+3. Проверка после прогона: `npm view agent-steward@0.0.11 mcpName` и
    `curl "https://registry.modelcontextprotocol.io/v0.1/servers?search=agent-steward"`.
 
 Если OIDC-вход в job недоступен, допустим ручной fallback с тем же бинарником:

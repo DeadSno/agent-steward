@@ -128,7 +128,7 @@ jobs:
 
   # MCP Registry: публикуем server.json только после npm publish, иначе реестр
   # не сможет сверить имя с полем mcpName в уже опубликованном пакете.
-  # OIDC-логин привязан к io.github.deadsno/* — пространство имён из server.json.
+  # OIDC-логин привязан к io.github.DeadSno/* — регистр имени GitHub важен.
   publish-mcp:
     name: Publish to MCP Registry
     needs: publish
@@ -144,18 +144,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      # Зеркало npm иногда отстаёт от OIDC-публикации (см. релиз 0.0.9),
-      # поэтому ждём появления версии, прежде чем отдавать её реестру.
+      # Зеркало npm иногда отстаёт от OIDC-публикации: в релизе 0.0.10 npm view
+      # отдавал E404 ~6 минут, хотя прямой registry.npmjs.org уже содержал версию.
+      # Проверяем прямой metadata endpoint и ждём до 10 минут.
       - name: Wait for npm package
         shell: bash
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          for i in $(seq 1 30); do
-            if npm view "agent-steward@$VERSION" version >/dev/null 2>&1; then
-              echo "agent-steward@$VERSION is available in npm"
+          for i in $(seq 1 60); do
+            if curl -fsSL "https://registry.npmjs.org/agent-steward/${VERSION}" | tr -d ' ' | grep -q "\"version\":\"${VERSION}\""; then
+              echo "agent-steward@$VERSION is available in npm registry"
               exit 0
             fi
-            echo "Waiting for npm registry ($i/30)..."
+            echo "Waiting for npm registry ($i/60)..."
             sleep 10
           done
           echo "::error::agent-steward@$VERSION did not appear in npm registry"

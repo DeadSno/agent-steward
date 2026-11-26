@@ -70,7 +70,7 @@ CI runs build, GUI build and tests on Windows, Ubuntu and macOS for every pull r
 
 ## Release process
 
-**Do NOT run `npm publish` locally.** Releases are published exclusively by pushing a version tag (`git tag v0.0.10 && git push origin v0.0.10`), which triggers `.github/workflows/release.yml`. The release workflow:
+**Do NOT run `npm publish` locally.** Releases are published exclusively by pushing a version tag (`git tag v0.0.11 && git push origin v0.0.11`), which triggers `.github/workflows/release.yml`. The release workflow:
 
 1. Verifies `package.json` version matches the tag.
 2. Runs `npm run build`, `npm run build:gui` and `npm test`.

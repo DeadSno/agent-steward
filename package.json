@@ -1,8 +1,8 @@
 {
   "name": "agent-steward",
-  "version": "0.0.10",
+  "version": "0.0.11",
   "description": "Local-first agent orchestration framework with an MCP stdio server and an OpenCode V1/V2 plugin as current entry points — cron, one-shot runs, DAG pipelines, matrix builds, quality gates, SQLite history, metrics and a local web dashboard. The same core is also available via CLI and standalone mode. Windows, macOS and Linux. Free and open source (MIT).",
-  "mcpName": "io.github.deadsno/agent-steward",
+  "mcpName": "io.github.DeadSno/agent-steward",
   "license": "MIT",
   "author": "agent-steward contributors",
   "homepage": "https://github.com/DeadSno/agent-steward#readme",

@@ -1512,7 +1512,7 @@ check(
   );
   check(
     "MCP-REGISTRY: версии package.json, lock и server.json согласованы",
-    pkg.version === "0.0.10" &&
+    pkg.version === "0.0.11" &&
       lock.version === pkg.version &&
       server.version === pkg.version &&
       Array.isArray(server.packages) &&

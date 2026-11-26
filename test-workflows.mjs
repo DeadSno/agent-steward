@@ -172,6 +172,14 @@ if (releaseName) {
       mcpRuns.every((step) => !/\bnpm publish\b/.test(step.run)),
       "release: publish-mcp не вызывает npm publish",
     );
+    check(
+      mcpRuns.some(
+        (step) =>
+          /registry\.npmjs\.org\/agent-steward\//.test(step.run) &&
+          /seq 1 60/.test(step.run),
+      ) && mcpRuns.every((step) => !/npm view/.test(step.run)),
+      "release: publish-mcp ждёт npm через прямой registry endpoint, не npm view",
+    );
   }
   const guardStep = runsOf(releaseJobs.verify).find((step) =>
     /version/i.test(String(step.name ?? "")),
