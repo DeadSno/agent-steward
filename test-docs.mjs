@@ -1187,10 +1187,15 @@ check(
     activeLegacy(block + "\n1. P-1 — закрыть изоляцию ядра\n"),
   );
   check(
-    "QA-FULL-04: P-4/P-5 и S-1…S-6 отмечены реализованными, открыта только V009-PLUGIN-1",
+    "QA-FULL-04: P-4/P-5 и S-1…S-6 реализованы, V009-PLUGIN-1 закрыта и новых находок нет",
     /P-4\/P-5 и S-1…S-6 уже реализованы/.test(block) &&
-      /V009-PLUGIN-1/.test(block) &&
+      /включая V009-PLUGIN-1/.test(block) &&
+      /новых открытых находок нет/.test(block) &&
       !/future, не в ближайшие две недели/i.test(block),
+  );
+  check(
+    "QA-FULL-04: негатив — старая формулировка «открыта V009-PLUGIN-1» детектируется",
+    !/Единственная открытая находка — V009-PLUGIN-1/.test(block),
   );
   check(
     "QA-FULL-04: синхронизация strategy ↔ ROADMAP сохранена",
