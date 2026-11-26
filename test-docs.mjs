@@ -1260,36 +1260,15 @@ check(
   );
 }
 
-// ROADMAP: полная иерархия выполненных задач/подзадач с артефактами кода.
+// ROADMAP: закрытые задачи не висят в роадмапе — архив удалён.
 {
   const roadmapText = fs.readFileSync(path.join(root, "ROADMAP.md"), "utf8");
-  const start = roadmapText.indexOf("### Архив задач и подзадач");
-  const end = roadmapText.indexOf("\n---\n\n# 4. Правила работы", start);
-  const archive = start >= 0 && end > start ? roadmapText.slice(start, end) : "";
-  const expectedIds = [
-    "DEEP-1.1", "DEEP-1.2", "DEEP-2.1", "DEEP-2.2",
-    "DEEP-3.1", "DEEP-3.2", "DEEP-3.3",
-    "DEEP-4.1", "DEEP-4.2", "DEEP-4.3", "DEEP-4.4", "DEEP-4.5",
-    "QA-CI-261", "QA-CI-B12", "QA-CI-NODE26",
-    "QA-FULL-01", "QA-FULL-02", "QA-FULL-03", "QA-FULL-04", "QA-FULL-05", "QA-FULL-06",
-    "ROADMAP-CLARIFY",
-    "P-1", "P-2", "P-3", "P-4", "P-5", "S-1", "S-2", "S-3", "S-4", "S-5", "S-6",
-  ];
+  const hasArchive = (text) =>
+    text.includes("### Архив задач и подзадач") || /✅ по коду/.test(text);
+  check("ROADMAP: архив закрытых задач удалён", !hasArchive(roadmapText));
   check(
-    "ROADMAP: архив расписан по задаче → подзадаче",
-    archive.length > 0 && expectedIds.every((id) => archive.includes(id)),
-  );
-  check(
-    "ROADMAP: статусы архива подтверждены кодом/тестами",
-    (archive.match(/✅ по коду/g) ?? []).length >= expectedIds.length,
-  );
-  check(
-    "ROADMAP: архив не содержит чекбоксов",
-    !/-\s+\[[xX]\]\s/.test(archive),
-  );
-  check(
-    "ROADMAP: негатив — потеря подзадачи детектируется",
-    !expectedIds.every((id) => archive.replace("QA-FULL-06", "QA-FULL-XX").includes(id)),
+    "ROADMAP: негатив — возврат архива детектируется",
+    hasArchive(roadmapText + "\n### Архив задач и подзадач\n- **DEEP-1.1** … — ✅ по коду"),
   );
 }
 
