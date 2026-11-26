@@ -1,8 +1,12 @@
 import { execFile } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import fs from "node:fs/promises";
+import os from "node:os";
 import { dirname, join } from "node:path";
+import path from "node:path";
 import { promisify } from "node:util";
 import iconv from "iconv-lite";
+import { quoteCmdArg } from "../opencode-cli.js";
 import type { ScheduledTaskInfo } from "../../types.js";
 import { TASK_FOLDER, TASK_FOLDER_NAME, LEGACY_TASK_FOLDER_NAME, taskFolderNameForProfile, legacyTaskFolderNameForProfile, getPluginDir } from "../../types.js";
 import { getProfileName } from "../../profiles.js";
@@ -392,6 +396,12 @@ export class SchtasksError extends Error {
     message: string,
     public readonly code: number | null,
     public readonly stderr: string,
+    /**
+     * Повышенный сбой + читающий `schtasks /query` (код выхода, не текст):
+     * задачи с таким именем нет. Только так fallback на legacy-папку работает
+     * и тогда, когда вывод повышенного запуска не перехватывается.
+     */
+    public readonly taskMissing = false,
   ) {
     const hint = explainSchtasksError(code, `${message} ${stderr}`);
     super(hint ? `${message} | пояснение: ${hint}` : message);
@@ -423,12 +433,220 @@ export async function runSchtasks(args: string[]): Promise<SchtasksResult> {
     const e = err as { message?: string; code?: number | null };
     const stdout = await decodeConsoleOutput(errorBuffer(err, "stdout"));
     const stderr = await decodeConsoleOutput(errorBuffer(err, "stderr"));
-    throw new SchtasksError(
+    const failure = new SchtasksError(
       `schtasks error: ${buildErrorDetails(err, stdout, stderr)}`,
       e.code ?? null,
       stderr,
     );
+    // Нет прав → пробуем тот же вызов с повышением (UAC) вместо тупика.
+    if (!isAccessDeniedError(failure) || !shouldTryElevation(args)) {
+      throw failure;
+    }
+    return await runSchtasksWithElevation(args, failure);
   }
+}
+
+/**
+ * Фолбэк повышения (UAC) для schtasks.
+ *
+ * На части машин (OEM-политика, отозванное право «Log on as a batch job»)
+ * регистрация задач запрещена даже владельцу без повышения: и `schtasks.exe`,
+ * и COM-апик `Register-ScheduledTask` отвечают «Access is denied». Раньше это
+ * была тупиковая ошибка и единственный способ — запускать OpenCode от администратора.
+ * Теперь команда повторяется через ShellExecute `verb=runas`: права спрашиваются
+ * у пользователя ровно на одну операцию, сам OpenCode остаётся без повышения.
+ *
+ * Повышается сам schtasks.exe (`Start-Process -FilePath schtasks.exe
+ * -ArgumentList @(...)`), поэтому в промпте UAC видно «Task Scheduler Command
+ * Line» с полными аргументами операции — пользователь подтверждает конкретное
+ * действие, а не произвольный скрипт. `cmd.exe` в цепочке нет нигде: командная
+ * строка заранее не собирается, metacharacters и `%VAR%` оболочкой не
+ * раскрываются; аргументы (каждый экранирован `quoteCmdArg`) лежат в JSON-файле.
+ *
+ * Ограничения: промпт показывает только интерактивный десктоп — повышаемся лишь
+ * при явном SESSIONNAME=Console/RDP (в services/session 0 фолбэк выключен);
+ * ответа ждём `UAC_TIMEOUT_MS`, но снятый по таймауту повышенный процесс пережить
+ * не можем (повышенного ребёнка не убить из не повышенного родителя) — диалог
+ * закрыт только руками пользователя; отключается фолбэк истинным значением
+ * `AGENT_STEWARD_NO_UAC=1|true|yes|on` (CI, headless, сервисы).
+ */
+
+/** Флаги schtasks, которые меняют планировщик: только для них просим повышение. */
+const ELEVATABLE_FLAGS = new Set(["/create", "/delete", "/change", "/run", "/end"]);
+
+/** Отключение фолбэка (CI/headless/сервисы): AGENT_STEWARD_NO_UAC=1. */
+export const NO_UAC_ENV = "AGENT_STEWARD_NO_UAC";
+
+/** Сколько ждать ответа на запрос повышения. */
+export const UAC_TIMEOUT_MS = 120_000;
+
+/**
+ * Признак «нет прав»: код/HRESULT или строго анкорированная строка в stderr.
+ * message не читаем: в него входит командная строка с именем задачи, и задача
+ * с именем «Access is denied» иначе вымогала бы UAC-промпт на любой ошибке.
+ */
+export function isAccessDeniedError(err: unknown): boolean {
+  const e = (err ?? {}) as { code?: number | null; stderr?: string };
+  const code =
+    typeof e.code === "number" && Number.isFinite(e.code) ? e.code >>> 0 : null;
+  if (code === 0x80070005 || code === 5) return true;
+  const stderr = String(e.stderr ?? "");
+  return (
+    /^\s*(?:ERROR:\s*)?(?:Access is denied|Отказано в доступе)\.?\s*$/im.test(stderr) ||
+    /0x80070005/i.test(stderr)
+  );
+}
+
+/** Нужен ли UAC-фолбэк для этих аргументов (только изменяющие команды). */
+export function shouldTryElevation(
+  args: string[],
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  const flag = (env[NO_UAC_ENV] ?? "").trim().toLowerCase();
+  if (flag === "1" || flag === "true" || flag === "yes" || flag === "on") return false;
+  if (!ELEVATABLE_FLAGS.has((args[0] ?? "").toLowerCase())) return false;
+  // Services/session 0: показать промпт некому, ждать согласия не от кого.
+  // SESSIONNAME не задан — это и есть сервисный контекст, не повышаемся.
+  return /^(console|rdp-tcp)/i.test((env.SESSIONNAME ?? "").trim());
+}
+
+/** Литерал строки для PowerShell (одинарные кавычки удваиваются). */
+function psLiteral(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+/**
+ * Повышенный повтор schtasks: повышается сам exe, промпт UAC читается целиком.
+ *
+ * `Start-Process -FilePath <exe> -ArgumentList @(...) -Verb RunAs` — в промпте
+ * видно «Task Scheduler Command Line» и все аргументы операции, пользователь
+ * подтверждает конкретный schtasks-вызов, а не произвольный скрипт-хост.
+ * `cmd.exe` в цепочке нет: командная строка заранее не собирается, exe и
+ * аргументы (каждый экранирован `quoteCmdArg` под CommandLineToArgvW) лежат в
+ * JSON-файле, который читает PowerShell.
+ *
+ * Плату за читаемость просит ShellExecute: повышенному процессу нельзя
+ * перенаправить stdout/stderr (в PS 5.1 `-Verb` не совмещается с
+ * `-RedirectStandard*`), поэтому вывод пустой, а ошибка объясняется кодом
+ * возврата через `explainSchtasksError`. Код возврата доходит полностью.
+ *
+ * `opts` — тестовый шов: `verb: null` прогоняет ту же цепочку без повышения,
+ * `exe` подставляет заглушку вместо schtasks.exe.
+ */
+export async function runSchtasksElevated(
+  args: string[],
+  opts: { verb?: string | null; exe?: string; timeoutMs?: number } = {},
+): Promise<SchtasksResult> {
+  const verb = opts.verb === undefined ? "runas" : opts.verb;
+  const exe =
+    opts.exe ??
+    path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "schtasks.exe");
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "agent-steward-uac-"));
+  const codeFile = path.join(dir, "code.txt");
+  const specFile = path.join(dir, "spec.json");
+  try {
+    const spec = JSON.stringify({ exe, args: args.map(quoteCmdArg) });
+    await fs.writeFile(specFile, spec, "utf8");
+
+    const verbBranch = verb
+      ? `$p = Start-Process -FilePath $spec.exe -ArgumentList @($spec.args) -Verb ${psLiteral(verb)} -Wait -PassThru -WindowStyle Hidden\n`
+      : "$p = Start-Process -FilePath $spec.exe -ArgumentList @($spec.args) -Wait -PassThru -WindowStyle Hidden\n";
+    const script =
+      "$ErrorActionPreference = 'Stop'\n" +
+      `$spec = [IO.File]::ReadAllText(${psLiteral(specFile)}, [Text.Encoding]::UTF8) | ConvertFrom-Json\n` +
+      verbBranch +
+      `[IO.File]::WriteAllText(${psLiteral(codeFile)}, [string]$p.ExitCode)\n`;
+
+    try {
+      await execFileAsync(
+        "powershell.exe",
+        ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")],
+        {
+          windowsHide: true,
+          maxBuffer: MAX_OUTPUT_BUFFER,
+          timeout: opts.timeoutMs ?? UAC_TIMEOUT_MS,
+        },
+      );
+    } catch (err) {
+      const e = err as { killed?: boolean; message?: string; stderr?: string | Buffer };
+      const stderr = Buffer.isBuffer(e.stderr) ? e.stderr.toString("utf8") : (e.stderr ?? "");
+      const text = `${e.message ?? ""} ${stderr}`;
+      if (e.killed) {
+        // shortcut: ни промпт на secure desktop, ни уже согласованный повышенный
+        // schtasks из неповышенного родителя не снять — если пользователь
+        // ответит «Да» после таймаута, операция всё равно выполнится.
+        throw new Error(`повышение не подтверждено за ${Math.round((opts.timeoutMs ?? UAC_TIMEOUT_MS) / 1000)} с`);
+      }
+      if (/canceled by the user|отменена пользователем|1223|0x800704c7/i.test(text)) {
+        throw new Error("повышение отклонено пользователем");
+      }
+      throw new Error(`не удалось повысить права: ${(text.split(/\r?\n/)[0] ?? text).trim()}`);
+    }
+
+    const codeRaw = (await fs.readFile(codeFile, "utf8").catch(() => "")).trim();
+    if (codeRaw === "") {
+      throw new Error("повышенный запуск не вернул код возврата");
+    }
+    const code = Number.parseInt(codeRaw, 10);
+    // Вывод повышенного exe не перехватить (у ShellExecute нет pipe'ов) —
+    // объясняем ошибку кодом, чтобы текст ошибки остался осмысленным.
+    const explain = code === 0 ? null : explainSchtasksError(code, "");
+    const stderrOut =
+      code === 0
+        ? ""
+        : `${explain ? explain + " " : ""}(код возврата schtasks: ${code}; вывод при повышенном запуске не перехватывается)`.trim();
+    return { stdout: "", stderr: stderrOut, code };
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+/** Повышение уже отклонено/не ответили — не просим заново до перезапуска процесса. */
+let elevationUnavailable = false;
+
+/** Повтор команды с повышением; при отказе сохраняется исходная ошибка. */
+async function runSchtasksWithElevation(
+  args: string[],
+  failure: SchtasksError,
+): Promise<SchtasksResult> {
+  if (elevationUnavailable) {
+    throw new SchtasksError(
+      `${failure.message} | повышение уже отклонено в этой сессии — перезапустите OpenCode с правами администратора`,
+      failure.code,
+      failure.stderr,
+    );
+  }
+
+  let result: SchtasksResult;
+  try {
+    result = await runSchtasksElevated(args);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (/отклонено|не подтверждено/.test(message)) {
+      elevationUnavailable = true;
+    }
+    throw new SchtasksError(`${failure.message} | ${message}`, failure.code, failure.stderr);
+  }
+
+  if (result.code !== 0) {
+    // В повышенном режиме schtasks тоже может ошибаться («уже существует» и т.п.).
+    // Вывод повышенного запуска не перехватывается — восстанавливаем контекст
+    // читающей командой: /query повышения не требует (читaющие флаги вне
+    // ELEVATABLE_FLAGS, рекурсии нет), её код выхода отвечает «задача есть?»
+    // без сравнения строк, а текст описывает ошибку человеку.
+    const parts = [result.stdout, result.stderr].filter(Boolean);
+    let taskMissing = false;
+    const tnIndex = args.findIndex((a) => a.toLowerCase() === "/tn");
+    const target = tnIndex >= 0 ? args[tnIndex + 1] : undefined;
+    if (target) {
+      const probe = await runSchtasks(["/query", "/tn", target]).catch(() => null);
+      if (probe && probe.code !== 0) {
+        taskMissing = true;
+        parts.push([probe.stdout, probe.stderr].filter(Boolean).join(" "));
+      }
+    }
+    throw new SchtasksError(`schtasks error: ${parts.join(" | ")}`, result.code, parts.join(" | "), taskMissing);
+  }
+  return result;
 }
 
 /** Формирует полное имя задачи с папкой плагина. */
@@ -967,19 +1185,13 @@ export class WindowsScheduler implements SchedulerBackend {
     for (let i = 0; i < candidates.length; i++) {
       const args = ["/run", "/tn", candidates[i]];
 
-      // schtasks /run не требует смены кодировки — вызываем напрямую.
+      // /run тоже может требовать повышения → общий путь с UAC-фолбэком.
       try {
-        await execFileAsync("schtasks", args, {
-          windowsHide: true,
-          encoding: "buffer",
-          maxBuffer: MAX_OUTPUT_BUFFER,
-        });
+        await runSchtasks(args);
         return { alreadyRunning: false };
       } catch (err) {
-        const e = err as { message?: string; code?: number | null };
-        const stdout = await decodeConsoleOutput(errorBuffer(err, "stdout"));
-        const stderr = await decodeConsoleOutput(errorBuffer(err, "stderr"));
-        const errorDetails = buildErrorDetails(err, stdout, stderr);
+        const e = err as { message?: string; code?: number | null; stderr?: string; taskMissing?: boolean };
+        const errorDetails = `${e.message ?? ""} ${e.stderr ?? ""}`.trim();
 
         const text = errorDetails.toLowerCase();
         const saysAlreadyRunning =
@@ -992,15 +1204,22 @@ export class WindowsScheduler implements SchedulerBackend {
         }
 
         // Новая папка пуста — задача могла остаться в legacy-папке.
-        if (isTaskNotFoundText(errorDetails) && i < candidates.length - 1) {
+        // taskMissing — решение по коду выхода читающего /query (повышенный
+        // путь без вывода); isTaskNotFoundText — прежнее поведение upstream.
+        if (
+          (isTaskNotFoundText(errorDetails) || e.taskMissing === true) &&
+          i < candidates.length - 1
+        ) {
           continue;
         }
 
-        throw new SchtasksError(
-          `schtasks error: ${errorDetails}`,
-          e.code ?? null,
-          stderr,
-        );
+        throw err instanceof SchtasksError
+          ? err
+          : new SchtasksError(
+            `schtasks error: ${errorDetails}`,
+            e.code ?? null,
+            e.stderr ?? "",
+          );
       }
     }
     throw new SchtasksError(

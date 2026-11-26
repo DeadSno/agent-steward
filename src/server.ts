@@ -1543,9 +1543,11 @@ function sendJson(res: http.ServerResponse, status: number, payload: unknown): v
     res.end();
     return;
   }
-  // Локализуем и данные API: часть строк (причины pre-flight, статусы демо,
-  // длительности) приходит из истории/демо-данных и не присутствует в HTML.
-  send(res, status, JSON_TYPE, localizeDashboardHtml(JSON.stringify(payload), getLocale()));
+  // JSON-ответы не локализуем: подстроковый перевод искажал пользовательские
+  // строки (имена задач, тексты ошибок) в ответах — кнопки дашборда получали
+  // имя, которого нет в планировщике, и работали с 404. Переводится только HTML
+  // оболочки (см. localizeDashboardHtml в HTML-ответах).
+  send(res, status, JSON_TYPE, JSON.stringify(payload));
 }
 
 /** Санитизирует сообщение об ошибке для клиентского ответа.
