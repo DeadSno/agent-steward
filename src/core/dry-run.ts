@@ -823,10 +823,22 @@ async function describeTrigger(opts: DescribeTriggerOptions): Promise<DryRunTrig
  * Симулирует конвейер задачи: сама задача + все зависимости (dependsOn)
  * в топологическом порядке. Возвращает отчёт без реального запуска.
  */
-export async function simulatePipeline(taskName: string): Promise<DryRunReport> {
+export async function simulatePipeline(
+  taskName: string,
+  extraDefinitions: TaskDefinition[] = [],
+): Promise<DryRunReport> {
   const warnings: string[] = [];
 
-  const allDefs = await loadTaskDefinitions();
+  // V009-PLUGIN-1: задачи, зарегистрированные только в ОС, не имеют записи
+  // в SQLite. Вызывающий поднимает минимальное определение из планировщика
+  // и передаёт его здесь; SQLite остаётся основным источником при совпадении
+  // имён (первая запись в Map побеждает).
+  const byName = new Map<string, TaskDefinition>();
+  for (const def of [...(await loadTaskDefinitions()), ...extraDefinitions]) {
+    const key = def.name.trim().toLowerCase();
+    if (!byName.has(key)) byName.set(key, def);
+  }
+  const allDefs = [...byName.values()];
   const rootLower = taskName.trim().toLowerCase();
   const root = allDefs.find((d) => d.name.toLowerCase() === rootLower);
   if (!root) {

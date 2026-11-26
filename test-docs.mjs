@@ -1431,6 +1431,38 @@ check(
     "V009-3: негатив — дубль заголовка версии детектируется",
     new Set(withDuplicate).size !== withDuplicate.length,
   );
+
+  // V009-4: задачи только в ОС больше не выглядят «не найденными».
+  const indexSrc = read("src/index.ts");
+  const dryRunSrc = read("src/core/dry-run.ts");
+  const agentToolTests = read("test-agent-tools.mjs");
+  const roadmapText = read("ROADMAP.md");
+  check(
+    "V009-4: definition поднимается из ОС для update_task и dry_run",
+    indexSrc.includes("async function resolveTaskDefinition") &&
+      indexSrc.includes("definitionRecovered") &&
+      /await scheduler\.listTasks\(\)/.test(indexSrc) &&
+      dryRunSrc.includes("extraDefinitions: TaskDefinition[] = []"),
+  );
+  check(
+    "V009-4: негатив — старый поиск только в БД детектируется",
+    !/const previous = getTask\(name\);/.test(indexSrc),
+  );
+  check(
+    "V009-4: регрессия в test-agent-tools.mjs покрывает update_task и dry_run",
+    agentToolTests.includes("V009-PLUGIN-1: update_task восстанавливает definition из ОС-планировщика") &&
+      agentToolTests.includes("V009-PLUGIN-1: dry_run видит задачу без definition в SQLite"),
+  );
+  check(
+    "V009-4: строка перенесена из ROADMAP в CHANGELOG",
+    !roadmapText.includes("⬜ V009-PLUGIN-1") && changelog.includes("V009-4"),
+  );
+  check(
+    "V009-4: все локали содержат предупреждение о восстановлении из ОС",
+    ["en", "ru", "zh", "tr"].every((locale) =>
+      read(`locales/${locale}.json`).includes("osOnlyDefinition"),
+    ),
+  );
 }
 
 const failed = results.filter((r) => !r.ok);

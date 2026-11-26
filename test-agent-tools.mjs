@@ -56,6 +56,7 @@ const { executeBatchCalls, BATCH_CALL_LIMIT } = await import(
 const { LOG_DIR, sanitizeName } = await import("./dist/types.js");
 const { loadTemplates, saveTemplate, deleteTemplate } = await import("./dist/templates.js");
 const { saveTask, getTask } = await import("./dist/db/tasks-repo.js");
+const { removeTaskDefinition } = await import("./dist/task-transfer.js");
 
 const results = [];
 function check(name, cond, detail) {
@@ -1413,6 +1414,78 @@ check(
   check(
     "QA-PLUGIN-DIAG: свой чек-аут не помечается как stale",
     ownDiag.reason === "ok" && ownDiag.staleInstallation === false
+  );
+}
+
+// V009-PLUGIN-1: list_tasks показывает задачи из ОС даже без definition в SQLite.
+{
+  const probeName = "V009-PLUGIN-1-probe";
+  const created = JSON.parse((await handlers.schedule_task({
+    name: probeName, schedule: "0 9 * * *", prompt: "original prompt",
+  })).content);
+  check(
+    "V009-PLUGIN-1: пререквизит — задача создана",
+    created.success === true,
+    JSON.stringify(created)
+  );
+
+  removeTaskDefinition(probeName);
+  const listed = JSON.parse((await handlers.list_tasks({})).content);
+  const listedProbe = listed.tasks?.find((task) => task.name === probeName);
+  check(
+    "V009-PLUGIN-1: list_tasks видит задачу без definition в SQLite",
+    Boolean(listedProbe) && listedProbe.schedule === "" && listedProbe.prompt === "",
+    JSON.stringify(listedProbe)
+  );
+  check(
+    "V009-PLUGIN-1: getTask не находит definition в SQLite",
+    getTask(probeName) === undefined
+  );
+
+  const missingSchedule = JSON.parse((await handlers.update_task({ name: probeName })).content);
+  check(
+    "V009-PLUGIN-1: update_task без графика не отвечает «задача не найдена»",
+    missingSchedule.success === false &&
+      !String(missingSchedule.message).includes("не найдена") &&
+      String(missingSchedule.message).includes("cron"),
+    JSON.stringify(missingSchedule)
+  );
+
+  const updated = JSON.parse((await handlers.update_task({
+    name: probeName, schedule: "*/5 * * * *", prompt: "restored prompt",
+  })).content);
+  const restored = getTask(probeName);
+  check(
+    "V009-PLUGIN-1: update_task восстанавливает definition из ОС-планировщика",
+    updated.success === true &&
+      updated.definitionRecovered === true &&
+      restored?.schedule === "*/5 * * * *" &&
+      restored?.prompt === "restored prompt",
+    JSON.stringify({ updated, restored })
+  );
+  check(
+    "V009-PLUGIN-1: предупреждение о восстановлении definition из ОС",
+    Array.isArray(updated.warnings) &&
+      updated.warnings.some((warning) => String(warning).includes("SQLite")),
+    JSON.stringify(updated.warnings)
+  );
+
+  removeTaskDefinition(probeName);
+  const dry = JSON.parse((await handlers.dry_run({ name: probeName })).content);
+  check(
+    "V009-PLUGIN-1: dry_run видит задачу без definition в SQLite",
+    dry.success === true &&
+      dry.taskName === probeName &&
+      Array.isArray(dry.warnings) &&
+      dry.warnings.some((warning) => String(warning).includes("SQLite")),
+    JSON.stringify(dry)
+  );
+
+  const deleted = JSON.parse((await handlers.delete_task({ name: probeName })).content);
+  check(
+    "V009-PLUGIN-1: уборка — задача удалена из ОС",
+    deleted.success === true,
+    JSON.stringify(deleted)
   );
 }
 

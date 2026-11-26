@@ -2432,6 +2432,42 @@ async function garbageCollectTaskArtifacts(): Promise<void> {
   }
 }
 
+/**
+ * V009-PLUGIN-1: `list_tasks` показывает задачи, зарегистрированные в ОС,
+ * даже если определения в SQLite нет. `update_task` и `dry_run` искали
+ * определение только в БД и отвечали «Задача не найдена». Возвращаем
+ * минимальное определение из ОС-планировщика и помечаем восстановление,
+ * чтобы вызывающий мог предупредить пользователя: cron и промпт у сироты
+ * неизвестны и должны быть переданы явно.
+ */
+async function resolveTaskDefinition(
+  name: string,
+): Promise<{ definition: TaskDefinition; fromOs: boolean } | undefined> {
+  const stored = getTask(name);
+  if (stored) return { definition: stored, fromOs: false };
+
+  try {
+    const target = name.trim().toLowerCase();
+    const osTask = (await scheduler.listTasks()).find(
+      (task) => (task.taskName || "").trim().toLowerCase() === target,
+    );
+    if (!osTask) return undefined;
+    return {
+      definition: {
+        name: osTask.taskName,
+        schedule: "",
+        prompt: "",
+        triggerType: "cron",
+        ...(osTask.paused === true ? { paused: true } : {}),
+      },
+      fromOs: true,
+    };
+  } catch {
+    // ОС-планировщик недоступен — сохраняем прежнее поведение «не найдена».
+    return undefined;
+  }
+}
+
 async function deleteTaskWithFamily(
   name: string,
 ): Promise<{ removed: string[]; existed: boolean }> {
@@ -2696,6 +2732,8 @@ async function updateTaskFromInput(
   model?: string | null;
   /** B-2.2: true — модель выбрана эвристикой по autoSelectModel. */
   autoSelected?: boolean;
+  /** V009-PLUGIN-1: определение отсутствовало в SQLite и поднято из ОС. */
+  definitionRecovered?: boolean;
 }> {
   const name = input.name?.trim();
   if (!name) {
@@ -2708,10 +2746,11 @@ async function updateTaskFromInput(
     return { success: false, message: rangeError };
   }
 
-  const previous = getTask(name);
-  if (!previous) {
+  const resolved = await resolveTaskDefinition(name);
+  if (!resolved) {
     return { success: false, message: t("tool.error.taskNotFound", { name }) };
   }
+  const previous = resolved.definition;
 
   const schedule = clearableString(input.schedule ?? input.newSchedule, previous.schedule);
   const prompt = clearableString(input.prompt ?? input.newPrompt, previous.prompt);
@@ -2924,6 +2963,9 @@ async function updateTaskFromInput(
       input.harness ?? previous.harness,
       // EX-1.1: null явно сбрасывает runner на local; пропуск сохраняет старый.
       input.runner === null ? undefined : (input.runner ?? previous.runner),
+      // V009-PLUGIN-1: файлы принадлежат той же ОС-задаче, definition которой
+      // только что восстановили из планировщика.
+      resolved.fromOs,
     );
 
     // Матрица отключена при обновлении — убираем клонов и агрегатор.
@@ -2976,8 +3018,13 @@ async function updateTaskFromInput(
       paused,
       nextRun: computeTaskNextRun(updated, { paused }),
       message: t("tool.task.updated", { name }),
+      /** V009-PLUGIN-1: определение восстановлено из ОС-планировщика. */
+      definitionRecovered: resolved.fromOs,
       // B-2.1: предупреждение о неявной модели приходит и при обновлении.
-      warnings: modelChoice.warning ? [modelChoice.warning] : [],
+      warnings: [
+        ...(resolved.fromOs ? [t("tool.warn.osOnlyDefinition", { name })] : []),
+        ...(modelChoice.warning ? [modelChoice.warning] : []),
+      ],
       model: effectiveModel ?? null,
       autoSelected: modelChoice.autoSelected,
     };
@@ -3421,9 +3468,21 @@ const dryRunExecute = wrapExecute<DryRunArgs>(async (args) => {
   const available = await availableModelsForDryRun(definitions);
 
   if (name) {
+    // V009-PLUGIN-1: даём dry_run видеть задачи, регистрация которых есть
+    // только в ОС. simulatePipeline получает восстановленное определение как
+    // дополнительный источник и не требует записи в SQLite.
+    const resolved = await resolveTaskDefinition(name);
+    const extraDefinitions =
+      resolved?.fromOs &&
+      !definitions.some((def) => def.name.toLowerCase() === name.toLowerCase())
+        ? [resolved.definition]
+        : [];
     try {
-      const report = await simulatePipeline(name);
-      annotateDryRunModelWarnings(report, definitions, available);
+      const report = await simulatePipeline(name, extraDefinitions);
+      annotateDryRunModelWarnings(report, [...definitions, ...extraDefinitions], available);
+      if (resolved?.fromOs) {
+        report.warnings.push(t("dryRun.osOnlyDefinition", { task: name }));
+      }
       return { content: JSON.stringify(report) };
     } catch (err) {
       // QA-PORT-14: MCP/Code Mode требует структурированный результат — сырое
@@ -7573,6 +7632,12 @@ export async function schedulerCreateTask(
   harness?: HarnessName,
   /** EX-1.1: транспорт исполнения; undefined/неполный = local (fail-open). */
   runner?: RunnerConfig,
+  /**
+   * V009-PLUGIN-1: определение отсутствовало в SQLite, но задача жила в ОС.
+   * update_task уже удалил ОС-задачу перед пересозданием, поэтому проверка
+   * «осиротевших» файлов должна быть пропущена — они принадлежат этой же задаче.
+   */
+  skipSanitizedConflictCheck?: boolean,
 ): Promise<void> {
   // Спринт 27.5 (hotfix 1.5.1): проверяем имя до создания wrapper/prompt и записи
   // в БД. Недопустимые символы отклоняются с понятным сообщением, а не ошибкой
@@ -7604,11 +7669,24 @@ export async function schedulerCreateTask(
   }
   // Для отката файлов: при обновлении существующей задачи файлы переиспользуются,
   // удалять их при сбое нельзя — в БД остаётся прежнее определение.
-  const definitionExisted = Boolean(getTask(normalizedName));
+  let definitionExisted = Boolean(getTask(normalizedName));
+  // V009-PLUGIN-1: definition мог отсутствовать в SQLite, но задача жить в ОС
+  // (list_tasks её показывает). Такие файлы принадлежат той же задаче и не
+  // должны считаться осиротевшими при восстановлении через update_task.
+  if (!definitionExisted) {
+    try {
+      definitionExisted = (await scheduler.listTasks()).some(
+        (task) =>
+          (task.taskName || "").trim().toLowerCase() === normalizedName.toLowerCase(),
+      );
+    } catch {
+      // ОС-планировщик недоступен — сохраняем прежнюю проверку артефактов.
+    }
+  }
   // P1-10: при создании проверяем, что sanitized-имя не занято другой задачей
   // или её оставшимися файлами. Иначе «my task» и «my-task» делят
   // wrapper/prompt/lock/log, а вторая задача перезаписывает первую.
-  if (!definitionExisted) {
+  if (!definitionExisted && skipSanitizedConflictCheck !== true) {
     const conflict = findSanitizedNameConflict(
       normalizedName,
       listTaskDefinitions().map((def) => def.name),
