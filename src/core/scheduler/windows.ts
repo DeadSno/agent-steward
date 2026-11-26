@@ -410,6 +410,20 @@ export class SchtasksError extends Error {
 }
 
 /**
+ * Bun (рантайм OpenCode) не кладёт stderr execFile-ошибки отдельно — текст
+ * schtasks виден только в `message` (там же, где у Node строки после
+ * «Command failed: <cmd>»). Без этой подмены детект «нет прав» под Bun
+ * получает пустой stderr и UAC-фолбэк никогда не срабатывает. Текст
+ * пишет сам schtasks, а имена задач не содержат переводов строк
+ * (валидация их запрещает), так что подделать строку ошибки нельзя.
+ */
+export function stderrFromExecMessage(message: string): string {
+  if (!message) return "";
+  const lines = message.split(/\r?\n/);
+  return lines[0].startsWith("Command failed:") ? lines.slice(1).join("\n") : message;
+}
+
+/**
  * Выполняет `schtasks.exe` напрямую с массивом аргументов.
  *
  * Раньше команда собиралась в строку и запускалась через `cmd.exe /c`,
@@ -432,7 +446,9 @@ export async function runSchtasks(args: string[]): Promise<SchtasksResult> {
   } catch (err) {
     const e = err as { message?: string; code?: number | null };
     const stdout = await decodeConsoleOutput(errorBuffer(err, "stdout"));
-    const stderr = await decodeConsoleOutput(errorBuffer(err, "stderr"));
+    const stderr =
+      (await decodeConsoleOutput(errorBuffer(err, "stderr"))) ||
+      stderrFromExecMessage(e.message ?? "");
     const failure = new SchtasksError(
       `schtasks error: ${buildErrorDetails(err, stdout, stderr)}`,
       e.code ?? null,

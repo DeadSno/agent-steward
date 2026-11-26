@@ -21,6 +21,7 @@ import {
   SchtasksError,
   isAccessDeniedError,
   shouldTryElevation,
+  stderrFromExecMessage,
   runSchtasksElevated,
   NO_UAC_ENV,
 } from "./dist/core/scheduler/windows.js";
@@ -200,5 +201,31 @@ if (process.platform === "win32") {
 //    реальным UAC проверяется живьём (CI без промпта её не пройдёт).
 assert.equal(new SchtasksError("x", 1, "").taskMissing, false);
 assert.equal(new SchtasksError("x", 1, "", true).taskMissing, true);
+
+// 9. Bun (рантайм OpenCode) не прикладывает stderr к ошибке execFile —
+//    текст живёт только в message. Без восстановления UAC-фолбэк молчит
+//    внутри плагина (проверено живьём: create/delete падали без промпта).
+assert.equal(
+  isAccessDeniedError({ code: 1, stderr: stderrFromExecMessage("ERROR: Access is denied.\r\r\n") }),
+  true,
+  "Bun-формат: message без префикса -> stderr восстановлен, права угаданы",
+);
+assert.equal(
+  stderrFromExecMessage("Command failed: schtasks /create /tn X /tr Y /sc once\r\nERROR: Access is denied."),
+  "ERROR: Access is denied.",
+  "Node-формат: берём строки после Command failed",
+);
+// Спойлинг по-прежнему мёртв: имя задачи в командной строке не даёт строку
+// «Access is denied» с начала строки.
+assert.equal(
+  isAccessDeniedError({
+    code: 1,
+    stderr: stderrFromExecMessage(
+      'Command failed: schtasks /delete /tn "Access is denied" /f\nERROR: The task name "Access is denied" not found.',
+    ),
+  }),
+  false,
+  "задача с именем «Access is denied» не вымогает промпт",
+);
 
 console.log("Schtasks errors: все проверки пройдены.");
