@@ -1214,6 +1214,26 @@ check(
   );
 }
 
+// QA-CI-NODE26: тест саммари не должен звать process.exit() сразу после close().
+{
+  const summaryTest = fs.readFileSync(
+    path.join(root, "test-notifications-summary.mjs"),
+    "utf8",
+  );
+  const detectHardExit = (text) =>
+    /process\.exit\(/.test(text) ||
+    !/process\.exitCode\s*=/.test(text) ||
+    !/closeAllConnections\?\.\(\)/.test(text);
+  check(
+    "QA-CI-NODE26: саммари использует exitCode и закрывает соединения",
+    !detectHardExit(summaryTest),
+  );
+  check(
+    "QA-CI-NODE26: негативный тест — возврат process.exit() детектируется",
+    detectHardExit(summaryTest.replace("process.exitCode =", "process.exit(")),
+  );
+}
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\nDocs: ${results.length - failed.length}/${results.length} проверок пройдено.`);
 process.exit(failed.length > 0 ? 1 : 0);

@@ -60,6 +60,10 @@ async function withServers(modelHandler, fn) {
   try {
     return await fn(hookUrl, modelUrl);
   } finally {
+    // QA-CI-NODE26: закрываем keeps-alive-сокеты до close(), иначе Node 26
+    // на Windows может ассертить UV_HANDLE_CLOSING при выходе из процесса.
+    webhook.closeAllConnections?.();
+    model.closeAllConnections?.();
     await new Promise((r) => webhook.close(r));
     await new Promise((r) => model.close(r));
   }
@@ -214,4 +218,6 @@ try {
 } catch (_) {}
 
 console.log(`\n${passed}/${results.length} тестов саммари пройдены.`);
-process.exit(failed > 0 ? 1 : 0);
+// QA-CI-NODE26: даём event loop дренироваться; принудительный выход процесса
+// ловит закрывающийся libuv-async-хендл на Windows Node 26.4.
+process.exitCode = failed > 0 ? 1 : 0;
