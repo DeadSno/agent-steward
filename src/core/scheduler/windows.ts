@@ -396,6 +396,12 @@ export class SchtasksError extends Error {
     message: string,
     public readonly code: number | null,
     public readonly stderr: string,
+    /**
+     * Повышенный сбой + читающий `schtasks /query` (код выхода, не текст):
+     * задачи с таким именем нет. Только так fallback на legacy-папку работает
+     * и тогда, когда вывод повышенного запуска не перехватывается.
+     */
+    public readonly taskMissing = false,
   ) {
     const hint = explainSchtasksError(code, `${message} ${stderr}`);
     super(hint ? `${message} | пояснение: ${hint}` : message);
@@ -623,11 +629,22 @@ async function runSchtasksWithElevation(
 
   if (result.code !== 0) {
     // В повышенном режиме schtasks тоже может ошибаться («уже существует» и т.п.).
-    throw new SchtasksError(
-      `schtasks error: ${[result.stdout, result.stderr].filter(Boolean).join(" | ")}`,
-      result.code,
-      result.stderr,
-    );
+    // Вывод повышенного запуска не перехватывается — восстанавливаем контекст
+    // читающей командой: /query повышения не требует (читaющие флаги вне
+    // ELEVATABLE_FLAGS, рекурсии нет), её код выхода отвечает «задача есть?»
+    // без сравнения строк, а текст описывает ошибку человеку.
+    const parts = [result.stdout, result.stderr].filter(Boolean);
+    let taskMissing = false;
+    const tnIndex = args.findIndex((a) => a.toLowerCase() === "/tn");
+    const target = tnIndex >= 0 ? args[tnIndex + 1] : undefined;
+    if (target) {
+      const probe = await runSchtasks(["/query", "/tn", target]).catch(() => null);
+      if (probe && probe.code !== 0) {
+        taskMissing = true;
+        parts.push([probe.stdout, probe.stderr].filter(Boolean).join(" "));
+      }
+    }
+    throw new SchtasksError(`schtasks error: ${parts.join(" | ")}`, result.code, parts.join(" | "), taskMissing);
   }
   return result;
 }
@@ -1173,7 +1190,7 @@ export class WindowsScheduler implements SchedulerBackend {
         await runSchtasks(args);
         return { alreadyRunning: false };
       } catch (err) {
-        const e = err as { message?: string; code?: number | null; stderr?: string };
+        const e = err as { message?: string; code?: number | null; stderr?: string; taskMissing?: boolean };
         const errorDetails = `${e.message ?? ""} ${e.stderr ?? ""}`.trim();
 
         const text = errorDetails.toLowerCase();
@@ -1187,7 +1204,12 @@ export class WindowsScheduler implements SchedulerBackend {
         }
 
         // Новая папка пуста — задача могла остаться в legacy-папке.
-        if (isTaskNotFoundText(errorDetails) && i < candidates.length - 1) {
+        // taskMissing — решение по коду выхода читающего /query (повышенный
+        // путь без вывода); isTaskNotFoundText — прежнее поведение upstream.
+        if (
+          (isTaskNotFoundText(errorDetails) || e.taskMissing === true) &&
+          i < candidates.length - 1
+        ) {
           continue;
         }
 

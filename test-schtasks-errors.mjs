@@ -194,4 +194,11 @@ if (process.platform === "win32") {
   console.log("пропуск 7: повышение самого exe проверяется только на Windows");
 }
 
+// 8. SchtasksError несёт флаг taskMissing — по нему runTask уходит в
+//    legacy-папку, когда вывод повышенного запуска не перехвачен. Само
+//    решение принимает код выхода читающего /query, не текст; ветка с
+//    реальным UAC проверяется живьём (CI без промпта её не пройдёт).
+assert.equal(new SchtasksError("x", 1, "").taskMissing, false);
+assert.equal(new SchtasksError("x", 1, "", true).taskMissing, true);
+
 console.log("Schtasks errors: все проверки пройдены.");
