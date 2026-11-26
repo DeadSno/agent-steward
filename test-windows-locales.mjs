@@ -13,6 +13,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { buildWindowsOneShotFlags, formatDateByLocalePattern } from "./dist/core/one-shot.js";
+import { formatCronBoundaryForLocale } from "./dist/core/scheduler/windows.js";
 
 let failures = 0;
 const check = (msg, cond, detail) => {
@@ -58,6 +59,19 @@ for (const { culture, pattern, sd } of KNOWN) {
   );
 }
 
+// V009-5: cron-граница /sd (PL-57/PL-75) тоже должна следовать локали ОС.
+for (const { culture, pattern, sd } of KNOWN) {
+  check(
+    `cron /sd для ${culture} (${pattern}) → ${sd}`,
+    formatCronBoundaryForLocale("02.01.2030", pattern, culture) === sd,
+    { pattern, got: formatCronBoundaryForLocale("02.01.2030", pattern, culture), expected: sd },
+  );
+}
+check(
+  "cron /sd: невалидная граница остаётся без изменений (fail-open)",
+  formatCronBoundaryForLocale("not-a-date", "M/d/yyyy", "en-US") === "not-a-date",
+);
+
 // Живое подтверждение на Windows: реальные Get-Culture не расходятся с KNOWN.
 if (process.platform === "win32") {
   const scriptPath = path.join(
@@ -101,6 +115,21 @@ if (process.platform === "win32") {
 } else {
   console.log("SKIP: живые Get-Culture проверки доступны только на Windows (шаблоны сверху проверены всегда).");
 }
+
+// V009-5: исходный код должен переформатировать /sd cron под локаль, а не
+// пушить хардкоженную DD.MM.YYYY границу напрямую.
+const windowsSource = fs.readFileSync(
+  new URL("./src/core/scheduler/windows.ts", import.meta.url),
+  "utf8",
+);
+check(
+  "V009-5: /sd cron переформатируется под ShortDatePattern локали",
+  /formatCronBoundaryForLocale\(\s*scheduleFlags\[i \+ 1\]/.test(windowsSource) &&
+    windowsSource.includes(
+      "formatCronBoundaryForLocale(cronStartBoundary(schedule), dateFormat, locale)",
+    ) &&
+    !windowsSource.includes('scheduleFlags.push("/sd", cronStartBoundary(schedule))'),
+);
 
 console.log(`\n${failures === 0 ? "P1-8.T1.4 locales: OK" : `${failures} ошибок`}.`);
 process.exit(failures > 0 ? 1 : 0);

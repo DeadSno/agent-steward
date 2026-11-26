@@ -11,7 +11,10 @@ import {
   convertCronToSchTasks,
   nextMonthlyStartBoundary,
 } from "../cron-to-schtasks.js";
-import { buildWindowsOneShotFlags } from "../one-shot.js";
+import {
+  buildWindowsOneShotFlags,
+  formatDateByLocalePattern,
+} from "../one-shot.js";
 import { buildWindowsHiddenTaskCommand, ensureHiddenLauncher } from "../ps-wrapper.js";
 import { needsPollMode } from "../schedule-v2.js";
 import type {
@@ -86,6 +89,34 @@ function formatCronBoundary(date: Date): string {
     "." +
     String(date.getFullYear())
   );
+}
+
+/**
+ * V009-5: переформатирует стартовую границу `/sd` из DD.MM.YYYY (PL-57/PL-75)
+ * в ShortDatePattern системной локали Windows. CI-регрессия: на windows-latest
+ * с en-US (`M/d/yyyy`) schtasks отвергал `24.11.2026` как `Incorrect Start Date`,
+ * из-за чего `update_task` терял ОС-задачу без definition в SQLite.
+ * Некорректные/уже локализованные значения возвращаются как есть (fail-open).
+ */
+export function formatCronBoundaryForLocale(
+  boundary: string,
+  format = "dd.MM.yyyy",
+  locale?: string,
+): string {
+  const match = /^(\d{2})\.(\d{2})\.(\d{4})$/.exec(boundary);
+  if (!match) return boundary;
+  const day = Number(match[1]);
+  const month = Number(match[2]);
+  const year = Number(match[3]);
+  const date = new Date(year, month - 1, day);
+  if (
+    date.getFullYear() !== year ||
+    date.getMonth() !== month - 1 ||
+    date.getDate() !== day
+  ) {
+    return boundary;
+  }
+  return formatDateByLocalePattern(date, format, locale);
 }
 
 /**
@@ -568,17 +599,35 @@ export class WindowsScheduler implements SchedulerBackend {
       }
     }
 
-    // PL-75: пересоздание cron-задачи (update_task) не должно наследовать
-    // прошедшую start boundary — иначе schtasks включает catch-up и запускает
-    // задачу сразу после зелёного гейта. Добавляем явную будущую /sd, если
-    // конвертер её ещё не выставил (MONTHLY получает её сам, см. PL-57).
-    if (
-      triggerType !== "once" &&
-      (!triggerType || triggerType === "cron") &&
-      options.avoidCatchUp &&
-      !scheduleFlags.includes("/sd")
-    ) {
-      scheduleFlags.push("/sd", cronStartBoundary(schedule));
+    // V009-5: /sd от PL-57 (MONTHLY) и PL-75 (catch-up) приходит в DD.MM.YYYY.
+    // Для en-US/windows-latest такой формат отвергается schtasks; приводим
+    // границу к ShortDatePattern системы до передачи флагов в /create.
+    if (!triggerType || triggerType === "cron") {
+      const [dateFormat, locale] = await Promise.all([
+        getWindowsDateFormat(),
+        getWindowsLocale(),
+      ]);
+      for (let i = 0; i < scheduleFlags.length - 1; i += 1) {
+        if (scheduleFlags[i] === "/sd") {
+          scheduleFlags[i + 1] = formatCronBoundaryForLocale(
+            scheduleFlags[i + 1],
+            dateFormat,
+            locale,
+          );
+          break;
+        }
+      }
+
+      // PL-75: пересоздание cron-задачи (update_task) не должно наследовать
+      // прошедшую start boundary — иначе schtasks включает catch-up и запускает
+      // задачу сразу после зелёного гейта. Добавляем явную будущую /sd, если
+      // конвертер её ещё не выставил (MONTHLY получает её сам, см. PL-57).
+      if (options.avoidCatchUp && !scheduleFlags.includes("/sd")) {
+        scheduleFlags.push(
+          "/sd",
+          formatCronBoundaryForLocale(cronStartBoundary(schedule), dateFormat, locale),
+        );
+      }
     }
 
     // Создаём всегда в новой папке, даже если передано полное legacy-имя.
