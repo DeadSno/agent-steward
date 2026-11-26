@@ -27,10 +27,30 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 
 | Горизонт | Ставка | Что должно быть правдой на выходе | Вход в канбан |
 |---|---|---|---|
-| 0 · сейчас (0–2 нед) | Доверие к релизу и честная диагностика | Находки аудита 25.11.2026 закрыты или документированы; версия, метрики и стратегия без противоречий; строгая установка не ломается | QA-DEEP4-1 (ниже) |
+| 0 · сейчас (0–2 нед) | Доверие к релизу и честная диагностика | Находки аудита 25.11.2026 закрыты или документированы; версия, метрики и стратегия без противоречий; строгая установка не ломается | закрыто; вход — Release-чеклист §5 |
 | 1 · 1–3 мес | P-1 изоляция ядра | `createToolSpecs`/`createRuntime`/`tool-specs.ts` отделены от OpenCode, контракт 34 specs зелёный, регрессия watch-paths исправлена | P-1 → P-2 → P-3 (жёсткий порядок) |
 | 2 · 3–6 мес | MCP-нативная оркестрация | `agent-steward mcp` и subpath `./core`, `./mcp` стабильны; capability router и reliability scorecard работают на реальной истории | S-1, S-2, S-3 после закрытия P-1/P-2 |
 | 3 · 6–12 мес | Экосистема и вторые харнессы | Рецепты/SKILL, верифицированный Telegram-чат, скаффолдинг из gate-passed примеров; P-4/P-5 — по боли пользователя | S-4, S-5, S-6, P-4, P-5 |
+
+### Что означают ID в таблице горизонтов
+
+**Проект** — `agent-steward`: локально-первый framework-супервизор для агент-задач. Планировщик, уведомления и аналитика — лишь триггеры и обвязка, не ядро (CONCEPT §8). Работа идёт по модели **Деталь** (подсистема/файлы) → **Задача** (что чиним/делаем) → **Подзадача** (атомарный шаг); в работу берётся ровно одна подзадача. Закрытое уходит в CHANGELOG, поэтому в таблице остаются только незавершённые ставки.
+
+| ID | Что это | Статус на 26.11.2026 |
+|---|---|---|
+| P-1 | Изоляция ядра: `agent-steward/core` (`createToolSpecs`/`createRuntime`/`tool-specs.ts` отделены от OpenCode, контракт 34 specs) | Частично сделано; считается открытым до фикса регрессии `test-watch-paths.mjs` |
+| P-2 | MCP-адаптер: `agent-steward mcp`, subpath `./core`, `./mcp` (~80% ценности горизонта 2) | Частично сделано, ждёт P-1 |
+| P-3 | Универсальный harness: `AgentInvoker` + поле `harness`, runner local/docker/ssh через `invoke` | Открыт, после P-2 |
+| S-1 | Открытый spec pipeline: `src/core/pipeline-open-spec.ts`, `parsePipelineYaml`, CLI `pipeline describe`, docs/OPEN-SPEC.md | ✅ Реализовано (Деталь 3.19), в таблице указано как вход горизонта 2 |
+| S-2 | Capability-роутинг + flywheel: `agent-steward/router`, docs/ROUTER.md | ✅ Реализовано (Деталь 3.19) |
+| S-3 | Reliability scorecard: objective gate outcomes, first-pass rate, token savings, docs/RELIABILITY.md | ✅ Реализовано (Деталь 3.19) |
+| S-4 | Библиотека gate-passed рецептов: `src/core/recipes.ts`, docs/RECIPES.md | ✅ Реализовано (Деталь 3.19) |
+| S-5 | Верифицированный чат: `src/core/verified-chat.ts`, docs/VERIFIED-CHAT.md | ✅ Реализовано (Деталь 3.19) |
+| S-6 | Scaffolding из gate-passed рецептов: `src/core/scaffold.ts`, CLI `agent-steward scaffold`, docs/SCAFFOLD.md | ✅ Реализовано (Деталь 3.19) |
+| P-4 | Нативный dsh-плагин (`src/dsh.ts`, ctx.tools/jobs) | Бэклог P3; P-4.1 уже в CHANGELOG |
+| P-5 | `agent-steward serve` | Бэклог P3 |
+
+> S-1…S-6 в стратегии помечены `future` как «входы» горизонтов 2–3, но код и тесты уже в Детали 3.19; это не открытые задачи, а проверенные возможности, на которые опираются P-1/P-2/P-3.
 
 **Входы аудита, которые меняют приоритеты:** nondeterministic-версия MCP (`serverInfo.version=0.0.7` при package 0.0.8) блокировала доверие к любому MCP-клиенту — QA-FULL-02 закрыт; смешение skipped/interrupted с error в аналитике искажало scorecard горизонта 2 — QA-FULL-03 закрыт; engine-рассинхрон снят: QA-FULL-01 закрыт, `engines.node >=26.4.0` совпадает с `@opentui/core`, smoke `--engine-strict` работает в CI; пропуски PL-121 теперь видны в истории и дашборде — QA-FULL-06 закрыт.
 
@@ -42,7 +62,7 @@ Legacy: `opencode-windows-scheduler@1.5.9`.
 
 ## QA-находки (проверка работоспособности плагина 24.11.2026)
 
-Все находки QA-D316-21…37 и все последующие QA-находки 25.11.2026 закрыты, удалены отсюда и перенесены в [CHANGELOG.md](./CHANGELOG.md). Ниже — только открытые находки, внесённые по факту воспроизведения 25.11.2026.
+Все находки QA-D316-21…37 и все последующие QA-находки 25.11.2026 закрыты, удалены отсюда и перенесены в [CHANGELOG.md](./CHANGELOG.md). Открытых строк сейчас нет.
 
 ## Деталь 3.21 — Усиление в глубину (не расширение)
 `src/core/savings.ts`, `src/core/permissions.ts`, `src/core/worktree.ts`, `src/core/audit.ts`, `src/core/self-analysis.ts`, `src/shared/installation-warning.ts`, `src/version.ts`, `src/index.ts`, `src/rpc.ts`, `src/gui.tsx`, `TEST-PLAN.md`, `test-budget.mjs`, `test-permissions-policy.mjs`, `test-self-analysis.mjs`, `test-gui-bundle.mjs`, `test-agent-tools.mjs`, `docs/SAFETY.md`, `docs/EXECUTION-LOOP.md`

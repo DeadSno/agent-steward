@@ -1234,6 +1234,32 @@ check(
   );
 }
 
+// ROADMAP: расшифровка стратегических ID и отсутствие устаревших ссылок.
+{
+  const roadmap = fs.readFileSync(path.join(root, "ROADMAP.md"), "utf8");
+  const decoder = /### Что означают ID в таблице горизонтов([\s\S]*?)\*\*Входы аудита/.exec(roadmap)?.[1] ?? "";
+  const hasIds = (ids) => ids.every((id) => decoder.includes(`| ${id} |`));
+  const hasStalePointer = (text) =>
+    text.includes("QA-DEEP4-1 (ниже)") || text.includes("Ниже — только открытые находки");
+  check(
+    "ROADMAP: расшифрованы P-1…P-5",
+    hasIds(["P-1", "P-2", "P-3", "P-4", "P-5"]),
+  );
+  check(
+    "ROADMAP: расшифрованы S-1…S-6 и помечены реализованными",
+    hasIds(["S-1", "S-2", "S-3", "S-4", "S-5", "S-6"]) &&
+      (decoder.match(/✅ Реализовано/g) ?? []).length >= 6,
+  );
+  check(
+    "ROADMAP: нет устаревших ссылок на закрытые находки",
+    !hasStalePointer(roadmap),
+  );
+  check(
+    "ROADMAP: негативный тест — возврат устаревшей ссылки детектируется",
+    hasStalePointer(roadmap.replace("закрыто; вход — Release-чеклист §5", "QA-DEEP4-1 (ниже)")),
+  );
+}
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\nDocs: ${results.length - failed.length}/${results.length} проверок пройдено.`);
 process.exit(failed.length > 0 ? 1 : 0);
