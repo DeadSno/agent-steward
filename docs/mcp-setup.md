@@ -6,7 +6,7 @@
 `skill://agent-steward/scheduled-job-best-practices/SKILL.md` и промпт
 `agent-steward-skill` с тем же содержимым.
 
-Требуется собранный пакет (`npm run build`) и Node ≥ 22.22.
+Требуется собранный пакет (`npm run build`) и Node ≥ 26.4 (`engines.node`, совместимость с `@opentui/core`).
 
 ## Cursor — `.cursor/mcp.json`
 
@@ -56,7 +56,7 @@ Settings → Tools → AI Assistant → Model Context Protocol → Add:
 ## Ограничения
 
 - Нужен собранный пакет: `npm run build` создаёт `dist/`; запуск из исходников
-  без сборки не работает. Минимальная версия Node — 22.22 (`engines.node`).
+  без сборки не работает. Минимальная версия Node — 26.4 (`engines.node`, нижняя граница `@opentui/core` 0.9.0).
 - MCP публикует **все 34 инструмента** независимо от
   `AGENT_STEWARD_TOOL_PROFILE` в корневом харнессе: урезанный профиль клиента
   относится к вызовам внутри дочернего запуска и может отключить часть

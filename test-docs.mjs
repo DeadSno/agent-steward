@@ -404,8 +404,8 @@ check(
   !/старее/.test(ciSrc) && ciSrc.includes("нижнюю границу")
 );
 check(
-  "CI: пин 22.22.0 совпадает с минимумом из engines",
-  pkg.engines?.node === ">=22.22.0" && ciSrc.includes('"22.22.0"')
+  "CI: пин 26.4.0 совпадает с минимумом из engines",
+  pkg.engines?.node === ">=26.4.0" && ciSrc.includes('"26.4.0"')
 );
 // macOS дорог в релизной очереди (он блокировал publish 0.0.3), поэтому
 // проверяется обычным CI на каждом push. Инвариант не даёт молча потерять macOS.
@@ -1116,6 +1116,41 @@ check(
     "DEEP-4.5: итог §8 переключён на принято с 18/18",
     /^\|\s*Итог\s*\|\s*✅[^\n]*18\/18/m.test(plan),
   );
+}
+
+// QA-FULL-01: декларация engines.node и CI должны совпадать с нижней границей
+// @opentui/core (node >=26.4.0), иначе `npm ci --engine-strict` падает EBADENGINE.
+{
+  const read = (rel) => fs.readFileSync(path.join(root, rel), "utf8");
+  const pkg = JSON.parse(read("package.json"));
+  const ci = read(".github/workflows/ci.yml");
+  const nightly = read(".github/workflows/nightly.yml");
+  const release = read(".github/workflows/release.yml");
+  const readme = read("README.md");
+  const engine = pkg.engines?.node ?? "";
+  const validEngine = (value) => value === ">=26.4.0";
+  check("QA-FULL-01: engines.node совпадает с нижней границей @opentui/core", validEngine(engine));
+  check(
+    "QA-FULL-01: негативный тест — старая декларация >=22.22.0 детектируется",
+    !validEngine(">=22.22.0"),
+  );
+  check(
+    "QA-FULL-01: CI-матрица проверяет 26.4.0 и не держит устаревшие 22.22/24",
+    /node:\s*\["26\.4\.0",\s*26\]/.test(ci) &&
+      !ci.includes('"22.22.0"') &&
+      !/node-version:\s*24\b/.test(ci),
+  );
+  check(
+    "QA-FULL-01: smoke `npm ci --dry-run --engine-strict` есть в CI",
+    /npm ci --dry-run --engine-strict --ignore-scripts/.test(ci),
+  );
+  check(
+    "QA-FULL-01: nightly и release используют Node 26.4.0",
+    !/node-version:\s*(?:22\.22\.0|24)\b/.test(nightly + "\n" + release) &&
+      (nightly.match(/node-version:\s*26\.4\.0/g) ?? []).length >= 1 &&
+      (release.match(/node-version:\s*26\.4\.0/g) ?? []).length >= 3,
+  );
+  check("QA-FULL-01: README декларирует Node.js 26.4+", /Node\.js 26\.4\+/.test(readme));
 }
 
 const failed = results.filter((r) => !r.ok);

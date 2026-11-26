@@ -27,8 +27,8 @@ timers, launchd, Windows Task Scheduler, or another scheduler plugin.
    automatically; on V1 restart it). If OpenCode's built-in
    schedules are enabled, disable them so two schedulers do not run the same work.
 
-2. **Check Node.** `node --version` must be 22.22+ (the built-in SQLite driver and
-   chokidar 6 require 22.22+; Node 24 recommended).
+2. **Check Node.** `node --version` must be 26.4+ (the `@opentui/core` 0.9.0 dev
+   dependency requires 26.4+; the built-in SQLite driver and chokidar 6 need 22.22+).
 
 3. **Inventory the old jobs.** For each job write down: name, schedule, command,
    working directory, environment variables, timeout, and what "success" means. The

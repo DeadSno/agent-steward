@@ -78,7 +78,7 @@ originals.
 
 ## Install
 
-Requires OpenCode V1 ≥ 1.18.29 or V2, and Node.js 22.22+ (node:sqlite and chokidar 6 require Node.js 22.22+). See [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md) for version support and the V1/V2 surface (GUI and RPC are V2-only; TUI works on both).
+Requires OpenCode V1 ≥ 1.18.29 or V2, and Node.js 26.4+ (the `@opentui/core` 0.9.0 dev dependency requires Node.js 26.4+; node:sqlite and chokidar 6 need 22.22+). See [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md) for version support and the V1/V2 surface (GUI and RPC are V2-only; TUI works on both).
 
 The config key differs between lines:
 

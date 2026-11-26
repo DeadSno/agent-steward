@@ -67,7 +67,7 @@ Translations: [English](../README.md) · [Русский](README.ru.md).
 
 ## 安装
 
-需要 OpenCode V1（≥ 1.18.29）或 V2，以及 Node.js 22.22+。版本矩阵与界面差异见
+需要 OpenCode V1（≥ 1.18.29）或 V2，以及 Node.js 26.4+（`@opentui/core` 的下限）。版本矩阵与界面差异见
 [COMPATIBILITY.md](COMPATIBILITY.md)（GUI 与 RPC 仅支持 V2，TUI 两条版本线都支持）。
 
 配置键因版本线而异：

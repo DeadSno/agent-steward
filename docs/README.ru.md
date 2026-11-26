@@ -56,7 +56,7 @@ Translations: [English](../README.md) · [中文](README.zh.md).
 
 ## Установка
 
-Нужны OpenCode V1 ≥ 1.18.29 или V2, и Node.js 22.22+. Матрица версий и различия
+Нужны OpenCode V1 ≥ 1.18.29 или V2, и Node.js 26.4+ (нижняя граница `@opentui/core`). Матрица версий и различия
 поверхностей — в [COMPATIBILITY.md](COMPATIBILITY.md) (GUI и RPC — только V2, TUI — обе линии).
 
 Ключ конфигурации зависит от линии:

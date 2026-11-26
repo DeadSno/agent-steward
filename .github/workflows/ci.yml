@@ -19,10 +19,11 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-latest, ubuntu-latest, macos-latest]
-        # T-14: пин 22.22.0 фиксирует нижнюю границу из engines (node:sqlite).
-        # Без пина "22" резолвится в последний 22.x — обычно НОВЕЕ минимума,
+        # QA-FULL-01: пин 26.4.0 фиксирует нижнюю границу из engines — она
+        # определена dev-зависимостью @opentui/core 0.9.0 (node >=26.4.0).
+        # Без пина "26" резолвится в последний 26.x — обычно НОВЕЕ минимума,
         # но версия плавает и нижняя граница остаётся непроверенной.
-        node: ["22.22.0", 24]
+        node: ["26.4.0", 26]
 
     steps:
       - name: Checkout
@@ -91,7 +92,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: "22.22.0"
+          node-version: "26.4.0"
           cache: npm
 
       - name: Install dependencies
@@ -125,7 +126,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: "22.22.0"
+          node-version: "26.4.0"
           cache: npm
 
       - name: Install dependencies
@@ -154,7 +155,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: "22.22.0"
+          node-version: "26.4.0"
           cache: npm
 
       - name: Install dependencies
@@ -183,7 +184,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: "22.22.0"
+          node-version: "26.4.0"
           cache: npm
 
       - name: Install dependencies
@@ -226,13 +227,13 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: 26.4.0
 
       - name: Use newest npm
         run: npm install -g npm@latest
 
-      - name: Check lock matches package.json
-        run: npm ci --dry-run --ignore-scripts
+      - name: Check lock and engine contract (QA-FULL-01)
+        run: npm ci --dry-run --engine-strict --ignore-scripts
 
       - name: Check publish payload
         run: npm pack --dry-run --ignore-scripts
