@@ -115,6 +115,23 @@ npm install
 npm run build && npm run build:gui
 ```
 
+## MCP 服务器
+
+同一核心也是标准的 stdio MCP 服务器：`agent-steward mcp` 提供全部 34 个工具、传输辅助 `batch_call`，以及调度最佳实践的资源和提示。无需 OpenCode，任何 MCP 客户端均可连接。
+
+```json
+{
+  "mcpServers": {
+    "agent-steward": {
+      "command": "npx",
+      "args": ["-y", "agent-steward", "mcp"]
+    }
+  }
+}
+```
+
+VS Code、JetBrains 配置及资源/提示契约见 [docs/mcp-setup.md](mcp-setup.md)。
+
 ## Agent 工具
 
 agent 可获得完整功能 —— 34 个工具，覆盖调度、流水线、运维、可观测性与管理：

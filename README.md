@@ -132,6 +132,23 @@ npm install
 npm run build && npm run build:gui
 ```
 
+## MCP server
+
+The same core is also a standard MCP server over stdio: `agent-steward mcp` exposes all 34 agent tools plus the `batch_call` transport helper, a scheduling best-practices resource and prompt. OpenCode is not required — any MCP client can use it.
+
+```json
+{
+  "mcpServers": {
+    "agent-steward": {
+      "command": "npx",
+      "args": ["-y", "agent-steward", "mcp"]
+    }
+  }
+}
+```
+
+See [docs/mcp-setup.md](docs/mcp-setup.md) for VS Code, JetBrains and the resource/prompt contract.
+
 ## Agent tools
 
 The agent gets the full feature set — 34 tools covering scheduling, pipelines, operations, observability and administration:

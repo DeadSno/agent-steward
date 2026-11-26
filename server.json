@@ -1,0 +1,20 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.deadsno/agent-steward",
+  "description": "Local-first MCP server for agent orchestration: cron, DAG, matrix and SQLite history.",
+  "repository": {
+    "url": "https://github.com/DeadSno/agent-steward",
+    "source": "github"
+  },
+  "version": "0.0.9",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "agent-steward",
+      "version": "0.0.9",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}
