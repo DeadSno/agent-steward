@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { TOOL_NAMES } from "./dist/core-entry.js";
+import { getPluginVersion } from "./dist/version.js";
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 let checks = 0;
@@ -32,6 +33,15 @@ const client = new Client({ name: "agent-steward-contract-test", version: "1.0.0
 
 try {
   await client.connect(transport);
+
+  // QA-FULL-02: `initialize` обязан отдавать версию из package.json, а не захардкоженную.
+  const serverInfo = client.getServerVersion();
+  const packageVersion = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version;
+  check("QA-FULL-02: serverInfo.version === package.json === getPluginVersion()", () => {
+    assert.equal(serverInfo?.name, "agent-steward");
+    assert.equal(serverInfo?.version, packageVersion);
+    assert.equal(serverInfo?.version, getPluginVersion());
+  });
 
   const tools = await client.listTools();
   // IM-4: `batch_call` — хелпер MCP-транспорта, а не агентский инструмент.

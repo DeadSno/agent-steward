@@ -11,6 +11,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { createToolSpecs } from "./index.js";
+import { getPluginVersion } from "./version.js";
 import { BATCH_CALL_LIMIT, executeBatchCalls } from "./shared/batch-call.js";
 import type { ToolSpec } from "./tool-specs.js";
 import type { SchedulerRuntime } from "./runtime.js";
@@ -33,7 +34,9 @@ function skillPath(): string {
 }
 
 export function createMcpServer(env: NodeJS.ProcessEnv = process.env): McpServer {
-  const server = new McpServer({ name: "agent-steward", version: "0.0.7" });
+  // QA-FULL-02: версия MCP-сервера берётся из единого источника (package.json),
+  // чтобы `initialize` совпадало с `/api/health` и `get_dashboard_info`.
+  const server = new McpServer({ name: "agent-steward", version: getPluginVersion() });
   const specs = mcpToolSpecs(env);
 
   for (const spec of specs) {
