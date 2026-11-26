@@ -1187,8 +1187,10 @@ check(
     activeLegacy(block + "\n1. P-1 — закрыть изоляцию ядра\n"),
   );
   check(
-    "QA-FULL-04: будущие ID помечены как future",
-    /future, не в ближайшие две недели/i.test(block),
+    "QA-FULL-04: P-4/P-5 и S-1…S-6 отмечены реализованными, открыта только V009-PLUGIN-1",
+    /P-4\/P-5 и S-1…S-6 уже реализованы/.test(block) &&
+      /V009-PLUGIN-1/.test(block) &&
+      !/future, не в ближайшие две недели/i.test(block),
   );
   check(
     "QA-FULL-04: синхронизация strategy ↔ ROADMAP сохранена",
@@ -1317,6 +1319,103 @@ check(
   check(
     "POSITIONING-DOCS: негатив — старый текст плагина детектируется",
     !positioned("OpenCode V1 and V2 plugin for scheduling and orchestrating AI agent jobs"),
+  );
+}
+
+// V009-2: согласование счётчиков/локалей/ссылок после аудита документации.
+{
+  const read = (rel) => fs.readFileSync(path.join(root, rel), "utf8");
+  const ru = read("docs/README.ru.md");
+  const zh = read("docs/README.zh.md");
+  const hasToolRows = (text) =>
+    ["backup_db", "restore_db", "report_bug"].every((name) => text.includes(`\`${name}\``));
+  check(
+    "V009-2: RU/ZH README декларируют 34 инструмента и перечисляют backup/restore/report_bug",
+    /34 инструмента/.test(ru) && /34 个工具/.test(zh) &&
+      hasToolRows(ru) && hasToolRows(zh) &&
+      !/32 инструментов/.test(ru) && !/32 个工具/.test(zh) && !/25 个 agent 工具/.test(zh),
+  );
+  check(
+    "V009-2: негатив — возврат старых счётчиков в RU/ZH детектируется",
+    !/34 个工具/.test(zh.replaceAll("34 个工具", "32 个工具")),
+  );
+
+  const lock = JSON.parse(read("package-lock.json"));
+  check(
+    "V009-2: корневой engines в package-lock совпадает с package.json (>=26.4.0)",
+    lock.packages?.[""]?.engines?.node === ">=26.4.0" &&
+      JSON.stringify(lock.packages?.[""]).indexOf("22.22.0") === -1,
+  );
+
+  const db = read("src/db/index.ts");
+  const hardening = read("test-execution-hardening.mjs");
+  check(
+    "V009-2: сообщение БД и гейт требуют Node 26.4+ (не 22.22+)",
+    /Node 26\.4\+/.test(db) && /Node\.js 26\.4\+/.test(db) &&
+      !/22\.22\+/.test(db) && /Node 26\.4\+/.test(hardening) &&
+      !/QW-14\.2: сообщение БД требует Node 22\.22\+/.test(hardening),
+  );
+  check(
+    "V009-2: негатив — возврат Node 22.22 в сообщении БД детектируется",
+    /22\.22\+/.test(db.replace("Node 26.4+", "Node 22.22+")),
+  );
+
+  const plan = read("TEST-PLAN.md");
+  check(
+    "V009-2: TEST-PLAN D04 указывает 10/10 проверок MCP-адаптера",
+    /test-mcp-adapter\.mjs` 10\/10/.test(plan) && !/test-mcp-adapter\.mjs` 9\/9/.test(plan),
+  );
+
+  const roadmap = read("ROADMAP.md");
+  const glossary = /### Что означают префиксы ID([\s\S]*?)\*\*Входы аудита/.exec(roadmap)?.[1] ?? "";
+  check(
+    "V009-2: глоссарий префиксов PL/DS/QA/DEEP/X/EV/EX/SC/LP/AD/V009 на месте",
+    ["PL-", "DS-", "QA-", "DEEP-", "X-", "EV-", "EX-", "SC-", "LP-", "AD-", "V009-"]
+      .every((prefix) => glossary.includes(`**${prefix}**`)),
+  );
+  check(
+    "V009-2: роадмап не ссылается на удалённый архив задач",
+    !/архиве ниже/.test(roadmap) && !/сохранена в архиве/.test(roadmap),
+  );
+
+  const changelog = read("CHANGELOG.md");
+  const start = changelog.indexOf("- **PL-94");
+  const end = changelog.indexOf("- **PL-91", start);
+  const fixedBlock = start >= 0 && end > start ? changelog.slice(start, end) : "";
+  const brokenRef = /[\w./-]+\.ts:\d+/.test(fixedBlock);
+  check(
+    "V009-2: ссылки на исходники в CHANGELOG используют #L",
+    fixedBlock.length > 0 &&
+      !brokenRef &&
+      /src\/core\/execution\.ts#L478/.test(fixedBlock) &&
+      /src\/db\/capability-repo\.ts#L616/.test(fixedBlock),
+  );
+  check(
+    "V009-2: негатив — возврат синтаксиса `file:line` детектируется",
+    /(?:src\/core\/execution\.ts):478/.test(changelog + "\n[execution.ts](src/core/execution.ts:478)"),
+  );
+
+  const docsList = (text, names) => names.every((name) => text.includes(`${name}.md`));
+  const extraDocs = [
+    "mcp-setup", "ROUTER", "OPEN-SPEC", "portability", "NATIVE-SCHEDULER", "EXECUTION-LOOP", "SAFETY",
+  ];
+  check(
+    "V009-2: списки документации в EN/RU/ZH включают все семь недостающих файлов",
+    docsList(read("README.md"), extraDocs) && docsList(ru, extraDocs) && docsList(zh, extraDocs),
+  );
+  check(
+    "V009-2: бейджи в ZH README указывают на корневые LICENSE/package.json",
+    zh.includes("](../LICENSE)") && zh.includes("](../package.json)") &&
+      !zh.includes("](LICENSE)") && !zh.includes("](package.json)"),
+  );
+
+  const strategy = read("ROADMAP-STRATEGY.md");
+  const runbook = read("docs/RELEASE-RUNBOOK.md");
+  check(
+    "V009-2: стратегия и runbook не противоречат закрытым P-4/P-5/S-1…S-6 и X-5",
+    /P-4\/P-5 и S-1…S-6 уже реализованы/.test(strategy) &&
+      !/future, не в ближайшие две недели/.test(strategy) &&
+      /X-4 закрыта/.test(runbook) && /X-5 остаётся открытой/.test(runbook),
   );
 }
 

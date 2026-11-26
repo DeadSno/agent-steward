@@ -2,6 +2,8 @@
 
 `agent-steward mcp` поднимает MCP-сервер на stdio с полным реестром из 34
 инструментов — тем же, что регистрирует плагин в OpenCode V1/V2 (`TOOL_NAMES`).
+В `tools/list` также показан transport-хелпер `batch_call` (итого 35 записей);
+он изолирован от агентского реестра и не входит в `TOOL_NAMES`.
 Дополнительно доступны ресурс
 `skill://agent-steward/scheduled-job-best-practices/SKILL.md` и промпт
 `agent-steward-skill` с тем же содержимым.
@@ -73,7 +75,7 @@ Settings → Tools → AI Assistant → Model Context Protocol → Add:
 
 ```bash
 npm run build
-node test-mcp-adapter.mjs   # 7 проверок: реальный stdio-клиент, 34 инструмента, ресурс, prompt, list_tasks
+node test-mcp-adapter.mjs   # 10 проверок: реальный stdio-клиент, 34 инструмента + batch_call, ресурс, prompt, list_tasks
 node test-tool-specs.mjs    # снимок схем 34 инструментов и паритет с RPC
 node test-docs.mjs          # целостность документации и контрактов
 ```

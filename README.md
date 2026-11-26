@@ -317,6 +317,13 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 - [docs/VERIFIED-CHAT.md](docs/VERIFIED-CHAT.md) — answers only with objective gate/source proof (S-5).
 - [docs/SCAFFOLD.md](docs/SCAFFOLD.md) — one-command scaffolding from gate-passed recipes (S-6).
 - [CROSS_PLATFORM.md](CROSS_PLATFORM.md) — Windows / macOS / Linux differences and backends.
+- [docs/mcp-setup.md](docs/mcp-setup.md) — MCP stdio adapter, 34 tools plus `batch_call`.
+- [docs/ROUTER.md](docs/ROUTER.md) — routing, escalation and capability map.
+- [docs/OPEN-SPEC.md](docs/OPEN-SPEC.md) — open specification of the execution contract.
+- [docs/portability.md](docs/portability.md) — portable builds and cross-platform checks.
+- [docs/NATIVE-SCHEDULER.md](docs/NATIVE-SCHEDULER.md) — native scheduler integration mode.
+- [docs/EXECUTION-LOOP.md](docs/EXECUTION-LOOP.md) — execution loop internals.
+- [docs/SAFETY.md](docs/SAFETY.md) — safety policies and diagnostics channels.
 - [Documentation site (GitHub Pages runbook)](docs/FEATURES.md#documentation-site-github-pages) — how the docs are built and published.
 
 Translations: [Русский](docs/README.ru.md) · [中文](docs/README.zh.md).

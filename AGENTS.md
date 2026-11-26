@@ -21,7 +21,7 @@
 - `npm run lint` — eslint по `src/`.
 - `npm run build:gui` — пересобрать GUI-бандл перед релизом.
 - `npm test` — полный прогон (131 сюита из 140 файлов `test-*.mjs`, тесты идут против `dist/`); `npm run test:parallel` — быстрее; точечно — `npm run test:<name>`.
-- `npm run test:en`, `npm run test:zh` — локали; `npm run test:i18n` — паритет ключей ru/en/zh.
+- `npm run test:en`, `npm run test:zh` — локали; `npm run test:i18n` — паритет ключей ru/en/zh/tr.
 - `node test-docs.mjs` — мета-гейт: сверка счётчиков tools/RPC, версии схемы, ключей конфига и доков; `node test-workflows.mjs` — структура CI-воркфлоу.
 - `npm run test:chaos` — nightly-проверки crash/kill-9; `npm pack --dry-run`, `node test-package-exports.mjs` — целостность тарбола и `exports`.
 - Публикация **только** через `git tag vX.Y.Z` → `.github/workflows/release.yml` (OIDC + provenance). Локальный `npm publish` не делать; `workflow_dispatch` = dry-run `npm pack`.

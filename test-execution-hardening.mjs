@@ -4228,9 +4228,10 @@ try {
       !typesSrc.includes("как раньше — без миграции"),
   );
   check(
-    "QW-14.2: сообщение БД требует Node 22.22+ (как в engines)",
-    dbSrc.includes("Node 22.22+") &&
-      dbSrc.includes("Node.js 22.22+") &&
+    "QW-14.2: сообщение БД требует Node 26.4+ (как в engines)",
+    dbSrc.includes("Node 26.4+") &&
+      dbSrc.includes("Node.js 26.4+") &&
+      !dbSrc.includes("22.22+") &&
       !dbSrc.includes("22.5+"),
   );
   check(

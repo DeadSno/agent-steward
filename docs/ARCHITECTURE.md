@@ -5,7 +5,7 @@ This document explains how `agent-steward` (plugin id
 model, the modules, the data model and the extension points.
 
 - [Design principles](#design-principles)
-- [Process model](#process-model)
+- [Execution model](#execution-model)
 - [Data flow](#data-flow)
 - [Modules](#modules)
 - [Scheduling backends](#scheduling-backends)

@@ -46,7 +46,7 @@ Translations: [English](../README.md) · [中文](README.zh.md).
 | Мультирепо | workspaces с валидацией путей, запуски по workspace, матрица поверх родительской задачи |
 | Наблюдаемость | история SQLite (success / error / timeout / partial / running), метрики (длительность, токены, стоимость), JSONL-логи с `/api/logs`, Prometheus `/metrics`, экспорт OTLP, логи по задачам, веб-дашборд с аналитикой за 14 дней, ретеншн истории и экспорт CSV/JSON |
 | Эксплуатация | dry-run, экспорт/импорт JSON, шаблоны, уведомления по нескольким каналам (webhook, Telegram, нативные toast), тихие часы, дайджест, локальный ассистент для триажа уведомлений (fail-open, shadow-режим), зашифрованные секреты (`${secret:NAME}`), журнал аудита, настройки |
-| Интерфейсы | панель OpenCode GUI, веб-дашборд, 32 инструментов для агента, встроенный скилл |
+| Интерфейсы | панель OpenCode GUI, веб-дашборд, 34 инструментов для агента, встроенный скилл |
 
 ### Язык интерфейса
 
@@ -106,7 +106,7 @@ npm run build && npm run build:gui
 
 ## Инструменты для агента
 
-Агенту доступен весь функционал — 32 инструментов: расписание, пайплайны, эксплуатация, аналитика и администрирование.
+Агенту доступен весь функционал — 34 инструмента: расписание, пайплайны, эксплуатация, аналитика и администрирование.
 
 | Инструмент | Аргументы | Что делает |
 |---|---|---|
@@ -122,6 +122,8 @@ npm run build && npm run build:gui
 | `get_history` | `taskName?`, `status?`, `limit?` | История запусков: длительность, токены, стоимость, модель, Quality Gate, хуки |
 | `get_task_logs` | `name`, `lines?` | Хвост лога запуска |
 | `dry_run` | `name?` | Симуляция пайплайна (или всех задач): порядок, DAG, fan-out, оценки |
+| `backup_db` | `file?` | Онлайн-снимок SQLite в `<db>.backup` с контрольной суммой SHA-256 и размером |
+| `restore_db` | `file`, `sha256?` | Восстановление проверенного снимка без закрытия соединения дашборда |
 | `manage_workspaces` | `action`, `id?`, `name?`, `path?`, `color?` | Multi-repo workspace: список, добавление, изменение, удаление |
 | `matrix_control` | `action`, `name?` | Результаты матрицы, отмена клонов, очистка осиротевших задач, предпросмотр |
 | `get_metrics` | — | Всего запусков, успехов и падений |
@@ -141,6 +143,7 @@ npm run build && npm run build:gui
 | `pipeline_validate` | `path?`, `source?` | Проверяет `opencode.pipeline.yaml`, не меняя задачи |
 | `pipeline_apply` | `path?`, `source?`, `dryRun?` | Идемпотентно создаёт и обновляет задачи конвейера; `dryRun` только показывает diff |
 | `pipeline_export` | `pipeline` | Выгружает задачи конвейера обратно в YAML |
+| `report_bug` | `description`, `taskName?`, `includeLogs?`, `includeAnalytics?`, `channel?` | Сообщает об issue agent-steward с диагностикой и контекстом воспроизведения |
 
 `schedule_task` принимает и полную конфигурацию матрицы (`workspaceIds`, `strategy`, `failureMode`, `aggregation`, `concurrency`, `overrides`, `createAggregator`).
 
@@ -287,6 +290,13 @@ npm run test:en      # те же сюиты с английской локаль
 - [VERIFIED-CHAT.md](VERIFIED-CHAT.md) — ответ чата только с объективным гейтом/источником (S-5, English).
 - [SCAFFOLD.md](SCAFFOLD.md) — разворачивание проекта из gate-passed рецепта одной командой (S-6, English).
 - [../CROSS_PLATFORM.md](../CROSS_PLATFORM.md) — различия и бэкенды Windows / macOS / Linux.
+- [mcp-setup.md](mcp-setup.md) — MCP-адаптер на stdio: 34 инструмента плюс `batch_call`.
+- [ROUTER.md](ROUTER.md) — маршрутизация, эскалация и capability map.
+- [OPEN-SPEC.md](OPEN-SPEC.md) — открытая спецификация контракта исполнения.
+- [portability.md](portability.md) — портативные сборки и кросс-платформенные проверки.
+- [NATIVE-SCHEDULER.md](NATIVE-SCHEDULER.md) — режим интеграции с нативным планировщиком.
+- [EXECUTION-LOOP.md](EXECUTION-LOOP.md) — устройство цикла исполнения.
+- [SAFETY.md](SAFETY.md) — политики безопасности и каналы диагностики.
 - [Сайт документации (runbook GitHub Pages)](FEATURES.md#documentation-site-github-pages) — как собирается и публикуется документация.
 
 ## FAQ
