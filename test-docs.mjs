@@ -1237,8 +1237,8 @@ check(
 // ROADMAP: расшифровка стратегических ID и отсутствие устаревших ссылок.
 {
   const roadmap = fs.readFileSync(path.join(root, "ROADMAP.md"), "utf8");
-  const decoder = /### Что означают ID в таблице горизонтов([\s\S]*?)\*\*Входы аудита/.exec(roadmap)?.[1] ?? "";
-  const hasIds = (ids) => ids.every((id) => decoder.includes(`| ${id} |`));
+  const decoder = /### Что означают ID([\s\S]*?)\*\*Входы аудита/.exec(roadmap)?.[1] ?? "";
+  const hasIds = (ids) => ids.every((id) => decoder.includes(`- **${id}**`));
   const hasStalePointer = (text) =>
     text.includes("QA-DEEP4-1 (ниже)") || text.includes("Ниже — только открытые находки");
   check(
@@ -1256,7 +1256,7 @@ check(
   );
   check(
     "ROADMAP: негативный тест — возврат устаревшей ссылки детектируется",
-    hasStalePointer(roadmap.replace("закрыто; вход — Release-чеклист §5", "QA-DEEP4-1 (ниже)")),
+    hasStalePointer(roadmap + "\nНиже — только открытые находки"),
   );
 }
 
