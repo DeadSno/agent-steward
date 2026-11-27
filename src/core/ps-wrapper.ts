@@ -2141,11 +2141,11 @@ export async function withFileWriteRetry<T>(
 export async function writePromptFile(taskName: string, prompt: string): Promise<string> {
   const safety = inspectPromptSafety(prompt);
   if (!safety.safe) {
-    // PL-112 предупреждает, но не блокирует: проверка смотрит только в текст
-    // промпта (её обходят через qualityGate/beforeScript) и отсекает легитимные
-    // задачи вроде «rm -rf node_modules». Граница разрешений — allowedTools/deniedTools.
+    // PL-112 warns but does not block: the check only inspects the prompt
+    // text (bypassed via qualityGate/beforeScript) and rejects legitimate
+    // tasks such as "rm -rf node_modules". The permission boundary is allowedTools/deniedTools.
     console.warn(
-      `[agent-steward] PL-112: подозрительный промпт "${sanitizeName(taskName)}" (${safety.reasons.join("; ")}) — задача создана, проверка не блокирует`,
+      `[agent-steward] PL-112: suspicious prompt "${sanitizeName(taskName)}" (${safety.reasons.join("; ")}) - task created, check does not block`,
     );
   }
   const promptDir = path.join(PLUGIN_DIR, "prompts");
