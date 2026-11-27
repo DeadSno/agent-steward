@@ -507,9 +507,12 @@ export function isAccessDeniedError(err: unknown): boolean {
     typeof e.code === "number" && Number.isFinite(e.code) ? e.code >>> 0 : null;
   if (code === 0x80070005 || code === 5) return true;
   const stderr = String(e.stderr ?? "");
+  // The HRESULT must end an error line; a quoted task name containing
+  // 0x80070005 must not be mistaken for the error code.
+  const hresultLine = /^[ \t]*(?:ERROR:[ \t]*)?[^"\r\n]*\b0x80070005\b[ \t]*\)?\.?[ \t]*$/im;
   return (
     /^\s*(?:ERROR:\s*)?(?:Access is denied|Отказано в доступе)\.?\s*$/im.test(stderr) ||
-    /0x80070005/i.test(stderr)
+    hresultLine.test(stderr)
   );
 }
 

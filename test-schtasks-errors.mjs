@@ -132,6 +132,23 @@ assert.ok(
   "имя задачи «Access is denied» в командной строке не должно вымогать повышение на чужой ошибке"
 );
 
+// Regression: a task named like the HRESULT must not open the elevation path
+// on an unrelated "task not found" error.
+assert.ok(
+  !isAccessDeniedError(
+    new SchtasksError(
+      'schtasks error: "schtasks.exe" /delete /tn "0x80070005" | ERROR: The task name "0x80070005" not found.',
+      1,
+      'ERROR: The task name "0x80070005" not found.'
+    )
+  ),
+  "0x80070005 in a task name must not trigger the UAC fallback"
+);
+assert.ok(
+  isAccessDeniedError({ code: 1, stderr: "ERROR: Access is denied. (0x80070005)" }),
+  "an anchored HRESULT line must still be recognized as access denied"
+);
+
 const interactive = { SESSIONNAME: "Console" };
 assert.ok(shouldTryElevation(["/create", "/tn", "X"], interactive), "/create — изменяющая команда, в интерактивной сессии повышаться можно");
 assert.ok(shouldTryElevation(["/DELETE", "/tn", "X", "/f"], interactive), "флаг регистронезависим");
