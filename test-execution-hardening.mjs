@@ -2700,6 +2700,34 @@ try {
     "PL-112: упоминание в прозе не считается командой",
     inspectPromptSafety("В отчёте описано, как Remove-Item повредил файлы в прошлый раз.").safe === true
   );
+
+  // Regression for the warn-only path: a suspicious prompt must still create
+  // the task file and emit a warning instead of throwing.
+  const warnTaskName = "pl112-warn-probe";
+  const warnPrompt = "rm -rf C:\\repo\\cache";
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => warnings.push(args.map(String).join(" "));
+  try {
+    const promptPath = await writePromptFile(warnTaskName, warnPrompt);
+    check(
+      "PL-112: writePromptFile creates the task file for a suspicious prompt",
+      fs.existsSync(promptPath) &&
+        fs.readFileSync(promptPath, "utf8").replace(/^\uFEFF/, "") === warnPrompt
+    );
+    check(
+      "PL-112: writePromptFile warns with the task name and reason",
+      warnings.some(
+        (line) =>
+          line.includes(warnTaskName) &&
+          line.includes("destructive recursive delete") &&
+          line.includes("task created")
+      ),
+      warnings.join(" | ")
+    );
+  } finally {
+    console.warn = originalWarn;
+  }
 } catch (err) {
   console.log("[diag] PL-112 section THREW:", err instanceof Error ? err.stack : String(err));
   check("PL-112: секция не выбросила исключение", false, "section threw");
