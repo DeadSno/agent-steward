@@ -129,9 +129,9 @@ Enforced `allowedTools` / `deniedTools` вместо advisory, scoped-инъек
 
 ## Горизонт 3–6 месяцев: масштаб и надёжность
 
-### 8. Docker runner (P3)
+### 8. Docker runner (P3) — 0.0.2–0.0.11 ✅
 
-Локальный процесс, Docker, SSH-хост. Задача описывает *что* делать, runner — *где*. Изоляцию не изобретаем: Docker / Landstrip. Opt-in, по умолчанию выключен. Статус: модули `runner.ts`/`runner-docker.ts`/`runner-ssh.ts` и `resolveRunner` с fail-open на `local` подключены к execution-пути через `AgentInvoker.invoke` (P-3.2), но выбор runner пока доступен только программно (поле `runner` в `BuildCommandOptions`), не через схему задачи — в релизе пользовательской опции нет. Версия присваивается по факту релиза.
+Локальный процесс, Docker, SSH-хост. Задача описывает *что* делать, runner — *где*. Изоляцию не изобретаем: Docker / Landstrip. Opt-in, по умолчанию выключен. Статус: модули `runner.ts`/`runner-docker.ts`/`runner-ssh.ts`/`runner-run.ts` и `resolveRunner` с fail-open на `local` подключены к execution-пути через `AgentInvoker.invoke` (P-3.2). С EX-1.1 выбор runner доступен пользователю декларативно: поле `runner` в схеме задачи и RPC `create_task`/`update_task`/`run_mission`, CLI `steward add --runner local|docker|ssh` и ad-hoc `--runner*`; для зарегистрированных задач выбор запекается в обёртку через `runner-run.js`. Неполная конфигурация деградирует в local (fail-open). Версия присваивается по факту релиза.
 
 ### 9. Durable DAG (P1 для 0.1.0) — 0.0.3–0.0.4 ✅
 

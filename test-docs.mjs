@@ -1532,6 +1532,141 @@ check(
   );
 }
 
+// DOCS-CLEAN: семантический дрейф закрытых находок. Счётчики и списки модулей
+// ловятся выше, но фраза «PL-125 — открытый пробел» проходила все гейты.
+{
+  const read = (rel) => fs.readFileSync(path.join(root, rel), "utf8");
+  const diagrams = [
+    read("docs/ARCHITECTURE-DIAGRAMS.md"),
+    read("docs/ARCHITECTURE-DIAGRAMS-SEQUENCES.md"),
+  ];
+  const staleBudgetWording = (text) =>
+    /открытый пробел PL-125|бюджет не проверяет|\*\*нет budget gate\*\*|не в обёртке зарегистрированных задач|задача B-1 Детали 3\.12|остаётся открытой задачей|текущие открытые находки/.test(
+      text,
+    );
+  check(
+    "DOCS-CLEAN: диаграммы не изображают PL-125/B-1 открытыми",
+    diagrams.every((text) => !staleBudgetWording(text)),
+  );
+  check(
+    "DOCS-CLEAN: диаграммы показывают budget gate на обоих путях (PL-125 закрыт)",
+    diagrams.every(
+      (text) =>
+        /PL-125 закрыт/.test(text) &&
+        /evaluateRunBudgetGate/.test(text) &&
+        /--budget-gate/.test(text),
+    ),
+  );
+  check(
+    "DOCS-CLEAN: негатив — возврат «открытый пробел PL-125» детектируется",
+    staleBudgetWording(diagrams[0] + "\nоткрытый пробел PL-125 (задача B-1 Детали 3.12)"),
+  );
+
+  const changelog = read("CHANGELOG.md");
+  const unreleased = changelog.slice(
+    changelog.indexOf("## [Unreleased]"),
+    changelog.indexOf("## [0.0.11]"),
+  );
+  const staleRegistryWording = (text) =>
+    /пока невозможна|не содержит `mcpName`|готовится вместе с релизом/.test(text);
+  check(
+    "DOCS-CLEAN: Unreleased не содержит снятого блокера MCP Registry",
+    unreleased.length > 0 && !staleRegistryWording(unreleased),
+  );
+  check(
+    "DOCS-CLEAN: Unreleased фиксирует X-7 закрытым и запись реестра активной",
+    /X-7 закрыт/.test(unreleased) &&
+      /io\.github\.DeadSno\/agent-steward` v0\.0\.11 активна/.test(unreleased),
+  );
+  check(
+    "DOCS-CLEAN: негатив — возврат «пока невозможна» детектируется",
+    staleRegistryWording(unreleased + "\nПубликация в официальный реестр пока невозможна"),
+  );
+
+  const runbook = read("docs/RELEASE-RUNBOOK.md");
+  check(
+    "DOCS-CLEAN: RELEASE-RUNBOOK не называет X-7 готовящимся",
+    !/готовится вместе с релизом/.test(runbook) &&
+      /X-7 \(публикация в MCP Registry\) выполнена/.test(runbook) &&
+      /запись `io\.github\.DeadSno\/agent-steward` v0\.0\.11 активна/.test(runbook),
+  );
+  check(
+    "DOCS-CLEAN: негатив — возврат «готовится вместе с релизом» детектируется",
+    /готовится вместе с релизом/.test(runbook + "\nX-7 готовится вместе с релизом `v0.0.11`"),
+  );
+}
+
+// DOCS-CLEAN-2: дрейф после сверки с EX-1.1 (runner), P-2/P-4 (адаптеры),
+// PL-97 (DLQ-retry) и фактическим состоянием MCP Registry.
+{
+  const read = (rel) => fs.readFileSync(path.join(root, rel), "utf8");
+  const strategy = read("ROADMAP-STRATEGY.md");
+  const staleRunnerWording = (text) =>
+    /только программно|пользовательской опции нет/.test(text);
+  check(
+    "DOCS-CLEAN: стратегия не называет выбор runner только программным",
+    !staleRunnerWording(strategy) &&
+      /декларативно/.test(strategy) &&
+      /EX-1\.1/.test(strategy) &&
+      /--runner/.test(strategy),
+  );
+  check(
+    "DOCS-CLEAN: негатив — возврат «только программно» детектируется",
+    staleRunnerWording(strategy + "\nвыбор runner пока доступен только программно"),
+  );
+
+  const diagrams = read("docs/ARCHITECTURE-DIAGRAMS.md");
+  const staleWiringWording = (text) =>
+    /не подключён к execution-пути|вызовов из `src\/index\.ts`\/`execution\.ts` нет/.test(
+      text,
+    );
+  check(
+    "DOCS-CLEAN: диаграммы показывают runner подключённым к execution-пути",
+    !staleWiringWording(diagrams) &&
+      /подключён к execution-пути/.test(diagrams) &&
+      /AgentInvoker\.invoke/.test(diagrams) &&
+      /runner-run\.ts/.test(diagrams),
+  );
+
+  const announcements = read("docs/ANNOUNCEMENTS.md");
+  check(
+    "DOCS-CLEAN: анонсы не откладывают публикацию в MCP Registry",
+    !/ожидает тега `v0\.0\.11`/.test(announcements) &&
+      /выполнена релизом `v0\.0\.11`/.test(announcements) &&
+      /X-7 закрыт/.test(announcements),
+  );
+  check(
+    "DOCS-CLEAN: негатив — возврат «ожидает тега» детектируется",
+    /ожидает тега `v0\.0\.11`/.test(announcements + "\nпубликация ожидает тега `v0.0.11`"),
+  );
+
+  const sequences = read("docs/ARCHITECTURE-DIAGRAMS-SEQUENCES.md");
+  check(
+    "DOCS-CLEAN: DLQ-retry в диаграмме не изображается мёртвым (PL-97 закрыт)",
+    !/ручной retry пока не вызывает исполнителя/.test(sequences) &&
+      /PL-97 закрыт/.test(sequences) &&
+      /resumeDurableRunExecution/.test(sequences),
+  );
+
+  const compatibility = read("docs/COMPATIBILITY.md");
+  check(
+    "DOCS-CLEAN: совместимость признаёт MCP/dsh-адаптеры",
+    !/Отдельных MCP\/dsh-адаптеров в коде пока нет/.test(compatibility) &&
+      /`src\/mcp\.ts`/.test(compatibility) &&
+      /`src\/dsh\.ts`/.test(compatibility),
+  );
+
+  const unresolvedTodo = diagrams
+    .split(/\r?\n/)
+    .filter(
+      (line) => line.includes("[TODO: проверить]") && !/снят|не осталось/.test(line),
+    );
+  check(
+    "DOCS-CLEAN: в диаграммах нет неподтверждённых [TODO: проверить]",
+    unresolvedTodo.length === 0,
+  );
+}
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\nDocs: ${results.length - failed.length}/${results.length} проверок пройдено.`);
 process.exit(failed.length > 0 ? 1 : 0);

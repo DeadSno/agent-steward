@@ -1,7 +1,7 @@
 # Steward: Архитектурные диаграммы — последовательности
 
 > Часть основного документа: [ARCHITECTURE-DIAGRAMS.md](./ARCHITECTURE-DIAGRAMS.md).
-> Все имена функций сверены с `src/` по состоянию на schema v14, 2026-11-23.
+> Все имена функций сверены с `src/` по состоянию на schema v14, 2026-11-27.
 
 ---
 
@@ -23,6 +23,10 @@ sequenceDiagram
 
     OS->>WR: cron tick или schtasks /Run
     WR->>WR: schedule gate и PL-106 lock (already running → skip)
+    WR->>RH: node record-history.js --budget-gate task (B-1.1/PL-125, до старта PowerShell/opencode)
+    opt бюджет исчерпан (exit 3)
+        RH->>DB: skipped-запись с причиной, запуск не стартует
+    end
     WR->>RH: node record-history.js --start task startedAt
     RH->>DB: history-запись running (startRun)
     RH->>EX: buildRegisteredContext → createRegisteredRunContext + validateRunContext
@@ -48,7 +52,7 @@ sequenceDiagram
 
 **Что видно:** один агент-процесс на задачу, quality gate — отдельная команда обёртки, а не шаг execution-loop. Durable-run создаётся тем же `createRun`, что и ad-hoc путь (ARCH-1.1), шаг сразу в `running` (STEP_TRANSITIONS не разрешает `pending → passed`), вердикт пишется в ту же хеш-цепочку `gate_outcomes` через `writeGateOutcome`. Все вызовы durable-слоя в рекордере защищены try/catch: отказ durable-слоя не ломает историю/цепочки/уведомления. Телеметрия: лог → OpenCode DB → offline-оценка `estimateRunUsage` для free-tier моделей с нулевым usage (T-6, событие `usage.offline_estimate`).
 
-**Ключевые выводы:** на этом пути **нет budget gate** — `checkBudgetGate` вызывается только в tool/RPC/manual-входах `index.ts` (`run_task_now`, `run_mission`, `runTaskEntry`), обёртка бюджет не проверяет (**PL-125**, задача B-1 Детали 3.12). Остановки без побочных эффектов: schedule gate/lock обёртки и worktree snapshot gate (`decideWorktreeSnapshot`/`enforceWorktreeSnapshot`, PL-59). Approval gate и эскалация доступны только ad-hoc пути (4.1b). Legacy-вызов рекордера без `--start` тоже идёт через durable-мост (`recordRegisteredRun` создаёт run сам).
+**Ключевые выводы:** на этом пути budget gate тоже работает: обёртка `.cmd` до старта PowerShell/opencode вызывает `record-history.js --budget-gate` (`evaluateRunBudgetGate`), при exit 3 запуск не стартует и в историю пишется `skipped` с причиной (B-1.1/B-1.2, **PL-125 закрыт**). Ad-hoc-входы `index.ts` (`run_task_now`, `run_mission`, `runTaskEntry`) используют тот же общий гейт через `checkBudgetGate`. Остановки без побочных эффектов: budget gate, schedule gate/lock обёртки и worktree snapshot gate (`decideWorktreeSnapshot`/`enforceWorktreeSnapshot`, PL-59). Approval gate и эскалация доступны только ad-hoc пути (4.1b). Legacy-вызов рекордера без `--start` тоже идёт через durable-мост (`recordRegisteredRun` создаёт run сам).
 
 ### 4.1b Ad-hoc миссия (execution plan)
 
@@ -120,7 +124,7 @@ sequenceDiagram
 
 **Что видно:** единый путь `RunContext → ExecutionPlan → executeExecutionPlan`. Гейт одобрений и бюджет стоят **до** `createRun`; намерения эффектов — **до** гейта; применение эффектов — **только после** `pass`. Эскалация PL-93 показана в блоке `opt`: в ядре она требует явного `execution.escalation.enabled`, но реальный `runMission` после PL-102 включает её и передаёт `agentResultGate`; повтор того же исполнителя под другим маршрутом запрещён. Компиляция контекста PL-94 идёт внутри `buildExecutionPlan`: `CompiledContext` с `contextHash` сохраняется в шаге и передаётся исполнителю, при эскалации пересобирается под новую модель/окно. Очередь одобрений после PL-95 видна пользователю через RPC `list_approvals`/`decide_approval` и карточку GUI, а после PL-103 approve автоматически перезапускает отложенный план: дескриптор хранится в аудите, `executeApprovedPlan` помечает решение как запущенное до старта и вызывает `executeExecutionPlan`; планы с эффектами переводятся в ручной перезапуск.
 
-**Ключевые выводы:** три места, где запуск может быть остановлен без побочных эффектов: budget gate (вызывается в `index.ts` на входах `run_task_now`/`run_mission`/`runTaskEntry`, не в движке и **не в обёртке зарегистрированных задач** — PL-125), approval gate, worktree snapshot gate (PL-59). Ledger-запись делает `writeGateOutcome`, а не сам исполнитель — поэтому registered (4.1a) и ad-hoc (4.1b) дают одинаковый набор хэшей. Компиляция контекста PL-94 встроена в план: `compileContextForRoute` создаёт `CompiledContext` с `contextHash`, он доходит до исполнителя и OpenCode-invocation; при эскалации `recompileContextForRouteEscalation` пересобирает контекст под новую модель (`local-7b` → `cloud-large`). flake-aware эскалация PL-93 подключена: в `runMission` включена по умолчанию через `agentResultGate` (PL-102), при прямом вызове ядра остаётся opt-in; рекордер зарегистрированных задач использует отдельный процесс с командной quality gate и в execution-loop эскалацию не идёт.
+**Ключевые выводы:** три места, где запуск может быть остановлен без побочных эффектов: budget gate (в `index.ts` на входах `run_task_now`/`run_mission`/`runTaskEntry` и в обёртке зарегистрированных задач через `--budget-gate`/`evaluateRunBudgetGate`, B-1.1/B-1.2, PL-125 закрыт; не внутри движка `executeExecutionPlan`), approval gate, worktree snapshot gate (PL-59). Ledger-запись делает `writeGateOutcome`, а не сам исполнитель — поэтому registered (4.1a) и ad-hoc (4.1b) дают одинаковый набор хэшей. Компиляция контекста PL-94 встроена в план: `compileContextForRoute` создаёт `CompiledContext` с `contextHash`, он доходит до исполнителя и OpenCode-invocation; при эскалации `recompileContextForRouteEscalation` пересобирает контекст под новую модель (`local-7b` → `cloud-large`). flake-aware эскалация PL-93 подключена: в `runMission` включена по умолчанию через `agentResultGate` (PL-102), при прямом вызове ядра остаётся opt-in; рекордер зарегистрированных задач использует отдельный процесс с командной quality gate и в execution-loop эскалацию не идёт.
 
 ### 4.2 Matrix fan-out
 
@@ -204,7 +208,7 @@ sequenceDiagram
     RS->>DB: finishStep success или failure
     alt детерминированное падение
         H->>DLQ: enqueueDeadLetter attempts-exhausted
-        Note over DLQ: ручной retry пока не вызывает исполнителя (PL-97)
+        Note over DLQ: PL-97 закрыт — retry вызывает тот же исполнитель через resumeDurableRunExecution, attempt растёт один раз
     else успех
         RS->>DB: finishRun
     end
