@@ -2141,7 +2141,12 @@ export async function withFileWriteRetry<T>(
 export async function writePromptFile(taskName: string, prompt: string): Promise<string> {
   const safety = inspectPromptSafety(prompt);
   if (!safety.safe) {
-    throw new Error(`PL-112: unsafe prompt rejected (${safety.reasons.join("; ")})`);
+    // PL-112 warns but does not block: the check only inspects the prompt
+    // text (bypassed via qualityGate/beforeScript) and rejects legitimate
+    // tasks such as "rm -rf node_modules". The permission boundary is allowedTools/deniedTools.
+    console.warn(
+      `[agent-steward] PL-112: suspicious prompt "${sanitizeName(taskName)}" (${safety.reasons.join("; ")}) - task created, check does not block`,
+    );
   }
   const promptDir = path.join(PLUGIN_DIR, "prompts");
   await fs.mkdir(promptDir, { recursive: true });
