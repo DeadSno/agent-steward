@@ -21,6 +21,7 @@ import {
   SchtasksError,
   isAccessDeniedError,
   shouldTryElevation,
+  stderrFromExecMessage,
   runSchtasksElevated,
   NO_UAC_ENV,
 } from "./dist/core/scheduler/windows.js";
@@ -131,6 +132,23 @@ assert.ok(
   "имя задачи «Access is denied» в командной строке не должно вымогать повышение на чужой ошибке"
 );
 
+// Regression: a task named like the HRESULT must not open the elevation path
+// on an unrelated "task not found" error.
+assert.ok(
+  !isAccessDeniedError(
+    new SchtasksError(
+      'schtasks error: "schtasks.exe" /delete /tn "0x80070005" | ERROR: The task name "0x80070005" not found.',
+      1,
+      'ERROR: The task name "0x80070005" not found.'
+    )
+  ),
+  "0x80070005 in a task name must not trigger the UAC fallback"
+);
+assert.ok(
+  isAccessDeniedError({ code: 1, stderr: "ERROR: Access is denied. (0x80070005)" }),
+  "an anchored HRESULT line must still be recognized as access denied"
+);
+
 const interactive = { SESSIONNAME: "Console" };
 assert.ok(shouldTryElevation(["/create", "/tn", "X"], interactive), "/create — изменяющая команда, в интерактивной сессии повышаться можно");
 assert.ok(shouldTryElevation(["/DELETE", "/tn", "X", "/f"], interactive), "флаг регистронезависим");
@@ -200,5 +218,31 @@ if (process.platform === "win32") {
 //    реальным UAC проверяется живьём (CI без промпта её не пройдёт).
 assert.equal(new SchtasksError("x", 1, "").taskMissing, false);
 assert.equal(new SchtasksError("x", 1, "", true).taskMissing, true);
+
+// 9. Bun (the OpenCode runtime) does not attach stderr to execFile errors —
+//    the text lives only in message. Without recovery, the UAC fallback stays
+//    silent inside the plugin (verified live: create/delete failed without a prompt).
+assert.equal(
+  isAccessDeniedError({ code: 1, stderr: stderrFromExecMessage("ERROR: Access is denied.\r\r\n") }),
+  true,
+  "Bun format: message without prefix -> stderr recovered, access denied detected",
+);
+assert.equal(
+  stderrFromExecMessage("Command failed: schtasks /create /tn X /tr Y /sc once\r\nERROR: Access is denied."),
+  "ERROR: Access is denied.",
+  "Node format: take the lines after Command failed",
+);
+// Spoofing is still dead: a task name in the command line cannot produce an
+// "Access is denied" line at the start of the string.
+assert.equal(
+  isAccessDeniedError({
+    code: 1,
+    stderr: stderrFromExecMessage(
+      'Command failed: schtasks /delete /tn "Access is denied" /f\nERROR: The task name "Access is denied" not found.',
+    ),
+  }),
+  false,
+  "a task named \"Access is denied\" must not extort a prompt",
+);
 
 console.log("Schtasks errors: все проверки пройдены.");

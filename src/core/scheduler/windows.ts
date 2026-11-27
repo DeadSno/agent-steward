@@ -410,6 +410,20 @@ export class SchtasksError extends Error {
 }
 
 /**
+ * Bun (the OpenCode runtime) does not attach execFile stderr separately — the
+ * schtasks text is only visible in `message` (where Node also puts the lines
+ * after "Command failed: <cmd>"). Without this substitution, "access denied"
+ * detection under Bun sees an empty stderr and the UAC fallback never fires.
+ * The text is written by schtasks itself, and task names cannot contain line
+ * breaks (validation forbids them), so the error line cannot be spoofed.
+ */
+export function stderrFromExecMessage(message: string): string {
+  if (!message) return "";
+  const lines = message.split(/\r?\n/);
+  return lines[0].startsWith("Command failed:") ? lines.slice(1).join("\n") : message;
+}
+
+/**
  * Выполняет `schtasks.exe` напрямую с массивом аргументов.
  *
  * Раньше команда собиралась в строку и запускалась через `cmd.exe /c`,
@@ -432,7 +446,9 @@ export async function runSchtasks(args: string[]): Promise<SchtasksResult> {
   } catch (err) {
     const e = err as { message?: string; code?: number | null };
     const stdout = await decodeConsoleOutput(errorBuffer(err, "stdout"));
-    const stderr = await decodeConsoleOutput(errorBuffer(err, "stderr"));
+    const stderr =
+      (await decodeConsoleOutput(errorBuffer(err, "stderr"))) ||
+      stderrFromExecMessage(e.message ?? "");
     const failure = new SchtasksError(
       `schtasks error: ${buildErrorDetails(err, stdout, stderr)}`,
       e.code ?? null,
@@ -491,9 +507,12 @@ export function isAccessDeniedError(err: unknown): boolean {
     typeof e.code === "number" && Number.isFinite(e.code) ? e.code >>> 0 : null;
   if (code === 0x80070005 || code === 5) return true;
   const stderr = String(e.stderr ?? "");
+  // The HRESULT must end an error line; a quoted task name containing
+  // 0x80070005 must not be mistaken for the error code.
+  const hresultLine = /^[ \t]*(?:ERROR:[ \t]*)?[^"\r\n]*\b0x80070005\b[ \t]*\)?\.?[ \t]*$/im;
   return (
     /^\s*(?:ERROR:\s*)?(?:Access is denied|Отказано в доступе)\.?\s*$/im.test(stderr) ||
-    /0x80070005/i.test(stderr)
+    hresultLine.test(stderr)
   );
 }
 
