@@ -410,12 +410,12 @@ export class SchtasksError extends Error {
 }
 
 /**
- * Bun (рантайм OpenCode) не кладёт stderr execFile-ошибки отдельно — текст
- * schtasks виден только в `message` (там же, где у Node строки после
- * «Command failed: <cmd>»). Без этой подмены детект «нет прав» под Bun
- * получает пустой stderr и UAC-фолбэк никогда не срабатывает. Текст
- * пишет сам schtasks, а имена задач не содержат переводов строк
- * (валидация их запрещает), так что подделать строку ошибки нельзя.
+ * Bun (the OpenCode runtime) does not attach execFile stderr separately — the
+ * schtasks text is only visible in `message` (where Node also puts the lines
+ * after "Command failed: <cmd>"). Without this substitution, "access denied"
+ * detection under Bun sees an empty stderr and the UAC fallback never fires.
+ * The text is written by schtasks itself, and task names cannot contain line
+ * breaks (validation forbids them), so the error line cannot be spoofed.
  */
 export function stderrFromExecMessage(message: string): string {
   if (!message) return "";

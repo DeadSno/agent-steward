@@ -202,21 +202,21 @@ if (process.platform === "win32") {
 assert.equal(new SchtasksError("x", 1, "").taskMissing, false);
 assert.equal(new SchtasksError("x", 1, "", true).taskMissing, true);
 
-// 9. Bun (рантайм OpenCode) не прикладывает stderr к ошибке execFile —
-//    текст живёт только в message. Без восстановления UAC-фолбэк молчит
-//    внутри плагина (проверено живьём: create/delete падали без промпта).
+// 9. Bun (the OpenCode runtime) does not attach stderr to execFile errors —
+//    the text lives only in message. Without recovery, the UAC fallback stays
+//    silent inside the plugin (verified live: create/delete failed without a prompt).
 assert.equal(
   isAccessDeniedError({ code: 1, stderr: stderrFromExecMessage("ERROR: Access is denied.\r\r\n") }),
   true,
-  "Bun-формат: message без префикса -> stderr восстановлен, права угаданы",
+  "Bun format: message without prefix -> stderr recovered, access denied detected",
 );
 assert.equal(
   stderrFromExecMessage("Command failed: schtasks /create /tn X /tr Y /sc once\r\nERROR: Access is denied."),
   "ERROR: Access is denied.",
-  "Node-формат: берём строки после Command failed",
+  "Node format: take the lines after Command failed",
 );
-// Спойлинг по-прежнему мёртв: имя задачи в командной строке не даёт строку
-// «Access is denied» с начала строки.
+// Spoofing is still dead: a task name in the command line cannot produce an
+// "Access is denied" line at the start of the string.
 assert.equal(
   isAccessDeniedError({
     code: 1,
@@ -225,7 +225,7 @@ assert.equal(
     ),
   }),
   false,
-  "задача с именем «Access is denied» не вымогает промпт",
+  "a task named \"Access is denied\" must not extort a prompt",
 );
 
 console.log("Schtasks errors: все проверки пройдены.");
